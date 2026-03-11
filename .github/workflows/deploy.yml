@@ -1,0 +1,36 @@
+name: Deploy LaTeX Editor
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/latex-editor
+            git pull origin main
+            
+            # Run installation script (idempotent)
+            bash scripts/install.sh
+            
+            # Build and restart backend
+            cd backend
+            npm run build
+            pm2 restart latex-backend || pm2 start dist/index.js --name latex-backend
+            
+            # Build and restart frontend
+            cd ../frontend
+            npm run build
+            pm2 restart latex-frontend || pm2 start npm --name "latex-frontend" -- start
