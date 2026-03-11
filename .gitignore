@@ -9,7 +9,8 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+./backend/node_modules
+./frontend/node_modules
 # testing
 /coverage
 frontend/.next/
