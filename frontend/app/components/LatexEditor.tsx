@@ -1,19 +1,33 @@
 "use client";
 
-import Editor from "@monaco-editor/react";
+import Editor, { useMonaco } from "@monaco-editor/react";
+import { latexTokensProvider, latexThemes } from "./latexTheme";
 
 interface LatexEditorProps {
     value: string;
     onChange: (value: string) => void;
+    theme: string;
 }
 
-export default function LatexEditor({ value, onChange }: LatexEditorProps) {
+export default function LatexEditor({ value, onChange, theme }: LatexEditorProps) {
+    const handleEditorWillMount = (monaco: any) => {
+        // Register a new language
+        monaco.languages.register({ id: "custom-latex" });
+        // Register a tokens provider for the language
+        monaco.languages.setMonarchTokensProvider("custom-latex", latexTokensProvider);
+        // Define new themes that contain only rules that match this language
+        Object.entries(latexThemes).forEach(([themeName, themeData]) => {
+            monaco.editor.defineTheme(themeName, themeData);
+        });
+    };
+
     return (
         <div className="h-full w-full overflow-hidden rounded-lg border border-border bg-surface">
             <Editor
                 height="100%"
-                defaultLanguage="latex"
-                theme="vs-dark"
+                defaultLanguage="custom-latex"
+                theme={theme}
+                beforeMount={handleEditorWillMount}
                 value={value}
                 onChange={(val) => onChange(val ?? "")}
                 options={{

@@ -27,6 +27,7 @@ export default function Home() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<string | null>(null);
+  const [theme, setTheme] = useState("latex-dark");
 
   const activeFile = useMemo(
     () => files.find((f) => f.name === activeFileName) || files[0],
@@ -187,6 +188,8 @@ export default function Home() {
           isCompiling={compileMutation.isPending}
           hasPdf={!!pdfUrl}
           pdfUrl={pdfUrl}
+          theme={theme}
+          onThemeChange={setTheme}
         />
       </header>
 
@@ -223,6 +226,7 @@ export default function Home() {
                 filename={activeFileName}
                 value={activeFile.content}
                 onChange={updateActiveContent}
+                theme={theme}
               />
             )}
           </div>

@@ -1,10 +1,14 @@
 "use client";
 
+import { INCLUDED_THEMES } from "./latexTheme";
+
 interface ToolbarProps {
     onCompile: () => void;
     onDownload: () => void;
     isCompiling: boolean;
     hasPdf: boolean;
+    theme: string;
+    onThemeChange: (theme: string) => void;
 }
 
 export default function Toolbar({
@@ -12,9 +16,24 @@ export default function Toolbar({
     onDownload,
     isCompiling,
     hasPdf,
+    theme,
+    onThemeChange,
 }: ToolbarProps) {
     return (
         <div className="flex items-center gap-3">
+            {/* Theme switcher */}
+            <select
+                value={theme}
+                onChange={(e) => onThemeChange(e.target.value)}
+                className="bg-surface text-foreground text-xs rounded-lg border border-border px-3 py-2 outline-none focus:border-accent hover:border-accent/40 transition-colors"
+                title="Editor Theme"
+            >
+                {INCLUDED_THEMES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                        {t.name}
+                    </option>
+                ))}
+            </select>
             {/* Compile button */}
             <button
                 id="compile-btn"
