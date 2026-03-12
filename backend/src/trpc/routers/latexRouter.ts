@@ -9,56 +9,102 @@ import os from "os";
 const execPromise = promisify(exec);
 
 export const latexRouter = router({
-    compileLatex: publicProcedure
-        .input(
+  compileLatex: publicProcedure
+    .input(
+      z.object({
+        tex: z.string().min(1, "LaTeX content cannot be empty"),
+        images: z
+          .array(
             z.object({
-                tex: z.string().min(1, "LaTeX content cannot be empty"),
+              filename: z.string(),
+              data: z.string(), // base64
             })
-        )
-        .mutation(async ({ input }) => {
-            const { tex } = input;
-            const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "latex-"));
-            const texFile = path.join(tmpDir, "main.tex");
-            const pdfFile = path.join(tmpDir, "main.pdf");
+          )
+          .optional(),
+        files: z
+          .array(
+            z.object({
+              filename: z.string(), // e.g. "references.bib", "figures/chart.png"
+              data: z.string(), // base64
+            })
+          )
+          .optional(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const { tex, images, files } = input;
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "latex-"));
+      const texFile = path.join(tmpDir, "main.tex");
+      const pdfFile = path.join(tmpDir, "main.pdf");
 
-            try {
-                await fs.writeFile(texFile, tex);
+      const writeFileSafely = async (filename: string, data: string) => {
+        const resolvedPath = path.resolve(tmpDir, filename);
+        if (!resolvedPath.startsWith(tmpDir)) {
+          throw new Error(`Invalid filename (path traversal): ${filename}`);
+        }
+        await fs.mkdir(path.dirname(resolvedPath), { recursive: true });
+        await fs.writeFile(resolvedPath, Buffer.from(data, "base64"));
+      };
 
-                // Security: Limit execution time to 30 seconds
-                const compileOptions = {
-                    cwd: tmpDir,
-                    timeout: 30000,
-                };
+      try {
+        await fs.writeFile(texFile, tex);
 
-                // Compilation command with latexmk
-                const { stdout, stderr } = await execPromise(
-                    "latexmk -pdf -silent main.tex",
-                    compileOptions
-                );
+        // Write images
+        if (images && images.length > 0) {
+          await Promise.all(images.map((img) => writeFileSafely(img.filename, img.data)));
+        }
 
-                const pdfBuffer = await fs.readFile(pdfFile);
-                const pdfBase64 = pdfBuffer.toString("base64");
+        // Write .bib files and any other extra files (cls, sty, etc.)
+        if (files && files.length > 0) {
+          await Promise.all(files.map((f) => writeFileSafely(f.filename, f.data)));
+        }
 
-                return {
-                    pdf: pdfBase64,
-                    logs: stdout + stderr,
-                    success: true,
-                };
-            } catch (error: any) {
-                return {
-                    pdf: null,
-                    logs: error.stdout + error.stderr || error.message,
-                    success: false,
-                };
-            } finally {
-                // Cleanup: Remove the temporary directory
-                // In a real production setup, we might want to keep it for a few minutes
-                // but for this implementation we'll clean up immediately.
-                try {
-                    await fs.rm(tmpDir, { recursive: true, force: true });
-                } catch (cleanupError) {
-                    console.error("Failed to clean up temporary directory:", cleanupError);
-                }
-            }
-        }),
+        const compileOptions = {
+          cwd: tmpDir,
+          timeout: 60000,
+          maxBuffer: 1024 * 1024 * 10,
+        };
+
+        // -f forces compilation even with warnings/missing refs
+        const { stdout, stderr } = await execPromise(
+          "latexmk -pdf -f -silent main.tex",
+          compileOptions
+        );
+
+        const pdfBuffer = await fs.readFile(pdfFile);
+        const pdfBase64 = pdfBuffer.toString("base64");
+
+        return {
+          pdf: pdfBase64,
+          logs: [stdout, stderr].filter(Boolean).join("\n"),
+          success: true,
+        };
+      } catch (error: any) {
+        // Try to return partial PDF even on error (e.g. only missing citations)
+        let pdfBase64: string | null = null;
+        try {
+          const pdfBuffer = await fs.readFile(pdfFile);
+          pdfBase64 = pdfBuffer.toString("base64");
+        } catch {
+          // No PDF was generated
+        }
+
+        const logs =
+          [error?.stdout, error?.stderr, error?.message]
+            .filter(Boolean)
+            .join("\n") || "Unknown compilation error";
+
+        return {
+          pdf: pdfBase64, // Return partial PDF if it exists
+          logs,
+          success: pdfBase64 !== null, // Succeed if we at least got a PDF
+        };
+      } finally {
+        try {
+          await fs.rm(tmpDir, { recursive: true, force: true });
+        } catch (cleanupError) {
+          console.error("Failed to clean up temporary directory:", cleanupError);
+        }
+      }
+    }),
 });
