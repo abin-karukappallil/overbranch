@@ -2,6 +2,7 @@
 
 import Editor, { useMonaco } from "@monaco-editor/react";
 import { latexTokensProvider, latexThemes } from "./latexTheme";
+import { getLatexCompletionProvider } from "./latexSuggestions";
 
 interface LatexEditorProps {
     value: string;
@@ -19,6 +20,9 @@ export default function LatexEditor({ value, onChange, theme }: LatexEditorProps
         Object.entries(latexThemes).forEach(([themeName, themeData]) => {
             monaco.editor.defineTheme(themeName, themeData);
         });
+
+        // Register code suggestions provider
+        monaco.languages.registerCompletionItemProvider("custom-latex", getLatexCompletionProvider(monaco));
     };
 
     return (
@@ -47,7 +51,7 @@ export default function LatexEditor({ value, onChange, theme }: LatexEditorProps
                     automaticLayout: true,
                     tabSize: 2,
                     suggestOnTriggerCharacters: true,
-                    quickSuggestions: false,
+                    quickSuggestions: true,
                 }}
                 loading={
                     <div className="flex h-full items-center justify-center text-muted">
