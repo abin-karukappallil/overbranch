@@ -25,6 +25,12 @@ export const latexRouter = createTRPCRouter({
                     httpBatchLink({
                         url: COMPILE_SERVICE_URL,
                         transformer: superjson,
+                        headers: () => {
+                            return {
+                                cookie: ctx.session?.cookie || "",
+                                authorization: `Bearer ${ctx.session?.session.token}`,
+                            };
+                        },
                     }),
                 ],
             });
