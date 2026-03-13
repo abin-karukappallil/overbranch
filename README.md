@@ -1,5 +1,5 @@
 
-# LaTeX Editor — Full System
+# OverBranch - LaTeX Editor
 
 A fast, single-user LaTeX web editor with Monaco editor, live PDF preview, and automated deployment.
 
@@ -37,7 +37,7 @@ overbranch/
 ## Setup Instructions
 
 ### Prerequisites
-- Node.js & npm (or Bun)
+- Node.js & bun (or npm)
 - TeX Live and `latexmk` installed on the system.
 
 ### Local Installation
@@ -49,21 +49,14 @@ overbranch/
    ```
 3. Start the backend:
    ```bash
-   cd backend && npm run dev
+   cd backend && bun run dev
    ```
 4. Start the frontend:
    ```bash
-   cd frontend && npm run dev
+   cd frontend && bun run dev
    ```
 5. Open `http://localhost:3000`.
 
-## EC2 Deployment Guide
-
-1. Launch an Ubuntu 22.04 EC2 instance.
-2. Configure GitHub Secrets:
-   - `EC2_HOST`: IP/Hostname of your instance.
-   - `EC2_SSH_KEY`: Private SSH key for access.
-3. Push to `main` to trigger the deployment pipeline.
 
 ## Usage
 
