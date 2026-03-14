@@ -2,11 +2,11 @@
   "name": "backend",
   "version": "1.0.0",
   "description": "LaTeX Compilation Server",
-  "main": "dist/index.js",
+  "main": "dist/backend/src/index.js",
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/backend/src/index.js"
   },
   "dependencies": {
     "@trpc/server": "^11.12.0",
