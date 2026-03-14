@@ -3,6 +3,7 @@ import { latexRouter } from "./latex";
 import { projectRouter } from "./project";
 import { projectFileRouter } from "./projectFile";
 import { projectAssetRouter } from "./projectAsset";
+import { aiRouter } from "./ai";
 
 export const appRouter = createTRPCRouter({
   test: protectedProcedure.query(async () => {
@@ -12,6 +13,7 @@ export const appRouter = createTRPCRouter({
   project: projectRouter,
   projectFile: projectFileRouter,
   projectAsset: projectAssetRouter,
+  ai: aiRouter,
 });
 
 export type AppRouter = typeof appRouter;

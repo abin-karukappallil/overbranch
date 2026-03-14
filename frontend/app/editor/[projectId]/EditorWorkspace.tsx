@@ -6,6 +6,8 @@ import { trpc } from "@/trpc/client";
 import LatexEditor from "@/app/components/LatexEditor";
 import PdfPreview from "@/app/components/PdfPreview";
 import Toolbar from "@/app/components/Toolbar";
+import AiChatPanel from "@/app/components/AiChatPanel";
+import AiSettingsModal from "@/app/components/AiSettingsModal";
 import Link from "next/link";
 
 interface FileData {
@@ -57,6 +59,13 @@ export default function EditorWorkspace({
     const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
     const [renameValue, setRenameValue] = useState("");
     const [showAssetPanel, setShowAssetPanel] = useState(false);
+
+    // AI state
+    const [showAiPanel, setShowAiPanel] = useState(false);
+    const [showAiSettings, setShowAiSettings] = useState(false);
+    const [diffMode, setDiffMode] = useState(false);
+    const [diffOriginal, setDiffOriginal] = useState("");
+    const [diffModified, setDiffModified] = useState("");
 
     const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -250,6 +259,36 @@ export default function EditorWorkspace({
         setTimeout(() => document.body.removeChild(link), 100);
     }, [pdfUrl, activeFile]);
 
+    // AI handlers
+    const handleShowDiff = useCallback((original: string, modified: string) => {
+        setDiffOriginal(original);
+        setDiffModified(modified);
+        setDiffMode(true);
+    }, []);
+
+    const handleClearDiff = useCallback(() => {
+        setDiffMode(false);
+        setDiffOriginal("");
+        setDiffModified("");
+    }, []);
+
+    const handleApplyChange = useCallback((newContent: string) => {
+        if (!activeFileId) return;
+        setFiles((prev) =>
+            prev.map((f) => (f.id === activeFileId ? { ...f, content: newContent } : f))
+        );
+        setDiffMode(false);
+        setDiffOriginal("");
+        setDiffModified("");
+
+        // Trigger save
+        setSaveStatus("saving");
+        updateFileMutation.mutate({
+            id: activeFileId,
+            content: newContent,
+        });
+    }, [activeFileId, updateFileMutation]);
+
     return (
         <div className="editor-page">
             {/* Header */}
@@ -279,14 +318,28 @@ export default function EditorWorkspace({
                     </div>
                 </div>
 
-                <Toolbar
-                    onCompile={handleCompile}
-                    onDownload={handleDownload}
-                    isCompiling={compileMutation.isPending}
-                    hasPdf={!!pdfUrl}
-                    theme={theme}
-                    onThemeChange={setTheme}
-                />
+                <div className="flex items-center gap-2">
+                    <Toolbar
+                        onCompile={handleCompile}
+                        onDownload={handleDownload}
+                        isCompiling={compileMutation.isPending}
+                        hasPdf={!!pdfUrl}
+                        theme={theme}
+                        onThemeChange={setTheme}
+                    />
+                    {/* AI toggle button */}
+                    <button
+                        onClick={() => setShowAiPanel(!showAiPanel)}
+                        className={`ai-toggle-btn ${showAiPanel ? "active" : "inactive"}`}
+                        title="Toggle AI Assistant"
+                    >
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 2a8 8 0 0 0-8 8c0 3.36 2.07 6.24 5 7.42V20a1 1 0 0 0 1 1h4a1 1 0 0 0 1-1v-2.58c2.93-1.18 5-4.06 5-7.42a8 8 0 0 0-8-8z" />
+                            <line x1="9" y1="22" x2="15" y2="22" />
+                        </svg>
+                        AI
+                    </button>
+                </div>
             </header>
 
             <div className="flex flex-1 overflow-hidden">
@@ -481,15 +534,19 @@ export default function EditorWorkspace({
                     </div>
                 </aside>
 
-                {/* Editor + Preview */}
-                <main className="flex flex-1 flex-col overflow-hidden md:flex-row">
+                {/* Editor + Preview + AI Panel */}
+                <main className="flex flex-1 overflow-hidden">
                     {/* Left: Code editor */}
-                    <div className="flex h-1/2 flex-col border-b border-border p-2 md:h-full md:w-1/2 md:border-b-0 md:border-r md:p-3">
+                    <div className={`flex flex-col border-r border-border p-2 md:p-3 transition-all duration-200 ${showAiPanel ? "md:w-1/3" : "md:w-1/2"
+                        } h-full`}>
                         {activeFile ? (
                             <LatexEditor
                                 value={activeFile.content || ""}
                                 onChange={handleContentChange}
                                 theme={theme}
+                                diffMode={diffMode}
+                                diffOriginal={diffOriginal}
+                                diffModified={diffModified}
                             />
                         ) : (
                             <div className="flex h-full items-center justify-center text-muted text-sm">
@@ -498,8 +555,9 @@ export default function EditorWorkspace({
                         )}
                     </div>
 
-                    {/* Right: PDF preview */}
-                    <div className="flex h-1/2 flex-col p-2 md:h-full md:w-1/2 md:p-3">
+                    {/* Middle: PDF preview */}
+                    <div className={`flex flex-col p-2 md:p-3 transition-all duration-200 ${showAiPanel ? "md:w-1/3" : "md:w-1/2"
+                        } h-full`}>
                         <PdfPreview
                             pdfUrl={pdfUrl}
                             isCompiling={compileMutation.isPending}
@@ -512,8 +570,28 @@ export default function EditorWorkspace({
                             </div>
                         )}
                     </div>
+
+                    {/* Right: AI Chat Panel */}
+                    {showAiPanel && (
+                        <div className="md:w-1/3 h-full">
+                            <AiChatPanel
+                                isOpen={showAiPanel}
+                                onClose={() => setShowAiPanel(false)}
+                                currentFileContent={activeFile?.content || ""}
+                                onApplyChange={handleApplyChange}
+                                onShowDiff={handleShowDiff}
+                                onClearDiff={handleClearDiff}
+                                onOpenSettings={() => setShowAiSettings(true)}
+                            />
+                        </div>
+                    )}
                 </main>
             </div>
+
+            {/* AI Settings Modal */}
+            {showAiSettings && (
+                <AiSettingsModal onClose={() => setShowAiSettings(false)} />
+            )}
         </div>
     );
 }
