@@ -1,6 +1,6 @@
 "use client";
 
-import Editor, { useMonaco } from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
 import { latexTokensProvider, latexThemes } from "./latexTheme";
 import { getLatexCompletionProvider } from "./latexSuggestions";
 
@@ -8,9 +8,19 @@ interface LatexEditorProps {
     value: string;
     onChange: (value: string) => void;
     theme: string;
+    diffMode?: boolean;
+    diffOriginal?: string;
+    diffModified?: string;
 }
 
-export default function LatexEditor({ value, onChange, theme }: LatexEditorProps) {
+export default function LatexEditor({
+    value,
+    onChange,
+    theme,
+    diffMode,
+    diffOriginal,
+    diffModified,
+}: LatexEditorProps) {
     const handleEditorWillMount = (monaco: any) => {
         // Register a new language
         monaco.languages.register({ id: "custom-latex" });
@@ -24,6 +34,43 @@ export default function LatexEditor({ value, onChange, theme }: LatexEditorProps
         // Register code suggestions provider
         monaco.languages.registerCompletionItemProvider("custom-latex", getLatexCompletionProvider(monaco));
     };
+
+    if (diffMode && diffOriginal !== undefined && diffModified !== undefined) {
+        return (
+            <div className="h-full w-full overflow-hidden rounded-lg border border-accent/30 bg-surface">
+                <div className="ai-diff-header">
+                    <svg className="h-3.5 w-3.5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                    </svg>
+                    <span className="text-xs font-medium text-accent">AI Suggested Changes — Review Diff</span>
+                </div>
+                <DiffEditor
+                    height="calc(100% - 32px)"
+                    language="custom-latex"
+                    theme={theme}
+                    original={diffOriginal}
+                    modified={diffModified}
+                    beforeMount={handleEditorWillMount}
+                    options={{
+                        fontSize: 14,
+                        fontFamily: "var(--font-geist-mono), 'Fira Code', 'Cascadia Code', monospace",
+                        readOnly: true,
+                        renderSideBySide: true,
+                        scrollBeyondLastLine: false,
+                        padding: { top: 12, bottom: 12 },
+                        smoothScrolling: true,
+                        automaticLayout: true,
+                        minimap: { enabled: false },
+                    }}
+                    loading={
+                        <div className="flex h-full items-center justify-center text-muted">
+                            Loading diff…
+                        </div>
+                    }
+                />
+            </div>
+        );
+    }
 
     return (
         <div className="h-full w-full overflow-hidden rounded-lg border border-border bg-surface">
