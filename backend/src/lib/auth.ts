@@ -8,7 +8,7 @@ import { bearer } from "better-auth/plugins";
 export const auth = betterAuth({
 
     secret: process.env.BETTER_AUTH_SECRET,
-    baseURL: process.env.BETTER_AUTH_BASE_URL + "/api/auth",
+    baseURL: process.env.BETTER_AUTH_BASE_URL,
     trustedOrigins: ["*"],
     trustHost: true,
     advanced: {

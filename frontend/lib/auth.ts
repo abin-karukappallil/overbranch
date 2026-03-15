@@ -4,7 +4,7 @@ import { db } from "@/db/index";
 import * as schema from "@/db/schema";
 
 export const auth = betterAuth({
-  baseURL: process.env.BETTER_AUTH_BASE_URL + "/api/auth",
+  baseURL: process.env.BETTER_AUTH_BASE_URL,
   trustedOrigins: ["*"],
   trustHost: true,
   advanced: {
