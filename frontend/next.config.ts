@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/trpc/:path*",
-        destination: "http://localhost:8080/trpc/:path*",
+        destination: `${process.env.NEXT_PUBLIC_LATEX_COMPILE_URL || "http://localhost:8080/trpc"}/:path*`,
       },
     ];
   },

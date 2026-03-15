@@ -19,18 +19,34 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            # Navigate to project directory
             cd /home/ubuntu/latex-editor
+            
+            # Pull latest changes
             git pull origin main
             
-            # Run installation script (idempotent)
+            # Create/Update .env files from GitHub Secrets
+            # Backend .env
+            cat <<EOF > backend/.env
+            DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            BETTER_AUTH_SECRET="${{ secrets.BETTER_AUTH_SECRET }}"
+            BETTER_AUTH_BASE_URL="${{ secrets.BETTER_AUTH_BASE_URL }}"
+            PORT=8080
+            EOF
+
+            # Frontend .env
+            cat <<EOF > frontend/.env
+            DATABASE_URL="${{ secrets.DATABASE_URL }}"
+            BETTER_AUTH_SECRET="${{ secrets.BETTER_AUTH_SECRET }}"
+            BETTER_AUTH_BASE_URL="${{ secrets.BETTER_AUTH_BASE_URL }}"
+            NEXT_PUBLIC_BETTER_AUTH_URL="${{ secrets.BETTER_AUTH_BASE_URL }}"
+            LATEX_COMPILE_URL="http://localhost:8080/trpc"
+            NEXT_PUBLIC_BASE_URL="${{ secrets.NEXT_PUBLIC_BASE_URL }}"
+            EOF
+            
+            # Run installation and build script
+            # This script handles npm install, npm build, and PM2 restarts
             bash scripts/install.sh
             
-            # Build and restart backend
-            cd backend
-            npm run build
-            pm2 restart latex-backend || pm2 start dist/index.js --name latex-backend
-            
-            # Build and restart frontend
-            cd ../frontend
-            npm run build
-            pm2 restart latex-frontend || pm2 start npm --name "latex-frontend" -- start
+            # Save PM2 state to persist on boots
+            pm2 save

@@ -16,15 +16,23 @@ export const latexRouter = createTRPCRouter({
                 activeFileId: z.string(),
             })
         )
-        .mutation(async ({ input }) => {
+        .mutation(async ({ ctx, input }) => {
+            const token = ctx.session?.session.token;
+            console.log("[FRONTEND] Compiling project:", input.projectId, "Token present:", !!token);
+
             const COMPILE_SERVICE_URL =
-                process.env.LATEX_COMPILE_URL || "http://localhost:8080/trpc";
+                process.env.NEXT_PUBLIC_LATEX_COMPILE_URL || "http://localhost:8080/trpc";
 
             const backendClient = createTRPCClient<BackendRouter>({
                 links: [
                     httpBatchLink({
                         url: COMPILE_SERVICE_URL,
                         transformer: superjson,
+                        headers: () => {
+                            return {
+                                authorization: `Bearer ${ctx.session?.session.token}`,
+                            };
+                        },
                     }),
                 ],
             });
