@@ -5,7 +5,7 @@ import * as schema from "@/db/schema";
 
 export const auth = betterAuth({
   trustedOrigins: ["*"],
-  baseURL: process.env.BETTER_AUTH_BASE_URL,
+  trustHost: true,
   advanced: {
     cookiePrefix: "overbranch",
   },

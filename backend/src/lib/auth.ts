@@ -9,7 +9,7 @@ export const auth = betterAuth({
 
     secret: process.env.BETTER_AUTH_SECRET,
     trustedOrigins: ["*"],
-    baseURL: process.env.BETTER_AUTH_BASE_URL,
+    trustHost: true,
     advanced: {
         cookiePrefix: "overbranch",
     },
