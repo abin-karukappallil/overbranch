@@ -9,9 +9,10 @@ import os from "os";
 const execPromise = promisify(exec);
 
 export const latexRouter = router({
-  compileLatex: publicProcedure
+  compile: publicProcedure
     .input(
       z.object({
+
         tex: z.string().min(1, "LaTeX content cannot be empty"),
         images: z
           .array(

@@ -1,6 +1,8 @@
 import { createTRPCRouter, protectedProcedure } from "../init";
 import { z } from "zod";
-import { TRPCError } from "@trpc/server";
+import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import superjson from "superjson";
+import type { AppRouter as BackendRouter } from "../../../backend/src/trpc/routers/_app";
 
 const messageSchema = z.object({
     role: z.enum(["system", "user", "assistant"]),
@@ -16,55 +18,25 @@ export const aiRouter = createTRPCRouter({
                 messages: z.array(messageSchema).min(1),
             })
         )
-        .mutation(async ({ input }) => {
-            const { apiKey, model, messages } = input;
+        .mutation(async ({ ctx, input }) => {
+            const COMPILE_SERVICE_URL =
+                process.env.NEXT_PUBLIC_LATEX_COMPILE_URL || "http://localhost:8080/trpc";
 
-            try {
-                const response = await fetch(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                            Authorization: `Bearer ${apiKey}`,
+            const backendClient = createTRPCClient<BackendRouter>({
+                links: [
+                    httpBatchLink({
+                        url: COMPILE_SERVICE_URL,
+                        transformer: superjson,
+                        headers: () => {
+                            return {
+                                authorization: `Bearer ${ctx.session?.session.token}`,
+                            };
                         },
-                        body: JSON.stringify({
-                            model,
-                            messages,
-                            temperature: 0.3,
-                            max_tokens: 8192,
-                        }),
-                    }
-                );
+                    }),
+                ],
+            });
 
-                if (!response.ok) {
-                    const errorBody = await response.text();
-                    let errorMessage = `Groq API error (${response.status})`;
-                    try {
-                        const parsed = JSON.parse(errorBody);
-                        errorMessage = parsed?.error?.message || errorMessage;
-                    } catch {
-                        // use default
-                    }
-                    throw new TRPCError({
-                        code: "BAD_REQUEST",
-                        message: errorMessage,
-                    });
-                }
-
-                const data = await response.json();
-                const content = data?.choices?.[0]?.message?.content || "";
-
-                return { content, model: data?.model || model };
-            } catch (error) {
-                if (error instanceof TRPCError) throw error;
-                throw new TRPCError({
-                    code: "INTERNAL_SERVER_ERROR",
-                    message:
-                        error instanceof Error
-                            ? error.message
-                            : "Failed to communicate with Groq API",
-                });
-            }
+            return backendClient.ai.chat.mutate(input);
         }),
 });
+
