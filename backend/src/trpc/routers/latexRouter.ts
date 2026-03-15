@@ -12,8 +12,7 @@ export const latexRouter = router({
   compile: publicProcedure
     .input(
       z.object({
-
-        tex: z.string().min(1, "LaTeX content cannot be empty"),
+        latex: z.string().min(1, "LaTeX content cannot be empty"),
         images: z
           .array(
             z.object({
@@ -33,7 +32,11 @@ export const latexRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const { tex, images, files } = input;
+      console.log("[BACKEND] Received compile request. Keys:", Object.keys(input));
+      const { latex, images, files } = input;
+      const tex = latex;
+
+
       const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "latex-"));
       const texFile = path.join(tmpDir, "main.tex");
       const pdfFile = path.join(tmpDir, "main.pdf");

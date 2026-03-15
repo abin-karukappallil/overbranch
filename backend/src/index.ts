@@ -13,6 +13,8 @@ console.log("[BACKEND] Starting with BETTER_AUTH_URL:", process.env.BETTER_AUTH_
 console.log("[BACKEND] BETTER_AUTH_SECRET present:", !!process.env.BETTER_AUTH_SECRET);
 
 app.use(cors());
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.use(
     "/trpc",

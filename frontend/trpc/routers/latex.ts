@@ -79,7 +79,7 @@ export const latexRouter = createTRPCRouter({
 
             try {
                 const response = await backendClient.latex.compile.mutate({
-                    tex: input.latex,
+                    latex: input.latex,
                     files: filesPayload,
                     images: imagesPayload.filter(img => img.data !== ""), // Only send valid images
                 });
