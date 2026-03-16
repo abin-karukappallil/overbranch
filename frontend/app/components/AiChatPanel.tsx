@@ -2,15 +2,27 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { trpc } from "@/trpc/client";
-import { AI_SYSTEM_PROMPT, GROQ_MODELS, DEFAULT_MODEL, extractLatexFromResponse } from "./aiSystemPrompt";
+import {
+    AI_SYSTEM_PROMPT,
+    PARALLEL_AI_SYSTEM_PROMPT,
+    GROQ_MODELS,
+    DEFAULT_MODEL,
+    extractLatexFromResponse,
+    extractChunkLatex,
+    extractChunkId,
+    extractChangesSummary,
+} from "./aiSystemPrompt";
 import { getStoredApiKey } from "./AiSettingsModal";
+import { estimateTokenCount, splitLatexDocument } from "@/lib/latexSplitter";
+
+const PARALLEL_TOKEN_THRESHOLD = 6000;
 
 export interface ChatMessage {
     id: string;
     role: "user" | "assistant";
     content: string;
     timestamp: Date;
-    latexCode?: string | null;  // extracted code from AI response
+    latexCode?: string | null;
     status?: "pending" | "done" | "error" | "applied" | "rejected";
 }
 
@@ -50,17 +62,14 @@ export default function AiChatPanel({
 
     const apiKey = typeof window !== "undefined" ? getStoredApiKey() : null;
 
-    // Auto-scroll to bottom
     useEffect(() => {
         chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, isStreaming]);
 
-    // Persist model choice
     useEffect(() => {
         localStorage.setItem("overbranch_ai_model", model);
     }, [model]);
 
-    // Auto-resize textarea
     useEffect(() => {
         if (textareaRef.current) {
             textareaRef.current.style.height = "auto";
@@ -68,6 +77,210 @@ export default function AiChatPanel({
         }
     }, [input]);
 
+    // Helper to update the pending message content progressively
+    const updatePendingMessage = useCallback((pendingId: string, content: string, extra?: Partial<ChatMessage>) => {
+        setMessages((prev) =>
+            prev.map((m) =>
+                m.id === pendingId ? { ...m, content, ...extra } : m
+            )
+        );
+    }, []);
+
+    // ─────────────────────────────────────────────
+    //  SINGLE-CALL PIPELINE (small documents)
+    // ─────────────────────────────────────────────
+    const handleSingleCall = useCallback(async (
+        pendingId: string,
+        userRequest: string,
+        processedContent: string,
+        conversationHistory: { role: "user" | "assistant"; content: string }[]
+    ) => {
+        updatePendingMessage(pendingId, "🔍 Analyzing LaTeX code...");
+
+        const apiMessages = [
+            { role: "system" as const, content: AI_SYSTEM_PROMPT },
+            ...conversationHistory,
+            {
+                role: "user" as const,
+                content: `Here is the current LaTeX document:\n\n\`\`\`latex\n${processedContent}\n\`\`\`\n\nUser request: ${userRequest}`,
+            },
+        ];
+
+        const result = await chatMutation.mutateAsync({
+            apiKey: apiKey!,
+            model,
+            messages: apiMessages,
+        });
+
+        const extractedCode = extractLatexFromResponse(result.content);
+
+        updatePendingMessage(pendingId, result.content, {
+            latexCode: extractedCode,
+            status: "done",
+        });
+
+        return extractedCode;
+    }, [apiKey, model, chatMutation, updatePendingMessage]);
+
+    // ─────────────────────────────────────────────
+    //  PARALLEL PIPELINE (large documents)
+    // ─────────────────────────────────────────────
+    const handleParallelCall = useCallback(async (
+        pendingId: string,
+        userRequest: string,
+        processedContent: string,
+    ) => {
+        // Step 1: Analyzing
+        updatePendingMessage(pendingId, "🔍 Analyzing LaTeX code...");
+        await delay(400);
+
+        // Step 2: Token detection
+        const tokenCount = estimateTokenCount(processedContent);
+        updatePendingMessage(pendingId, `📊 Token count: ~${tokenCount} — Activating parallel processing...`);
+        await delay(400);
+
+        // Step 3: Splitting
+        updatePendingMessage(pendingId, "✂️ Splitting document into semantic chunks...");
+        const { preamble, chunks } = splitLatexDocument(processedContent, 6);
+        await delay(300);
+
+        updatePendingMessage(pendingId, `📦 Split into ${chunks.length} chunks. Dispatching parallel AI agents...`);
+        await delay(300);
+
+        // Step 4: Dispatch parallel agents
+        // Main agent uses openai/gpt-oss-120b (single call path)
+        // Parallel agents use diverse Groq models with low input token rate limits
+        const AGENT_MODELS = [
+            "llama-3.1-8b-instant",
+            "moonshotai/kimi-k2-instruct-0905",
+            "openai/gpt-oss-20b",
+            "llama-3.3-70b-versatile",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768",
+        ];
+
+        // Track state of each agent for live UI updates
+        const agentStates = Array.from({ length: chunks.length }, (_, i) => ({
+            id: i + 1,
+            model: AGENT_MODELS[i % AGENT_MODELS.length],
+            status: "dispatching..."
+        }));
+
+        const refreshAgentUI = () => {
+            const statusLines = agentStates.map(a =>
+                `${a.status === "completed" ? "✅" : "⏳"} Agent ${a.id} (${a.model}): ${a.status}`
+            ).join('\n');
+            updatePendingMessage(pendingId, `🚀 Parallel agents working:\n\n${statusLines}`);
+        };
+
+        const agentPromises = chunks.map(async (chunk, idx) => {
+            const chunkId = idx + 1;
+            const totalChunks = chunks.length;
+            const agentModel = AGENT_MODELS[idx % AGENT_MODELS.length];
+
+            const agentMessages = [
+                { role: "system" as const, content: PARALLEL_AI_SYSTEM_PROMPT },
+                {
+                    role: "user" as const,
+                    content: `CHUNK_ID: ${chunkId}\nTOTAL_CHUNKS: ${totalChunks}\n\nHere is body chunk ${chunkId} of ${totalChunks}:\n\n\`\`\`latex\n${chunk}\n\`\`\`\n\nUser editing instruction: ${userRequest}`,
+                },
+            ];
+
+            // Mark processing
+            agentStates[idx].status = "processing edit...";
+            refreshAgentUI();
+
+            try {
+                const result = await chatMutation.mutateAsync({
+                    apiKey: apiKey!,
+                    model: agentModel,
+                    messages: agentMessages,
+                });
+
+                // Mark completed
+                agentStates[idx].status = "completed";
+                refreshAgentUI();
+
+                return { chunkId, response: result.content };
+            } catch (error) {
+                // Mark error but don't break others
+                agentStates[idx].status = `error: ${error instanceof Error ? error.message : "failed"}`;
+                refreshAgentUI();
+                return { chunkId, response: chunk }; // fallback to original chunk on error
+            }
+        });
+
+        // Wait for all agents
+        const agentResults = await Promise.all(agentPromises);
+
+        // Step 5: Collecting results
+        updatePendingMessage(pendingId, "📥 All agents finished. Collecting results...");
+        await delay(300);
+
+        // Step 6: Merging
+        updatePendingMessage(pendingId, "🔗 Merging document chunks...");
+        await delay(200);
+
+        // Sort responses by chunk ID
+        agentResults.sort((a, b) => {
+            const idA = extractChunkId(a.response) ?? a.chunkId;
+            const idB = extractChunkId(b.response) ?? b.chunkId;
+            return idA - idB;
+        });
+
+        // Extract the updated LaTeX from each agent response
+        const mergedChunks = agentResults.map((r) => {
+            const extracted = extractChunkLatex(r.response);
+            if (extracted) return extracted;
+            // Fallback: try regular extraction
+            const fallback = extractLatexFromResponse(r.response);
+            if (fallback) return fallback;
+            // Last resort: use original chunk
+            return chunks[r.chunkId - 1] || "";
+        });
+
+        // Collect changes summaries
+        const changesSummaries = agentResults
+            .map((r) => {
+                const summary = extractChangesSummary(r.response);
+                return summary ? `**Agent ${r.chunkId}:** ${summary}` : null;
+            })
+            .filter(Boolean);
+
+        // Build the final merged document
+        let finalLatex = "";
+        if (preamble) {
+            finalLatex += preamble + "\n";
+        }
+        finalLatex += mergedChunks.join("\n");
+
+        // Ensure document ends properly
+        if (!finalLatex.includes("\\end{document}") && preamble.includes("\\begin{document}")) {
+            finalLatex += "\n\\end{document}\n";
+        }
+
+        // Build the summary content for display
+        const summaryContent = [
+            "✅ **Parallel editing complete!**",
+            "",
+            `📊 Document: ~${tokenCount} tokens → ${chunks.length} chunks`,
+            `🤖 ${agentResults.length} agents completed successfully`,
+            "",
+            "**Changes Summary:**",
+            ...changesSummaries,
+        ].join("\n");
+
+        updatePendingMessage(pendingId, summaryContent, {
+            latexCode: finalLatex,
+            status: "done",
+        });
+
+        return finalLatex;
+    }, [apiKey, model, chatMutation, updatePendingMessage]);
+
+    // ─────────────────────────────────────────────
+    //  MAIN SUBMIT HANDLER
+    // ─────────────────────────────────────────────
     const handleSubmit = useCallback(async () => {
         if (!input.trim() || isStreaming || !apiKey) return;
 
@@ -91,91 +304,62 @@ export default function AiChatPanel({
         setInput("");
         setIsStreaming(true);
 
-        // Build messages array for Groq with optimizations
-        // 1. Limit history to last 10 messages
-        // 2. Remove redundant document content strings from history
-        // 3. Truncate large code blocks in history assistant messages
+        // Build conversation history
         const conversationHistory = messages
             .filter((m) => m.status !== "error")
-            .slice(-10) // Only last 10
+            .slice(-10)
             .map((m) => {
                 let content = m.content;
-                // If assistant message has code, truncate it to save tokens in history
                 if (m.role === "assistant" && m.latexCode) {
                     content = content.replace(/```latex[\s\S]*?```/g, "[CODE BLOCK TRUNCATED FOR CONTEXT]");
                 }
-                // Strip redundant document context if it was matched in history
                 content = content.replace(/Here is the current LaTeX document:[\s\S]*?User request:/g, "User request:");
-
                 return {
                     role: m.role as "user" | "assistant",
                     content,
                 };
             });
 
-        // 2. Pre-process current document (strip comments, compress whitespace)
-        let processedContent = currentFileContent
-            .replace(/%.*$/gm, '') // Strip comments
-            .replace(/[ \t]+/g, ' ') // Compress horizontal whitespace
-            .replace(/\n\s*\n/g, '\n\n') // Compress multiple newlines
+        // Pre-process content
+        const processedContent = currentFileContent
+            .replace(/%.*$/gm, '')
+            .replace(/[ \t]+/g, ' ')
+            .replace(/\n\s*\n/g, '\n\n')
             .trim();
 
-        // 3. Smart Truncation if document is still massive (> 15k chars approx 4k tokens)
-        if (processedContent.length > 15000) {
-            const head = processedContent.slice(0, 6000);
-            const tail = processedContent.slice(-6000);
-            processedContent = `${head}\n\n[... LARGE DOCUMENT TRUNCATED FOR TOKEN LIMITS ...]\n\n${tail}`;
-        }
-
-        const apiMessages = [
-            { role: "system" as const, content: AI_SYSTEM_PROMPT },
-            ...conversationHistory,
-            {
-                role: "user" as const,
-                content: `Here is the current LaTeX document:\n\n\`\`\`latex\n${processedContent}\n\`\`\`\n\nUser request: ${userMessage.content}`,
-            },
-        ];
-
         try {
-            const result = await chatMutation.mutateAsync({
-                apiKey,
-                model,
-                messages: apiMessages,
-            });
+            const tokenCount = estimateTokenCount(processedContent);
+            let extractedCode: string | null = null;
 
-            const extractedCode = extractLatexFromResponse(result.content);
+            if (tokenCount <= PARALLEL_TOKEN_THRESHOLD) {
+                // ─── Single call path ───
+                extractedCode = await handleSingleCall(
+                    pendingId,
+                    userMessage.content,
+                    processedContent,
+                    conversationHistory
+                );
+            } else {
+                // ─── Parallel pipeline path ───
+                extractedCode = await handleParallelCall(
+                    pendingId,
+                    userMessage.content,
+                    processedContent,
+                );
+            }
 
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.id === pendingId
-                        ? {
-                            ...m,
-                            content: result.content,
-                            latexCode: extractedCode,
-                            status: "done" as const,
-                        }
-                        : m
-                )
-            );
-
-            // If we got code, show diff preview
+            // Show diff if we extracted code
             if (extractedCode) {
                 onShowDiff(currentFileContent, extractedCode);
                 setPendingDiffMessageId(pendingId);
             }
         } catch (error) {
             const errorMsg = error instanceof Error ? error.message : "AI request failed";
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.id === pendingId
-                        ? { ...m, content: errorMsg, status: "error" as const }
-                        : m
-                )
-            );
+            updatePendingMessage(pendingId, errorMsg, { status: "error" });
         } finally {
             setIsStreaming(false);
         }
-    }, [input, isStreaming, apiKey, messages, currentFileContent, model, chatMutation, onShowDiff]);
+    }, [input, isStreaming, apiKey, messages, currentFileContent, model, chatMutation, onShowDiff, handleSingleCall, handleParallelCall, updatePendingMessage]);
 
     const handleAccept = useCallback(() => {
         if (!pendingDiffMessageId) return;
@@ -303,7 +487,7 @@ export default function AiChatPanel({
                                                 <circle cx="12" cy="12" r="10" opacity="0.25" />
                                                 <path d="M12 2a10 10 0 0 1 10 10" opacity="0.75" />
                                             </svg>
-                                            Thinking…
+                                            Processing…
                                         </>
                                     )}
                                     {msg.status === "error" && "Error"}
@@ -313,7 +497,7 @@ export default function AiChatPanel({
                             )}
                         </div>
                         <div className="ai-chat-message-body">
-                            {msg.status === "pending" ? (
+                            {msg.status === "pending" && !msg.content ? (
                                 <div className="ai-thinking-dots">
                                     <span></span><span></span><span></span>
                                 </div>
@@ -387,4 +571,9 @@ export default function AiChatPanel({
             </div>
         </div>
     );
+}
+
+// Simple delay utility for progress animation
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }

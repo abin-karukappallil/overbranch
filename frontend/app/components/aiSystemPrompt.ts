@@ -45,6 +45,14 @@ Do NOT say things like:
 
 Always output the full required code.
 
+10. YOU MUST OUTPUT THE ENTIRE LATEX CODE
+    - DO NOT TRUNCATE OR SHORTEN THE CODE.
+    - DO NOT REMOVE ANYTHING UNLESS THE USER EXPLICITLY ASKS TO DO SO.
+    - YOU MUST RETURN THE FULL FILE CONTENT FROM TOP TO BOTTOM.YOU MUST OUTPUT THE ENTIRE LATEX CODE
+    - DO NOT TRUNCATE OR SHORTEN THE CODE.
+    - DO NOT REMOVE ANYTHING UNLESS THE USER EXPLICITLY ASKS TO DO SO.
+    - YOU MUST RETURN THE FULL FILE CONTENT FROM TOP TO BOTTOM.
+
 --------------------------------
 INPUT YOU RECEIVE
 --------------------------------
@@ -81,6 +89,37 @@ User: Fix bibliography
 \`\`\`
 `;
 
+export const PARALLEL_AI_SYSTEM_PROMPT = `You are a specialized agentic LaTeX worker processing one chunk of a larger document.
+
+RULES:
+1. You receive a CHUNK_ID and a piece of the LaTeX document body (NOT the preamble).
+2. Apply the user's editing instructions ONLY to your assigned chunk.
+3. Do NOT add \\documentclass, \\begin{document}, or \\end{document} — those are handled separately.
+4. Preserve all labels, references, and cross-references exactly.
+5. YOU MUST OUTPUT THE ENTIRE LATEX CODE
+    - DO NOT TRUNCATE OR SHORTEN THE CODE.
+    - DO NOT REMOVE ANYTHING UNLESS THE USER EXPLICITLY ASKS TO DO SO.
+    - YOU MUST RETURN THE FULL FILE CONTENT FROM TOP TO BOTTOM.
+6. If the user's request does not apply to your chunk, return it UNCHANGED.
+
+STRICT RESPONSE FORMAT:
+
+CHUNK_ID: <the number you were given>
+
+STATUS:
+Analyzed LaTeX Code
+Performing Edit
+Writing Changes
+
+UPDATED_LATEX:
+\`\`\`latex
+% your edited chunk here
+\`\`\`
+
+CHANGES_SUMMARY:
+- list what you changed (or "No changes needed for this chunk")
+`;
+
 export const GROQ_MODELS = [
     { id: "qwen-qwq-32b", name: "Qwen QWQ 32B" },
     { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
@@ -88,16 +127,47 @@ export const GROQ_MODELS = [
     { id: "gemma2-9b-it", name: "Gemma 2 9B" },
     { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
     { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 70B" },
+    { id: "openai/gpt-oss-20b", name: "OpenAI GPT OSS 20B" },
+    { id: "openai/gpt-oss-120b", name: "OpenAI GPT OSS 120B" },
 ];
-
-export const DEFAULT_MODEL = "qwen-qwq-32b";
+export const DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 /**
  * Extract LaTeX code from AI response that contains a fenced code block.
  * Returns the extracted code, or null if no code block is found.
  */
 export function extractLatexFromResponse(response: string): string | null {
-    // Match ```latex ... ``` or ``` ... ```
-    const match = response.match(/```(?:latex)?\s*\n([\s\S]*?)```/);
+    const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
+    const match = response.match(pattern);
     return match ? match[1].trim() : null;
+}
+
+/**
+ * Extract the UPDATED_LATEX content from a parallel agent response.
+ */
+export function extractChunkLatex(response: string): string | null {
+    const marker = response.indexOf("UPDATED_LATEX:");
+    if (marker === -1) {
+        // Some models skip the marker — try extracting any code block
+        return extractLatexFromResponse(response);
+    }
+    const afterMarker = response.slice(marker);
+    return extractLatexFromResponse(afterMarker);
+}
+
+/**
+ * Extract the CHUNK_ID from a parallel agent response.
+ */
+export function extractChunkId(response: string): number | null {
+    const match = response.match(/CHUNK_ID:\s*(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Extract CHANGES_SUMMARY from a parallel agent response.
+ */
+export function extractChangesSummary(response: string): string | null {
+    const marker = response.indexOf("CHANGES_SUMMARY:");
+    if (marker === -1) return null;
+    return response.slice(marker + "CHANGES_SUMMARY:".length).trim();
 }
