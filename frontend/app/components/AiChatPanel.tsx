@@ -230,13 +230,35 @@ export default function AiChatPanel({
 
         // Extract the updated LaTeX from each agent response
         const mergedChunks = agentResults.map((r) => {
-            const extracted = extractChunkLatex(r.response);
-            if (extracted) return extracted;
-            // Fallback: try regular extraction
-            const fallback = extractLatexFromResponse(r.response);
-            if (fallback) return fallback;
+            const originalChunk = chunks[r.chunkId - 1] || "";
+            const summary = extractChangesSummary(r.response) || "";
+
+            // Safety 1: If the agent explicitly says no changes are needed,
+            // strictly use the original chunk to prevent any accidental truncation.
+            if (summary.toLowerCase().includes("no changes needed") || summary.toLowerCase().includes("no change")) {
+                console.log(`[AI] Agent ${r.chunkId} reported no changes. Using original chunk.`);
+                return originalChunk;
+            }
+
+            let extracted = extractChunkLatex(r.response);
+            if (!extracted) {
+                extracted = extractLatexFromResponse(r.response);
+            }
+
+            if (extracted) {
+                // Safety 2: Length check to catch lazy models returning placeholders
+                // e.g., "```latex\n% rest of code\n```"
+                // If the extracted code is massively smaller than the original, it's likely truncated.
+                if (extracted.length < originalChunk.length * 0.5 && originalChunk.length > 500) {
+                    console.warn(`[AI] WARNING: Agent ${r.chunkId} returned suspiciously short chunk (${extracted.length} vs ${originalChunk.length}). Falling back to original.`);
+                    return originalChunk;
+                }
+                return extracted;
+            }
+
             // Last resort: use original chunk
-            return chunks[r.chunkId - 1] || "";
+            console.warn(`[AI] WARNING: Agent ${r.chunkId} failed extraction. Falling back to original.`);
+            return originalChunk;
         });
 
         // Collect changes summaries
