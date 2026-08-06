@@ -1,0 +1,8 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9
+pydantic>=2.6.0
+langchain>=0.1.0
+langchain-text-splitters>=0.0.1
+langchain-nvidia-ai-endpoints>=0.0.1
+qdrant-client>=1.8.0
