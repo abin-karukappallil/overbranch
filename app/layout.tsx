@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { TRPCProvider } from "@/trpc/client";
+import { ThemeProvider } from "@/providers/ThemeProvider";
+import { Toaster } from "sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,10 +15,18 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+};
+
 export const metadata: Metadata = {
-  title: "Next.js ProStack — tRPC + Better Auth + Drizzle + Supabase",
-  description: "A modern, production-ready Next.js boilerplate with tRPC, Better Auth, Drizzle ORM, and Supabase. Built with Tailwind CSS and Shadcn UI.",
-  keywords: ["Next.js", "tRPC", "Better Auth", "Drizzle", "Supabase", "ProStack", "TypeScript"],
+  title: "OverBranch — Collaborative LaTeX Editor & Developer Workspace",
+  description: "Next-generation cloud workspace with instant web environments and seamless Git collaboration.",
+  keywords: ["OverBranch", "LaTeX Editor", "Collaborative Workspace", "Developer Tools", "Next.js", "TypeScript"],
+  authors: [{ name: "OverBranch Team" }],
 };
 
 export default function RootLayout({
@@ -25,13 +35,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="scroll-smooth">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
-      >
-        <TRPCProvider>
-          {children}
-        </TRPCProvider>
+    <html lang="en" suppressHydrationWarning className="scroll-smooth dark">
+      <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground min-h-screen selection:bg-indigo-500/20 selection:text-indigo-300`}>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <TRPCProvider>
+            {children}
+            <Toaster position="bottom-right" theme="dark" richColors />
+          </TRPCProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
