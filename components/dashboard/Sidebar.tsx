@@ -6,24 +6,20 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Cpu,
   LayoutDashboard,
-  FolderGit2,
   Settings,
   Users,
-  KeyRound,
-  Terminal,
-  ChevronDown,
-  Plus,
   Search,
   LogOut,
-  Sparkles,
-  ChevronRight,
   PanelLeftClose,
   PanelLeft,
   FileCode2,
+  BookOpen,
+  User,
+  CreditCard,
+  FolderGit2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { StatusBadge } from "@/components/ui/badge-custom";
 import { toast } from "sonner";
 
 interface SidebarProps {
@@ -35,12 +31,16 @@ interface SidebarProps {
 export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPalette }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [workspaceDropdownOpen, setWorkspaceDropdownOpen] = useState(false);
 
   const navItems = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Projects", href: "/projects", icon: FolderGit2 },
+    { name: "Workspaces", href: "/workspaces", icon: Users },
+    { name: "Templates", href: "/templates", icon: BookOpen },
     { name: "LaTeX Editor", href: "/editor", icon: FileCode2 },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
+    { name: "Profile", href: "/profile", icon: User },
+    { name: "Billing", href: "/billing", icon: CreditCard },
   ];
 
   return (
@@ -112,7 +112,7 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+              className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
                 isActive
                   ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-semibold"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50"

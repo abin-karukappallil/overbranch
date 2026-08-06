@@ -8,14 +8,15 @@ import {
   Key,
   Users,
   Save,
-  Trash2,
   Plus,
   Copy,
   Check,
-  Globe,
   Sun,
   Moon,
   Laptop,
+  Bell,
+  Sliders,
+  Keyboard,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,9 +29,11 @@ import { toast } from "sonner";
 const settingTabs = [
   { id: "general", label: "General", icon: Settings },
   { id: "appearance", label: "Appearance", icon: Palette },
+  { id: "editor", label: "Editor Prefs", icon: Sliders },
+  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "shortcuts", label: "Shortcuts", icon: Keyboard },
   { id: "auth", label: "Authentication", icon: Shield },
   { id: "apikeys", label: "API Keys", icon: Key },
-  { id: "members", label: "Team Members", icon: Users },
 ];
 
 export default function SettingsPage() {
@@ -39,6 +42,10 @@ export default function SettingsPage() {
 
   const [workspaceName, setWorkspaceName] = useState("Acme OverBranch");
   const [workspaceSlug, setWorkspaceSlug] = useState("acme-overbranch");
+  const [fontSize, setFontSize] = useState(14);
+  const [tabSize, setTabSize] = useState(2);
+  const [autoCompile, setAutoCompile] = useState(true);
+  const [engine, setEngine] = useState("pdfLaTeX");
   const [copiedKey, setCopiedKey] = useState(false);
 
   const handleSaveGeneral = (e: React.FormEvent) => {
@@ -59,7 +66,7 @@ export default function SettingsPage() {
           Workspace Settings
         </h1>
         <p className="text-sm text-muted-foreground">
-          Manage workspace configuration, team members, themes, and API tokens.
+          Manage workspace configuration, editor preferences, keyboard shortcuts, and API tokens.
         </p>
       </div>
 
@@ -144,6 +151,94 @@ export default function SettingsPage() {
         </Card>
       )}
 
+      {activeTab === "editor" && (
+        <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl max-w-2xl space-y-6">
+          <div>
+            <h3 className="text-lg font-bold text-foreground">LaTeX Code Editor Preferences</h3>
+            <p className="text-xs text-muted-foreground">Font sizing, tab indents, and compiler defaults</p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Font Size ({fontSize}px)</Label>
+              <Input
+                type="range"
+                min="11"
+                max="20"
+                value={fontSize}
+                onChange={(e) => setFontSize(Number(e.target.value))}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Tab Spacing ({tabSize} spaces)</Label>
+              <Input
+                type="number"
+                min="2"
+                max="8"
+                value={tabSize}
+                onChange={(e) => setTabSize(Number(e.target.value))}
+                className="h-10 font-mono text-xs"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Default TeX Compiler Engine</Label>
+              <select
+                value={engine}
+                onChange={(e) => setEngine(e.target.value)}
+                className="w-full h-10 px-3 rounded-lg border border-border/60 bg-background text-foreground text-xs font-mono"
+              >
+                <option value="pdfLaTeX">pdfLaTeX</option>
+                <option value="XeLaTeX">XeLaTeX</option>
+                <option value="LuaLaTeX">LuaLaTeX</option>
+              </select>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {activeTab === "notifications" && (
+        <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl max-w-2xl space-y-4 text-xs">
+          <h3 className="text-lg font-bold text-foreground">Notification Preferences</h3>
+          <div className="p-4 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between">
+            <div>
+              <span className="font-bold text-foreground block">Email Compilation Digests</span>
+              <span className="text-muted-foreground">Receive weekly summary of document compilations</span>
+            </div>
+            <input type="checkbox" defaultChecked className="w-4 h-4 accent-indigo-500" />
+          </div>
+
+          <div className="p-4 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between">
+            <div>
+              <span className="font-bold text-foreground block">Real-time Co-Author Join Alerts</span>
+              <span className="text-muted-foreground">Notify when a co-author opens the active paper</span>
+            </div>
+            <input type="checkbox" defaultChecked className="w-4 h-4 accent-indigo-500" />
+          </div>
+        </Card>
+      )}
+
+      {activeTab === "shortcuts" && (
+        <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl max-w-2xl space-y-4 text-xs font-mono">
+          <h3 className="text-lg font-bold text-foreground font-sans">Keyboard Shortcuts Matrix</h3>
+          <div className="space-y-2">
+            <div className="p-3 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between">
+              <span className="text-muted-foreground font-sans">Global Command Palette</span>
+              <kbd className="px-2 py-1 rounded bg-background border border-border/40 font-mono text-[10px]">⌘K / Ctrl+K</kbd>
+            </div>
+            <div className="p-3 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between">
+              <span className="text-muted-foreground font-sans">Compile TeX Document</span>
+              <kbd className="px-2 py-1 rounded bg-background border border-border/40 font-mono text-[10px]">⌘Enter / Ctrl+Enter</kbd>
+            </div>
+            <div className="p-3 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between">
+              <span className="text-muted-foreground font-sans">Toggle Quick Symbol Bar</span>
+              <kbd className="px-2 py-1 rounded bg-background border border-border/40 font-mono text-[10px]">⌘S / Ctrl+S</kbd>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {activeTab === "auth" && (
         <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl max-w-2xl space-y-6">
           <div>
@@ -192,38 +287,6 @@ export default function SettingsPage() {
             <Button variant="ghost" size="icon" onClick={copyApiKey}>
               {copiedKey ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
             </Button>
-          </div>
-        </Card>
-      )}
-
-      {activeTab === "members" && (
-        <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl max-w-2xl space-y-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-lg font-bold text-foreground">Workspace Members</h3>
-              <p className="text-xs text-muted-foreground">Team access roles and permissions</p>
-            </div>
-            <Button size="sm" onClick={() => toast.info("Invite Member Dialog")} className="bg-indigo-600 text-white">
-              <Plus className="w-4 h-4 mr-1.5" />
-              Invite Member
-            </Button>
-          </div>
-
-          <div className="space-y-3">
-            <div className="p-3 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center text-white font-bold">
-                  AR
-                </div>
-                <div>
-                  <span className="font-bold text-foreground block">Alex Rivers (You)</span>
-                  <span className="text-muted-foreground font-mono">alex@overbranch.dev</span>
-                </div>
-              </div>
-              <span className="px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 font-mono font-bold">
-                Owner
-              </span>
-            </div>
           </div>
         </Card>
       )}

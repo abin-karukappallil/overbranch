@@ -68,14 +68,16 @@ export default function RegisterPage() {
         callbackURL: "/dashboard",
       });
 
+      if (res?.data?.url) {
+        window.location.href = res.data.url;
+        return;
+      }
+
       if (res?.error) {
-        toast.error(res.error.message || "Google OAuth requires valid GOOGLE_CLIENT_ID in .env", {
-          description: "Defaulting to demo session for workspace preview.",
-        });
-        setTimeout(() => router.push("/dashboard"), 1000);
+        toast.error(res.error.message || "Google OAuth error");
       }
     } catch {
-      toast.info("Google OAuth registration demo");
+      toast.info("Navigating to OverBranch Dashboard");
       router.push("/dashboard");
     } finally {
       setGoogleLoading(false);

@@ -16,6 +16,10 @@ import {
   LogOut,
   Moon,
   Sun,
+  FileCode2,
+  BookOpen,
+  CreditCard,
+  Users,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -59,7 +63,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             <Search className="w-5 h-5 text-muted-foreground mr-3 shrink-0" />
             <Command.Input
               autoFocus
-              placeholder="Type a command or search workspace..."
+              placeholder="Type a command or search projects, templates, settings..."
               className="w-full h-14 bg-transparent text-foreground placeholder:text-muted-foreground text-base outline-none"
             />
             <kbd className="hidden sm:inline-flex items-center gap-1 px-2 py-1 text-xs font-mono text-muted-foreground bg-muted rounded border border-border/40">
@@ -78,7 +82,35 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <LayoutDashboard className="w-4 h-4 text-indigo-400" />
-                <span>Go to Dashboard</span>
+                <span>Go to Overview Dashboard</span>
+              </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/projects"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <FileCode2 className="w-4 h-4 text-indigo-400" />
+                <span>Projects List</span>
+              </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/editor"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Code2 className="w-4 h-4 text-indigo-400" />
+                <span>Open LaTeX Editor Workspace</span>
+              </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/workspaces"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <Users className="w-4 h-4 text-indigo-400" />
+                <span>Workspaces & Team Members</span>
+              </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/templates"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <BookOpen className="w-4 h-4 text-indigo-400" />
+                <span>Scientific Templates Gallery</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/dashboard/settings"))}
@@ -87,30 +119,38 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <Settings className="w-4 h-4 text-indigo-400" />
                 <span>Workspace Settings</span>
               </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/profile"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <User className="w-4 h-4 text-indigo-400" />
+                <span>User Profile</span>
+              </Command.Item>
+              <Command.Item
+                onSelect={() => handleSelect(() => router.push("/billing"))}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
+              >
+                <CreditCard className="w-4 h-4 text-indigo-400" />
+                <span>Billing & Plans</span>
+              </Command.Item>
             </Command.Group>
 
-            <Command.Group heading="Quick Actions" className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-2">
+            <Command.Group heading="Projects & Quick Actions" className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-2">
               <Command.Item
-                onSelect={() => handleSelect(() => toast.info("New project modal trigger"))}
+                onSelect={() => handleSelect(() => router.push("/projects"))}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Plus className="w-4 h-4 text-emerald-400" />
-                <span>Create New Project</span>
-                <span className="ml-auto text-xs text-muted-foreground font-mono">⌘N</span>
+                <span>IEEE_Paper_OverBranch_v1</span>
+                <span className="ml-auto text-xs text-emerald-400 font-mono">IEEEtran</span>
               </Command.Item>
               <Command.Item
-                onSelect={() => handleSelect(() => toast.info("Import repository dialog"))}
+                onSelect={() => handleSelect(() => router.push("/projects"))}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <FolderGit2 className="w-4 h-4 text-cyan-400" />
-                <span>Import Git Repository</span>
-              </Command.Item>
-              <Command.Item
-                onSelect={() => handleSelect(() => toast.info("Terminal session launched"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Terminal className="w-4 h-4 text-amber-400" />
-                <span>Open Workspace Terminal</span>
+                <span>arXiv_Quantum_Intelligence_2026</span>
+                <span className="ml-auto text-xs text-cyan-400 font-mono">arXiv</span>
               </Command.Item>
             </Command.Group>
 

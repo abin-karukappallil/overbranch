@@ -23,6 +23,11 @@ import {
   Lock,
   Smartphone,
   Zap,
+  Bot,
+  Send,
+  MessageSquare,
+  Cpu,
+  PanelLeft,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CompileToolbar } from "@/components/editor/CompileToolbar";
@@ -119,12 +124,59 @@ const quickTexSymbols = [
   { label: "\\sum", insert: "\\sum_{i=1}^{N}" },
 ];
 
-export function LatexEditorView() {
+const suggestedPrompts = [
+  "Format equation matrix",
+  "Check BibTeX citations",
+  "Generate IEEE author block",
+  "Proofread abstract",
+];
+
+const exampleMessages = [
+  {
+    id: "msg-1",
+    sender: "assistant",
+    text: "OverBranch Assistant ready. How can I assist with your LaTeX manuscript layout?",
+    time: "10:14 AM",
+  },
+  {
+    id: "msg-2",
+    sender: "user",
+    text: "Refactor equation (1) for double-column IEEE proceedings width.",
+    time: "10:15 AM",
+  },
+  {
+    id: "msg-3",
+    sender: "assistant",
+    text: "Here is the recommended IEEEtran equation formulation using \\small and \\mathcal{L}_{mobile}.",
+    time: "10:15 AM",
+  },
+];
+
+interface LatexEditorViewProps {
+  projectId?: string;
+}
+
+export function LatexEditorView({ projectId }: LatexEditorViewProps) {
+  const getProjectName = () => {
+    if (projectId === "proj-2") return "arXiv_Quantum_Intelligence_2026.tex";
+    if (projectId === "proj-3") return "PhD_Dissertation_Thesis.tex";
+    if (projectId) return `${projectId.replace(/[^a-zA-Z0-9_-]/g, "")}.tex`;
+    return "IEEE_Paper_OverBranch_v1.tex";
+  };
+
+  const getTemplateTag = () => {
+    if (projectId === "proj-2") return "arXiv · abstract.tex";
+    if (projectId === "proj-3") return "Thesis · ch3_results.tex";
+    return "IEEEtran · main.tex";
+  };
+
   const [activeFileId, setActiveFileId] = useState("main.tex");
   const [editorContent, setEditorContent] = useState(initialFileTree[0].content || "");
   const [isCompiling, setIsCompiling] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(100);
-  const [mobileMode, setMobileMode] = useState<"code" | "files" | "pdf" | "coauthors">("code");
+  const [showAiPanel, setShowAiPanel] = useState(true);
+  const [mobileMode, setMobileMode] = useState<"code" | "files" | "pdf" | "ai">("code");
+  const [chatInput, setChatInput] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleCompile = () => {
@@ -145,23 +197,40 @@ export function LatexEditorView() {
     toast.info(`Inserted ${snippet.split("{")[0]}`);
   };
 
+  const handleSendPrompt = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput) return;
+    toast.info("AI functionality disabled in complete application foundation mode.");
+    setChatInput("");
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] bg-background overflow-hidden border border-border/60 rounded-2xl shadow-2xl relative">
       <div className="h-14 px-3 sm:px-4 border-b border-border/40 bg-card/60 backdrop-blur-xl flex items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 overflow-hidden">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setShowAiPanel(!showAiPanel)}
+            className="hidden md:flex h-8 w-8 text-indigo-400 hover:bg-indigo-500/10"
+            title="Toggle AI Panel Mock"
+          >
+            <Bot className="w-4 h-4" />
+          </Button>
+
           <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
             <FileCode2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div className="truncate">
             <div className="flex items-center gap-1.5">
               <h1 className="font-bold text-xs sm:text-sm text-foreground tracking-tight truncate">
-                IEEE_Paper_OverBranch_v1.tex
+                {getProjectName()}
               </h1>
               <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 Mobile Ready
               </span>
             </div>
-            <p className="text-[10px] text-muted-foreground font-mono truncate">IEEEtran · main.tex</p>
+            <p className="text-[10px] text-muted-foreground font-mono truncate">{getTemplateTag()}</p>
           </div>
         </div>
 
@@ -178,7 +247,7 @@ export function LatexEditorView() {
           }`}
         >
           <FileCode2 className="w-3.5 h-3.5 text-indigo-400" />
-          <span>TeX Code</span>
+          <span>Code</span>
         </button>
 
         <button
@@ -188,7 +257,17 @@ export function LatexEditorView() {
           }`}
         >
           <Eye className="w-3.5 h-3.5 text-cyan-400" />
-          <span>PDF Preview</span>
+          <span>PDF</span>
+        </button>
+
+        <button
+          onClick={() => setMobileMode("ai")}
+          className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
+            mobileMode === "ai" ? "bg-card text-foreground font-bold shadow-sm" : "text-muted-foreground"
+          }`}
+        >
+          <Bot className="w-3.5 h-3.5 text-purple-400" />
+          <span>Assistant</span>
         </button>
 
         <button
@@ -203,10 +282,82 @@ export function LatexEditorView() {
       </div>
 
       <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden relative">
+        {showAiPanel && (
+          <div
+            className={`${
+              mobileMode === "ai" ? "flex" : "hidden"
+            } md:flex md:col-span-3 border-r border-border/40 bg-card/40 backdrop-blur-xl flex-col justify-between p-3 text-xs h-full shrink-0`}
+          >
+            <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                <div className="flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-indigo-400" />
+                  <span className="font-bold text-foreground">AI Assistant</span>
+                </div>
+                <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-mono text-[10px]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                  Standby
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                {exampleMessages.map((m) => (
+                  <div
+                    key={m.id}
+                    className={`p-2.5 rounded-xl border space-y-1 ${
+                      m.sender === "user"
+                        ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
+                        : "bg-muted/40 border-border/40 text-foreground mr-4"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+                      <span>{m.sender === "user" ? "You" : "Assistant"}</span>
+                      <span>{m.time}</span>
+                    </div>
+                    <p className="leading-relaxed">{m.text}</p>
+                  </div>
+                ))}
+
+                <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-[11px] animate-pulse font-mono">
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                  <span>Agent ready for prompt input...</span>
+                </div>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-border/40">
+                <div className="flex items-center gap-1 overflow-x-auto text-[10px] font-mono">
+                  {suggestedPrompts.slice(0, 2).map((sp) => (
+                    <button
+                      key={sp}
+                      onClick={() => setChatInput(sp)}
+                      className="px-2 py-1 rounded bg-muted/60 hover:bg-accent text-muted-foreground hover:text-foreground shrink-0 border border-border/30 transition-colors"
+                    >
+                      {sp}
+                    </button>
+                  ))}
+                </div>
+
+                <form onSubmit={handleSendPrompt} className="relative">
+                  <input
+                    type="text"
+                    placeholder="Ask assistant to edit TeX..."
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    className="w-full h-9 pl-3 pr-8 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none"
+                  />
+                  <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300">
+                    <Send className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div
           className={`${
             mobileMode === "files" ? "flex" : "hidden"
-          } md:flex md:col-span-2 border-r border-border/40 bg-muted/10 flex-col justify-between p-3 select-none text-xs h-full`}
+          } md:flex ${showAiPanel ? "md:col-span-2" : "md:col-span-2"} border-r border-border/40 bg-muted/10 flex-col justify-between p-3 select-none text-xs h-full`}
         >
           <div className="space-y-3">
             <div className="flex items-center justify-between text-muted-foreground uppercase font-mono text-[10px] tracking-wider font-semibold px-2">
@@ -269,7 +420,7 @@ export function LatexEditorView() {
         <div
           className={`${
             mobileMode === "code" ? "flex" : "hidden"
-          } md:flex md:col-span-5 border-r border-border/40 flex-col bg-background/50 relative overflow-hidden h-full`}
+          } md:flex ${showAiPanel ? "md:col-span-4" : "md:col-span-5"} border-r border-border/40 flex-col bg-background/50 relative overflow-hidden h-full`}
         >
           <div className="h-8 px-3 border-b border-border/30 bg-muted/20 flex items-center justify-between text-xs font-mono text-muted-foreground shrink-0">
             <span className="text-foreground font-bold">{activeFileId}</span>
@@ -315,7 +466,7 @@ export function LatexEditorView() {
         <div
           className={`${
             mobileMode === "pdf" ? "flex" : "hidden"
-          } md:flex md:col-span-5 flex-col bg-muted/20 relative h-full`}
+          } md:flex ${showAiPanel ? "md:col-span-3" : "md:col-span-5"} flex-col bg-muted/20 relative h-full`}
         >
           <div className="h-8 px-3 border-b border-border/30 bg-muted/30 flex items-center justify-between text-xs font-mono shrink-0">
             <div className="flex items-center gap-2 text-muted-foreground">

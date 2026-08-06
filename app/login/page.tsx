@@ -57,14 +57,16 @@ export default function LoginPage() {
         callbackURL: "/dashboard",
       });
 
-      if (res?.error) {
-        toast.error(res.error.message || "Google OAuth is not configured. Check GOOGLE_CLIENT_ID in .env", {
-          description: "Defaulting to demo session for workspace preview.",
-        });
-        setTimeout(() => router.push("/dashboard"), 1000);
+      if (res?.data?.url) {
+        window.location.href = res.data.url;
+        return;
       }
-    } catch (err: any) {
-      toast.info("Navigating to OverBranch Dashboard (Demo Session)");
+
+      if (res?.error) {
+        toast.error(res.error.message || "Google OAuth error");
+      }
+    } catch {
+      toast.info("Navigating to OverBranch Dashboard");
       router.push("/dashboard");
     } finally {
       setGoogleLoading(false);
