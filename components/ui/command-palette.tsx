@@ -96,14 +96,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Code2 className="w-4 h-4 text-indigo-400" />
-                <span>Open LaTeX Editor Workspace</span>
-              </Command.Item>
-              <Command.Item
-                onSelect={() => handleSelect(() => router.push("/workspaces"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Users className="w-4 h-4 text-indigo-400" />
-                <span>Workspaces & Team Members</span>
+                <span>Open LaTeX Editor</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/templates"))}

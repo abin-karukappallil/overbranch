@@ -15,6 +15,11 @@ const mockProjects = [
     stars: 142,
     updatedAt: "10 mins ago",
     color: "from-indigo-500/20 to-purple-500/20",
+    members: [
+      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
+      { id: "mem-2", name: "Prof. Bob Chen", email: "bob@stanford.edu", role: "Editor", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80" },
+      { id: "mem-3", name: "Carol Zhang", email: "carol@overbranch.dev", role: "Viewer", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" },
+    ],
   },
   {
     id: "proj-2",
@@ -29,6 +34,10 @@ const mockProjects = [
     stars: 88,
     updatedAt: "1 hour ago",
     color: "from-cyan-500/20 to-blue-500/20",
+    members: [
+      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
+      { id: "mem-2", name: "Prof. Bob Chen", email: "bob@stanford.edu", role: "Editor", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80" },
+    ],
   },
   {
     id: "proj-3",
@@ -43,6 +52,9 @@ const mockProjects = [
     stars: 210,
     updatedAt: "Yesterday",
     color: "from-emerald-500/20 to-teal-500/20",
+    members: [
+      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
+    ],
   },
 ];
 
@@ -75,6 +87,38 @@ export const projectsRouter = router({
       return found || mockProjects[0];
     }),
 
+  getMembers: publicProcedure
+    .input(z.object({ projectId: z.string() }))
+    .query(async ({ input }) => {
+      const found = mockProjects.find(p => p.id === input.projectId);
+      return found?.members || mockProjects[0].members;
+    }),
+
+  inviteMember: publicProcedure
+    .input(z.object({
+      projectId: z.string(),
+      email: z.string().email(),
+      role: z.enum(["Editor", "Viewer"]).default("Editor"),
+    }))
+    .mutation(async ({ input }) => {
+      return {
+        success: true,
+        invitation: { email: input.email, role: input.role, projectId: input.projectId, status: "pending" },
+      };
+    }),
+
+  removeMember: publicProcedure
+    .input(z.object({ projectId: z.string(), memberId: z.string() }))
+    .mutation(async ({ input }) => {
+      return { success: true, memberId: input.memberId };
+    }),
+
+  generateShareLink: publicProcedure
+    .input(z.object({ projectId: z.string() }))
+    .mutation(async ({ input }) => {
+      return { shareUrl: `https://overbranch.dev/editor/${input.projectId}?invite=${Math.random().toString(36).substring(2, 10)}` };
+    }),
+
   createProject: publicProcedure
     .input(z.object({
       name: z.string().min(2),
@@ -95,6 +139,9 @@ export const projectsRouter = router({
         stars: 0,
         updatedAt: "Just now",
         color: "from-indigo-500/20 to-cyan-500/20",
+        members: [
+          { id: "mem-me", name: "You", email: "author@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" },
+        ],
       };
       return newProj;
     }),

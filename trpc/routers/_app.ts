@@ -4,7 +4,6 @@ import { authRouter } from './auth';
 import { userRouter } from './user';
 import { dashboardRouter } from './dashboard';
 import { projectsRouter } from './projects';
-import { workspaceRouter } from './workspace';
 import { settingsRouter } from './settings';
 import { preferencesRouter } from './preferences';
 import { templatesRouter } from './templates';
@@ -28,7 +27,6 @@ export const appRouter = router({
   user: userRouter,
   dashboard: dashboardRouter,
   projects: projectsRouter,
-  workspace: workspaceRouter,
   settings: settingsRouter,
   preferences: preferencesRouter,
   templates: templatesRouter,

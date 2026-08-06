@@ -35,7 +35,6 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
   const navItems = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Projects", href: "/projects", icon: FolderGit2 },
-    { name: "Workspaces", href: "/workspaces", icon: Users },
     { name: "Templates", href: "/templates", icon: BookOpen },
     { name: "LaTeX Editor", href: "/editor", icon: FileCode2 },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },

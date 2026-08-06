@@ -47,37 +47,9 @@ export const verification = pgTable("verification", {
   updatedAt: timestamp("updated_at").defaultNow()
 });
 
-export const workspaces = pgTable("workspaces", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  slug: text("slug").notNull().unique(),
-  avatarUrl: text("avatar_url"),
-  plan: text("plan").notNull().default("pro"),
-  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow()
-});
-
-export const workspaceMembers = pgTable("workspace_members", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  role: text("role").notNull().default("member"),
-  joinedAt: timestamp("joined_at").notNull().defaultNow()
-});
-
-export const workspaceInvitations = pgTable("workspace_invitations", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
-  email: text("email").notNull(),
-  role: text("role").notNull().default("member"),
-  status: text("status").notNull().default("pending"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-
 export const projects = pgTable("projects", {
   id: text("id").primaryKey(),
-  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
   repository: text("repository"),
@@ -91,6 +63,23 @@ export const projects = pgTable("projects", {
   lastActiveAt: timestamp("last_active_at").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow()
+});
+
+export const projectMembers = pgTable("project_members", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("editor"),
+  joinedAt: timestamp("joined_at").notNull().defaultNow()
+});
+
+export const projectInvitations = pgTable("project_invitations", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  email: text("email").notNull(),
+  role: text("role").notNull().default("editor"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow()
 });
 
 export const templates = pgTable("templates", {
@@ -145,7 +134,7 @@ export const recentFiles = pgTable("recent_files", {
 
 export const activityLogs = pgTable("activity_logs", {
   id: text("id").primaryKey(),
-  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   action: text("action").notNull(),
   target: text("target").notNull(),
@@ -154,10 +143,9 @@ export const activityLogs = pgTable("activity_logs", {
 });
 
 export type User = typeof user.$inferSelect;
-export type Workspace = typeof workspaces.$inferSelect;
-export type WorkspaceMember = typeof workspaceMembers.$inferSelect;
-export type WorkspaceInvitation = typeof workspaceInvitations.$inferSelect;
 export type Project = typeof projects.$inferSelect;
+export type ProjectMember = typeof projectMembers.$inferSelect;
+export type ProjectInvitation = typeof projectInvitations.$inferSelect;
 export type Template = typeof templates.$inferSelect;
 export type UserPreferences = typeof userPreferences.$inferSelect;
 export type EditorPreferences = typeof editorPreferences.$inferSelect;
