@@ -3,6 +3,11 @@ uvicorn[standard]>=0.28.0
 python-multipart>=0.0.9
 pydantic>=2.6.0
 langchain>=0.1.0
-langchain-text-splitters>=0.0.1
 langchain-nvidia-ai-endpoints>=0.0.1
-qdrant-client>=1.8.0
+supabase>=2.3.0
+python-dotenv>=1.0.0
+reportlab>=4.0.0
+langchain-groq>=0.1.0
+groq>=0.9.0
+qdrant-client>=1.7.0
+
