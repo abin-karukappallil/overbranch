@@ -28,8 +28,8 @@ const featureList = [
   },
   {
     icon: ShieldCheck,
-    title: "Better Auth & Supabase Core",
-    description: "Production-grade authentication with Google OAuth, session management, and Drizzle ORM PostgreSQL integration.",
+    title: "Secure Enterprise Security",
+    description: "Production-grade session management, in-app collaborator invitations, and granular server-side role authorization.",
     gradient: "from-cyan-500/10 via-blue-500/10 to-transparent",
     borderGlow: "group-hover:border-cyan-500/40",
     iconColor: "text-cyan-400",

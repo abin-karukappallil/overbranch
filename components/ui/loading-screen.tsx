@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Cpu } from "lucide-react";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 export function LoadingScreen({ message = "Initializing OverBranch..." }: { message?: string }) {
   return (
@@ -10,15 +10,15 @@ export function LoadingScreen({ message = "Initializing OverBranch..." }: { mess
         <div className="absolute -inset-4 rounded-full bg-gradient-to-r from-indigo-500/20 via-cyan-500/20 to-purple-500/20 blur-xl animate-pulse" />
         
         <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 0.5, repeat: Infinity, repeatType: "reverse" }}
-          className="relative w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-600 to-cyan-600 flex items-center justify-center shadow-2xl shadow-indigo-500/30"
+          initial={{ scale: 0.9, opacity: 0.8 }}
+          animate={{ scale: 1.05, opacity: 1 }}
+          transition={{ duration: 1.2, repeat: Infinity, repeatType: "reverse" }}
+          className="relative flex items-center justify-center"
         >
-          <Cpu className="w-8 h-8 text-white" />
+          <OverBranchLogo size={64} variant="icon" colored animated={false} />
         </motion.div>
 
-        <h2 className="mt-6 text-xl font-bold tracking-tight text-foreground">
+        <h2 className="mt-6 text-xl font-extrabold tracking-tight text-foreground">
           OverBranch
         </h2>
         <p className="mt-2 text-sm text-muted-foreground animate-pulse font-mono">

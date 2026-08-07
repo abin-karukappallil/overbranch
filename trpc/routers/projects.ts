@@ -1,172 +1,284 @@
-import { router, publicProcedure, protectedProcedure } from '../init';
+import { router, publicProcedure, protectedProcedure, projectProcedure, ownerProcedure } from '../init';
 import { z } from 'zod';
-
-const mockProjects = [
-  {
-    id: "proj-1",
-    name: "IEEE_Paper_OverBranch_v1",
-    description: "Architectural Foundations for Collaborative LaTeX Editors with real-time PDF recompilation.",
-    repository: "overbranch/ieee-paper-2026",
-    branch: "main.tex",
-    template: "IEEEtran",
-    status: "active",
-    isFavorite: true,
-    collaboratorsCount: 3,
-    stars: 142,
-    updatedAt: "10 mins ago",
-    color: "from-indigo-500/20 to-purple-500/20",
-    members: [
-      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
-      { id: "mem-2", name: "Prof. Bob Chen", email: "bob@stanford.edu", role: "Editor", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80" },
-      { id: "mem-3", name: "Carol Zhang", email: "carol@overbranch.dev", role: "Viewer", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" },
-    ],
-  },
-  {
-    id: "proj-2",
-    name: "arXiv_Quantum_Intelligence_2026",
-    description: "Multi-file LaTeX project tree for neural symbol parsing and quantum state matrix formulations.",
-    repository: "overbranch/arxiv-quantum-draft",
-    branch: "sections/abstract.tex",
-    template: "arXiv",
-    status: "compiling",
-    isFavorite: false,
-    collaboratorsCount: 2,
-    stars: 88,
-    updatedAt: "1 hour ago",
-    color: "from-cyan-500/20 to-blue-500/20",
-    members: [
-      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
-      { id: "mem-2", name: "Prof. Bob Chen", email: "bob@stanford.edu", role: "Editor", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80" },
-    ],
-  },
-  {
-    id: "proj-3",
-    name: "PhD_Dissertation_Thesis",
-    description: "Distributed real-time document synchronization algorithms with BibTeX reference citation manager.",
-    repository: "overbranch/phd-dissertation-v2",
-    branch: "chapters/ch3_results.tex",
-    template: "Book / Thesis",
-    status: "active",
-    isFavorite: true,
-    collaboratorsCount: 4,
-    stars: 210,
-    updatedAt: "Yesterday",
-    color: "from-emerald-500/20 to-teal-500/20",
-    members: [
-      { id: "mem-1", name: "Dr. Alice Vance", email: "alice@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80" },
-    ],
-  },
-];
+import { db } from '@/db';
+import { projects, projectMembers, user, notifications } from '@/db/schema';
+import { eq, and, or, ilike, desc } from 'drizzle-orm';
+import { TRPCError } from '@trpc/server';
 
 export const projectsRouter = router({
-  listProjects: publicProcedure
+  listProjects: protectedProcedure
     .input(z.object({
       search: z.string().optional(),
       template: z.string().optional(),
       favoritesOnly: z.boolean().optional(),
     }).optional())
-    .query(async ({ input }) => {
-      let filtered = [...mockProjects];
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+
+      const owned = await db.select().from(projects).where(eq(projects.ownerId, userId));
+
+      const sharedRecords = await db
+        .select({
+          project: projects,
+          role: projectMembers.role,
+        })
+        .from(projectMembers)
+        .innerJoin(projects, eq(projectMembers.projectId, projects.id))
+        .where(eq(projectMembers.userId, userId));
+
+      const ownedList = owned.map((p) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description || "",
+        repository: p.repository || "",
+        branch: p.defaultBranch || "main.tex",
+        template: p.template || "IEEEtran",
+        status: p.status || "active",
+        isFavorite: p.isFavorite || false,
+        role: "Owner" as "Owner" | "Editor" | "Viewer",
+        collaboratorsCount: 1,
+        stars: p.starsCount || 0,
+        updatedAt: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : "Recently",
+        color: "from-indigo-500/20 to-purple-500/20",
+        badgeVariant: "glow" as const,
+        isOwner: true,
+      }));
+
+      const sharedList = sharedRecords.map(({ project: p, role }) => ({
+        id: p.id,
+        name: p.name,
+        description: p.description || "",
+        repository: p.repository || "",
+        branch: p.defaultBranch || "main.tex",
+        template: p.template || "IEEEtran",
+        status: p.status || "active",
+        isFavorite: p.isFavorite || false,
+        role: role as "Owner" | "Editor" | "Viewer",
+        collaboratorsCount: 2,
+        stars: p.starsCount || 0,
+        updatedAt: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : "Recently",
+        color: "from-purple-500/20 to-cyan-500/20",
+        badgeVariant: "glow" as const,
+        isOwner: false,
+      }));
+
+      const combinedMap = new Map<string, typeof ownedList[number]>();
+      ownedList.forEach((p) => combinedMap.set(p.id, p));
+      sharedList.forEach((p) => {
+        if (!combinedMap.has(p.id)) {
+          combinedMap.set(p.id, p);
+        }
+      });
+
+      let allProjects = Array.from(combinedMap.values());
+
       if (input?.search) {
-        const query = input.search.toLowerCase();
-        filtered = filtered.filter(p => p.name.toLowerCase().includes(query) || p.description.toLowerCase().includes(query));
+        const q = input.search.toLowerCase();
+        allProjects = allProjects.filter(
+          (p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
+        );
       }
+
       if (input?.template && input.template !== "all") {
-        filtered = filtered.filter(p => p.template.toLowerCase().includes(input.template!.toLowerCase()));
+        allProjects = allProjects.filter((p) => p.template === input.template);
       }
+
       if (input?.favoritesOnly) {
-        filtered = filtered.filter(p => p.isFavorite);
+        allProjects = allProjects.filter((p) => p.isFavorite);
       }
-      return filtered;
+
+      return allProjects;
     }),
 
-  getById: publicProcedure
-    .input(z.object({ id: z.string() }))
-    .query(async ({ input }) => {
-      const found = mockProjects.find(p => p.id === input.id);
-      return found || mockProjects[0];
-    }),
+  getById: projectProcedure.query(async ({ ctx }) => {
+    return {
+      ...ctx.project,
+      role: ctx.memberRole as "Owner" | "Editor" | "Viewer",
+      isOwner: ctx.memberRole === "Owner",
+    };
+  }),
 
-  getMembers: publicProcedure
-    .input(z.object({ projectId: z.string() }))
-    .query(async ({ input }) => {
-      const found = mockProjects.find(p => p.id === input.projectId);
-      return found?.members || mockProjects[0].members;
-    }),
+  createProject: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().min(2),
+        template: z.string().default("IEEEtran"),
+        description: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const projId = crypto.randomUUID();
+      const memberId = crypto.randomUUID();
 
-  inviteMember: publicProcedure
-    .input(z.object({
-      projectId: z.string(),
-      email: z.string().email(),
-      role: z.enum(["Editor", "Viewer"]).default("Editor"),
-    }))
-    .mutation(async ({ input }) => {
-      return {
-        success: true,
-        invitation: { email: input.email, role: input.role, projectId: input.projectId, status: "pending" },
-      };
-    }),
-
-  removeMember: publicProcedure
-    .input(z.object({ projectId: z.string(), memberId: z.string() }))
-    .mutation(async ({ input }) => {
-      return { success: true, memberId: input.memberId };
-    }),
-
-  generateShareLink: publicProcedure
-    .input(z.object({ projectId: z.string() }))
-    .mutation(async ({ input }) => {
-      return { shareUrl: `https://overbranch.dev/editor/${input.projectId}?invite=${Math.random().toString(36).substring(2, 10)}` };
-    }),
-
-  createProject: publicProcedure
-    .input(z.object({
-      name: z.string().min(2),
-      description: z.string().optional(),
-      template: z.string().default("IEEEtran"),
-    }))
-    .mutation(async ({ input }) => {
-      const newProj = {
-        id: `proj-${Date.now()}`,
+      const [newP] = await db.insert(projects).values({
+        id: projId,
+        ownerId: userId,
         name: input.name,
-        description: input.description || "Custom scientific manuscript",
-        repository: `overbranch/${input.name.toLowerCase().replace(/\s+/g, '-')}`,
-        branch: "main.tex",
+        description: input.description || "Scientific LaTeX Document",
         template: input.template,
+        repository: `prostack/${input.name.toLowerCase().replace(/\s+/g, '-')}`,
+        defaultBranch: "main.tex",
         status: "active",
         isFavorite: false,
+      }).returning();
+
+      await db.insert(projectMembers).values({
+        id: memberId,
+        projectId: projId,
+        userId: userId,
+        role: "Owner",
+      });
+
+      return {
+        id: newP.id,
+        name: newP.name,
+        description: newP.description || "",
+        template: newP.template,
+        isFavorite: newP.isFavorite,
+        role: "Owner",
         collaboratorsCount: 1,
-        stars: 0,
         updatedAt: "Just now",
-        color: "from-indigo-500/20 to-cyan-500/20",
-        members: [
-          { id: "mem-me", name: "You", email: "author@overbranch.dev", role: "Owner", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80" },
-        ],
       };
-      return newProj;
     }),
 
-  renameProject: publicProcedure
-    .input(z.object({ id: z.string(), name: z.string().min(2) }))
-    .mutation(async ({ input }) => {
-      return { success: true, id: input.id, name: input.name };
+  renameProject: ownerProcedure
+    .input(z.object({ name: z.string().min(2) }))
+    .mutation(async ({ input, ctx }) => {
+      await db.update(projects).set({ name: input.name, updatedAt: new Date() }).where(eq(projects.id, ctx.project.id));
+      return { success: true, id: ctx.project.id, name: input.name };
     }),
 
-  toggleFavorite: publicProcedure
-    .input(z.object({ id: z.string(), isFavorite: z.boolean() }))
-    .mutation(async ({ input }) => {
-      return { success: true, id: input.id, isFavorite: input.isFavorite };
+  toggleFavorite: projectProcedure
+    .input(z.object({ isFavorite: z.boolean() }))
+    .mutation(async ({ input, ctx }) => {
+      await db.update(projects).set({ isFavorite: input.isFavorite, updatedAt: new Date() }).where(eq(projects.id, ctx.project.id));
+      return { success: true, id: ctx.project.id, isFavorite: input.isFavorite };
     }),
 
-  deleteProject: publicProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }) => {
-      return { success: true, id: input.id };
+  deleteProject: ownerProcedure
+    .mutation(async ({ ctx }) => {
+      await db.delete(projects).where(eq(projects.id, ctx.project.id));
+      return { success: true, id: ctx.project.id };
     }),
 
-  duplicateProject: publicProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ input }) => {
-      return { success: true, id: `proj-${Date.now()}`, message: "Project duplicated successfully" };
+  getMembers: projectProcedure
+    .query(async ({ ctx }) => {
+      const projectId = ctx.project.id;
+
+      const [ownerUser] = await db.select().from(user).where(eq(user.id, ctx.project.ownerId));
+
+      const memberRecords = await db
+        .select({
+          memberId: projectMembers.id,
+          role: projectMembers.role,
+          joinedAt: projectMembers.joinedAt,
+          userId: user.id,
+          name: user.name,
+          email: user.email,
+          image: user.image,
+        })
+        .from(projectMembers)
+        .innerJoin(user, eq(projectMembers.userId, user.id))
+        .where(eq(projectMembers.projectId, projectId));
+
+      const list = memberRecords.map((m) => ({
+        id: m.userId,
+        name: m.name,
+        email: m.email,
+        role: m.userId === ctx.project.ownerId ? "Owner" : m.role,
+        avatar: m.image || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(m.name || 'User')}`,
+        isOwner: m.userId === ctx.project.ownerId,
+      }));
+
+      if (ownerUser && !list.some((m) => m.id === ownerUser.id)) {
+        list.unshift({
+          id: ownerUser.id,
+          name: ownerUser.name,
+          email: ownerUser.email,
+          role: "Owner",
+          avatar: ownerUser.image || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(ownerUser.name || 'Owner')}`,
+          isOwner: true,
+        });
+      }
+
+      list.sort((a, b) => (a.isOwner ? -1 : b.isOwner ? 1 : 0));
+
+      return list;
+    }),
+
+  removeMember: ownerProcedure
+    .input(z.object({ memberUserId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      if (input.memberUserId === ctx.project.ownerId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'Project owner cannot be removed' });
+      }
+
+      await db
+        .delete(projectMembers)
+        .where(and(eq(projectMembers.projectId, ctx.project.id), eq(projectMembers.userId, input.memberUserId)));
+
+      await db.insert(notifications).values({
+        id: crypto.randomUUID(),
+        receiverId: input.memberUserId,
+        senderId: ctx.user.id,
+        projectId: ctx.project.id,
+        type: 'MemberRemoved',
+        title: 'Removed from Project',
+        message: `You were removed from ${ctx.project.name} by the owner.`,
+      });
+
+      return { success: true, removedUserId: input.memberUserId };
+    }),
+
+  transferOwnership: ownerProcedure
+    .input(z.object({ newOwnerUserId: z.string() }))
+    .mutation(async ({ input, ctx }) => {
+      const projectId = ctx.project.id;
+      const currentOwnerId = ctx.user.id;
+      const newOwnerId = input.newOwnerUserId;
+
+      if (currentOwnerId === newOwnerId) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'You are already the owner of this project' });
+      }
+
+      const [newOwnerUser] = await db.select().from(user).where(eq(user.id, newOwnerId));
+      if (!newOwnerUser) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Target user does not exist' });
+      }
+
+      await db.transaction(async (tx) => {
+        await tx.update(projects).set({ ownerId: newOwnerId, updatedAt: new Date() }).where(eq(projects.id, projectId));
+
+        await tx
+          .insert(projectMembers)
+          .values({
+            id: crypto.randomUUID(),
+            projectId,
+            userId: newOwnerId,
+            role: "Owner",
+          })
+          .onConflictDoUpdate({
+            target: [projectMembers.projectId, projectMembers.userId],
+            set: { role: "Owner" },
+          });
+
+        await tx
+          .update(projectMembers)
+          .set({ role: "Editor" })
+          .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, currentOwnerId)));
+
+        await tx.insert(notifications).values({
+          id: crypto.randomUUID(),
+          receiverId: newOwnerId,
+          senderId: currentOwnerId,
+          projectId,
+          type: 'OwnershipTransferred',
+          title: 'Project Ownership Transferred',
+          message: `You are now the owner of project ${ctx.project.name}.`,
+        });
+      });
+
+      return { success: true, newOwnerUserId: newOwnerId };
     }),
 });

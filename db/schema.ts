@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, integer, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -53,7 +53,7 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   description: text("description"),
   repository: text("repository"),
-  defaultBranch: text("default_branch").notNull().default("main"),
+  defaultBranch: text("default_branch").notNull().default("main.tex"),
   language: text("language").notNull().default("latex"),
   status: text("status").notNull().default("active"),
   isPublic: boolean("is_public").notNull().default(false),
@@ -69,17 +69,44 @@ export const projectMembers = pgTable("project_members", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  role: text("role").notNull().default("editor"),
+  role: text("role").notNull().default("Editor"),
   joinedAt: timestamp("joined_at").notNull().defaultNow()
-});
+}, (t) => ({
+  unq: unique().on(t.projectId, t.userId),
+}));
 
 export const projectInvitations = pgTable("project_invitations", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  senderId: text("sender_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  receiverId: text("receiver_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   email: text("email").notNull(),
-  role: text("role").notNull().default("editor"),
-  status: text("status").notNull().default("pending"),
+  role: text("role").notNull().default("Editor"),
+  status: text("status").notNull().default("Pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
+});
+
+export const notifications = pgTable("notifications", {
+  id: text("id").primaryKey(),
+  receiverId: text("receiver_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  senderId: text("sender_id").references(() => user.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  type: text("type").notNull().default("ProjectInvite"),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  isRead: boolean("is_read").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow()
+});
+
+export const comments = pgTable("comments", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  authorId: text("author_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  resolved: boolean("resolved").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
 
 export const templates = pgTable("templates", {
@@ -113,42 +140,9 @@ export const editorPreferences = pgTable("editor_preferences", {
   lineNumbers: boolean("line_numbers").notNull().default(true)
 });
 
-export const notifications = pgTable("notifications", {
-  id: text("id").primaryKey(),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  title: text("title").notNull(),
-  message: text("message").notNull(),
-  type: text("type").notNull().default("info"),
-  isRead: boolean("is_read").notNull().default(false),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-
-export const recentFiles = pgTable("recent_files", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  filePath: text("file_path").notNull(),
-  fileName: text("file_name").notNull(),
-  language: text("language").notNull().default("latex"),
-  lastOpenedAt: timestamp("last_opened_at").notNull().defaultNow()
-});
-
-export const activityLogs = pgTable("activity_logs", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  action: text("action").notNull(),
-  target: text("target").notNull(),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at").notNull().defaultNow()
-});
-
 export type User = typeof user.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectInvitation = typeof projectInvitations.$inferSelect;
-export type Template = typeof templates.$inferSelect;
-export type UserPreferences = typeof userPreferences.$inferSelect;
-export type EditorPreferences = typeof editorPreferences.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
-export type RecentFile = typeof recentFiles.$inferSelect;
-export type ActivityLog = typeof activityLogs.$inferSelect;
+export type Comment = typeof comments.$inferSelect;

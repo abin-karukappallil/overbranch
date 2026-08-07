@@ -1,98 +1,236 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Users, UserPlus, Share2, Sparkles, X, Check, Mail, Shield } from "lucide-react";
+import { Users, UserPlus, Share2, X, Trash2, Crown } from "lucide-react";
 import { toast } from "sonner";
+import { trpc } from "@/trpc/client";
 
-interface Collaborator {
-  id: string;
-  name: string;
-  avatar: string;
-  color: string;
-  status: "active" | "idle";
-  cursorFile: string;
-  role: string;
+interface CollaboratorAvatarsProps {
+  projectId?: string;
 }
 
-const mockCollaborators: Collaborator[] = [
-  {
-    id: "1",
-    name: "Dr. Alice Vance",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=100&auto=format&fit=crop&q=80",
-    color: "#818cf8",
-    status: "active",
-    cursorFile: "main.tex (Ln 14)",
-    role: "Owner",
-  },
-  {
-    id: "2",
-    name: "Prof. Bob Chen",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80",
-    color: "#38bdf8",
-    status: "active",
-    cursorFile: "references.bib (Ln 28)",
-    role: "Editor",
-  },
-  {
-    id: "3",
-    name: "Carol Zhang",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80",
-    color: "#34d399",
-    status: "idle",
-    cursorFile: "sections/abstract.tex",
-    role: "Viewer",
-  },
-];
-
-export function CollaboratorAvatars() {
-  const [mobileModalOpen, setMobileModalOpen] = useState(false);
+export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
+  const [modalOpen, setModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("Editor");
+  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
   const [copied, setCopied] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const utils = trpc.useUtils();
+
+  const { data: membersList = [] } = trpc.projects.getMembers.useQuery(
+    { projectId: projectId! },
+    { enabled: !!projectId, refetchInterval: 5000 }
+  );
+
+  const { data: projectInfo } = trpc.projects.getById.useQuery(
+    { projectId: projectId! },
+    { enabled: !!projectId }
+  );
+
+  const sendInviteMutation = trpc.invitations.sendInvite.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Invitation sent to ${data.receiverName || data.receiverEmail}`);
+      setInviteEmail("");
+      utils.invitations.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to send invitation");
+    },
+  });
+
+  const removeMemberMutation = trpc.projects.removeMember.useMutation({
+    onSuccess: () => {
+      toast.success("Collaborator removed.");
+      utils.projects.getMembers.invalidate({ projectId: projectId! });
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to remove member");
+    },
+  });
+
+  const transferOwnershipMutation = trpc.projects.transferOwnership.useMutation({
+    onSuccess: () => {
+      toast.success("Project ownership transferred.");
+      utils.projects.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to transfer ownership");
+    },
+  });
+
+  const isOwner = projectInfo?.isOwner;
 
   const handleShare = () => {
+    if (!projectId) return;
+    const shareUrl = `${window.location.origin}/editor/${projectId}`;
+    navigator.clipboard.writeText(shareUrl);
     setCopied(true);
-    toast.success("Direct Project Invite Link copied to clipboard!", {
-      description: "Co-authors can join and edit this LaTeX manuscript in real time.",
-    });
+    toast.success("Project URL copied to clipboard!");
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSendInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail) return;
-    toast.success(`Project co-author invitation sent to ${inviteEmail} (${inviteRole})`);
-    setInviteEmail("");
+    if (!inviteEmail.trim() || !projectId) return;
+    sendInviteMutation.mutate({
+      projectId,
+      email: inviteEmail.trim(),
+      role: inviteRole,
+    });
   };
+
+  const modalContent = modalOpen && (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) setModalOpen(false);
+      }}
+    >
+      <div className="w-full max-w-md bg-card border border-border/80 rounded-2xl shadow-2xl overflow-hidden font-sans space-y-0 text-foreground animate-in zoom-in-95 duration-150">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-border/40 bg-muted/20">
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-indigo-400" />
+            <h3 className="font-bold text-sm text-foreground tracking-tight">Invite Co-Authors</h3>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setModalOpen(false)}
+            className="h-7 w-7 rounded-lg hover:bg-muted"
+          >
+            <X className="w-4 h-4 text-muted-foreground" />
+          </Button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <form onSubmit={handleSendInvite} className="space-y-2.5">
+            <label className="text-xs font-semibold text-muted-foreground block">
+              Registered Account Email
+            </label>
+            <div className="flex gap-2">
+              <Input
+                type="email"
+                placeholder="collaborator@domain.com"
+                value={inviteEmail}
+                onChange={(e) => setInviteEmail(e.target.value)}
+                required
+                className="h-9 text-xs rounded-xl bg-background border-border/60"
+              />
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer")}
+                className="h-9 px-2.5 text-xs rounded-xl border border-border/60 bg-background text-foreground outline-none font-mono cursor-pointer"
+              >
+                <option value="Editor">Editor</option>
+                <option value="Viewer">Viewer</option>
+              </select>
+            </div>
+            <Button
+              type="submit"
+              disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl h-9 text-xs font-medium shadow-md shadow-indigo-500/20"
+            >
+              {sendInviteMutation.isPending ? "Sending Invite..." : "Send In-App Invite"}
+            </Button>
+          </form>
+
+          <div className="space-y-2 pt-2 border-t border-border/40">
+            <span className="text-xs font-bold text-foreground block">
+              Active Members ({membersList.length})
+            </span>
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              {membersList.map((m) => (
+                <div
+                  key={m.id}
+                  className="p-2 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <Avatar className="w-6 h-6 rounded-full border border-border/60">
+                      <AvatarImage src={m.avatar} />
+                      <AvatarFallback className="bg-indigo-600 text-white text-[9px] font-bold">
+                        {(m.name || 'U').slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="truncate max-w-[180px]">
+                      <p className="font-semibold text-foreground text-[11px] truncate flex items-center gap-1">
+                        {m.isOwner && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
+                        <span className="truncate">{m.name || m.email}</span>
+                      </p>
+                      <p className="text-[9px] text-muted-foreground font-mono leading-none">{m.role}</p>
+                    </div>
+                  </div>
+
+                  {isOwner && !m.isOwner && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => transferOwnershipMutation.mutate({ projectId: projectId!, newOwnerUserId: m.id })}
+                        title="Transfer Ownership"
+                        className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-400 transition-colors"
+                      >
+                        <Crown className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => removeMemberMutation.mutate({ projectId: projectId!, memberUserId: m.id })}
+                        title="Remove Member"
+                        className="p-1 rounded-lg hover:bg-rose-500/20 text-rose-400 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <Button
+            onClick={handleShare}
+            variant="outline"
+            className="w-full rounded-xl h-9 text-xs border-border/60 bg-muted/20 hover:bg-muted/40"
+          >
+            <Share2 className="w-3.5 h-3.5 mr-2 text-indigo-400" />
+            {copied ? "Project Link Copied!" : "Copy Direct Project Link"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex items-center gap-2">
       <div
-        onClick={() => setMobileModalOpen(true)}
+        onClick={() => setModalOpen(true)}
         className="flex items-center -space-x-2 overflow-hidden cursor-pointer"
         title="Manage Project Co-Authors"
       >
-        {mockCollaborators.map((c) => (
-          <div key={c.id} className="relative group">
+        {membersList.map((m) => (
+          <div key={m.id} className="relative group">
             <Avatar className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-background shadow-md">
-              <AvatarImage src={c.avatar} alt={c.name} />
-              <AvatarFallback style={{ backgroundColor: c.color }} className="text-white text-xs font-bold">
-                {c.name.slice(0, 2).toUpperCase()}
+              <AvatarImage src={m.avatar} alt={m.name || 'Member'} />
+              <AvatarFallback className="bg-indigo-600 text-white text-[10px] font-bold">
+                {(m.name || 'U').slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            {c.status === "active" && (
-              <span
-                className="absolute bottom-0 right-0 w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full border border-background"
-                style={{ backgroundColor: c.color }}
-              />
-            )}
+
+            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-400 border border-background" />
 
             <div className="absolute right-0 top-10 hidden group-hover:block z-50 p-2.5 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-2xl text-xs whitespace-nowrap space-y-1">
-              <p className="font-bold text-foreground">{c.name} ({c.role})</p>
-              <p className="text-[10px] text-muted-foreground font-mono">Editing: {c.cursorFile}</p>
+              <p className="font-bold text-foreground flex items-center gap-1">
+                {m.isOwner && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                <span>{m.name || m.email}</span>
+              </p>
+              <p className="text-[10px] text-indigo-400 font-mono">Role: {m.role}</p>
             </div>
           </div>
         ))}
@@ -101,84 +239,14 @@ export function CollaboratorAvatars() {
       <Button
         variant="outline"
         size="sm"
-        onClick={() => setMobileModalOpen(true)}
+        onClick={() => setModalOpen(true)}
         className="h-8 px-2.5 border-border/60 bg-card/60 backdrop-blur-md text-xs font-medium"
       >
         <UserPlus className="w-3.5 h-3.5 text-indigo-400 sm:mr-1.5" />
         <span className="hidden sm:inline">Invite Co-Author</span>
       </Button>
 
-      {mobileModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
-          <div className="w-full max-w-md p-6 rounded-2xl border border-border/80 bg-card shadow-2xl space-y-5">
-            <div className="flex items-center justify-between border-b border-border/40 pb-3">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-indigo-400" />
-                <h3 className="font-bold text-base text-foreground">Project Co-Authors</h3>
-              </div>
-              <Button variant="ghost" size="icon" onClick={() => setMobileModalOpen(false)} className="h-8 w-8">
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-
-            <form onSubmit={handleSendInvite} className="space-y-3">
-              <span className="text-xs font-bold text-foreground block">Invite Co-Author to Project</span>
-              <div className="flex gap-2">
-                <Input
-                  type="email"
-                  placeholder="coauthor@university.edu"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  required
-                  className="h-9 text-xs"
-                />
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value)}
-                  className="h-9 px-2 text-xs rounded-lg border border-border/60 bg-background text-foreground outline-none font-mono"
-                >
-                  <option value="Editor">Editor</option>
-                  <option value="Viewer">Viewer</option>
-                </select>
-              </div>
-              <Button type="submit" className="w-full bg-indigo-600 text-white rounded-xl h-9 text-xs">
-                Send Direct Invite
-              </Button>
-            </form>
-
-            <div className="space-y-2 border-t border-border/40 pt-3">
-              <span className="text-xs font-bold text-foreground block">Active Project Members ({mockCollaborators.length})</span>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {mockCollaborators.map((c) => (
-                  <div key={c.id} className="p-2.5 rounded-xl border border-border/40 bg-muted/20 flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar className="w-7 h-7 rounded-full">
-                        <AvatarImage src={c.avatar} />
-                        <AvatarFallback>{c.name.slice(0, 2)}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-bold text-foreground text-[11px]">{c.name}</p>
-                        <p className="text-[10px] text-muted-foreground font-mono">{c.role}</p>
-                      </div>
-                    </div>
-                    <span
-                      className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase"
-                      style={{ color: c.color, backgroundColor: `${c.color}15` }}
-                    >
-                      {c.status}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <Button onClick={handleShare} variant="outline" className="w-full rounded-xl h-9 text-xs">
-              <Share2 className="w-3.5 h-3.5 mr-2 text-indigo-400" />
-              {copied ? "Invite Link Copied!" : "Copy Project Invite Link"}
-            </Button>
-          </div>
-        </div>
-      )}
+      {mounted && modalContent && createPortal(modalContent, document.body)}
     </div>
   );
 }

@@ -92,58 +92,30 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 <span>Projects List</span>
               </Command.Item>
               <Command.Item
-                onSelect={() => handleSelect(() => router.push("/editor"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Code2 className="w-4 h-4 text-indigo-400" />
-                <span>Open LaTeX Editor</span>
-              </Command.Item>
-              <Command.Item
-                onSelect={() => handleSelect(() => router.push("/templates"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <BookOpen className="w-4 h-4 text-indigo-400" />
-                <span>Scientific Templates Gallery</span>
-              </Command.Item>
-              <Command.Item
-                onSelect={() => handleSelect(() => router.push("/dashboard/settings"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <Settings className="w-4 h-4 text-indigo-400" />
-                <span>Workspace Settings</span>
-              </Command.Item>
-              <Command.Item
                 onSelect={() => handleSelect(() => router.push("/profile"))}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <User className="w-4 h-4 text-indigo-400" />
                 <span>User Profile</span>
               </Command.Item>
-              <Command.Item
-                onSelect={() => handleSelect(() => router.push("/billing"))}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
-              >
-                <CreditCard className="w-4 h-4 text-indigo-400" />
-                <span>Billing & Plans</span>
-              </Command.Item>
             </Command.Group>
 
             <Command.Group heading="Projects & Quick Actions" className="px-2 py-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-2">
               <Command.Item
-                onSelect={() => handleSelect(() => router.push("/projects"))}
+                onSelect={() => handleSelect(() => router.push("/editor"))}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <Plus className="w-4 h-4 text-emerald-400" />
-                <span>IEEE_Paper_OverBranch_v1</span>
-                <span className="ml-auto text-xs text-emerald-400 font-mono">IEEEtran</span>
+                <span>Create New LaTeX Project</span>
+                <span className="ml-auto text-xs text-emerald-400 font-mono">Editor</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/projects"))}
                 className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors"
               >
                 <FolderGit2 className="w-4 h-4 text-cyan-400" />
-                <span>arXiv_Quantum_Intelligence_2026</span>
-                <span className="ml-auto text-xs text-cyan-400 font-mono">arXiv</span>
+                <span>Manage Workspace Projects</span>
+                <span className="ml-auto text-xs text-cyan-400 font-mono">View All</span>
               </Command.Item>
             </Command.Group>
 

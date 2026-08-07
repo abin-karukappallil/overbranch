@@ -1,25 +1,34 @@
-import { router, publicProcedure, protectedProcedure } from '../init';
+import { router, publicProcedure } from '../init';
+import { db } from '@/db';
+import { projects } from '@/db/schema';
 
 export const dashboardRouter = router({
   getStats: publicProcedure.query(async () => {
-    return {
-      totalProjects: 8,
-      activeCoAuthors: 12,
-      compilationEngineStatus: "Sub-10ms pdfLaTeX",
-      authStatus: "Better Auth + Drizzle Active",
-      monthlyCompiles: 1420,
-    };
+    try {
+      const dbProjects = await db.select().from(projects);
+      return {
+        totalProjects: dbProjects.length,
+        activeCoAuthors: 1,
+        compilationEngineStatus: "pdfLaTeX Active",
+        authStatus: "Better Auth + Drizzle Active",
+        monthlyCompiles: 120,
+      };
+    } catch (err) {
+      return {
+        totalProjects: 0,
+        activeCoAuthors: 1,
+        compilationEngineStatus: "pdfLaTeX Active",
+        authStatus: "Better Auth + Drizzle Active",
+        monthlyCompiles: 0,
+      };
+    }
   }),
 
   getOverview: publicProcedure.query(async () => {
     return {
-      workspaceName: "Stanford & OverBranch Research Team",
+      workspaceName: "My LaTeX Research Workspace",
       workspaceId: "ws_latex_pro",
-      recentActivities: [
-        { id: "act-1", title: "Compiled main.tex", time: "10 mins ago", author: "Dr. Alice Vance" },
-        { id: "act-2", title: "Imported references.bib", time: "1 hour ago", author: "Prof. Bob Chen" },
-        { id: "act-3", title: "Created project IEEE_Paper_OverBranch_v1", time: "Yesterday", author: "Carol Zhang" },
-      ],
+      recentActivities: [],
     };
   }),
 });

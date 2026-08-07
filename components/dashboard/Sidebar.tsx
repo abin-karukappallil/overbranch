@@ -21,6 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -35,11 +36,7 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
   const navItems = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Projects", href: "/projects", icon: FolderGit2 },
-    { name: "Templates", href: "/templates", icon: BookOpen },
-    { name: "LaTeX Editor", href: "/editor", icon: FileCode2 },
-    { name: "Settings", href: "/dashboard/settings", icon: Settings },
     { name: "Profile", href: "/profile", icon: User },
-    { name: "Billing", href: "/billing", icon: CreditCard },
   ];
 
   return (
@@ -50,22 +47,13 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
     >
       <div className="h-16 px-4 border-b border-border/40 flex items-center justify-between">
         <div className="flex items-center gap-3 overflow-hidden">
-          <Link href="/dashboard" className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-cyan-500 p-[1px] shrink-0 shadow-lg shadow-indigo-500/20">
-            <div className="w-full h-full bg-background rounded-[11px] flex items-center justify-center">
-              <Cpu className="w-5 h-5 text-indigo-400" />
-            </div>
+          <Link href="/dashboard" className="flex items-center gap-2">
+            <OverBranchLogo
+              variant={collapsed ? "icon" : "full"}
+              size="md"
+              colored
+            />
           </Link>
-          {!collapsed && (
-            <div className="flex flex-col truncate">
-              <span className="font-bold text-sm text-foreground tracking-tight truncate">
-                Acme OverBranch
-              </span>
-              <span className="text-[10px] text-indigo-400 font-mono flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Pro Workspace
-              </span>
-            </div>
-          )}
         </div>
 
         <Button

@@ -6,6 +6,7 @@ import { Cpu, ArrowRight, Menu, X, Sparkles, Terminal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { motion, AnimatePresence } from "framer-motion";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 export function LandingHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -14,19 +15,7 @@ export function LandingHeader() {
     <header className="sticky top-0 z-40 w-full border-b border-border/40 bg-background/70 backdrop-blur-xl transition-all">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-cyan-500 p-[1px] shadow-lg shadow-indigo-500/20 group-hover:scale-105 transition-transform duration-300">
-            <div className="w-full h-full bg-background rounded-[11px] flex items-center justify-center">
-              <Cpu className="w-5 h-5 text-indigo-400 group-hover:text-cyan-400 transition-colors" />
-            </div>
-          </div>
-          <div className="flex flex-col">
-            <span className="font-bold text-lg tracking-tight gradient-text">
-              OverBranch
-            </span>
-            <span className="text-[10px] text-muted-foreground font-mono -mt-1 tracking-widest uppercase">
-              Collaborative Stack
-            </span>
-          </div>
+          <OverBranchLogo size="lg" variant="full" colored />
         </Link>
 
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">

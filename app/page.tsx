@@ -35,7 +35,7 @@ export default function HomePage() {
               Build your workspace on OverBranch
             </h2>
             <p className="text-muted-foreground text-base sm:text-lg max-w-xl mx-auto leading-relaxed">
-              Start with a world-class frontend foundation powered by Better Auth, Supabase Drizzle ORM, and pixel-perfect responsive layouts.
+              Start writing scientific documents with real-time co-authoring, instant TeX recompilation, and pixel-perfect responsive layouts.
             </p>
 
             <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-4">

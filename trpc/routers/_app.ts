@@ -4,10 +4,10 @@ import { authRouter } from './auth';
 import { userRouter } from './user';
 import { dashboardRouter } from './dashboard';
 import { projectsRouter } from './projects';
-import { settingsRouter } from './settings';
 import { preferencesRouter } from './preferences';
-import { templatesRouter } from './templates';
 import { notificationsRouter } from './notifications';
+import { invitationsRouter } from './invitations';
+import { commentsRouter } from './comments';
 
 export const appRouter = router({
   hello: publicProcedure
@@ -27,10 +27,10 @@ export const appRouter = router({
   user: userRouter,
   dashboard: dashboardRouter,
   projects: projectsRouter,
-  settings: settingsRouter,
   preferences: preferencesRouter,
-  templates: templatesRouter,
   notifications: notificationsRouter,
+  invitations: invitationsRouter,
+  comments: commentsRouter,
 });
 
 export type AppRouter = typeof appRouter;

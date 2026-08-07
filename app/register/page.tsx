@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Cpu, ArrowLeft, Loader2, Eye, EyeOff, Lock, Mail, User, Sparkles, CheckCircle2 } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -91,10 +92,7 @@ export default function RegisterPage() {
         <div className="absolute -top-20 -right-20 w-96 h-96 bg-cyan-500/20 rounded-full blur-[100px]" />
 
         <Link href="/" className="flex items-center gap-3 relative z-10">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-            <Cpu className="w-5 h-5 text-white" />
-          </div>
-          <span className="font-bold text-xl tracking-tight gradient-text">OverBranch</span>
+          <OverBranchLogo size="lg" variant="full" colored />
         </Link>
 
         <div className="relative z-10 space-y-6">

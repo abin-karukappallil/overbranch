@@ -6,16 +6,28 @@ export function middleware(request: NextRequest) {
   const protectedRoutes = [
     "/dashboard",
     "/projects",
-    "/templates",
-    "/settings",
     "/profile",
-    "/billing",
     "/editor",
   ];
 
   const isProtectedPath = protectedRoutes.some((route) => path.startsWith(route));
   const isAuthPath = path === "/login" || path === "/register" || path === "/forgot-password";
-  const sessionToken = request.cookies.get("better-auth.session_token")?.value;
+  
+  const sessionToken =
+    request.cookies.get("better-auth.session_token")?.value ||
+    request.cookies.get("__Secure-better-auth.session_token")?.value ||
+    request.cookies.get("sb-access-token")?.value ||
+    request.cookies.get("supabase-auth-token")?.value;
+
+  if (isProtectedPath && !sessionToken) {
+    const loginUrl = new URL("/login", request.url);
+    loginUrl.searchParams.set("redirect", path);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  if (isAuthPath && sessionToken) {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
 
   const response = NextResponse.next();
 
@@ -30,10 +42,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/projects/:path*",
-    "/templates/:path*",
-    "/settings/:path*",
     "/profile/:path*",
-    "/billing/:path*",
     "/editor/:path*",
     "/login",
     "/register",

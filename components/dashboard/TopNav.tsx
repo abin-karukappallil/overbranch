@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { NotificationsPopover } from "@/components/dashboard/NotificationsPopover";
 import { UserProfileDropdown } from "@/components/dashboard/UserProfileDropdown";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 interface TopNavProps {
   onOpenCommandPalette: () => void;
@@ -28,9 +29,8 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
           </Button>
         )}
         <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground">
-          <Link href="/dashboard" className="hover:text-foreground transition-colors flex items-center gap-1">
-            <Cpu className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="font-semibold text-foreground">overbranch</span>
+          <Link href="/dashboard" className="hover:opacity-90 transition-opacity">
+            <OverBranchLogo size="sm" variant="full" colored />
           </Link>
           {pathSegments.map((segment, index) => (
             <React.Fragment key={segment}>

@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -11,106 +12,104 @@ import {
   FileCode2,
   X,
   Sparkles,
+  Users,
+  ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
-
-const mockProjects = [
-  {
-    id: "proj-1",
-    name: "IEEE_Paper_OverBranch_v1",
-    description: "Architectural Foundations for Collaborative LaTeX Editors with real-time PDF recompilation.",
-    template: "IEEEtran",
-    isFavorite: true,
-    collaboratorsCount: 3,
-    updatedAt: "10m ago",
-  },
-  {
-    id: "proj-2",
-    name: "arXiv_Quantum_Intelligence_2026",
-    description: "Multi-file LaTeX project tree for neural symbol parsing and quantum state matrix formulations.",
-    template: "arXiv",
-    isFavorite: false,
-    collaboratorsCount: 2,
-    updatedAt: "1h ago",
-  },
-  {
-    id: "proj-3",
-    name: "PhD_Dissertation_Thesis",
-    description: "Distributed real-time document synchronization algorithms with BibTeX reference citation manager.",
-    template: "Thesis",
-    isFavorite: true,
-    collaboratorsCount: 4,
-    updatedAt: "Yesterday",
-  },
-];
+import { trpc } from "@/trpc/client";
 
 export default function ProjectsPage() {
+  const router = useRouter();
   const [search, setSearch] = useState("");
   const [templateFilter, setTemplateFilter] = useState("all");
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const [projectsList, setProjectsList] = useState(mockProjects);
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [newProjName, setNewProjName] = useState("");
-  const [inviteModalProj, setInviteModalProj] = useState<typeof mockProjects[0] | null>(null);
+  const [inviteModalProj, setInviteModalProj] = useState<any | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState("Editor");
+  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
 
-  const filtered = projectsList.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.description.toLowerCase().includes(search.toLowerCase());
-    const matchesTemplate = templateFilter === "all" || p.template.toLowerCase().includes(templateFilter.toLowerCase());
-    const matchesFav = !showFavoritesOnly || p.isFavorite;
-    return matchesSearch && matchesTemplate && matchesFav;
+  const utils = trpc.useUtils();
+
+  const { data: dbProjects, isLoading, refetch } = trpc.projects.listProjects.useQuery({
+    search,
+    template: templateFilter,
+    favoritesOnly: showFavoritesOnly,
   });
+
+  const toggleFavMutation = trpc.projects.toggleFavorite.useMutation({
+    onSuccess: () => refetch(),
+  });
+
+  const createMutation = trpc.projects.createProject.useMutation({
+    onSuccess: (newProj) => {
+      refetch();
+      setNewModalOpen(false);
+      setNewProjName("");
+      toast.success("Project created successfully!");
+      router.push(`/editor/${newProj.id}`);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to create project");
+    },
+  });
+
+  const sendInviteMutation = trpc.invitations.sendInvite.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Invitation sent to ${data.receiverName || data.receiverEmail}`);
+      setInviteEmail("");
+      setInviteModalProj(null);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Invitation failed");
+    },
+  });
+
+  const filtered = dbProjects || [];
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setProjectsList((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, isFavorite: !p.isFavorite } : p))
-    );
-    toast.success("Updated favorite");
+    const target = filtered.find((p: any) => p.id === id);
+    if (target) {
+      toggleFavMutation.mutate({ projectId: id, isFavorite: !target.isFavorite });
+    }
   };
 
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProjName) return;
-    const newP = {
-      id: `proj-${Date.now()}`,
-      name: newProjName,
-      description: "Custom scientific LaTeX paper",
+    if (!newProjName.trim()) return;
+    createMutation.mutate({
+      name: newProjName.trim(),
+      description: "Collaborative scientific LaTeX manuscript",
       template: "IEEEtran",
-      isFavorite: false,
-      collaboratorsCount: 1,
-      updatedAt: "Just now",
-    };
-    setProjectsList([newP, ...projectsList]);
-    setNewModalOpen(false);
-    setNewProjName("");
-    toast.success("Project created");
+    });
   };
 
   const handleSendProjectInvite = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inviteEmail || !inviteModalProj) return;
-    toast.success(`Invite sent to ${inviteEmail}`);
-    setInviteEmail("");
-    setInviteModalProj(null);
+    if (!inviteEmail.trim() || !inviteModalProj) return;
+    sendInviteMutation.mutate({
+      projectId: inviteModalProj.id,
+      email: inviteEmail.trim(),
+      role: inviteRole,
+    });
   };
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-foreground tracking-tight">Projects</h1>
+          <h1 className="text-xl font-bold text-foreground tracking-tight">Projects Matrix</h1>
           <p className="text-xs text-muted-foreground">Manage and co-author your LaTeX manuscripts.</p>
         </div>
 
         <Button
           onClick={() => setNewModalOpen(true)}
-          className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg h-9 px-3.5 text-xs font-medium"
+          className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg h-9 px-3.5 text-xs font-medium shadow-md"
         >
           <Plus className="w-3.5 h-3.5 mr-1.5" />
           New Project
@@ -153,7 +152,7 @@ export default function ProjectsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map((proj) => (
+        {filtered.map((proj: any) => (
           <motion.div key={proj.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="group p-4 rounded-xl border border-border/40 bg-card/30 hover:border-indigo-500/30 hover:bg-card/60 transition-all space-y-3 flex flex-col justify-between h-full">
               <div className="space-y-2">
@@ -185,7 +184,7 @@ export default function ProjectsPage() {
                   className="px-2 py-1 rounded-md border border-border/40 hover:bg-indigo-500/10 hover:text-indigo-400 transition-colors flex items-center gap-1 text-[10px]"
                 >
                   <UserPlus className="w-3 h-3 text-indigo-400" />
-                  <span>{proj.collaboratorsCount} authors</span>
+                  <span>Invite Co-Author</span>
                 </button>
               </div>
             </Card>
@@ -193,13 +192,14 @@ export default function ProjectsPage() {
         ))}
       </div>
 
+      {/* Create Project Modal */}
       {newModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <div className="max-w-sm w-full p-5 rounded-xl border border-border/60 bg-card shadow-2xl space-y-4">
             <h3 className="text-sm font-bold text-foreground">Create LaTeX Project</h3>
             <form onSubmit={handleCreateProject} className="space-y-3">
               <Input
-                placeholder="e.g. ACM_Proceedings_2026"
+                placeholder="e.g. Quantum_State_Paper_2026"
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
                 required
@@ -209,8 +209,8 @@ export default function ProjectsPage() {
                 <Button variant="ghost" type="button" size="sm" onClick={() => setNewModalOpen(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" size="sm" className="bg-indigo-600 text-white">
-                  Create
+                <Button type="submit" size="sm" disabled={createMutation.isPending} className="bg-indigo-600 text-white">
+                  {createMutation.isPending ? "Creating..." : "Create"}
                 </Button>
               </div>
             </form>
@@ -218,35 +218,51 @@ export default function ProjectsPage() {
         </div>
       )}
 
+      {/* Invite Collaborator Modal */}
       {inviteModalProj && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
           <div className="max-w-sm w-full p-5 rounded-xl border border-border/60 bg-card shadow-2xl space-y-3">
             <div className="flex items-center justify-between border-b border-border/30 pb-2">
-              <span className="font-bold text-xs text-foreground truncate">{inviteModalProj.name}</span>
+              <span className="font-bold text-xs text-foreground truncate">
+                Invite to: {inviteModalProj.name}
+              </span>
               <button onClick={() => setInviteModalProj(null)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSendProjectInvite} className="space-y-2.5 text-xs">
-              <Input
-                type="email"
-                placeholder="coauthor@university.edu"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                required
-                className="h-8 text-xs"
-              />
-              <select
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value)}
-                className="w-full h-8 px-2 text-xs rounded-md border border-border/40 bg-background text-foreground outline-none font-mono"
+            <form onSubmit={handleSendProjectInvite} className="space-y-3 text-xs">
+              <div className="space-y-1">
+                <label className="text-muted-foreground font-mono text-[11px]">Registered User Email</label>
+                <Input
+                  type="email"
+                  placeholder="coauthor@university.edu"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  required
+                  className="h-8 text-xs"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-muted-foreground font-mono text-[11px]">Permission Role</label>
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer")}
+                  className="w-full h-8 px-2 text-xs rounded-md border border-border/40 bg-background text-foreground outline-none font-mono"
+                >
+                  <option value="Editor">Editor (Full edit & compile)</option>
+                  <option value="Viewer">Viewer (Read-only)</option>
+                </select>
+              </div>
+
+              <Button
+                type="submit"
+                size="sm"
+                disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white rounded-md h-8 text-xs font-medium"
               >
-                <option value="Editor">Editor</option>
-                <option value="Viewer">Viewer</option>
-              </select>
-              <Button type="submit" size="sm" className="w-full bg-indigo-600 text-white rounded-md h-8 text-xs">
-                Send Invite
+                {sendInviteMutation.isPending ? "Validating & Inviting..." : "Send In-App Invite"}
               </Button>
             </form>
           </div>

@@ -3,25 +3,23 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   FileCode2,
-  Terminal,
   Search,
-  GitBranch,
   Star,
-  Clock,
   Sparkles,
-  ExternalLink,
   Users,
   CheckCircle2,
-  Layers,
-  ArrowUpRight,
-  Filter,
-  RefreshCw,
   FolderPlus,
-  BookOpen,
-  FileText,
+  UserPlus,
+  XCircle,
+  FolderGit2,
+  ShieldCheck,
+  Crown,
+  Edit3,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -30,74 +28,73 @@ import { StatusBadge } from "@/components/ui/badge-custom";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
-
-const mockLatexProjects = [
-  {
-    id: "proj-1",
-    name: "IEEE_Paper_OverBranch_v1",
-    description: "Architectural Foundations for Collaborative LaTeX Editors with real-time PDF recompilation.",
-    repository: "overbranch/ieee-paper-2026",
-    branch: "main.tex",
-    template: "IEEEtran",
-    status: "active",
-    collaboratorsCount: 3,
-    stars: 142,
-    updatedAt: "10 mins ago",
-    color: "from-indigo-500/20 to-purple-500/20",
-    badgeVariant: "glow" as const,
-  },
-  {
-    id: "proj-2",
-    name: "arXiv_Quantum_Intelligence_2026",
-    description: "Multi-file LaTeX project tree for neural symbol parsing and quantum state matrix formulations.",
-    repository: "overbranch/arxiv-quantum-draft",
-    branch: "sections/abstract.tex",
-    template: "arXiv",
-    status: "compiling",
-    collaboratorsCount: 2,
-    stars: 88,
-    updatedAt: "1 hour ago",
-    color: "from-cyan-500/20 to-blue-500/20",
-    badgeVariant: "info" as const,
-  },
-  {
-    id: "proj-3",
-    name: "PhD_Dissertation_Thesis",
-    description: "Distributed real-time document synchronization algorithms with BibTeX reference citation manager.",
-    repository: "overbranch/phd-dissertation-v2",
-    branch: "chapters/ch3_results.tex",
-    template: "Book / Thesis",
-    status: "active",
-    collaboratorsCount: 4,
-    stars: 210,
-    updatedAt: "Yesterday",
-    color: "from-emerald-500/20 to-teal-500/20",
-    badgeVariant: "success" as const,
-  },
-];
+import { trpc } from "@/trpc/client";
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTemplate, setFilterTemplate] = useState("all");
-  const [showEmptyState, setShowEmptyState] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [newModalOpen, setNewModalOpen] = useState(false);
+  const [newProjName, setNewProjName] = useState("");
 
-  const filteredProjects = mockLatexProjects.filter((p) => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTemplate = filterTemplate === "all" || p.template.toLowerCase().includes(filterTemplate.toLowerCase());
-    return matchesSearch && matchesTemplate;
+  const utils = trpc.useUtils();
+
+  const { data: projectsData, isLoading: isProjectsLoading } = trpc.projects.listProjects.useQuery({
+    search: searchQuery,
+    template: filterTemplate,
   });
 
-  const handleSimulateLoading = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      setIsLoading(false);
-      toast.success("Workspace synced with Supabase & Better Auth");
-    }, 1000);
+  const { data: pendingInvites } = trpc.invitations.listPending.useQuery(undefined, {
+    refetchInterval: 5000,
+  });
+
+  const createMutation = trpc.projects.createProject.useMutation({
+    onSuccess: (newProj) => {
+      toast.success("LaTeX Project initialized!");
+      utils.projects.invalidate();
+      setNewModalOpen(false);
+      setNewProjName("");
+      router.push(`/editor/${newProj.id}`);
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to create project");
+    },
+  });
+
+  const acceptInviteMutation = trpc.invitations.acceptInvite.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation accepted! Project added to Shared With Me.");
+      utils.invitations.invalidate();
+      utils.projects.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to accept invitation");
+    },
+  });
+
+  const declineInviteMutation = trpc.invitations.declineInvite.useMutation({
+    onSuccess: () => {
+      toast.success("Invitation declined.");
+      utils.invitations.invalidate();
+    },
+  });
+
+  const ownedProjects = (projectsData || []).filter((p: any) => p.isOwner);
+  const sharedProjects = (projectsData || []).filter((p: any) => !p.isOwner);
+
+  const handleCreateSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjName.trim()) return;
+    createMutation.mutate({
+      name: newProjName.trim(),
+      description: "Collaborative scientific LaTeX manuscript",
+      template: "IEEEtran",
+    });
   };
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
+      {/* Header Banner */}
       <div className="relative p-6 sm:p-8 rounded-3xl border border-indigo-500/30 bg-card/70 backdrop-blur-2xl shadow-2xl overflow-hidden">
         <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-indigo-500/15 via-purple-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
 
@@ -105,253 +102,273 @@ export default function DashboardPage() {
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <StatusBadge variant="glow" dotPulse dotColor="bg-cyan-400">
-                  New Document Setup
+                <StatusBadge variant="glow" dotPulse dotColor="bg-emerald-400">
+                  Real-time Collaboration Active
                 </StatusBadge>
-                <span className="text-xs font-mono text-muted-foreground">LaTeX Engine: pdfLaTeX</span>
+                <span className="text-xs font-mono text-muted-foreground">TeX Engine: pdfLaTeX</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-                Create New Project
+                LaTeX Research Workspace
               </h1>
               <p className="text-sm text-muted-foreground">
-                Initialize a LaTeX manuscript from scientific templates or start with a blank canvas.
+                Co-author scientific manuscripts with real-time compilation, role permissions, and AI assistance.
               </p>
             </div>
 
             <Button
-              asChild
+              onClick={() => setNewModalOpen(true)}
               size="lg"
               className="h-11 px-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-600 hover:opacity-95 text-white font-semibold shadow-xl shadow-indigo-500/25 rounded-xl shrink-0"
             >
-              <Link href="/editor">
-                <Plus className="w-5 h-5 mr-2" />
-                Create & Launch Editor
-              </Link>
+              <Plus className="w-5 h-5 mr-2" />
+              New Project
             </Button>
           </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-            <Link
-              href="/editor"
-              className="p-4 rounded-2xl border border-border/60 bg-background/50 hover:border-indigo-500/50 hover:bg-accent/40 transition-all text-left space-y-2 group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-indigo-400 font-mono">IEEEtran.cls</span>
-                <Sparkles className="w-4 h-4 text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <h3 className="font-bold text-sm text-foreground group-hover:text-indigo-300 transition-colors">
-                IEEE Conference Paper
-              </h3>
-              <p className="text-xs text-muted-foreground line-clamp-2">
-                Standard two-column IEEE proceedings layout with equations & author block.
-              </p>
-            </Link>
-
-            <Link
-              href="/editor"
-              className="p-4 rounded-2xl border border-border/60 bg-background/50 hover:border-cyan-500/50 hover:bg-accent/40 transition-all text-left space-y-2 group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-cyan-400 font-mono">arXiv.sty</span>
-                <Sparkles className="w-4 h-4 text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <h3 className="font-bold text-sm text-foreground group-hover:text-cyan-300 transition-colors">
-                arXiv Scientific Preprint
-              </h3>
-              <p className="text-xs text-muted-foreground line-clamp-2">
-                Single-column manuscript template optimized for physics & computer science preprints.
-              </p>
-            </Link>
-
-            <Link
-              href="/editor"
-              className="p-4 rounded-2xl border border-border/60 bg-background/50 hover:border-emerald-500/50 hover:bg-accent/40 transition-all text-left space-y-2 group"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-emerald-400 font-mono">blank.tex</span>
-                <Sparkles className="w-4 h-4 text-emerald-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-              </div>
-              <h3 className="font-bold text-sm text-foreground group-hover:text-emerald-300 transition-colors">
-                Blank Document
-              </h3>
-              <p className="text-xs text-muted-foreground line-clamp-2">
-                Clean TeX document setup for custom packages, homework, and custom styles.
-              </p>
-            </Link>
-          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Link
-          href="/editor"
-          className="p-4 rounded-2xl border border-border/50 bg-card/40 hover:bg-accent/60 backdrop-blur-sm text-left transition-all hover:scale-[1.02] flex items-center gap-3 group"
-        >
-          <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 group-hover:scale-110 transition-transform">
-            <FileCode2 className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-sm block text-foreground">New LaTeX Paper</span>
-            <span className="text-[11px] text-muted-foreground">IEEE / ACM Template</span>
-          </div>
-        </Link>
-
-        <button
-          onClick={() => toast.info("BibTeX Reference Importer launched")}
-          className="p-4 rounded-2xl border border-border/50 bg-card/40 hover:bg-accent/60 backdrop-blur-sm text-left transition-all hover:scale-[1.02] flex items-center gap-3 group"
-        >
-          <div className="p-2.5 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 group-hover:scale-110 transition-transform">
-            <BookOpen className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-sm block text-foreground">Import BibTeX</span>
-            <span className="text-[11px] text-muted-foreground">DOI / Zotero Sync</span>
-          </div>
-        </button>
-
-        <button
-          onClick={() => toast.info("Terminal PDF compiler status")}
-          className="p-4 rounded-2xl border border-border/50 bg-card/40 hover:bg-accent/60 backdrop-blur-sm text-left transition-all hover:scale-[1.02] flex items-center gap-3 group"
-        >
-          <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20 group-hover:scale-110 transition-transform">
-            <Terminal className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-sm block text-foreground">TeX Logs</span>
-            <span className="text-[11px] text-muted-foreground">Compiler Output</span>
-          </div>
-        </button>
-
-        <button
-          onClick={() => setShowEmptyState(!showEmptyState)}
-          className="p-4 rounded-2xl border border-border/50 bg-card/40 hover:bg-accent/60 backdrop-blur-sm text-left transition-all hover:scale-[1.02] flex items-center gap-3 group"
-        >
-          <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20 group-hover:scale-110 transition-transform">
-            <Layers className="w-5 h-5" />
-          </div>
-          <div>
-            <span className="font-bold text-sm block text-foreground">Toggle Empty UI</span>
-            <span className="text-[11px] text-muted-foreground">Test Empty State</span>
-          </div>
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-              Active LaTeX Papers & Manuscripts
-              <span className="text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-mono">
-                {filteredProjects.length}
+      {/* Pending Invitations Section */}
+      {pendingInvites && pendingInvites.length > 0 && (
+        <div className="p-5 rounded-2xl border border-indigo-500/40 bg-indigo-500/10 backdrop-blur-md space-y-4 shadow-xl">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-indigo-400" />
+              <h2 className="font-bold text-base text-foreground tracking-tight">
+                Pending Co-Author Invitations
+              </h2>
+              <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-xs font-mono font-bold">
+                {pendingInvites.length}
               </span>
-            </h2>
-            <p className="text-xs text-muted-foreground">
-              Select a paper to launch split-pane TeX editor and compiled PDF preview
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <div className="relative w-full sm:w-64">
-              <Input
-                placeholder="Search paper or topic..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-9 pl-9 text-xs"
-              />
-              <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
             </div>
-            <select
-              value={filterTemplate}
-              onChange={(e) => setFilterTemplate(e.target.value)}
-              className="h-9 px-3 text-xs rounded-lg border border-border/60 bg-card text-foreground outline-none font-mono"
-            >
-              <option value="all">All Templates</option>
-              <option value="IEEE">IEEEtran</option>
-              <option value="arXiv">arXiv</option>
-              <option value="Thesis">Thesis</option>
-            </select>
           </div>
-        </div>
 
-        {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <ProjectCardSkeleton />
-            <ProjectCardSkeleton />
-            <ProjectCardSkeleton />
-          </div>
-        ) : showEmptyState || filteredProjects.length === 0 ? (
-          <EmptyState
-            icon={FolderPlus}
-            title="No LaTeX papers found"
-            description="Create your first LaTeX document or import BibTeX references to start writing."
-            primaryActionLabel="Create New LaTeX Paper"
-            onPrimaryAction={() => toast.info("New LaTeX Document Dialog")}
-            secondaryActionLabel="Reset Filters"
-            onSecondaryAction={() => {
-              setSearchQuery("");
-              setFilterTemplate("all");
-              setShowEmptyState(false);
-            }}
-          />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredProjects.map((project) => (
-              <motion.div
-                key={project.id}
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.3 }}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {pendingInvites.map((invite) => (
+              <div
+                key={invite.id}
+                className="p-4 rounded-xl border border-border/50 bg-card/60 space-y-3 flex flex-col justify-between"
               >
-                <Link href="/editor">
-                  <Card className="group p-6 rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl hover:border-indigo-500/40 hover:shadow-2xl transition-all duration-300 space-y-4 relative overflow-hidden">
-                    <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${project.color}`} />
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs font-mono text-indigo-400 font-bold">
+                    <span>Role: {invite.role}</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {invite.createdAt ? new Date(invite.createdAt).toLocaleDateString() : "Recent"}
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-sm text-foreground">{invite.projectName}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Invited by: <span className="text-foreground font-medium">{invite.senderName || invite.senderEmail}</span>
+                  </p>
+                </div>
 
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="space-y-1">
-                        <h3 className="font-bold text-base text-foreground tracking-tight group-hover:text-indigo-400 transition-colors flex items-center gap-1.5">
-                          {project.name}
-                          <ArrowUpRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </h3>
-                        <p className="text-xs text-muted-foreground font-mono">{project.repository}</p>
-                      </div>
-                      <StatusBadge variant={project.badgeVariant} dot={project.status === "active"}>
-                        {project.status}
-                      </StatusBadge>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
-                      {project.description}
-                    </p>
-
-                    <div className="pt-3 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground font-mono">
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded bg-muted/80 text-foreground font-semibold">
-                          {project.template}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Users className="w-3 h-3 text-indigo-400" />
-                          {project.collaboratorsCount} authors
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-1">
-                          <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400/20" />
-                          {project.stars}
-                        </span>
-                        <span className="flex items-center gap-1 text-[11px]">
-                          <Clock className="w-3 h-3" />
-                          {project.updatedAt}
-                        </span>
-                      </div>
-                    </div>
-                  </Card>
-                </Link>
-              </motion.div>
+                <div className="flex items-center gap-2 pt-2">
+                  <Button
+                    size="sm"
+                    onClick={() => acceptInviteMutation.mutate({ invitationId: invite.id })}
+                    disabled={acceptInviteMutation.isPending}
+                    className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex-1 font-medium shadow-md"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                    Accept & Join
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => declineInviteMutation.mutate({ invitationId: invite.id })}
+                    disabled={declineInviteMutation.isPending}
+                    className="h-8 text-xs border-border/60 hover:bg-accent rounded-lg flex-1 font-medium"
+                  >
+                    <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                    Decline
+                  </Button>
+                </div>
+              </div>
             ))}
           </div>
-        )}
+        </div>
+      )}
+
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
+            Your Manuscripts
+            <span className="text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-mono">
+              {(ownedProjects.length + sharedProjects.length)}
+            </span>
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Select a project to launch live collaborative LaTeX editor
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="relative w-full sm:w-64">
+            <Input
+              placeholder="Search manuscripts..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-9 pl-9 text-xs"
+            />
+            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+          </div>
+        </div>
       </div>
+
+      {isProjectsLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <ProjectCardSkeleton />
+          <ProjectCardSkeleton />
+          <ProjectCardSkeleton />
+        </div>
+      ) : ownedProjects.length === 0 && sharedProjects.length === 0 ? (
+        <EmptyState
+          icon={FolderPlus}
+          title="No LaTeX Projects Found"
+          description="Create your first LaTeX document or accept pending invitations to start co-authoring."
+          primaryActionLabel="Create New LaTeX Project"
+          onPrimaryAction={() => setNewModalOpen(true)}
+        />
+      ) : (
+        <div className="space-y-8">
+          {/* Owned Projects */}
+          {ownedProjects.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider font-mono">
+                <Crown className="w-4 h-4 text-amber-400" />
+                <span>Owned Projects ({ownedProjects.length})</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {ownedProjects.map((project) => (
+                  <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                    <Card className="group p-5 rounded-2xl border border-border/50 bg-card/40 hover:border-indigo-500/40 hover:bg-card/70 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
+                            <h3 className="font-bold text-base text-foreground group-hover:text-indigo-400 transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                              <span className="truncate">{project.name}</span>
+                            </h3>
+                          </Link>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Owner
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                          {project.description}
+                        </p>
+                      </div>
+
+                      <div className="pt-3 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-muted/60 text-foreground font-medium">
+                          {project.template}
+                        </span>
+
+                        <Link
+                          href={`/editor/${project.id}`}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                        >
+                          <span>Open Editor</span>
+                        </Link>
+                      </div>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Shared With Me Projects */}
+          {sharedProjects.length > 0 && (
+            <div className="space-y-3 pt-4">
+              <div className="flex items-center gap-2 text-xs font-bold text-cyan-400 uppercase tracking-wider font-mono">
+                <Users className="w-4 h-4 text-cyan-400" />
+                <span>Shared With Me ({sharedProjects.length})</span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {sharedProjects.map((project) => (
+                  <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+                    <Card className="group p-5 rounded-2xl border border-border/50 bg-card/40 hover:border-cyan-500/40 hover:bg-card/70 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
+                            <h3 className="font-bold text-base text-foreground group-hover:text-cyan-400 transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                              <span className="truncate">{project.name}</span>
+                            </h3>
+                          </Link>
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                            {project.role}
+                          </span>
+                        </div>
+
+                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                          {project.description}
+                        </p>
+                      </div>
+
+                      <div className="pt-3 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-muted/60 text-foreground font-medium">
+                          {project.template}
+                        </span>
+
+                        <Link
+                          href={`/editor/${project.id}`}
+                          className="px-3 py-1.5 rounded-lg bg-cyan-600/10 hover:bg-cyan-600 text-cyan-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                        >
+                          <span>Open Editor</span>
+                        </Link>
+                      </div>
+                    </Card>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* New Project Modal */}
+      {newModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-full p-6 rounded-2xl border border-border/60 bg-card shadow-2xl space-y-4">
+            <h3 className="text-base font-bold text-foreground">Create LaTeX Project</h3>
+            <form onSubmit={handleCreateSubmit} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground">Project Name</label>
+                <Input
+                  autoFocus
+                  placeholder="e.g. Quantum_State_Paper_2026"
+                  value={newProjName}
+                  onChange={(e) => setNewProjName(e.target.value)}
+                  className="h-10 text-sm"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setNewModalOpen(false)}
+                  className="h-9 text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={createMutation.isPending || !newProjName.trim()}
+                  className="h-9 text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+                >
+                  {createMutation.isPending ? "Creating..." : "Create Project"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

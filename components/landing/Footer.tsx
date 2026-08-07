@@ -2,7 +2,8 @@
 
 import React from "react";
 import Link from "next/link";
-import { Cpu, Shield, Sparkles, Globe } from "lucide-react";
+import { Shield, Sparkles, Globe } from "lucide-react";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
 export function LandingFooter() {
   return (
@@ -10,15 +11,10 @@ export function LandingFooter() {
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-5 gap-10">
         <div className="md:col-span-2 space-y-4">
           <Link href="/" className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-              <Cpu className="w-4 h-4 text-white" />
-            </div>
-            <span className="font-bold text-lg tracking-tight text-foreground">
-              OverBranch
-            </span>
+            <OverBranchLogo size="lg" variant="full" colored />
           </Link>
           <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">
-            The modern UI foundation for next-generation developer workspaces. Built with Next.js 15, Better Auth, Supabase, and Drizzle ORM.
+            The modern collaborative LaTeX platform for scientists, researchers, and engineers. Built with Next.js 15, tRPC, and high-performance cloud engines.
           </p>
           <div className="flex items-center gap-2 text-xs font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20 w-fit">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -32,17 +28,17 @@ export function LandingFooter() {
             <li><a href="#features" className="hover:text-foreground transition-colors">Architecture</a></li>
             <li><a href="#speed" className="hover:text-foreground transition-colors">Engine & Speed</a></li>
             <li><a href="#showcase" className="hover:text-foreground transition-colors">Workspace Preview</a></li>
-            <li><Link href="/login" className="hover:text-foreground transition-colors">Better Auth Portal</Link></li>
+            <li><Link href="/login" className="hover:text-foreground transition-colors">Sign In Portal</Link></li>
           </ul>
         </div>
 
         <div className="space-y-3">
-          <h4 className="text-sm font-semibold text-foreground uppercase tracking-wider">Developers</h4>
+          <h4 className="text-sm font-semibold text-foreground uppercase tracking-wider">Resources</h4>
           <ul className="space-y-2 text-sm text-muted-foreground">
             <li><a href="https://github.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">GitHub Repository</a></li>
-            <li><a href="https://supabase.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">Supabase Docs</a></li>
-            <li><a href="https://orm.drizzle.team" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">Drizzle ORM</a></li>
-            <li><a href="https://better-auth.com" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">Better Auth</a></li>
+            <li><a href="https://ctan.org" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">LaTeX CTAN Packages</a></li>
+            <li><a href="https://trpc.io" target="_blank" rel="noreferrer" className="hover:text-foreground transition-colors">tRPC Framework</a></li>
+            <li><a href="#features" className="hover:text-foreground transition-colors">Platform Features</a></li>
           </ul>
         </div>
 
