@@ -20,9 +20,9 @@ BACKEND_PID=$!
 # Wait for backend to initialize
 sleep 2
 
-# Start Next.js Web Application on port 3000 in foreground
-echo "► Starting Next.js Web App (0.0.0.0:3000)..."
+# Start Next.js Web Application on port 3000 in foreground using Bun
+echo "► Starting Next.js Web App with Bun (0.0.0.0:3000)..."
 cd /app
 export PORT=3000
 export HOSTNAME="0.0.0.0"
-exec npm run start
+exec bun run start
