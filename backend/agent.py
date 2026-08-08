@@ -145,10 +145,17 @@ def extract_fallback_chunks(text: str) -> Dict[str, Any]:
 
 
 def extract_latex_from_response(text: str) -> Optional[str]:
-    """Extracts code block from ```latex ... ``` response format."""
+    """Extracts code block from ```latex ... ``` response format or raw LaTeX document/frame."""
     pattern = r"```(?:latex)?\s*\n([\s\S]*?)```"
     match = re.search(pattern, text)
-    return match.group(1).strip() if match else None
+    if match:
+        return match.group(1).strip()
+
+    raw_doc_match = re.search(r'(\\documentclass[\s\S]*?\\end\{document\}|\\begin\{frame\}[\s\S]*?\\end\{frame\}|\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\})', text)
+    if raw_doc_match:
+        return raw_doc_match.group(1).strip()
+
+    return None
 
 
 def extract_chunk_latex(text: str) -> Optional[str]:
@@ -218,12 +225,12 @@ def clean_json_response(text: str) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Attempt 7: Fallback fenced code
+    # Attempt 7: Fallback fenced code or raw LaTeX extraction
     if fenced_code:
         return {
             "original_chunk": "",
             "proposed_chunk": fenced_code,
-            "explanation": "Extracted LaTeX code from fenced response."
+            "explanation": "Extracted LaTeX code from response."
         }
 
     raise ValueError(f"LLM output could not be parsed as valid JSON: {text}")
@@ -237,38 +244,33 @@ from typing import List, Optional, Dict, Any, Tuple
 def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
     """
     Categorizes user intent into 3 modes:
-    1. ("GENERAL_CHAT", False) — Greetings, how-to syntax advice ("hi", "how do I center text in LaTeX?"). Vector search: False, Edits: False.
+    1. ("GENERAL_CHAT", False) — Pure greetings & syntax questions ("hi", "how to center text in LaTeX?"). Vector search: False, Edits: False.
     2. ("INSPECT_DOCUMENT", True) — Document inquiries ("where is abstract?", "what packages are used in my document?"). Vector search: True, Edits: False.
-    3. ("EDIT_DOCUMENT", True) — Explicit edit instructions ("center the title in my code", "add section"). Vector search: True, Edits: True.
+    3. ("EDIT_DOCUMENT", True) — Edit/generation instructions ("add section", "generate ppt for..."). Vector search: True, Edits: True.
     """
     text = user_prompt.lower().strip()
 
-    # Mode 1: General greetings & syntax advice ("how to center text in latex", "how does this work", "hi")
+    # Pure greetings
     greetings = {"hi", "hello", "hey", "good morning", "good evening", "who are you", "what can you do", "help", "thanks", "thank you"}
-    if text in greetings or (len(text.split()) <= 2 and any(g in text for g in greetings)):
+    if text in greetings or (len(text.split()) <= 2 and any(g == text for g in greetings)):
         return ("GENERAL_CHAT", False)
 
     how_to_syntax_keywords = ["how do i", "how to", "how can i", "what is", "explain", "how does", "syntax for", "example of"]
     my_doc_references = ["my code", "my document", "my title", "my file", "my paper", "this paper", "this document", "this code", "my project"]
-    
-    # Explicit Edit Action Triggers
-    explicit_edit_actions = [
-        "add ", "edit ", "change ", "replace ", "delete ", "remove ", "generate ", "create ",
-        "insert ", "update ", "make ", "fix ", "move ", "center the", "bold the", "italicize",
-        "create slides", "generate ppt", "change title", "change author", "set author", "set title", "do edit"
-    ]
-    if any(act in text for act in explicit_edit_actions):
-        return ("EDIT_DOCUMENT", True)
 
+    # Pure syntax explanation request without asking to modify/create
     if any(h in text for h in how_to_syntax_keywords) and not any(r in text for r in my_doc_references):
-        return ("GENERAL_CHAT", False)
+        gen_triggers = ["generate", "create", "make", "build", "draw", "write", "ppt", "slide", "beamer", "presentation", "table", "figure", "section", "add", "insert"]
+        if not any(g in text for g in gen_triggers):
+            return ("GENERAL_CHAT", False)
 
     # Document Inspection / Inquiry Triggers
     doc_inquiry_keywords = ["where is", "find in my", "what packages", "check my", "show my", "list sections", "is my"]
-    if any(inq in text for inq in doc_inquiry_keywords) or any(r in text for r in my_doc_references):
+    if any(inq in text for inq in doc_inquiry_keywords):
         return ("INSPECT_DOCUMENT", True)
 
-    return ("GENERAL_CHAT", False)
+    # All other prompts default to EDIT_DOCUMENT so tool binding & JSON edit proposals are active
+    return ("EDIT_DOCUMENT", True)
 
 
 @router.post("/api/agent/chat")

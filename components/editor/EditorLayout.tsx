@@ -92,7 +92,12 @@ export const DEFAULT_MODEL = "qwen/qwen3.6-27b";
 export function extractLatexFromResponse(response: string): string | null {
   const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
   const match = response.match(pattern);
-  return match ? match[1].trim() : null;
+  if (match) return match[1].trim();
+
+  const rawDocMatch = response.match(/(\\documentclass[\s\S]*?\\end\{document\}|\\begin\{frame\}[\s\S]*?\\end\{frame\}|\\begin\{[a-zA-Z*]+\}[\s\S]*?\\end\{[a-zA-Z*]+\})/);
+  if (rawDocMatch) return rawDocMatch[1].trim();
+
+  return null;
 }
 
 export function extractChunkLatex(response: string): string | null {
@@ -500,7 +505,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       const responseText = data.explanation || "I have processed your LaTeX request.";
 
       // Build explicit edits list
-      const editsList: EditItem[] = (data.edits && Array.isArray(data.edits) && data.edits.length > 0)
+      let editsList: EditItem[] = (data.edits && Array.isArray(data.edits) && data.edits.length > 0)
         ? data.edits
           .filter((e: any) => e.original_chunk || e.proposed_chunk)
           .map((e: any, idx: number) => ({
@@ -517,6 +522,19 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             explanation: data.explanation || "AI Proposed Edit",
           }]
           : [];
+
+      // Fallback: If no edits were parsed in JSON but responseText contains LaTeX code, extract as proposed edit
+      if (editsList.length === 0) {
+        const extractedCode = extractLatexFromResponse(responseText);
+        if (extractedCode) {
+          editsList = [{
+            id: `edit-${Date.now()}-fallback`,
+            original_chunk: "",
+            proposed_chunk: extractedCode,
+            explanation: "Extracted LaTeX proposal.",
+          }];
+        }
+      }
 
       const hasEdits = editsList.length > 0;
 
