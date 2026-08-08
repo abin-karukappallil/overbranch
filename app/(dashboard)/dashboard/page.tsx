@@ -87,40 +87,38 @@ export default function DashboardPage() {
     if (!newProjName.trim()) return;
     createMutation.mutate({
       name: newProjName.trim(),
-      description: "Collaborative scientific LaTeX manuscript",
-      template: "IEEEtran",
+      description: "Seminar report & academic project workspace",
+      template: "Report",
     });
   };
 
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       {/* Header Banner */}
-      <div className="relative p-6 sm:p-8 rounded-3xl border border-indigo-500/30 bg-card/70 backdrop-blur-2xl shadow-2xl overflow-hidden">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-indigo-500/15 via-purple-500/10 to-transparent rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 space-y-6">
+      <div className="relative p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="relative z-10 space-y-5">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <StatusBadge variant="glow" dotPulse dotColor="bg-emerald-400">
-                  Real-time Collaboration Active
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge variant="outline" dotPulse dotColor="bg-emerald-400">
+                  Real-Time Workspace Sync Active
                 </StatusBadge>
                 <span className="text-xs font-mono text-muted-foreground">TeX Engine: pdfLaTeX</span>
               </div>
               <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-                LaTeX Research Workspace
+                Academic Document Workspace
               </h1>
-              <p className="text-sm text-muted-foreground">
-                Co-author scientific manuscripts with real-time compilation, role permissions, and AI assistance.
+              <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
+                Co-author seminar reports, assignments, project reports, slides, and papers with real-time compilation and SyncTeX.
               </p>
             </div>
 
             <Button
               onClick={() => setNewModalOpen(true)}
               size="lg"
-              className="h-11 px-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-cyan-600 hover:opacity-95 text-white font-semibold shadow-xl shadow-indigo-500/25 rounded-xl shrink-0"
+              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-xs rounded-xl shrink-0 text-xs"
             >
-              <Plus className="w-5 h-5 mr-2" />
+              <Plus className="w-4 h-4 mr-1.5" />
               New Project
             </Button>
           </div>
@@ -134,7 +132,7 @@ export default function DashboardPage() {
             <div className="flex items-center gap-2">
               <UserPlus className="w-5 h-5 text-indigo-400" />
               <h2 className="font-bold text-base text-foreground tracking-tight">
-                Pending Co-Author Invitations
+                Pending Team Invitations
               </h2>
               <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-xs font-mono font-bold">
                 {pendingInvites.length}
@@ -192,7 +190,7 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight text-foreground flex items-center gap-2">
-            Your Manuscripts
+            Your Document Projects
             <span className="text-xs px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-mono">
               {(ownedProjects.length + sharedProjects.length)}
             </span>
@@ -205,7 +203,7 @@ export default function DashboardPage() {
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <div className="relative w-full sm:w-64">
             <Input
-              placeholder="Search manuscripts..."
+              placeholder="Search reports, slides & projects..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-9 pl-9 text-xs"
@@ -234,24 +232,24 @@ export default function DashboardPage() {
           {/* Owned Projects */}
           {ownedProjects.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-bold text-indigo-400 uppercase tracking-wider font-mono">
-                <Crown className="w-4 h-4 text-amber-400" />
+              <div className="flex items-center gap-2 text-xs font-bold text-amber-500 dark:text-amber-400 uppercase tracking-wider font-mono">
+                <Crown className="w-4 h-4 text-amber-500 dark:text-amber-400" />
                 <span>Owned Projects ({ownedProjects.length})</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {ownedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-2xl border border-border/50 bg-card/40 hover:border-indigo-500/40 hover:bg-card/70 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
+                    <Card className="group p-5 rounded-2xl border border-border bg-card hover:border-amber-500/50 hover:bg-card/80 transition-all space-y-4 flex flex-col justify-between h-full shadow-sm">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-bold text-base text-foreground group-hover:text-indigo-400 transition-colors flex items-center gap-2 truncate">
-                              <FileCode2 className="w-4 h-4 text-indigo-400 shrink-0" />
+                            <h3 className="font-bold text-base text-foreground group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
                               <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20">
                             Owner
                           </span>
                         </div>
@@ -261,14 +259,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-muted/60 text-foreground font-medium">
+                      <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-muted text-foreground font-medium">
                           {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-indigo-600/10 hover:bg-indigo-600 text-indigo-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                          className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-600 dark:hover:bg-amber-500 text-amber-600 dark:text-amber-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
                         >
                           <span>Open Editor</span>
                         </Link>
@@ -283,24 +281,24 @@ export default function DashboardPage() {
           {/* Shared With Me Projects */}
           {sharedProjects.length > 0 && (
             <div className="space-y-3 pt-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-cyan-400 uppercase tracking-wider font-mono">
-                <Users className="w-4 h-4 text-cyan-400" />
+              <div className="flex items-center gap-2 text-xs font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider font-mono">
+                <Users className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
                 <span>Shared With Me ({sharedProjects.length})</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {sharedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-2xl border border-border/50 bg-card/40 hover:border-cyan-500/40 hover:bg-card/70 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
+                    <Card className="group p-5 rounded-2xl border border-border bg-card hover:border-emerald-500/50 hover:bg-card/80 transition-all space-y-4 flex flex-col justify-between h-full shadow-sm">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-bold text-base text-foreground group-hover:text-cyan-400 transition-colors flex items-center gap-2 truncate">
-                              <FileCode2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                            <h3 className="font-bold text-base text-foreground group-hover:text-emerald-500 dark:group-hover:text-emerald-400 transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
                               <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20">
                             {project.role}
                           </span>
                         </div>
@@ -310,14 +308,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-border/30 flex items-center justify-between text-xs text-muted-foreground font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-muted/60 text-foreground font-medium">
+                      <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-muted text-foreground font-medium">
                           {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-cyan-600/10 hover:bg-cyan-600 text-cyan-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                          className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-600 dark:hover:bg-emerald-500 text-emerald-600 dark:text-emerald-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
                         >
                           <span>Open Editor</span>
                         </Link>

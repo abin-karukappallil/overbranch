@@ -7,13 +7,11 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileDown,
-  ChevronDown,
-  Settings2,
-  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
+/* Hallmark · component: CompileToolbar · theme: Studio */
 interface CompileToolbarProps {
   onCompile: () => void;
   isCompiling: boolean;
@@ -28,13 +26,13 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
   };
 
   return (
-    <div className="h-12 px-3 sm:px-4 border-b border-border/40 bg-card/60 backdrop-blur-xl flex items-center justify-between gap-2 text-xs font-mono overflow-x-auto">
+    <div className="h-12 px-3 sm:px-4 border-b border-border bg-card flex items-center justify-between gap-2 text-xs font-mono overflow-x-auto">
       <div className="flex items-center gap-2 shrink-0">
         <Button
           size="sm"
           onClick={onCompile}
           disabled={isCompiling}
-          className="h-8 px-3 sm:px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-sm shadow-emerald-500/20 text-xs"
+          className="h-8 px-3 sm:px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg shadow-xs text-xs"
         >
           {isCompiling ? (
             <>
@@ -55,10 +53,10 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
             setAutoCompile(!autoCompile);
             toast.info(`Auto-compile on edit: ${!autoCompile ? "ENABLED" : "DISABLED"}`);
           }}
-          className={`hidden xs:flex items-center gap-1.5 px-2 py-1 rounded-md border text-[11px] transition-colors shrink-0 ${
+          className={`hidden xs:flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[11px] font-mono transition-colors shrink-0 ${
             autoCompile
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-semibold"
-              : "border-border/60 text-muted-foreground hover:bg-accent"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 font-semibold"
+              : "border-border text-muted-foreground hover:bg-accent"
           }`}
         >
           <span className={`w-2 h-2 rounded-full ${autoCompile ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground"}`} />
@@ -69,7 +67,7 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
         <select
           value={engine}
           onChange={(e) => setEngine(e.target.value)}
-          className="h-8 px-1.5 sm:px-2 rounded-lg border border-border/60 bg-background text-foreground outline-none text-[10px] sm:text-[11px] shrink-0"
+          className="h-8 px-2 rounded-lg border border-border bg-background text-foreground outline-none text-[10px] sm:text-[11px] font-mono shrink-0"
         >
           <option value="pdfLaTeX">pdfLaTeX</option>
           <option value="XeLaTeX">XeLaTeX</option>
@@ -79,10 +77,10 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
 
       <div className="flex items-center gap-2 shrink-0">
         <div className="hidden md:flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1 text-[11px]">
+          <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 flex items-center gap-1 text-[11px]">
             <CheckCircle2 className="w-3 h-3" /> 0 Errors
           </span>
-          <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1 text-[11px]">
+          <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1 text-[11px]">
             <AlertTriangle className="w-3 h-3" /> 1 Warning
           </span>
         </div>
@@ -91,13 +89,14 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
           variant="outline"
           size="sm"
           onClick={handleDownloadPdf}
-          className="h-8 px-2.5 border-border/60 bg-background/60 hover:bg-accent text-foreground text-xs"
+          className="h-8 px-2.5 border-border bg-background hover:bg-accent text-foreground text-xs"
           title="Download PDF"
         >
-          <FileDown className="w-3.5 h-3.5 sm:mr-1 text-indigo-400" />
+          <FileDown className="w-3.5 h-3.5 sm:mr-1 text-amber-500 dark:text-amber-400" />
           <span className="hidden sm:inline">PDF</span>
         </Button>
       </div>
     </div>
   );
 }
+

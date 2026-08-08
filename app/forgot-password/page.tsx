@@ -47,7 +47,7 @@ export default function ForgotPasswordPage() {
         </div>
 
         <div className="relative z-10 text-xs text-muted-foreground font-mono">
-          Better Auth Protocol
+          Security Verification
         </div>
       </div>
 
@@ -72,7 +72,7 @@ export default function ForgotPasswordPage() {
               <p className="text-sm text-muted-foreground">
                 We sent password recovery instructions to <strong className="text-foreground">{email}</strong>.
               </p>
-              <Button asChild className="w-full bg-indigo-600 text-white rounded-xl">
+              <Button asChild className="w-full bg-emerald-600 dark:bg-emerald-500 text-white dark:text-zinc-950 rounded-xl font-bold">
                 <Link href="/login">Return to Sign In</Link>
               </Button>
             </div>
@@ -106,7 +106,7 @@ export default function ForgotPasswordPage() {
                 <Button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-11 bg-gradient-to-r from-indigo-600 to-cyan-600 text-white font-medium hover:opacity-90 rounded-xl"
+                  className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-bold rounded-xl"
                 >
                   {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : "Send Reset Instructions"}
                 </Button>
@@ -116,7 +116,7 @@ export default function ForgotPasswordPage() {
         </div>
 
         <div className="text-xs text-center text-muted-foreground font-mono">
-          Protected by Better Auth
+          Protected by Enterprise Security System
         </div>
       </div>
     </div>

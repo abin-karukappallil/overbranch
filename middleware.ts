@@ -16,8 +16,9 @@ export function middleware(request: NextRequest) {
   const sessionToken =
     request.cookies.get("better-auth.session_token")?.value ||
     request.cookies.get("__Secure-better-auth.session_token")?.value ||
-    request.cookies.get("sb-access-token")?.value ||
-    request.cookies.get("supabase-auth-token")?.value;
+    request.cookies.get("better-auth.session-token")?.value ||
+    request.cookies.get("__Secure-better-auth.session-token")?.value ||
+    request.cookies.get("better_auth_session")?.value;
 
   if (isProtectedPath && !sessionToken) {
     const loginUrl = new URL("/login", request.url);
@@ -40,12 +41,17 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
+    "/dashboard",
     "/dashboard/:path*",
+    "/projects",
     "/projects/:path*",
+    "/profile",
     "/profile/:path*",
+    "/editor",
     "/editor/:path*",
     "/login",
     "/register",
     "/forgot-password",
   ],
 };
+

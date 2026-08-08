@@ -88,7 +88,7 @@ export default function MobileAuthPage() {
             <Cpu className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">OverBranch</h1>
-          <p className="text-xs text-muted-foreground text-center">Collaborative LaTeX IDE for Scientific Research</p>
+          <p className="text-xs text-muted-foreground text-center">Collaborative LaTeX Workspace for Seminars, Reports & Papers</p>
         </div>
 
         <div className="flex rounded-xl border border-border/40 bg-card/60 backdrop-blur-md p-1">
@@ -221,10 +221,6 @@ export default function MobileAuthPage() {
           ) : (
             <>Already have an account? <button onClick={() => setMode("login")} className="font-semibold text-foreground">Sign in</button></>
           )}
-        </p>
-
-        <p className="text-center text-[10px] text-muted-foreground font-mono pt-4">
-          Protected by Better Auth Session Protocol
         </p>
       </div>
     </div>

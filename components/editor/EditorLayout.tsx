@@ -356,7 +356,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       if (res.ok) {
         setSaveStatus("saved");
         if (showToast) {
-          toast.success("Document saved to Supabase DB & Qdrant vectors synced!", { icon: "💾" });
+          toast.success("Document saved & search index synced!");
         }
       } else {
         setSaveStatus("unsaved");

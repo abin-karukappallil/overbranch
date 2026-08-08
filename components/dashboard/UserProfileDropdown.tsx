@@ -66,7 +66,7 @@ export function UserProfileDropdown() {
             </Link>
 
             <Link
-              href="/dashboard/settings"
+              href="/profile"
               onClick={() => setOpen(false)}
               className="flex items-center gap-2.5 px-3 py-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
@@ -77,7 +77,7 @@ export function UserProfileDropdown() {
             <button
               onClick={() => {
                 setOpen(false);
-                toast.info("Better Auth Session Active");
+                toast.info("Account Session Active");
               }}
               className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left"
             >

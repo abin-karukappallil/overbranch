@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
+import { authClient } from "@/lib/auth-client";
 
 interface SidebarProps {
   collapsed: boolean;
@@ -101,12 +102,12 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
               href={item.href}
               className={`flex items-center gap-3 px-3 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
                 isActive
-                  ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-semibold"
+                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 font-semibold"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
               } ${collapsed ? "justify-center" : ""}`}
               title={collapsed ? item.name : undefined}
             >
-              <Icon className={`w-4 h-4 ${isActive ? "text-indigo-400" : "text-muted-foreground"}`} />
+              <Icon className={`w-4 h-4 ${isActive ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`} />
               {!collapsed && <span>{item.name}</span>}
             </Link>
           );
@@ -120,7 +121,10 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => {
+              onClick={async () => {
+                try {
+                  await authClient.signOut();
+                } catch {}
                 toast.info("Signed out of session");
                 router.push("/login");
               }}

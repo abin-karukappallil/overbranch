@@ -3,15 +3,29 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion } from "framer-motion";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Cpu, ArrowLeft, Loader2, Eye, EyeOff, Lock, Mail, User, Sparkles, CheckCircle2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  User,
+  ShieldCheck,
+  CheckCircle2,
+  FileCode2,
+  Users,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
+/* Hallmark · archetype: Workbench · component: RegisterPage · theme: Garden */
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -22,6 +36,12 @@ export default function RegisterPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  const { data: session } = authClient.useSession();
+
+  if (session?.user) {
+    router.replace("/dashboard");
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,62 +105,100 @@ export default function RegisterPage() {
     }
   };
 
+  const isPasswordMatching = password && confirmPassword && password === confirmPassword;
+
   return (
-    <div className="min-h-screen bg-background relative grid grid-cols-1 lg:grid-cols-12">
-      <div className="hidden lg:flex lg:col-span-5 relative flex-col justify-between p-12 bg-gradient-to-br from-indigo-950/60 via-purple-950/40 to-background border-r border-border/40 overflow-hidden">
-        <div className="absolute inset-0 bg-mesh-dark opacity-60 pointer-events-none" />
-        <div className="absolute -top-20 -right-20 w-96 h-96 bg-cyan-500/20 rounded-full blur-[100px]" />
+    <div className="min-h-screen bg-background relative flex flex-col lg:flex-row overflow-x-clip">
+      {/* Left Specimen Workbench Panel */}
+      <div className="hidden lg:flex lg:w-[42%] xl:w-[40%] bg-card border-r border-border flex-col justify-between p-10 shrink-0 select-none">
+        <div className="space-y-8 relative z-10">
+          <Link href="/" className="flex items-center gap-3">
+            <OverBranchLogo size="lg" variant="full" colored />
+          </Link>
 
-        <Link href="/" className="flex items-center gap-3 relative z-10">
-          <OverBranchLogo size="lg" variant="full" colored />
-        </Link>
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono font-bold text-emerald-500 dark:text-emerald-400">
+              <ShieldCheck className="w-3.5 h-3.5" /> ACADEMIC LATEX WORKSPACE
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground leading-snug">
+              Claim your report & presentation workspace in 60 seconds.
+            </h2>
+          </div>
 
-        <div className="relative z-10 space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-xs font-semibold text-cyan-400">
-            <Sparkles className="w-3.5 h-3.5" /> OverBranch Pro Workspace
+          {/* Live TeX Specimen Sandbox Card */}
+          <div className="rounded-2xl border border-border bg-background p-5 font-mono text-xs space-y-3 shadow-sm">
+            <div className="flex items-center justify-between border-b border-border pb-2 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1.5 font-bold text-foreground">
+                <FileCode2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                references.bib
+              </span>
+              <span className="text-emerald-500 dark:text-emerald-400 font-bold">✓ 42 Citations Resolved</span>
+            </div>
+
+            <div className="space-y-1 text-[11px]">
+              <div className="text-muted-foreground">@article&#123;overbranch2026,</div>
+              <div className="text-emerald-500 dark:text-emerald-400 pl-3">author = &#123;Vance, Alice and Chen, Bob&#125;,</div>
+              <div className="text-foreground pl-3">title = &#123;Real-time Academic Document Platform&#125;,</div>
+              <div className="text-foreground/80 pl-3">journal = &#123;Academic Software Engineering&#125;, year = &#123;2026&#125;</div>
+            </div>
+
+            <div className="pt-2 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Users className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> Team Project Ready
+              </span>
+              <span>Real-Time Sync • Instant Recompile</span>
+            </div>
           </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-white leading-tight">
-            Claim your cloud-native workspace in under 60 seconds.
-          </h2>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Full Supabase & Drizzle ORM model bindings</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Better Auth session guards & OAuth support</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Zero-lag GSAP & Framer Motion transitions</span>
-            </div>
-          </div>
+
+          <ul className="space-y-2.5 text-xs text-muted-foreground font-mono">
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              Seminar, lab assignment & project report templates
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              Beamer presentation slides & PPT layout support
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              Zero-latency PDF compilation & cursor tracking
+            </li>
+          </ul>
         </div>
 
-        <div className="relative z-10 text-xs text-muted-foreground font-mono">
-          OverBranch Workspace Auth v1.0
+        <div className="relative z-10 pt-6 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+          <span>OverBranch Academic Workspace</span>
+          <span>v1.0.4</span>
         </div>
       </div>
 
-      <div className="lg:col-span-7 flex flex-col justify-between p-6 sm:p-12 relative overflow-y-auto">
+      {/* Right Form Container */}
+      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-12 relative overflow-y-auto min-h-screen">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" asChild>
+          <Button variant="ghost" size="sm" asChild className="text-xs font-mono">
             <Link href="/">
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="w-4 h-4 mr-2 text-emerald-500 dark:text-emerald-400" />
               Back to Home
             </Link>
           </Button>
           <ThemeToggle />
         </div>
 
-        <div className="max-w-md w-full mx-auto py-8 space-y-6 animate-fade-in">
-          <div className="text-center sm:text-left space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
-              Create your OverBranch account
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="max-w-md w-full mx-auto my-auto p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-xl space-y-5"
+        >
+          <div className="text-center sm:text-left space-y-1.5">
+            <span className="text-[11px] font-mono text-emerald-500 dark:text-emerald-400 font-bold uppercase tracking-widest">
+              STUDENT & AUTHOR REGISTRATION
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              Create your account
             </h1>
-            <p className="text-sm text-muted-foreground">
-              Start building with your team on the modern collaborative UI stack
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Start co-authoring seminar reports, assignments & slides with your team.
             </p>
           </div>
 
@@ -148,12 +206,12 @@ export default function RegisterPage() {
             variant="outline"
             onClick={handleGoogleSignIn}
             disabled={googleLoading}
-            className="w-full h-11 border-border/80 bg-card/60 backdrop-blur-md hover:bg-accent font-medium rounded-xl text-sm flex items-center justify-center gap-3"
+            className="w-full h-11 border-border bg-background hover:bg-accent font-mono font-medium rounded-xl text-xs flex items-center justify-center gap-3 shadow-xs"
           >
             {googleLoading ? (
               <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
             ) : (
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
@@ -165,56 +223,56 @@ export default function RegisterPage() {
 
           <div className="relative flex items-center justify-center">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border/40" />
+              <div className="w-full border-t border-border" />
             </div>
-            <span className="relative px-3 bg-background text-xs font-mono text-muted-foreground uppercase">
+            <span className="relative px-3 bg-card text-[11px] font-mono text-muted-foreground uppercase">
               Or email sign up
             </span>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             {error && (
-              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm text-center">
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs text-center font-mono font-semibold">
                 {error}
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="name">Full Name</Label>
+            <div className="space-y-1">
+              <Label htmlFor="name" className="text-xs font-mono">Full Name</Label>
               <div className="relative">
                 <Input
                   id="name"
                   type="text"
-                  placeholder="Alex Rivers"
+                  placeholder="Dr. Alex Rivers"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10"
+                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
                 />
                 <User className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Work Email</Label>
+            <div className="space-y-1">
+              <Label htmlFor="email" className="text-xs font-mono">Work / University Email</Label>
               <div className="relative">
                 <Input
                   id="email"
                   type="email"
-                  placeholder="alex@overbranch.dev"
+                  placeholder="alex@university.edu"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10"
+                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
                 />
                 <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="password">Password</Label>
+            <div className="space-y-1">
+              <Label htmlFor="password" className="text-xs font-mono">Password</Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -224,7 +282,7 @@ export default function RegisterPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10 pr-10"
+                  className="h-10 pl-10 pr-10 text-xs font-mono border-border bg-background"
                 />
                 <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                 <button
@@ -235,11 +293,18 @@ export default function RegisterPage() {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="text-[11px] text-muted-foreground font-mono">Minimum 8 characters</p>
+              <p className="text-[10px] text-muted-foreground font-mono">Minimum 8 characters</p>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="confirmPassword">Confirm Password</Label>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="confirmPassword" className="text-xs font-mono">Confirm Password</Label>
+                {isPasswordMatching && (
+                  <span className="text-[10px] font-mono text-emerald-500 dark:text-emerald-400 font-bold">
+                    ✓ Passwords Match
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <Input
                   id="confirmPassword"
@@ -249,7 +314,7 @@ export default function RegisterPage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10"
+                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
                 />
                 <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
@@ -258,29 +323,29 @@ export default function RegisterPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-gradient-to-r from-indigo-600 to-cyan-600 text-white font-medium hover:opacity-90 rounded-xl"
+              className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl text-xs shadow-xs"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Creating workspace...
+                  Creating Workspace...
                 </>
               ) : (
-                "Create Free Workspace"
+                "Create Free Workspace Account"
               )}
             </Button>
           </form>
 
-          <p className="text-center text-sm text-muted-foreground">
-            Already have an OverBranch account?{" "}
-            <Link href="/login" className="font-semibold text-foreground hover:underline">
+          <p className="text-center text-xs text-muted-foreground font-mono pt-1">
+            Already have an account?{" "}
+            <Link href="/login" className="font-bold text-foreground hover:underline">
               Sign in
             </Link>
           </p>
-        </div>
+        </motion.div>
 
-        <div className="text-xs text-center text-muted-foreground font-mono">
-          Powered by Supabase PostgreSQL & Better Auth
+        <div className="text-[11px] text-center text-muted-foreground font-mono py-2">
+          Built for High-Velocity Scientific Research
         </div>
       </div>
     </div>

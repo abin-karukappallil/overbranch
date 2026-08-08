@@ -1,120 +1,109 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import { motion } from "framer-motion";
-import gsap from "gsap";
 import {
   Zap,
   ShieldCheck,
-  Smartphone,
-  Layers,
-  Sparkles,
   GitPullRequest,
-  Database,
-  Lock,
-  Palette,
   Terminal,
+  Cpu,
+  Layers,
 } from "lucide-react";
-import { Card } from "@/components/ui/card";
 
-const featureList = [
+/* Hallmark · archetype: F3 Tabular spec sheet · feature: F3 · theme: Cobalt */
+const specRows = [
   {
+    code: "01",
+    label: "TeX Recompilation Engine",
+    spec: "pdfLaTeX, XeLaTeX & LuaLaTeX",
+    detail: "Incremental compilation pipelines with sub-10ms UI sync and live PDF preview.",
     icon: Zap,
-    title: "Instant Environment Fluidity",
-    description: "Zero boot delay. Workspaces load instantly with pre-cached assets and unified state management.",
-    gradient: "from-indigo-500/10 via-purple-500/10 to-transparent",
-    borderGlow: "group-hover:border-indigo-500/40",
-    iconColor: "text-indigo-400",
   },
   {
-    icon: ShieldCheck,
-    title: "Secure Enterprise Security",
-    description: "Production-grade session management, in-app collaborator invitations, and granular server-side role authorization.",
-    gradient: "from-cyan-500/10 via-blue-500/10 to-transparent",
-    borderGlow: "group-hover:border-cyan-500/40",
-    iconColor: "text-cyan-400",
+    code: "02",
+    label: "Multi-Author Co-Authoring",
+    spec: "Real-time presence & live cursors",
+    detail: "Conflict-free document state synchronization with role-based invitation control.",
+    icon: Layers,
   },
   {
-    icon: Smartphone,
-    title: "Strict Universal Responsiveness",
-    description: "Tailored experience from ultra-wide 4K monitors down to foldable devices and small smartphone displays.",
-    gradient: "from-emerald-500/10 via-teal-500/10 to-transparent",
-    borderGlow: "group-hover:border-emerald-500/40",
-    iconColor: "text-emerald-400",
-  },
-  {
-    icon: Palette,
-    title: "Linear & Raycast Aesthetic",
-    description: "Curated dark mode standard with glassmorphic layers, soft glowing indicators, and smooth micro-animations.",
-    gradient: "from-purple-500/10 via-pink-500/10 to-transparent",
-    borderGlow: "group-hover:border-purple-500/40",
-    iconColor: "text-purple-400",
-  },
-  {
+    code: "03",
+    label: "Document Tree & BibTeX",
+    spec: "Multi-file .tex & .bib resolution",
+    detail: "Instant citation key autocompletion and package dependency tracking.",
     icon: GitPullRequest,
-    title: "Seamless Branch Tracking",
-    description: "Instant visual diffs, branch tracking, and commit timeline overview without leaves-the-editor context switches.",
-    gradient: "from-amber-500/10 via-orange-500/10 to-transparent",
-    borderGlow: "group-hover:border-amber-500/40",
-    iconColor: "text-amber-400",
   },
   {
+    code: "04",
+    label: "Command Palette & Shortcuts",
+    spec: "Global Cmd+K spotlight matrix",
+    detail: "Keyboard-driven project search, dark/light theme switching, and quick actions.",
     icon: Terminal,
-    title: "Keyboard-First Command Matrix",
-    description: "Global Cmd+K command palette for instant search, workspace switching, dark/light themes, and quick actions.",
-    gradient: "from-rose-500/10 via-red-500/10 to-transparent",
-    borderGlow: "group-hover:border-rose-500/40",
-    iconColor: "text-rose-400",
+  },
+  {
+    code: "05",
+    label: "Enterprise Session Protection",
+    spec: "Encrypted session & API security",
+    detail: "Strict session management, secure cookies, and type-safe server queries.",
+    icon: ShieldCheck,
+  },
+  {
+    code: "06",
+    label: "Universal Responsiveness",
+    spec: "320px to 4K display adaptation",
+    detail: "Mobile-tested layout collapse, no horizontal scroll, and touch-optimized hit targets.",
+    icon: Cpu,
   },
 ];
 
 export function LandingFeatures() {
-  const sectionRef = useRef<HTMLDivElement>(null);
-
   return (
-    <section id="features" ref={sectionRef} className="py-24 px-4 sm:px-6 lg:px-8 relative border-t border-border/40">
-      <div className="max-w-7xl mx-auto space-y-16">
-        <div className="text-center max-w-3xl mx-auto space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-indigo-500/20 bg-indigo-500/10 text-xs font-semibold text-indigo-400 uppercase tracking-widest">
-            <Sparkles className="w-3.5 h-3.5" />
-            Designed For Modern Engineers
+    <section id="specs" className="py-20 px-4 sm:px-6 lg:px-8 border-t border-border bg-card/40">
+      <div className="max-w-6xl mx-auto space-y-12">
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-border pb-6">
+          <div className="space-y-2">
+            <span className="text-xs font-mono text-indigo-400 font-bold uppercase tracking-widest">
+              SYSTEM ARCHITECTURE
+            </span>
+            <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-foreground">
+              Technical Specifications & Engine Capabilities
+            </h2>
           </div>
-          <h2 className="text-3xl sm:text-5xl font-extrabold tracking-tight text-foreground">
-            Crafted for speed, precision, and elegance
-          </h2>
-          <p className="text-base sm:text-lg text-muted-foreground leading-relaxed">
-            Every surface of OverBranch is tuned for maximum clarity and ergonomic comfort during long coding sessions.
+          <p className="text-xs font-mono text-muted-foreground max-w-xs">
+            Built for student seminars, project reports, assignments, slides, and journal publications.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {featureList.map((feature, idx) => (
+        <div className="divide-y divide-border border-y border-border">
+          {specRows.map((row, idx) => (
             <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 30 }}
+              key={row.code}
+              initial={{ opacity: 0, y: 15 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
-              transition={{ duration: 0.5, delay: idx * 0.1 }}
+              transition={{ duration: 0.4, delay: idx * 0.05 }}
+              className="py-5 grid grid-cols-1 md:grid-cols-12 gap-4 items-start hover:bg-accent/40 transition-colors px-3 rounded-lg"
             >
-              <Card
-                className={`group relative p-8 h-full rounded-2xl border border-border/60 bg-card/40 backdrop-blur-xl hover:shadow-2xl transition-all duration-300 ${feature.borderGlow} overflow-hidden`}
-              >
-                <div
-                  className={`absolute inset-0 bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-500`}
-                />
+              <div className="md:col-span-1 text-xs font-mono text-indigo-400 font-bold">
+                {row.code}
+              </div>
 
-                <div className="relative z-10 space-y-4">
-                  <div className="w-12 h-12 rounded-xl bg-muted/80 border border-border/40 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
-                    <feature.icon className={`w-6 h-6 ${feature.iconColor}`} />
-                  </div>
-                  <h3 className="text-xl font-bold tracking-tight text-foreground">
-                    {feature.title}
+              <div className="md:col-span-4 space-y-1">
+                <div className="flex items-center gap-2">
+                  <row.icon className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <h3 className="text-sm font-bold text-foreground">
+                    {row.label}
                   </h3>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    {feature.description}
-                  </p>
                 </div>
-              </Card>
+                <p className="text-xs font-mono text-muted-foreground">
+                  {row.spec}
+                </p>
+              </div>
+
+              <div className="md:col-span-7 text-xs text-muted-foreground leading-relaxed font-sans">
+                {row.detail}
+              </div>
             </motion.div>
           ))}
         </div>
@@ -122,3 +111,4 @@ export function LandingFeatures() {
     </section>
   );
 }
+

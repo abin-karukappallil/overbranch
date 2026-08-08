@@ -47,36 +47,36 @@ const initialFileTree: FileNode[] = [
     id: "main.tex",
     name: "main.tex",
     type: "file",
-    content: `\\documentclass[conference]{IEEEtran}
-\\usepackage{cite}
-\\usepackage{amsmath,amssymb,amsfonts}
+    content: `\\documentclass[12pt,report]{report}
 \\usepackage{graphicx}
+\\usepackage{amsmath,amssymb,amsfonts}
+\\usepackage{hyperref}
 
-\\title{OverBranch: Mobile Collaborative LaTeX Platforms}
+\\title{Seminar & Project Report: Modern Machine Learning Systems}
 
 \\author{
-  \\IEEEauthorblockN{Alice Vance\\mathbb{1}, Bob Chen\\mathbb{2}, Carol Zhang\\mathbb{1}}
-  \\IEEEauthorblockA{\\mathbb{1}OverBranch Research, \\mathbb{2}Stanford Computer Science}
+  Alex Rivers, Sam Vance\\\\
+  Department of Computer Science & Engineering
 }
 
 \\begin{document}
 \\maketitle
 
 \\begin{abstract}
-We present OverBranch, a collaborative LaTeX platform designed for mobile phone co-editing, sub-10ms UI latency, and touch-optimized PDF recompilation.
+This seminar report presents a comprehensive study on modern machine learning systems, prepared for academic evaluation and journal publication.
 \\end{abstract}
 
 \\section{Introduction}
-Scientific collaboration on mobile devices requires fast TeX symbol insertion and side-by-side paper rendering \\cite{vance2026overbranch}.
+Academic collaboration on reports and presentations requires fast TeX symbol insertion and instant PDF rendering \\cite{vance2026overbranch}.
 
 \\begin{equation}
-\\mathcal{L}_{mobile} = \\min_{\\theta} \\sum_{i=1}^{N} \\| T_{compile} - T_{touch} \\|^2
+\\mathcal{L}_{loss} = \\min_{\\theta} \\sum_{i=1}^{N} \\| Y_i - \\hat{Y}_i \\|^2
 \\end{equation}
 
-\\section{Results}
-Mobile co-authors can edit documents anywhere with full syntax support.
+\\section{Project Methodology & Results}
+Students and team members can co-author reports, lab assignments, and Beamer slides anywhere.
 
-\\bibliographystyle{IEEEtran}
+\\bibliographystyle{plain}
 \\bibliography{references}
 \\end{document}`,
   },
@@ -85,9 +85,12 @@ Mobile co-authors can edit documents anywhere with full syntax support.
     name: "sections",
     type: "folder",
     children: [
-      { id: "abstract.tex", name: "abstract.tex", type: "file" },
-      { id: "introduction.tex", name: "introduction.tex", type: "file" },
-      { id: "results.tex", name: "results.tex", type: "file" },
+      {
+        id: "intro.tex",
+        name: "intro.tex",
+        type: "file",
+        content: "% Seminar Report Section 1: Introduction",
+      },
     ],
   },
   {
@@ -105,8 +108,8 @@ Mobile co-authors can edit documents anywhere with full syntax support.
     type: "file",
     content: `@article{vance2026overbranch,
   author = {Vance, Alice and Chen, Bob},
-  title = {Mobile Collaborative LaTeX Workspace Architecture},
-  journal = {IEEE Transactions on Software Engineering},
+  title = {Real-Time Academic Document Collaboration Platform},
+  journal = {Journal of Educational Technology},
   year = {2026}
 }`,
   },
@@ -127,7 +130,7 @@ const quickTexSymbols = [
 const suggestedPrompts = [
   "Format equation matrix",
   "Check BibTeX citations",
-  "Generate IEEE author block",
+  "Generate author block",
   "Proofread abstract",
 ];
 
@@ -135,19 +138,19 @@ const exampleMessages = [
   {
     id: "msg-1",
     sender: "assistant",
-    text: "OverBranch Assistant ready. How can I assist with your LaTeX manuscript layout?",
+    text: "OverBranch Assistant ready. How can I assist with your seminar report or slide layout?",
     time: "10:14 AM",
   },
   {
     id: "msg-2",
     sender: "user",
-    text: "Refactor equation (1) for double-column IEEE proceedings width.",
+    text: "Refactor equation (1) for report presentation width.",
     time: "10:15 AM",
   },
   {
     id: "msg-3",
     sender: "assistant",
-    text: "Here is the recommended IEEEtran equation formulation using \\small and \\mathcal{L}_{mobile}.",
+    text: "Here is the recommended report equation formulation using \\small and \\mathcal{L}_{loss}.",
     time: "10:15 AM",
   },
 ];
@@ -158,16 +161,16 @@ interface LatexEditorViewProps {
 
 export function LatexEditorView({ projectId }: LatexEditorViewProps) {
   const getProjectName = () => {
-    if (projectId === "proj-2") return "arXiv_Quantum_Intelligence_2026.tex";
+    if (projectId === "proj-2") return "Seminar_Presentation_Slides.tex";
     if (projectId === "proj-3") return "PhD_Dissertation_Thesis.tex";
     if (projectId) return `${projectId.replace(/[^a-zA-Z0-9_-]/g, "")}.tex`;
-    return "IEEE_Paper_OverBranch_v1.tex";
+    return "Seminar_Project_Report_v1.tex";
   };
 
   const getTemplateTag = () => {
-    if (projectId === "proj-2") return "arXiv · abstract.tex";
+    if (projectId === "proj-2") return "Beamer · slides.tex";
     if (projectId === "proj-3") return "Thesis · ch3_results.tex";
-    return "IEEEtran · main.tex";
+    return "Report · main.tex";
   };
 
   const [activeFileId, setActiveFileId] = useState("main.tex");

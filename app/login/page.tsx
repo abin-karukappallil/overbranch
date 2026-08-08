@@ -3,16 +3,29 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card } from "@/components/ui/card";
-import { Cpu, ArrowLeft, Loader2, Eye, EyeOff, Lock, Mail, Sparkles, CheckCircle2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  Eye,
+  EyeOff,
+  Lock,
+  Mail,
+  ShieldCheck,
+  CheckCircle2,
+  FileCode2,
+  Users,
+  Sparkles,
+} from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
+/* Hallmark · archetype: Workbench · component: LoginPage · theme: Garden */
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -23,6 +36,12 @@ export default function LoginPage() {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [forgotModalOpen, setForgotModalOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
+
+  const { data: session } = authClient.useSession();
+
+  if (session?.user) {
+    router.replace("/dashboard");
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +62,7 @@ export default function LoginPage() {
         router.refresh();
       }
     } catch {
-      toast.success("Signed in to OverBranch Demo Session");
+      toast.success("Signed in to OverBranch Session");
       router.push("/dashboard");
     } finally {
       setLoading(false);
@@ -81,61 +100,99 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background relative grid grid-cols-1 lg:grid-cols-12">
-      <div className="hidden lg:flex lg:col-span-5 relative flex-col justify-between p-12 bg-gradient-to-br from-indigo-950/60 via-purple-950/40 to-background border-r border-border/40 overflow-hidden">
-        <div className="absolute inset-0 bg-mesh-dark opacity-60 pointer-events-none" />
-        <div className="absolute -bottom-20 -left-20 w-96 h-96 bg-indigo-500/20 rounded-full blur-[100px]" />
+    <div className="min-h-screen bg-background relative flex flex-col lg:flex-row overflow-x-clip">
+      {/* Left Specimen Workbench Panel */}
+      <div className="hidden lg:flex lg:w-[42%] xl:w-[40%] bg-card border-r border-border flex-col justify-between p-10 shrink-0 select-none">
+        <div className="space-y-8 relative z-10">
+          <Link href="/" className="flex items-center gap-3">
+            <OverBranchLogo size="lg" variant="full" colored />
+          </Link>
 
-        <Link href="/" className="flex items-center gap-3 relative z-10">
-          <OverBranchLogo size="lg" variant="full" colored />
-        </Link>
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono font-bold text-emerald-500 dark:text-emerald-400">
+              <ShieldCheck className="w-3.5 h-3.5" /> ACADEMIC WORKSPACE
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground leading-snug">
+              Co-author seminar reports, assignments & slides with zero friction.
+            </h2>
+          </div>
 
-        <div className="relative z-10 space-y-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-xs font-semibold text-indigo-400">
-            <Sparkles className="w-3.5 h-3.5" /> High-Velocity Workspace
+          {/* Live TeX Specimen Sandbox Card */}
+          <div className="rounded-2xl border border-border bg-background p-5 font-mono text-xs space-y-3 shadow-sm">
+            <div className="flex items-center justify-between border-b border-border pb-2 text-[11px] text-muted-foreground">
+              <span className="flex items-center gap-1.5 font-bold text-foreground">
+                <FileCode2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+                seminar_report.tex
+              </span>
+              <span className="text-emerald-500 dark:text-emerald-400 font-bold">✓ Compiled in 6ms</span>
+            </div>
+
+            <div className="space-y-1 text-[11px]">
+              <div className="text-muted-foreground">\documentclass&#123;report&#125;</div>
+              <div className="text-emerald-500 dark:text-emerald-400">\usepackage&#123;overbranch&#125;</div>
+              <div className="text-foreground pl-3">\begin&#123;document&#125;</div>
+              <div className="text-foreground/90 pl-6">\section&#123;Project Methodology&#125;</div>
+              <div className="text-foreground/80 pl-6">$ E = mc^2 $</div>
+              <div className="text-foreground pl-3">\end&#123;document&#125;</div>
+            </div>
+
+            <div className="pt-2 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Users className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> 2 Team Authors Active
+              </span>
+              <span>pdfLaTeX • SyncTeX</span>
+            </div>
           </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-white leading-tight">
-            Where high-performing engineering teams build faster.
-          </h2>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Unified LaTeX document engine & real-time collaboration</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Pixel-perfect responsive design across all devices</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>Keyboard-driven Cmd+K command palette</span>
-            </div>
-          </div>
+
+          <ul className="space-y-2.5 text-xs text-muted-foreground font-mono">
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              Seminar, lab assignment & project report templates
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              Instant multi-author SyncTeX cursor navigation
+            </li>
+            <li className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+              BibTeX reference manager & instant citation lookup
+            </li>
+          </ul>
         </div>
 
-        <div className="relative z-10 text-xs text-muted-foreground font-mono">
-          OverBranch Security Matrix v1.0
+        <div className="relative z-10 pt-6 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+          <span>OverBranch Academic Suite</span>
+          <span>v1.0.4</span>
         </div>
       </div>
 
-      <div className="lg:col-span-7 flex flex-col justify-between p-6 sm:p-12 relative">
+      {/* Right Auth Form */}
+      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-12 relative overflow-y-auto min-h-screen">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" asChild>
+          <Button variant="ghost" size="sm" asChild className="text-xs font-mono">
             <Link href="/">
-              <ArrowLeft className="w-4 h-4 mr-2" />
+              <ArrowLeft className="w-4 h-4 mr-2 text-emerald-500 dark:text-emerald-400" />
               Back to Home
             </Link>
           </Button>
           <ThemeToggle />
         </div>
 
-        <div className="max-w-md w-full mx-auto py-12 space-y-8 animate-fade-in">
-          <div className="text-center sm:text-left space-y-2">
-            <h1 className="text-3xl font-bold tracking-tight text-foreground">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="max-w-md w-full mx-auto my-auto p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-xl space-y-6"
+        >
+          <div className="text-center sm:text-left space-y-1.5">
+            <span className="text-[11px] font-mono text-emerald-500 dark:text-emerald-400 font-bold uppercase tracking-widest">
+              STUDENT & AUTHOR PORTAL
+            </span>
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
               Sign in to OverBranch
             </h1>
-            <p className="text-sm text-muted-foreground">
-              Enter your credentials or use Google OAuth to open your workspace
+            <p className="text-xs sm:text-sm text-muted-foreground">
+              Access your seminar reports, project assignments, slides & papers.
             </p>
           </div>
 
@@ -143,12 +200,12 @@ export default function LoginPage() {
             variant="outline"
             onClick={handleGoogleSignIn}
             disabled={googleLoading}
-            className="w-full h-11 border-border/80 bg-card/60 backdrop-blur-md hover:bg-accent font-medium rounded-xl text-sm flex items-center justify-center gap-3"
+            className="w-full h-11 border-border bg-background hover:bg-accent font-mono font-medium rounded-xl text-xs flex items-center justify-center gap-3 shadow-xs"
           >
             {googleLoading ? (
               <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
             ) : (
-              <svg className="w-5 h-5" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
                 <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                 <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
@@ -160,44 +217,44 @@ export default function LoginPage() {
 
           <div className="relative flex items-center justify-center">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border/40" />
+              <div className="w-full border-t border-border" />
             </div>
-            <span className="relative px-3 bg-background text-xs font-mono text-muted-foreground uppercase">
-              Or email & password
+            <span className="relative px-3 bg-card text-[11px] font-mono text-muted-foreground uppercase">
+              Or email credentials
             </span>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm text-center">
+              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs text-center font-mono font-semibold">
                 {error}
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Work Email</Label>
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-xs font-mono">Work / University Email</Label>
               <div className="relative">
                 <Input
                   id="email"
                   type="email"
-                  placeholder="developer@overbranch.dev"
+                  placeholder="author@university.edu"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10"
+                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
                 />
                 <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password" className="text-xs font-mono">Password</Label>
                 <button
                   type="button"
                   onClick={() => setForgotModalOpen(true)}
-                  className="text-xs text-indigo-400 hover:underline font-medium"
+                  className="text-xs text-emerald-500 dark:text-emerald-400 hover:underline font-mono"
                 >
                   Forgot password?
                 </button>
@@ -211,7 +268,7 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-11 pl-10 pr-10"
+                  className="h-10 pl-10 pr-10 text-xs font-mono border-border bg-background"
                 />
                 <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
                 <button
@@ -227,60 +284,67 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-gradient-to-r from-indigo-600 to-cyan-600 text-white font-medium hover:opacity-90 rounded-xl"
+              className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl text-xs shadow-xs"
             >
               {loading ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Authenticating...
+                  Verifying Account...
                 </>
               ) : (
-                "Sign In to Dashboard"
+                "Open Manuscript Workspace"
               )}
             </Button>
           </form>
 
-          <p className="text-center text-sm text-muted-foreground">
-            Don&apos;t have an OverBranch account?{" "}
-            <Link href="/register" className="font-semibold text-foreground hover:underline">
-              Create account
+          <p className="text-center text-xs text-muted-foreground font-mono pt-1">
+            New to OverBranch?{" "}
+            <Link href="/register" className="font-bold text-foreground hover:underline">
+              Create a free account
             </Link>
           </p>
-        </div>
+        </motion.div>
 
-        <div className="text-xs text-center text-muted-foreground font-mono">
-          Protected by Better Auth Session Protocol
+        <div className="text-[11px] text-center text-muted-foreground font-mono py-2">
+          Protected by Encrypted Enterprise Session Security
         </div>
       </div>
 
-      {forgotModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
-          <div className="max-w-md w-full p-6 rounded-2xl border border-border/80 bg-card shadow-2xl space-y-4">
-            <h3 className="text-lg font-bold text-foreground">Reset Password</h3>
-            <p className="text-sm text-muted-foreground">
-              Enter your account email address and we will send a password reset link.
-            </p>
-            <form onSubmit={handleForgotSubmit} className="space-y-4 pt-2">
-              <Input
-                type="email"
-                placeholder="developer@overbranch.dev"
-                value={forgotEmail}
-                onChange={(e) => setForgotEmail(e.target.value)}
-                required
-                className="h-11"
-              />
-              <div className="flex items-center justify-end gap-3">
-                <Button variant="ghost" type="button" onClick={() => setForgotModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" className="bg-indigo-600 text-white">
-                  Send Reset Link
-                </Button>
-              </div>
-            </form>
+      <AnimatePresence>
+        {forgotModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="max-w-md w-full p-6 rounded-2xl border border-border bg-card shadow-2xl space-y-4"
+            >
+              <h3 className="text-base font-bold text-foreground">Reset Password</h3>
+              <p className="text-xs text-muted-foreground">
+                Enter your registered account email to receive reset instructions.
+              </p>
+              <form onSubmit={handleForgotSubmit} className="space-y-4 pt-1">
+                <Input
+                  type="email"
+                  placeholder="author@university.edu"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  required
+                  className="h-10 text-xs font-mono"
+                />
+                <div className="flex items-center justify-end gap-2 text-xs">
+                  <Button variant="ghost" type="button" onClick={() => setForgotModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" className="bg-emerald-600 dark:bg-emerald-500 text-white dark:text-zinc-950 font-bold">
+                    Send Reset Link
+                  </Button>
+                </div>
+              </form>
+            </motion.div>
           </div>
-        </div>
-      )}
+        )}
+      </AnimatePresence>
     </div>
   );
 }
