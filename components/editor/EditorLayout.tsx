@@ -311,7 +311,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const loadSavedDocument = async () => {
       try {
         const activeProj = projectId || "proj-1";
-        const res = await fetch(`http://localhost:8000/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+        const res = await fetch(`${backendUrl}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
         if (res.ok) {
           const data = await res.json();
           if (data.raw_code !== undefined) {
@@ -348,7 +349,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       localStorage.setItem(storageKey, newCode);
 
       // Save to Supabase latex_documents DB + Local Disk + Qdrant Vector Sync
-      const res = await fetch("http://localhost:8000/api/projects/save-file", {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+      const res = await fetch(`${backendUrl}/api/projects/save-file`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

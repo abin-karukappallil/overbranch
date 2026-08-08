@@ -72,7 +72,8 @@ export const projectRouter = router({
       }
 
       try {
-        await fetch('http://localhost:8000/api/compile', {
+        const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        await fetch(`${backendUrl}/api/compile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

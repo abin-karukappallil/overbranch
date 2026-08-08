@@ -1,69 +1,57 @@
-# ProStack
+# OverBranch — Collaborative LaTeX & Beamer Workspace
 
-A modern full-stack Next.js starter built with the latest technologies to help you build production-ready applications faster.
+OverBranch is a modern, open-source collaborative LaTeX and Beamer slides workspace built for students, researchers, and scientific authors who demand precision, real-time co-authoring, AI document copilot editing, and sub-second PDF compilation.
 
-## Features
+---
 
-- Next.js (Latest)
-- React (Latest)
-- TypeScript
-- Bun Runtime & Package Manager
-- Tailwind CSS
-- tRPC
-- Drizzle ORM
-- PostgreSQL
-- Better Auth
-- Zod
-- ESLint & Prettier
-- Environment Variable Validation
-- Production-ready Project Structure
+##  Features
 
-## Getting Started
+- ** Instant TeX & Beamer Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
+- ** Built-in AI Copilot Router**: Instant AI LaTeX edits powered by NVIDIA NIM (`openai/gpt-oss-120b`) and Groq (`qwen/qwen3.6-27b`).
+- ** Real-time Collaborative Editing**: Seamless multi-user co-authoring with cursor presence and automatic document saving.
+- ** Asset Manager & Inline Preview**: Upload images and assets with one-click LaTeX code copying and instant image preview modal.
+- ** Fully Responsive**: Custom layout collapsed drawers for mobile & tablet authoring.
+- ** 100% Self-Contained Docker Container**: Zero external cloud dependency. Runs on any Azure VM, Linux server, Windows, or Mac.
 
-### 1. Create a project
+---
 
-Click **Use this template** on GitHub or clone the repository.
+## 1-Command Universal Docker Deployment
 
-### 2. Install dependencies
+Deploy OverBranch anywhere in seconds with Docker:
 
+```bash
+git clone https://github.com/abin-karukappallil/overbranch.git
+cd overbranch
+cp .env.example .env
+docker compose up --build -d
+```
+
+- **Web Workspace**: `http://localhost:3000`
+- **FastAPI Engine**: `http://localhost:8000`
+
+> 📄 For step-by-step Ubuntu VM setup and port rules, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md).
+
+---
+
+## 💻 Local Development Setup
+
+### 1. Frontend (Next.js)
 ```bash
 bun install
+bun dev
 ```
 
-### 3. Configure environment variables
-
+### 2. Backend (FastAPI Python Engine)
 ```bash
-cp .env.example .env
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Update the values inside `.env`.
+---
 
-### 4. Push the database schema
+## 📜 License
 
-```bash
-bun run db:push
-```
-
-### 5. Start the development server
-
-```bash
-bun run dev
-```
-
-Open http://localhost:3000 in your browser.
-
-## Tech Stack
-
-- Next.js
-- React
-- TypeScript
-- Bun
-- Tailwind CSS
-- tRPC
-- Drizzle ORM
-- PostgreSQL
-- Better Auth
-
-## License
-
-Licensed under the MIT License.
+Licensed under the [MIT License](LICENSE).

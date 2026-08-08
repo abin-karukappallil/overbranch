@@ -12,7 +12,7 @@
 /backend/.env
 /backend/.venv
 /backend/__pycache__
-/uploads
+/uploads/*
 # testing
 /coverage
 
