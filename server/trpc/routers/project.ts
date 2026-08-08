@@ -81,7 +81,7 @@ export const projectRouter = router({
             engine: 'pdfLaTeX',
           }),
         });
-      } catch {}
+      } catch { }
 
       return {
         success: true,

@@ -269,9 +269,8 @@ export function ProjectFilesPanel({
 
   return (
     <div
-      className={`h-full border-r border-border/40 bg-card/50 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
-        isOpen ? "w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
-      }`}
+      className={`h-full border-r border-border/40 bg-card/50 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
+        }`}
     >
       <div className="flex flex-col h-full p-3 text-xs min-w-[256px] space-y-3">
         {/* Panel Header */}
@@ -382,11 +381,10 @@ export function ProjectFilesPanel({
                       onSelectFile(file.path, "document");
                     }
                   }}
-                  className={`p-2 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-all gap-2 overflow-hidden ${
-                    isActive
+                  className={`p-2 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-all gap-2 overflow-hidden ${isActive
                       ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-200 font-semibold"
                       : "bg-muted/30 hover:bg-accent border-border/30 text-foreground"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2 truncate min-w-0 flex-1">
                     {getFileIcon(file.ext, file.type)}
@@ -553,7 +551,7 @@ export function ProjectFilesPanel({
             <div className="space-y-1.5 font-mono text-[11px]">
               <span className="text-muted-foreground font-semibold block">Code to implement below:</span>
               <pre className="p-2.5 bg-background rounded-lg border border-border/60 text-emerald-400 overflow-x-auto text-[10px] whitespace-pre">
-{`\\begin{figure}[htbp]
+                {`\\begin{figure}[htbp]
   \\centering
   \\includegraphics[width=0.8\\textwidth]{${previewImage.path}}
   \\caption{${previewImage.name.replace(/_/g, " ")}}

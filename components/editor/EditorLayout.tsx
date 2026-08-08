@@ -77,42 +77,42 @@ const quickSymbols = [
 ];
 
 export const GROQ_MODELS = [
-    { id: "qwen/qwen3.6-27b", name: "Qwen 3.6 27B" },
-    { id: "qwen-qwq-32b", name: "Qwen QWQ 32B" },
-    { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
-    { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" },
-    { id: "gemma2-9b-it", name: "Gemma 2 9B" },
-    { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
-    { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 70B" },
-    { id: "openai/gpt-oss-20b", name: "OpenAI GPT OSS 20B" },
-    { id: "openai/gpt-oss-120b", name: "OpenAI GPT OSS 120B" },
+  { id: "qwen/qwen3.6-27b", name: "Qwen 3.6 27B" },
+  { id: "qwen-qwq-32b", name: "Qwen QWQ 32B" },
+  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
+  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" },
+  { id: "gemma2-9b-it", name: "Gemma 2 9B" },
+  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
+  { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 70B" },
+  { id: "openai/gpt-oss-20b", name: "OpenAI GPT OSS 20B" },
+  { id: "openai/gpt-oss-120b", name: "OpenAI GPT OSS 120B" },
 ];
 export const DEFAULT_MODEL = "qwen/qwen3.6-27b";
 
 export function extractLatexFromResponse(response: string): string | null {
-    const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
-    const match = response.match(pattern);
-    return match ? match[1].trim() : null;
+  const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
+  const match = response.match(pattern);
+  return match ? match[1].trim() : null;
 }
 
 export function extractChunkLatex(response: string): string | null {
-    const marker = response.indexOf("UPDATED_LATEX:");
-    if (marker === -1) {
-        return extractLatexFromResponse(response);
-    }
-    const afterMarker = response.slice(marker);
-    return extractLatexFromResponse(afterMarker);
+  const marker = response.indexOf("UPDATED_LATEX:");
+  if (marker === -1) {
+    return extractLatexFromResponse(response);
+  }
+  const afterMarker = response.slice(marker);
+  return extractLatexFromResponse(afterMarker);
 }
 
 export function extractChunkId(response: string): number | null {
-    const match = response.match(/CHUNK_ID:\s*(\d+)/);
-    return match ? parseInt(match[1], 10) : null;
+  const match = response.match(/CHUNK_ID:\s*(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
 }
 
 export function extractChangesSummary(response: string): string | null {
-    const marker = response.indexOf("CHANGES_SUMMARY:");
-    if (marker === -1) return null;
-    return response.slice(marker + "CHANGES_SUMMARY:".length).trim();
+  const marker = response.indexOf("CHANGES_SUMMARY:");
+  if (marker === -1) return null;
+  return response.slice(marker + "CHANGES_SUMMARY:".length).trim();
 }
 
 export function EditorLayout({ projectId }: EditorLayoutProps) {
@@ -129,7 +129,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
-  
+
   // Groq API & Model Config States
   const [groqApiKey, setGroqApiKey] = useState("");
   const [groqModel, setGroqModel] = useState(DEFAULT_MODEL);
@@ -333,7 +333,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           setCode(savedCode);
           setSaveStatus("saved");
         }
-      } catch (e) {}
+      } catch (e) { }
     };
 
     loadSavedDocument();
@@ -384,7 +384,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     // Instantly persist in LocalStorage for crash resilience
     try {
       localStorage.setItem(storageKey, updated);
-    } catch (e) {}
+    } catch (e) { }
 
     // Debounced vector sync after 1.5s inactivity
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -502,21 +502,21 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       // Build explicit edits list
       const editsList: EditItem[] = (data.edits && Array.isArray(data.edits) && data.edits.length > 0)
         ? data.edits
-            .filter((e: any) => e.original_chunk || e.proposed_chunk)
-            .map((e: any, idx: number) => ({
-              id: `edit-${Date.now()}-${idx}`,
-              original_chunk: e.original_chunk || "",
-              proposed_chunk: e.proposed_chunk || "",
-              explanation: e.explanation || data.explanation,
-            }))
+          .filter((e: any) => e.original_chunk || e.proposed_chunk)
+          .map((e: any, idx: number) => ({
+            id: `edit-${Date.now()}-${idx}`,
+            original_chunk: e.original_chunk || "",
+            proposed_chunk: e.proposed_chunk || "",
+            explanation: e.explanation || data.explanation,
+          }))
         : (data.original_chunk || data.proposed_chunk)
-        ? [{
+          ? [{
             id: `edit-${Date.now()}-0`,
             original_chunk: data.original_chunk || "",
             proposed_chunk: data.proposed_chunk || "",
             explanation: data.explanation || "AI Proposed Edit",
           }]
-        : [];
+          : [];
 
       const hasEdits = editsList.length > 0;
 
@@ -800,11 +800,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               variant="outline"
               size="sm"
               onClick={() => setFilesOpen(!filesOpen)}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${
-                filesOpen
+              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${filesOpen
                   ? "bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-300 font-semibold"
                   : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
-              }`}
+                }`}
               title={filesOpen ? "Hide Project Files" : "Show Project Files"}
             >
               <FolderGit2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -816,11 +815,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               variant="outline"
               size="sm"
               onClick={toggleAi}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${
-                aiOpen
+              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${aiOpen
                   ? "bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300 font-semibold"
                   : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
-              }`}
+                }`}
               title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
             >
               <Bot className="w-3.5 h-3.5 text-indigo-400" />
@@ -832,11 +830,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               variant="outline"
               size="sm"
               onClick={togglePdf}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${
-                pdfOpen
+              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
                   ? "bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-500/30 text-cyan-300 font-semibold"
                   : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
-              }`}
+                }`}
               title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
             >
               <Eye className="w-3.5 h-3.5 text-cyan-400" />
@@ -967,9 +964,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           {/* Panel 3 (Middle Right): PDF Viewer / Compiled Output */}
           <div
-            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
-              pdfOpen ? "w-[42%] min-w-[360px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
-            }`}
+            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${pdfOpen ? "w-[42%] min-w-[360px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
+              }`}
           >
             <div className="flex-1 h-full min-w-[360px] flex flex-col">
               <PDFViewer
@@ -983,9 +979,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           {/* Panel 4 (Far Right): Agent Experience */}
           <div
-            className={`h-full border-l border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
-              aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
-            }`}
+            className={`h-full border-l border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
+              }`}
           >
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
@@ -998,13 +993,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => setShowConfigPanel(!showConfigPanel)}
-                        className={`p-1 rounded-md border text-[10px] font-mono flex items-center gap-1 transition-colors ${
-                          showConfigPanel
+                        className={`p-1 rounded-md border text-[10px] font-mono flex items-center gap-1 transition-colors ${showConfigPanel
                             ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
                             : groqApiKey
-                            ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
-                            : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-accent"
-                        }`}
+                              ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
+                              : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-accent"
+                          }`}
                         title="Configure Groq API Key & Model"
                       >
                         <Key className="w-3 h-3 text-amber-400" />
@@ -1072,11 +1066,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   {messages.map((m) => (
                     <div
                       key={m.id}
-                      className={`p-2.5 rounded-xl border space-y-1.5 ${
-                        m.sender === "user"
+                      className={`p-2.5 rounded-xl border space-y-1.5 ${m.sender === "user"
                           ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
                           : "bg-muted/40 border-border/40 text-foreground mr-4"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
                         <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
@@ -1267,9 +1260,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <nav className="md:hidden h-14 border-t border-border/40 bg-card/95 backdrop-blur-xl flex items-center justify-around shrink-0 z-30">
         <button
           onClick={() => setActiveMobileTab("files")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${
-            activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
-          }`}
+          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
+            }`}
         >
           <FolderGit2 className="w-5 h-5" />
           <span>Files</span>
@@ -1277,9 +1269,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
         <button
           onClick={() => setActiveMobileTab("code")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${
-            activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
-          }`}
+          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
+            }`}
         >
           <FileCode2 className="w-5 h-5" />
           <span>Code</span>
@@ -1287,9 +1278,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
         <button
           onClick={() => setActiveMobileTab("pdf")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${
-            activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-muted-foreground"
-          }`}
+          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-muted-foreground"
+            }`}
         >
           <Eye className="w-5 h-5" />
           <span>PDF</span>
@@ -1383,11 +1373,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-3 rounded-xl border space-y-1.5 ${
-                    m.sender === "user"
+                  className={`p-3 rounded-xl border space-y-1.5 ${m.sender === "user"
                       ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
                       : "bg-muted/40 border-border/40 text-foreground mr-4"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
                     <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
