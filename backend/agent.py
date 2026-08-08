@@ -59,49 +59,66 @@ def get_chat_llm(
     model_override: Optional[str] = None,
     user_groq_key: Optional[str] = None,
     user_groq_model: Optional[str] = None,
+    use_server_groq_first: bool = True
 ):
     """
-    Main Agent LLM Engine:
-    - If user configures a Groq API key: Executes using selected Groq Model.
-    - If Groq API key is NOT configured on user side: Uses ChatNVIDIA with model 'openai/gpt-oss-120b'.
+    Main Agent LLM Engine selection:
+    1. If user provided a Groq API key in UI: Use ChatGroq with user_groq_key.
+    2. If use_server_groq_first and GROQ_API_KEY is in .env: Use ChatGroq with server GROQ_API_KEY (~500 tok/s speed).
+    3. If NVIDIA_API_KEY is in .env: Use ChatNVIDIA with 30s timeout.
+    4. Fallback to server GROQ_API_KEY if present.
     """
     has_user_groq = bool(user_groq_key and user_groq_key.strip())
+    server_groq_key = os.getenv("GROQ_API_KEY")
 
     if HAS_GROQ and has_user_groq:
         selected_model = model_override or user_groq_model or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
-        logger.info(f"MAIN AGENT GROQ ENGINE: Executing selected Groq Model '{selected_model}'")
+        logger.info(f"MAIN AGENT GROQ ENGINE (User Key): Executing Groq Model '{selected_model}'")
         return ChatGroq(
             model_name=selected_model,
             groq_api_key=user_groq_key.strip(),
             temperature=0.2,
-            max_tokens=4096
+            max_tokens=3072,
+            request_timeout=30.0
         )
 
-    # Fallback to ChatNVIDIA (model: openai/gpt-oss-120b) if Groq key is not configured on user side
+    # If server GROQ_API_KEY is configured in .env, prioritize it over NVIDIA NIM for ultra-fast, zero-timeout response (~500 tokens/sec)
+    if HAS_GROQ and server_groq_key and server_groq_key.strip() and use_server_groq_first:
+        selected_model = model_override or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
+        logger.info(f"MAIN AGENT GROQ ENGINE (Server Key): Executing Groq Model '{selected_model}'")
+        return ChatGroq(
+            model_name=selected_model,
+            groq_api_key=server_groq_key.strip(),
+            temperature=0.2,
+            max_tokens=3072,
+            request_timeout=30.0
+        )
+
     nvidia_api_key = os.getenv("NVIDIA_API_KEY")
-    if nvidia_api_key:
+    if nvidia_api_key and nvidia_api_key.strip():
         env_model = os.getenv("NVIDIA_LLM_MODEL")
         nvidia_model = "openai/gpt-oss-120b" if (not env_model or env_model in ["meta/llama-3.3-70b-instruct", "z-ai/glm-5.2"]) else env_model
         logger.info(f"MAIN AGENT NVIDIA ENGINE: User Groq key absent, using ChatNVIDIA model '{nvidia_model}'")
         try:
             return ChatNVIDIA(
                 model=nvidia_model,
-                nvidia_api_key=nvidia_api_key,
+                nvidia_api_key=nvidia_api_key.strip(),
                 temperature=0.2,
-                max_tokens=4096
+                max_tokens=3072,
+                timeout=30.0
             )
         except Exception as n_err:
             logger.warning(f"NVIDIA NIM initialization failed with {nvidia_model}: {n_err}")
 
-    # Fallback to server GROQ_API_KEY if available
-    server_groq_key = os.getenv("GROQ_API_KEY")
+    # Fallback to server GROQ_API_KEY if not used earlier
     if HAS_GROQ and server_groq_key and server_groq_key.strip():
-        selected_model = model_override or user_groq_model or "qwen/qwen3.6-27b"
+        selected_model = model_override or "qwen/qwen3.6-27b"
         return ChatGroq(
             model_name=selected_model,
             groq_api_key=server_groq_key.strip(),
             temperature=0.2,
-            max_tokens=4096
+            max_tokens=3072,
+            request_timeout=30.0
         )
 
     raise ValueError("No valid AI API Key configured. Please configure your Groq API Key in the AI settings panel (🔑 Key icon).")
@@ -369,17 +386,23 @@ def agent_chat(req: AgentChatRequest):
                 # Base LLM invocation for chat / inspection (no tool binding)
                 llm_response = llm.invoke(messages)
         except Exception as llm_err:
-            has_user_groq = bool(req.groq_api_key and req.groq_api_key.strip())
-            print(f"  ⚠️  Primary LLM failed: {llm_err}.")
-            if not has_user_groq:
+            print(f"  ⚠️  Primary LLM failed / timed out: {llm_err}.")
+            server_groq = os.getenv("GROQ_API_KEY")
+            has_groq_option = bool((req.groq_api_key and req.groq_api_key.strip()) or (server_groq and server_groq.strip()))
+            
+            if not has_groq_option:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="LLM outage / timeout detected on default model. Please configure your own API key using Groq provider in the AI settings panel (🔑 Key icon)."
                 )
 
-            print("  Retrying with fallback Groq model...")
+            print("  Retrying with fallback Groq engine...")
             try:
-                llm = get_chat_llm(model_override="llama-3.3-70b-versatile", user_groq_key=req.groq_api_key)
+                llm = get_chat_llm(
+                    model_override="qwen/qwen3.6-27b",
+                    user_groq_key=req.groq_api_key,
+                    use_server_groq_first=True
+                )
                 if mode == "EDIT_DOCUMENT":
                     try:
                         llm_with_tools = llm.bind_tools(AI_TOOLS)
@@ -392,7 +415,7 @@ def agent_chat(req: AgentChatRequest):
                 print(f"  ❌ Fallback LLM failed: {fallback_err}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"LLM generation failed ({llm_err}). Please configure a valid Groq API Key in the AI settings panel (🔑 Key icon)."
+                    detail="LLM outage / timeout detected on default model. Please configure your own API key using Groq provider in the AI settings panel (🔑 Key icon)."
                 )
 
         # Step 7: Process Tool Calls or Raw JSON Response
