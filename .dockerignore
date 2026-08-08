@@ -1,0 +1,11 @@
+.next
+node_modules
+backend/.venv
+.venv
+uploads
+.git
+.agents
+.hallmark
+dist
+out
+*.log

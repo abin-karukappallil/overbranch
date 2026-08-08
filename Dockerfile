@@ -1,4 +1,4 @@
-FROM node:20-bookworm-slim
+FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -23,8 +23,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # 2. Install Node.js Dependencies
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json package-lock.json* ./
+RUN npm install --legacy-peer-deps
 
 # 3. Install Python Dependencies
 COPY backend/requirements.txt ./backend/requirements.txt
