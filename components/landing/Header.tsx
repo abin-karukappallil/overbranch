@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { authClient } from "@/lib/auth-client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { GithubIcon } from "@/components/ui/github-icon";
 
 /* Hallmark · archetype: N5 Floating pill · nav: N5 · theme: Garden */
 export function LandingHeader() {
@@ -35,6 +36,16 @@ export function LandingHeader() {
           </a>
           <a href="#showcase" className="hover:text-foreground transition-colors">
             Document Engine
+          </a>
+          <a
+            href="https://github.com/abin-karukappallil/overbranch"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground transition-colors flex items-center gap-1.5 text-foreground/80 font-bold"
+            title="OverBranch Open Source GitHub Repository"
+          >
+            <GithubIcon className="w-3.5 h-3.5" />
+            <span>GitHub</span>
           </a>
         </nav>
 
@@ -126,6 +137,16 @@ export function LandingHeader() {
                 className="px-3 py-2 rounded-xl hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               >
                 Document Engine
+              </a>
+              <a
+                href="https://github.com/abin-karukappallil/overbranch"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setMobileMenuOpen(false)}
+                className="px-3 py-2 rounded-xl hover:bg-accent text-emerald-400 font-semibold transition-colors flex items-center gap-2"
+              >
+                <GithubIcon className="w-4 h-4" />
+                <span>GitHub Repository (Open Source)</span>
               </a>
             </nav>
             <div className="pt-3 border-t border-border/40 flex flex-col gap-2">

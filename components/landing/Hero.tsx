@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/badge-custom";
 import { authClient } from "@/lib/auth-client";
+import { GithubIcon } from "@/components/ui/github-icon";
 
 /* Hallmark · macrostructure: Workbench · theme: Garden · HP: HP1 Vertical-rail */
 export function LandingHero() {
@@ -42,9 +43,19 @@ export function LandingHero() {
           transition={{ duration: 0.4 }}
           className="inline-flex items-center gap-2"
         >
-          <StatusBadge variant="outline" dotPulse dotColor="bg-emerald-400">
-            <span className="text-xs font-mono tracking-wide uppercase">OverBranch Workbench v1.0</span>
-          </StatusBadge>
+          <a
+            href="https://github.com/abin-karukappallil/overbranch"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:opacity-90 transition-opacity"
+          >
+            <StatusBadge variant="outline" dotPulse dotColor="bg-emerald-400">
+              <span className="text-xs font-mono tracking-wide flex items-center gap-1.5">
+                <GithubIcon className="w-3.5 h-3.5 text-foreground" />
+                OverBranch — Fully Free and Open-Source
+              </span>
+            </StatusBadge>
+          </a>
         </motion.div>
 
         <h1
@@ -78,7 +89,7 @@ export function LandingHero() {
               >
                 <Link href="/dashboard" className="flex items-center gap-2">
                   <LayoutDashboard className="w-4 h-4" />
-                  <span>Open Workspace Dashboard</span>
+                  <span>Open Workspace</span>
                 </Link>
               </Button>
               <Button
@@ -87,10 +98,15 @@ export function LandingHero() {
                 asChild
                 className="w-full sm:w-auto h-11 px-6 border-border bg-card hover:bg-accent font-medium rounded-full text-sm"
               >
-                <Link href="/projects" className="flex items-center gap-2">
-                  <FolderGit2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-                  <span>View All Document Projects</span>
-                </Link>
+                <a
+                  href="https://github.com/abin-karukappallil/overbranch"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2"
+                >
+                  <GithubIcon className="w-4 h-4 text-foreground" />
+                  <span>GitHub Repository</span>
+                </a>
               </Button>
             </>
           ) : (
@@ -112,10 +128,15 @@ export function LandingHero() {
                 asChild
                 className="w-full sm:w-auto h-11 px-6 border-border bg-card hover:bg-accent font-medium rounded-full text-sm"
               >
-                <Link href="/login" className="flex items-center gap-2">
-                  <Terminal className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-                  <span>Sign In to Workspace</span>
-                </Link>
+                <a
+                  href="https://github.com/abin-karukappallil/overbranch"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2"
+                >
+                  <GithubIcon className="w-4 h-4 text-foreground" />
+                  <span>Star on GitHub</span>
+                </a>
               </Button>
             </>
           )}
@@ -127,6 +148,15 @@ export function LandingHero() {
           transition={{ duration: 0.6, delay: 0.35 }}
           className="flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground font-mono pt-1"
         >
+          <a
+            href="https://github.com/abin-karukappallil/overbranch"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>100% Free & Open-Source</span>
+          </a>
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             <span>Seminar & Report Templates</span>

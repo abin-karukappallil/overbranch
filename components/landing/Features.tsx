@@ -9,6 +9,8 @@ import {
   Terminal,
   Cpu,
   Layers,
+  Code,
+  ServerOff
 } from "lucide-react";
 
 /* Hallmark · archetype: F3 Tabular spec sheet · feature: F3 · theme: Cobalt */
@@ -55,6 +57,21 @@ const specRows = [
     detail: "Mobile-tested layout collapse, no horizontal scroll, and touch-optimized hit targets.",
     icon: Cpu,
   },
+  {
+    code: "07",
+    label: "Free and Open Source",
+    spec: "Open Source",
+    detail: "Fully Free and Open-Source",
+    icon: Code,
+  },
+  {
+    code: "08",
+    label: "Self hostable",
+    spec: "Host on your own server/system",
+    detail: "Use your own compute resources instead of relying on cloud providers..using docker self-host is like plug-and-play",
+    icon: ServerOff,
+  }
+
 ];
 
 export function LandingFeatures() {
