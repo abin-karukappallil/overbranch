@@ -2,7 +2,6 @@ FROM node:22-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
 
 # 1. Install System Dependencies: TeX Live Compilation Suite, Python3 & Tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -22,9 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 2. Install Node.js Dependencies
+# 2. Install Node.js Dependencies (including devDependencies required for Next.js build & Tailwind CSS)
 COPY package.json package-lock.json* ./
-RUN npm install --legacy-peer-deps
+RUN npm install --include=dev --legacy-peer-deps
 
 # 3. Install Python Dependencies
 COPY backend/requirements.txt ./backend/requirements.txt
@@ -32,6 +31,7 @@ RUN python3 -m pip install --no-cache-dir --break-system-packages -r backend/req
 
 # 4. Copy Project Files & Build Next.js Application
 COPY . .
+ENV NODE_ENV=production
 RUN npm run build
 
 # 5. Expose Ports & Volume
