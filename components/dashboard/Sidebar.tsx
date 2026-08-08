@@ -46,25 +46,23 @@ export function DashboardSidebar({ collapsed, onToggleCollapse, onOpenCommandPal
         collapsed ? "w-20" : "w-64"
       }`}
     >
-      <div className="h-16 px-4 border-b border-border/40 flex items-center justify-between">
-        <div className="flex items-center gap-3 overflow-hidden">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <OverBranchLogo
-              variant={collapsed ? "icon" : "full"}
-              size="md"
-              colored
-            />
-          </Link>
-        </div>
+      <div className={`h-16 border-b border-border/40 flex items-center ${collapsed ? "justify-center px-2 gap-1.5" : "justify-between px-4"}`}>
+        <Link href="/dashboard" className="flex items-center gap-2 shrink-0">
+          <OverBranchLogo
+            variant={collapsed ? "icon" : "full"}
+            size={collapsed ? "sm" : "md"}
+            colored
+          />
+        </Link>
 
         <Button
           variant="ghost"
           size="icon"
           onClick={onToggleCollapse}
-          className="h-8 w-8 text-muted-foreground hover:text-foreground shrink-0"
+          className={`${collapsed ? "h-7 w-7" : "h-8 w-8"} text-muted-foreground hover:text-foreground shrink-0`}
           title={collapsed ? "Expand Sidebar" : "Collapse Sidebar"}
         >
-          {collapsed ? <PanelLeft className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          {collapsed ? <PanelLeft className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-4 h-4" />}
         </Button>
       </div>
 

@@ -21,8 +21,11 @@ export function OverBranchLogo({
   textClassName = "",
   iconClassName = "",
   animated = true,
-  colored = false,
+  colored = true,
 }: LogoProps) {
+  const reactId = React.useId ? React.useId().replace(/:/g, "") : "obLogo";
+  const gradientId = `obLogoGrad_${reactId}`;
+
   const pixelSize =
     typeof size === "number"
       ? size
@@ -37,8 +40,8 @@ export function OverBranchLogo({
   const showIcon = variant === "full" || variant === "icon";
   const showText = variant === "full" || variant === "text";
 
-  const strokeColor = colored ? "url(#obLogoGradient)" : "currentColor";
-  const fillColor = colored ? "url(#obLogoGradient)" : "currentColor";
+  const strokeColor = colored ? `url(#${gradientId})` : "currentColor";
+  const fillColor = colored ? `url(#${gradientId})` : "currentColor";
 
   return (
     <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
@@ -58,50 +61,56 @@ export function OverBranchLogo({
             className="w-full h-full text-foreground"
           >
             <defs>
-              <linearGradient id="obLogoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#6366f1" />
-                <stop offset="50%" stopColor="#a855f7" />
-                <stop offset="100%" stopColor="#06b6d4" />
+              <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#10b981" />
+                <stop offset="60%" stopColor="#059669" />
+                <stop offset="100%" stopColor="#d97706" />
               </linearGradient>
             </defs>
 
+            {/* Main Document Body Contour */}
             <path
-              d="M13 5H21L25 9V17C25 18.1046 24.1046 19 23 19H13C11.8954 19 11 18.1046 11 17V7C11 5.89543 11.8954 5 13 5Z"
-              stroke={strokeColor}
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            <path
-              d="M21 5V9H25"
+              d="M10 6C10 4.89543 10.8954 4 12 4H22L27 9V30C27 31.1046 26.1046 32 25 32H12C10.8954 32 10 31.1046 10 30V6Z"
               stroke={strokeColor}
               strokeWidth="2.2"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
 
+            {/* Folded Corner */}
             <path
-              d="M18 30V19"
+              d="M22 4V9H27"
+              stroke={strokeColor}
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+
+            {/* Central Branching Nodes (OverBranch) */}
+            <path
+              d="M18 27V15"
               stroke={strokeColor}
               strokeWidth="2.2"
               strokeLinecap="round"
             />
             <path
-              d="M18 26L9 20"
+              d="M18 22L13 17"
               stroke={strokeColor}
               strokeWidth="2.2"
               strokeLinecap="round"
             />
             <path
-              d="M18 26L27 20"
+              d="M18 22L23 17"
               stroke={strokeColor}
               strokeWidth="2.2"
               strokeLinecap="round"
             />
 
-            <circle cx="18" cy="30" r="2.2" fill={fillColor} stroke={strokeColor} strokeWidth="1" />
-            <circle cx="7" cy="19" r="2.2" fill={fillColor} stroke={strokeColor} strokeWidth="1" />
-            <circle cx="29" cy="19" r="2.2" fill={fillColor} stroke={strokeColor} strokeWidth="1" />
+            {/* Node Dots */}
+            <circle cx="18" cy="27" r="2" fill={fillColor} />
+            <circle cx="13" cy="17" r="2" fill={fillColor} />
+            <circle cx="23" cy="17" r="2" fill={fillColor} />
+            <circle cx="18" cy="15" r="2" fill={fillColor} />
           </svg>
         </div>
       )}

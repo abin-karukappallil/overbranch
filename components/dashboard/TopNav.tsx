@@ -29,13 +29,13 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
           </Button>
         )}
         <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground">
-          <Link href="/dashboard" className="hover:opacity-90 transition-opacity">
-            <OverBranchLogo size="sm" variant="full" colored />
+          <Link href="/dashboard" className="hover:text-foreground transition-colors font-bold text-foreground">
+            OverBranch
           </Link>
           {pathSegments.map((segment, index) => (
             <React.Fragment key={segment}>
               <ChevronRight className="w-3 h-3 text-border" />
-              <span className={index === pathSegments.length - 1 ? "text-foreground font-medium" : "hover:text-foreground"}>
+              <span className={index === pathSegments.length - 1 ? "text-foreground font-medium capitalize" : "hover:text-foreground capitalize"}>
                 {segment}
               </span>
             </React.Fragment>
