@@ -29,6 +29,7 @@ class FindReplaceAllArgs(BaseModel):
 
 @tool("edit_chunk", args_schema=EditChunkArgs)
 def edit_chunk(chunk_index: int, target_text: str, replacement_code: str, rationale: str) -> Dict[str, Any]:
+    """Replace an exact text span within a retrieved chunk with updated LaTeX code."""
     print(f"\n🛠️  [TOOL EXECUTION: edit_chunk]\n  ► CHUNK Index: {chunk_index}\n  ► Target Text: '{target_text}'\n  ► Replacement: '{replacement_code[:60]}...'\n  ► Rationale: {rationale}\n")
     return {
         "action": "edit",
@@ -40,6 +41,7 @@ def edit_chunk(chunk_index: int, target_text: str, replacement_code: str, ration
 
 @tool("create_content", args_schema=CreateContentArgs)
 def create_content(new_code: str, anchor_chunk_index: Optional[int] = None, position: str = "end", rationale: str = "") -> Dict[str, Any]:
+    """Create new LaTeX content, optionally anchored relative to an existing chunk."""
     print(f"\n✨ [TOOL EXECUTION: create_content]\n  ► Anchor CHUNK: {anchor_chunk_index}\n  ► Position: {position}\n  ► New Code Preview: '{new_code[:80]}...'\n  ► Rationale: {rationale}\n")
     return {
         "action": "create",
@@ -51,6 +53,7 @@ def create_content(new_code: str, anchor_chunk_index: Optional[int] = None, posi
 
 @tool("delete_chunk", args_schema=DeleteChunkArgs)
 def delete_chunk(chunk_index: int, target_text: str, rationale: str) -> Dict[str, Any]:
+    """Delete an exact text span from a specific retrieved chunk."""
     print(f"\n🗑️  [TOOL EXECUTION: delete_chunk]\n  ► CHUNK Index: {chunk_index}\n  ► Target to Delete: '{target_text}'\n  ► Rationale: {rationale}\n")
     return {
         "action": "delete",
@@ -62,6 +65,7 @@ def delete_chunk(chunk_index: int, target_text: str, rationale: str) -> Dict[str
 
 @tool("find_and_replace_all", args_schema=FindReplaceAllArgs)
 def find_and_replace_all(search_pattern: str, replacement_pattern: str, rationale: str) -> Dict[str, Any]:
+    """Request a document-wide literal find-and-replace transformation."""
     print(f"\n🔍 [TOOL EXECUTION: find_and_replace_all]\n  ► Search Pattern: '{search_pattern}'\n  ► Replacement: '{replacement_pattern}'\n  ► Rationale: {rationale}\n")
     return {
         "action": "global_replace",
@@ -77,6 +81,7 @@ class SearchChunksArgs(BaseModel):
 
 @tool("search_document_chunks", args_schema=SearchChunksArgs)
 def search_document_chunks(query: str) -> Dict[str, Any]:
+    """Search indexed document chunks semantically using a vector query."""
     print(f"\n🔎 [TOOL EXECUTION: search_document_chunks]\n  ► Vector Query: '{query}'\n")
     return {
         "action": "search_chunks",
