@@ -25,16 +25,19 @@ import {
   Check,
   HardDrive,
   ShieldAlert,
+  AlertTriangle,
   Lock,
 } from "lucide-react";
 import { CompileToolbar } from "@/components/editor/CompileToolbar";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
+import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
+import { FolderGit2 } from "lucide-react";
 
 interface EditorLayoutProps {
   projectId?: string;
@@ -115,7 +118,9 @@ export function extractChangesSummary(response: string): string | null {
 export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [code, setCode] = useState(initialLatexCode);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
-  const [activeMobileTab, setActiveMobileTab] = useState<"code" | "pdf">("code");
+  const [activeMobileTab, setActiveMobileTab] = useState<"code" | "files" | "pdf" | "ai">("code");
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [activeFilePath, setActiveFilePath] = useState("main.tex");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isCompiling, setIsCompiling] = useState(false);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
@@ -299,17 +304,17 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const storageKey = `overbranch_code_${projectId || 'default'}_main.tex`;
+  const storageKey = `overbranch_code_${projectId || 'default'}_${activeFilePath}`;
 
-  // 1. Load saved code from backend API (Supabase DB + Disk) or LocalStorage on mount
+  // 1. Load saved code from backend API (Supabase DB + Disk) or LocalStorage when activeFilePath or projectId changes
   useEffect(() => {
     const loadSavedDocument = async () => {
       try {
         const activeProj = projectId || "proj-1";
-        const res = await fetch(`http://localhost:8000/api/projects/get-file?project_id=${activeProj}&file_path=main.tex`);
+        const res = await fetch(`http://localhost:8000/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.raw_code && data.raw_code.trim()) {
+          if (data.raw_code !== undefined) {
             setCode(data.raw_code);
             setSaveStatus("saved");
             localStorage.setItem(storageKey, data.raw_code);
@@ -323,7 +328,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       // Fallback to LocalStorage
       try {
         const savedCode = localStorage.getItem(storageKey);
-        if (savedCode && savedCode.trim()) {
+        if (savedCode !== null) {
           setCode(savedCode);
           setSaveStatus("saved");
         }
@@ -331,7 +336,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     };
 
     loadSavedDocument();
-  }, [projectId, storageKey]);
+  }, [projectId, activeFilePath, storageKey]);
 
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
   const saveDocument = async (newCode: string, showToast = true) => {
@@ -348,7 +353,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: activeProj,
-          file_path: "main.tex",
+          file_path: activeFilePath,
           raw_code: newCode,
         }),
       });
@@ -356,7 +361,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       if (res.ok) {
         setSaveStatus("saved");
         if (showToast) {
-          toast.success("Document saved & search index synced!");
+          toast.success(`Saved ${activeFilePath}!`);
         }
       } else {
         setSaveStatus("unsaved");
@@ -482,7 +487,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       });
 
       if (!response.ok) {
-        throw new Error(`AI Agent returned status ${response.status}`);
+        const errJson = await response.json().catch(() => ({}));
+        const detailMsg = errJson.detail || `AI Agent returned status ${response.status}`;
+        throw new Error(detailMsg);
       }
 
       const data = await response.json();
@@ -534,13 +541,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         setDiffData(null);
       }
     } catch (err: any) {
-      toast.error(`AI Agent Error: ${err.message || "Failed to reach AI service"}`);
+      const isUnconfiguredGroq = !userGroqKey;
+      const warningMsg = isUnconfiguredGroq
+        ? `⚠️ LLM outage / timeout detected on default model. Please configure your own API key using Groq provider in the AI settings panel (🔑 Key icon).`
+        : `AI Agent Error: ${err.message || "Failed to reach AI service"}`;
+
+      toast.error(warningMsg, { duration: 6000 });
       setMessages((prev) => [
         ...prev,
         {
           id: `ai-err-${Date.now()}`,
           sender: "assistant",
-          text: `Error processing request: ${err.message}. Please verify the Python backend service is running.`,
+          text: warningMsg,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         },
       ]);
@@ -781,6 +793,22 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               )}
             </span>
 
+            {/* Files Panel Toggle Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setFilesOpen(!filesOpen)}
+              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${
+                filesOpen
+                  ? "bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-300 font-semibold"
+                  : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
+              }`}
+              title={filesOpen ? "Hide Project Files" : "Show Project Files"}
+            >
+              <FolderGit2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Files</span>
+            </Button>
+
             {/* AI Assistant Toggle Button */}
             <Button
               variant="outline"
@@ -794,7 +822,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
             >
               <Bot className="w-3.5 h-3.5 text-indigo-400" />
-              <span>AI Panel <span className="text-[9px] opacity-60 ml-0.5">(Cmd+L)</span></span>
+              <span>Agent <span className="text-[9px] opacity-60 ml-0.5">(Cmd+L)</span></span>
             </Button>
 
             {/* PDF Preview Toggle Button */}
@@ -834,10 +862,127 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       {/* Desktop Main Split View */}
       <div className="hidden md:flex flex-1 overflow-hidden relative">
         <div className="w-full h-full flex overflow-hidden">
-          {/* Left Panel: AI Assistant Chat */}
+          {/* Panel 1 (Far Left): Project Files & Image Uploads */}
+          <ProjectFilesPanel
+            projectId={projectId || "proj-1"}
+            activeFilePath={activeFilePath}
+            isOpen={filesOpen}
+            onClose={() => setFilesOpen(false)}
+            onSelectFile={(filePath) => setActiveFilePath(filePath)}
+            onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
+          />
+
+          {/* Panel 2 (Middle Left): Monaco Code Editor */}
+          <div className="flex-1 min-w-[320px] bg-background flex flex-col h-full border-r border-border/40 relative">
+            <div className="px-3 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0">
+              <div className="flex items-center gap-2 overflow-x-auto py-0.5">
+                <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
+                  Editing: {activeFilePath}
+                </span>
+                <span className="text-[10px] text-muted-foreground uppercase font-semibold shrink-0">Quick TeX:</span>
+                {quickSymbols.map((sym) => (
+                  <button
+                    key={sym.label}
+                    onClick={() => insertSymbol(sym.insert)}
+                    className="px-2 py-0.5 rounded bg-muted/60 hover:bg-accent text-indigo-300 hover:text-white border border-border/40 shrink-0 transition-colors"
+                  >
+                    {sym.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-hidden relative">
+              <Editor
+                height="100%"
+                defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
+                theme="vs-dark"
+                value={code}
+                onMount={handleEditorMount}
+                onChange={handleCodeChange}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: false,
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  readOnly: isViewer,
+                }}
+              />
+
+              {/* Floating Non-Overlapping In-Editor Accept/Reject Action Bar */}
+              {diffData && diffEditsList.length > 0 && (
+                <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
+                  <div className="flex items-center justify-between font-bold text-slate-100">
+                    <div className="flex items-center gap-1.5 text-indigo-400">
+                      <Sparkles className="w-4 h-4" />
+                      <span>In-Editor Code Edit</span>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold font-mono">
+                      {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
+                    </span>
+                  </div>
+
+                  {/* Red / Green Line Preview */}
+                  <div className="max-h-24 overflow-y-auto bg-black/60 p-2 rounded-lg text-[10px] space-y-1 border border-border/40 font-mono">
+                    {diffEditsList[0].original_chunk && (
+                      <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
+                        - {diffEditsList[0].original_chunk.split("\n")[0]}
+                      </div>
+                    )}
+                    {diffEditsList[0].proposed_chunk && (
+                      <div className="text-emerald-300 bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
+                        + {diffEditsList[0].proposed_chunk.split("\n")[0]}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Accept / Reject Buttons */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRejectAllEdits}
+                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Reject</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptAllEdits(diffEditsList)}
+                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-600/20"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Panel 3 (Middle Right): PDF Viewer / Compiled Output */}
           <div
-            className={`h-full border-r border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
-              aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
+            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
+              pdfOpen ? "w-[42%] min-w-[360px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
+            }`}
+          >
+            <div className="flex-1 h-full min-w-[360px] flex flex-col">
+              <PDFViewer
+                pdfBase64={pdfBase64}
+                isCompiling={isCompiling}
+                onRecompile={() => handleCompile()}
+                errorLog={errorLog}
+              />
+            </div>
+          </div>
+
+          {/* Panel 4 (Far Right): Agent Experience */}
+          <div
+            className={`h-full border-l border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
+              aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
             }`}
           >
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
@@ -846,7 +991,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <Bot className="w-4 h-4 text-indigo-400" />
-                      <span className="font-bold text-foreground">Agentic</span>
+                      <span className="font-bold text-foreground">Agentic Xperience</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
@@ -861,7 +1006,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         title="Configure Groq API Key & Model"
                       >
                         <Key className="w-3 h-3 text-amber-400" />
-                        <span className="truncate max-w-[90px]">{groqModel}</span>
+                        <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
                         <Settings2 className="w-3 h-3" />
                       </button>
                       <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-mono text-[10px]">
@@ -886,7 +1031,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         <label className="text-[10px] text-muted-foreground block font-semibold">Groq API Key:</label>
                         <input
                           type="password"
-                          placeholder="gsk_..."
+                          placeholder="gsk_... (Blank = NVIDIA gpt-oss-120b)"
                           value={groqApiKey}
                           onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
                           className="w-full h-8 px-2 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
@@ -907,6 +1052,16 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                           ))}
                         </select>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Small Warning Banner if Groq key is not configured */}
+                  {!groqApiKey && (
+                    <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="leading-snug">
+                        Groq API key not set. Using default NVIDIA model. If response fails, add your Groq key in AI settings (🔑).
+                      </span>
                     </div>
                   )}
                 </div>
@@ -931,7 +1086,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   {isAgentThinking && (
                     <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-[11px] animate-pulse font-mono">
                       <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Generating LaTeX edit proposal via NVIDIA NIM...</span>
+                      <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq" : "NVIDIA (openai/gpt-oss-120b)"}...</span>
                     </div>
                   )}
                   <div ref={chatEndRef} />
@@ -1008,130 +1163,49 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               </div>
             </div>
           </div>
-
-          {/* Middle Panel: Monaco Editor or Overlay DiffWidget */}
-          <div className="flex-1 min-w-[320px] bg-background flex flex-col h-full border-r border-border/40 relative">
-            <div className="px-3 py-1 border-b border-border/30 bg-card/40 flex items-center gap-1.5 overflow-x-auto shrink-0 font-mono text-[11px]">
-              <span className="text-[10px] text-muted-foreground uppercase px-1 font-semibold shrink-0">Quick TeX:</span>
-              {quickSymbols.map((sym) => (
-                <button
-                  key={sym.label}
-                  onClick={() => insertSymbol(sym.insert)}
-                  className="px-2 py-1 rounded bg-muted/60 hover:bg-accent text-indigo-300 hover:text-white border border-border/40 shrink-0 transition-colors"
-                >
-                  {sym.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex-1 overflow-hidden relative">
-              <Editor
-                height="100%"
-                defaultLanguage="latex"
-                theme="vs-dark"
-                value={code}
-                onMount={handleEditorMount}
-                onChange={handleCodeChange}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  lineNumbers: "on",
-                  scrollBeyondLastLine: false,
-                  wordWrap: "on",
-                  automaticLayout: true,
-                  readOnly: isViewer,
-                }}
-              />
-
-              {/* Floating Non-Overlapping In-Editor Accept/Reject Action Bar */}
-              {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
-                  <div className="flex items-center justify-between font-bold text-slate-100">
-                    <div className="flex items-center gap-1.5 text-indigo-400">
-                      <Sparkles className="w-4 h-4" />
-                      <span>In-Editor Code Edit</span>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold font-mono">
-                      {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
-                    </span>
-                  </div>
-
-                  {/* Red / Green Line Preview */}
-                  <div className="max-h-24 overflow-y-auto bg-black/60 p-2 rounded-lg text-[10px] space-y-1 border border-border/40 font-mono">
-                    {diffEditsList[0].original_chunk && (
-                      <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
-                        - {diffEditsList[0].original_chunk.split("\n")[0]}
-                      </div>
-                    )}
-                    {diffEditsList[0].proposed_chunk && (
-                      <div className="text-emerald-300 bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
-                        + {diffEditsList[0].proposed_chunk.split("\n")[0]}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Accept / Reject Buttons */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleAcceptAllEdits(diffEditsList)}
-                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-600/20"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Accept</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Panel: PDF Viewer */}
-          <div
-            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${
-              pdfOpen ? "w-[42%] min-w-[360px] border-l border-border/40" : "w-0 opacity-0 pointer-events-none border-l-0"
-            }`}
-          >
-            <div className="flex-1 h-full min-w-[360px] flex flex-col">
-              <PDFViewer
-                pdfBase64={pdfBase64}
-                isCompiling={isCompiling}
-                onRecompile={() => handleCompile()}
-                errorLog={errorLog}
-              />
-            </div>
-          </div>
         </div>
       </div>
 
       {/* Mobile Viewports */}
       <div className="flex md:hidden flex-1 overflow-hidden relative">
+        {activeMobileTab === "files" && (
+          <div className="flex-1 flex flex-col bg-background overflow-hidden relative">
+            <ProjectFilesPanel
+              projectId={projectId || "proj-1"}
+              activeFilePath={activeFilePath}
+              isOpen={true}
+              onClose={() => setActiveMobileTab("code")}
+              onSelectFile={(filePath) => {
+                setActiveFilePath(filePath);
+                setActiveMobileTab("code");
+              }}
+              onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
+            />
+          </div>
+        )}
+
         {activeMobileTab === "code" && (
           <div className="flex-1 flex flex-col bg-background overflow-hidden relative">
-            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center gap-1.5 overflow-x-auto shrink-0 font-mono text-[11px]">
-              {quickSymbols.map((sym) => (
-                <button
-                  key={sym.label}
-                  onClick={() => insertSymbol(sym.insert)}
-                  className="px-2 py-1 rounded bg-muted/60 text-indigo-300 border border-border/40 shrink-0 text-xs"
-                >
-                  {sym.label}
-                </button>
-              ))}
+            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px]">
+              <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
+                {activeFilePath}
+              </span>
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                {quickSymbols.map((sym) => (
+                  <button
+                    key={sym.label}
+                    onClick={() => insertSymbol(sym.insert)}
+                    className="px-2 py-1 rounded bg-muted/60 text-indigo-300 border border-border/40 shrink-0 text-xs"
+                  >
+                    {sym.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="flex-1 overflow-hidden relative">
               <Editor
                 height="100%"
-                defaultLanguage="latex"
+                defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                 theme="vs-dark"
                 value={code}
                 onMount={handleEditorMount}
@@ -1190,13 +1264,23 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden h-14 border-t border-border/40 bg-card/95 backdrop-blur-xl flex items-center justify-around shrink-0 z-30">
         <button
+          onClick={() => setActiveMobileTab("files")}
+          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${
+            activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
+          }`}
+        >
+          <FolderGit2 className="w-5 h-5" />
+          <span>Files</span>
+        </button>
+
+        <button
           onClick={() => setActiveMobileTab("code")}
           className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${
             activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
           }`}
         >
           <FileCode2 className="w-5 h-5" />
-          <span>Code Editor</span>
+          <span>Code</span>
         </button>
 
         <button
@@ -1206,7 +1290,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           }`}
         >
           <Eye className="w-5 h-5" />
-          <span>PDF Preview</span>
+          <span>PDF</span>
         </button>
 
         <button
@@ -1237,7 +1321,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     title="Configure Groq API Key & Model"
                   >
                     <Key className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="truncate max-w-[90px]">{groqModel}</span>
+                    <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
                     <Settings2 className="w-3.5 h-3.5" />
                   </button>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-muted-foreground p-1">
@@ -1259,7 +1343,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <label className="text-xs text-muted-foreground block font-semibold">Groq API Key:</label>
                     <input
                       type="password"
-                      placeholder="gsk_..."
+                      placeholder="gsk_... (Blank = NVIDIA gpt-oss-120b)"
                       value={groqApiKey}
                       onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
                       className="w-full h-9 px-2.5 rounded-lg bg-card border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
@@ -1280,6 +1364,15 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       ))}
                     </select>
                   </div>
+                  {/* Small Warning Banner if Groq key is not configured */}
+                  {!groqApiKey && (
+                    <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="leading-snug">
+                        Groq API key not set. Using default NVIDIA model. If response fails, add your Groq key in AI settings (🔑).
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1304,7 +1397,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               {isAgentThinking && (
                 <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-xs animate-pulse font-mono">
                   <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
-                  <span>Generating LaTeX edit proposal via NVIDIA NIM...</span>
+                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq" : "NVIDIA (openai/gpt-oss-120b)"}...</span>
                 </div>
               )}
               <div ref={mobileChatEndRef} />

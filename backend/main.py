@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -47,7 +50,8 @@ def compile_endpoint(req: CompileRequest):
         latex_code=code,
         engine=req.engine,
         images=images_dict,
-        files=files_dict
+        files=files_dict,
+        project_id=req.project_id
     )
     return result
 

@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/ui/command-palette";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
 
   return (
@@ -16,20 +17,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <DashboardSidebar
         collapsed={collapsed}
+        mobileOpen={mobileOpen}
         onToggleCollapse={() => setCollapsed(!collapsed)}
+        onCloseMobile={() => setMobileOpen(false)}
         onOpenCommandPalette={() => setCommandOpen(true)}
       />
 
       <div
-        className={`transition-all duration-300 flex flex-col min-h-screen ${
-          collapsed ? "pl-20" : "pl-64"
+        className={`transition-all duration-300 flex flex-col min-h-screen pl-0 ${
+          collapsed ? "md:pl-20" : "md:pl-64"
         }`}
       >
         <DashboardTopNav
           collapsed={collapsed}
           onOpenCommandPalette={() => setCommandOpen(true)}
+          onToggleMobileSidebar={() => setMobileOpen(!mobileOpen)}
         />
-        <main className="flex-1 p-4 sm:p-8 max-w-7xl mx-auto w-full">
+        <main className="flex-1 px-4 py-5 sm:p-6 md:p-8 max-w-7xl mx-auto w-full min-w-0">
           {children}
         </main>
       </div>

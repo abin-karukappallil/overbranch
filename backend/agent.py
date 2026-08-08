@@ -23,7 +23,7 @@ import prompt_builder
 from memory import conversation_memory, project_memory
 from tools import AI_TOOLS, process_tool_calls
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger("agent")
 logging.basicConfig(level=logging.INFO)
@@ -62,26 +62,27 @@ def get_chat_llm(
 ):
     """
     Main Agent LLM Engine:
-    Executes using the Groq Model selected by the user (or env GROQ_API_KEY).
-    Falls back to ChatNVIDIA if Groq key is absent.
+    - If user configures a Groq API key: Executes using selected Groq Model.
+    - If Groq API key is NOT configured on user side: Uses ChatNVIDIA with model 'openai/gpt-oss-120b'.
     """
-    groq_key = user_groq_key or os.getenv("GROQ_API_KEY")
-    selected_model = model_override or user_groq_model or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
+    has_user_groq = bool(user_groq_key and user_groq_key.strip())
 
-    if HAS_GROQ and groq_key and groq_key.strip():
+    if HAS_GROQ and has_user_groq:
+        selected_model = model_override or user_groq_model or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
         logger.info(f"MAIN AGENT GROQ ENGINE: Executing selected Groq Model '{selected_model}'")
         return ChatGroq(
             model_name=selected_model,
-            groq_api_key=groq_key.strip(),
+            groq_api_key=user_groq_key.strip(),
             temperature=0.2,
             max_tokens=4096
         )
 
-    # Fallback to ChatNVIDIA if Groq key is absent
+    # Fallback to ChatNVIDIA (model: openai/gpt-oss-120b) if Groq key is not configured on user side
     nvidia_api_key = os.getenv("NVIDIA_API_KEY")
     if nvidia_api_key:
-        nvidia_model = os.getenv("NVIDIA_LLM_MODEL", "meta/llama-3.3-70b-instruct")
-        logger.info(f"MAIN AGENT NVIDIA ENGINE: Groq key absent, using ChatNVIDIA model '{nvidia_model}'")
+        env_model = os.getenv("NVIDIA_LLM_MODEL")
+        nvidia_model = "openai/gpt-oss-120b" if (not env_model or env_model in ["meta/llama-3.3-70b-instruct", "z-ai/glm-5.2"]) else env_model
+        logger.info(f"MAIN AGENT NVIDIA ENGINE: User Groq key absent, using ChatNVIDIA model '{nvidia_model}'")
         try:
             return ChatNVIDIA(
                 model=nvidia_model,
@@ -90,9 +91,20 @@ def get_chat_llm(
                 max_tokens=4096
             )
         except Exception as n_err:
-            logger.warning(f"NVIDIA NIM initialization failed: {n_err}")
+            logger.warning(f"NVIDIA NIM initialization failed with {nvidia_model}: {n_err}")
 
-    raise ValueError("Groq API Key required for generation. Please configure your Groq API Key in the AI settings panel (🔑 Key icon).")
+    # Fallback to server GROQ_API_KEY if available
+    server_groq_key = os.getenv("GROQ_API_KEY")
+    if HAS_GROQ and server_groq_key and server_groq_key.strip():
+        selected_model = model_override or user_groq_model or "qwen/qwen3.6-27b"
+        return ChatGroq(
+            model_name=selected_model,
+            groq_api_key=server_groq_key.strip(),
+            temperature=0.2,
+            max_tokens=4096
+        )
+
+    raise ValueError("No valid AI API Key configured. Please configure your Groq API Key in the AI settings panel (🔑 Key icon).")
 
 
 # ─── Response Parsing Utilities ───────────────────────────────────────────────
@@ -355,7 +367,15 @@ def agent_chat(req: AgentChatRequest):
                 # Base LLM invocation for chat / inspection (no tool binding)
                 llm_response = llm.invoke(messages)
         except Exception as llm_err:
-            print(f"  ⚠️  Primary LLM failed: {llm_err}. Retrying with fallback model...")
+            has_user_groq = bool(req.groq_api_key and req.groq_api_key.strip())
+            print(f"  ⚠️  Primary LLM failed: {llm_err}.")
+            if not has_user_groq:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="LLM outage / timeout detected on default model. Please configure your own API key using Groq provider in the AI settings panel (🔑 Key icon)."
+                )
+
+            print("  Retrying with fallback Groq model...")
             try:
                 llm = get_chat_llm(model_override="llama-3.3-70b-versatile", user_groq_key=req.groq_api_key)
                 if mode == "EDIT_DOCUMENT":

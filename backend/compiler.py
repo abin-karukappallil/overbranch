@@ -296,7 +296,7 @@ def generate_beamer_pdf(latex_code: str) -> str:
     return base64.b64encode(buffer.read()).decode("utf-8")
 
 
-def generate_fallback_pdf(latex_code: str) -> str:
+def generate_fallback_pdf(latex_code: str, tmpdir: Optional[Path] = None) -> str:
     """
     Parses LaTeX code structure and generates a crisp PDF document using ReportLab
     when local TeX binary (pdflatex/tectonic) is missing or times out.
@@ -380,7 +380,7 @@ def generate_fallback_pdf(latex_code: str) -> str:
         fontName='Courier-Oblique',
         alignment=1,
         textColor=colors.HexColor('#4338ca'),
-        backColor=colors.HexColor('#eeef44'),
+        backColor=colors.HexColor('#eef2ff'),
         borderPadding=6,
         spaceAfter=8
     )
@@ -441,6 +441,26 @@ def generate_fallback_pdf(latex_code: str) -> str:
             math_lines.append(stripped)
             continue
 
+        # Check for \includegraphics
+        img_match = re.search(r'\\includegraphics(?:\[.*?\])?\{([^}]+)\}', stripped)
+        if img_match:
+            img_filename = img_match.group(1).strip()
+            found_img_path = None
+            if tmpdir:
+                candidate = (tmpdir / img_filename).resolve()
+                if candidate.exists() and candidate.is_file():
+                    found_img_path = candidate
+            if found_img_path:
+                try:
+                    from reportlab.platypus import Image as RLImage
+                    story.append(RLImage(str(found_img_path), width=350, height=250, preserveAspectRatio=True))
+                    story.append(Spacer(1, 6))
+                except Exception:
+                    story.append(Paragraph(f"<b>[ Asset Image: {img_filename} ]</b>", body_style))
+            else:
+                story.append(Paragraph(f"<b>[ Asset Image: {img_filename} ]</b>", body_style))
+            continue
+
         section_match = re.match(r'\\section\{([^}]+)\}', stripped)
         if section_match:
             sec_title = clean_tex_syntax(section_match.group(1))
@@ -480,11 +500,13 @@ def compile_latex(
     latex_code: str,
     engine: str = "latexmk",
     images: Optional[List[Dict[str, str]]] = None,
-    files: Optional[List[Dict[str, str]]] = None
+    files: Optional[List[Dict[str, str]]] = None,
+    project_id: Optional[str] = None
 ) -> dict:
     """
     Compiles LaTeX code into PDF using latexmk (with -f forced compilation & error suppression),
     pdflatex, xelatex, lualatex, tectonic, or the instant ReportLab fallback engine.
+    Copies all uploaded assets/files belonging to project_id into temporary compilation directory.
     """
     start_time = time.time()
     augment_path_for_latex()
@@ -496,10 +518,26 @@ def compile_latex(
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
         try:
+            # 1. Copy project disk assets if project_id is provided
+            if project_id and project_id.strip():
+                safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
+                uploads_base_dir = Path(os.path.join(os.path.dirname(__file__), "..", "uploads", "projects")).resolve()
+                project_dir = uploads_base_dir / safe_project
+                if project_dir.exists():
+                    for item in project_dir.rglob("*"):
+                        if item.is_file():
+                            rel_path = item.relative_to(project_dir)
+                            if str(rel_path) == "main.tex":
+                                continue
+                            dest = tmpdir / rel_path
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(item, dest)
+
+            # 2. Write current main.tex
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
 
-            # Write extra asset files and images if provided
+            # 3. Write extra asset files and images if provided directly in payload
             if images:
                 for img in images:
                     write_file_safely(tmpdir, img.get("filename", ""), img.get("data", ""))
@@ -556,18 +594,19 @@ def compile_latex(
         except Exception:
             pass
 
-    # Fallback to instant clean ReportLab TeX renderer if binaries are unavailable, timeout, or fail
-    try:
-        pdf_base64 = generate_fallback_pdf(latex_code)
-        elapsed_ms = int((time.time() - start_time) * 1000)
-        return {
-            "success": True,
-            "pdf_base64": pdf_base64,
-            "compile_time_ms": elapsed_ms,
-            "log": "Rendered via Fast TeX Engine Fallback",
-        }
-    except Exception as fallback_err:
-        return {
-            "success": False,
-            "error_log": f"Compilation error: {str(fallback_err)}",
-        }
+        # Fallback to instant clean ReportLab TeX renderer if binaries are unavailable, timeout, or fail
+        try:
+            pdf_base64 = generate_fallback_pdf(latex_code, tmpdir=tmpdir)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return {
+                "success": True,
+                "pdf_base64": pdf_base64,
+                "compile_time_ms": elapsed_ms,
+                "log": "Rendered via Fast TeX Engine Fallback",
+            }
+        except Exception as fallback_err:
+            return {
+                "success": False,
+                "error_log": f"Compilation error: {str(fallback_err)}",
+            }
+

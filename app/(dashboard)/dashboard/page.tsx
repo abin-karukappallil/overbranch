@@ -115,8 +115,8 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       {/* Header Banner */}
-      <div className="relative p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
-        <div className="relative z-10 space-y-5">
+      <div className="relative p-4 sm:p-8 rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+        <div className="relative z-10 space-y-4 sm:space-y-5">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
@@ -125,7 +125,7 @@ export default function DashboardPage() {
                 </StatusBadge>
                 <span className="text-xs font-mono text-muted-foreground">TeX Engine: pdfLaTeX</span>
               </div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+              <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-foreground">
                 Academic Document Workspace
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
@@ -136,7 +136,7 @@ export default function DashboardPage() {
             <Button
               onClick={() => setNewModalOpen(true)}
               size="lg"
-              className="h-10 px-5 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-xs rounded-xl shrink-0 text-xs"
+              className="h-9 sm:h-10 w-full sm:w-auto px-5 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-xs rounded-xl shrink-0 text-xs justify-center"
             >
               <Plus className="w-4 h-4 mr-1.5" />
               New Project
@@ -364,8 +364,8 @@ export default function DashboardPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-sm w-full p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-4 sm:p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
             <div className="flex items-center gap-2.5 text-rose-500">
               <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
                 <AlertTriangle className="w-5 h-5" />
@@ -402,8 +402,8 @@ export default function DashboardPage() {
 
       {/* New Project Modal */}
       {newModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-md w-full p-6 rounded-2xl border border-border/60 bg-card shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-[calc(100vw-2rem)] p-4 sm:p-6 rounded-2xl border border-border/60 bg-card shadow-2xl space-y-4">
             <h3 className="text-base font-bold text-foreground">Create LaTeX Project</h3>
             <form onSubmit={handleCreateSubmit} className="space-y-4">
               <div className="space-y-1">

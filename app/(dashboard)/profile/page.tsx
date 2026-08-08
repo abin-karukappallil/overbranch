@@ -34,27 +34,27 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="space-y-8 animate-fade-in pb-12 max-w-3xl">
+    <div className="space-y-6 sm:space-y-8 animate-fade-in pb-12 max-w-3xl">
       <div className="space-y-1">
-        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
+        <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-foreground">
           User Profile Customization
         </h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs sm:text-sm text-muted-foreground">
           Manage personal avatar, display name, academic affiliations, and co-author identities.
         </p>
       </div>
 
-      <Card className="p-6 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl space-y-6">
-        <div className="flex items-center gap-4">
-          <Avatar className="w-16 h-16 border-2 border-indigo-500/40">
+      <Card className="p-4 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl space-y-6">
+        <div className="flex items-center gap-3.5 sm:gap-4">
+          <Avatar className="w-14 h-14 sm:w-16 sm:h-16 border-2 border-indigo-500/40 shrink-0">
             <AvatarImage src={avatarUrl} />
             <AvatarFallback className="bg-indigo-600 text-white font-bold">
               {name.slice(0, 2).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <div>
-            <h2 className="text-lg font-bold text-foreground">{name}</h2>
-            <p className="text-xs text-muted-foreground font-mono">{email}</p>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base sm:text-lg font-bold text-foreground truncate">{name}</h2>
+            <p className="text-xs text-muted-foreground font-mono truncate">{email}</p>
           </div>
         </div>
 

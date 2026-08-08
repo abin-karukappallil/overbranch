@@ -128,7 +128,7 @@ export default function ProjectsPage() {
 
         <Button
           onClick={() => setNewModalOpen(true)}
-          className="bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl h-9 px-4 text-xs shadow-sm shrink-0"
+          className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl h-9 px-4 text-xs shadow-sm shrink-0 justify-center"
         >
           <Plus className="w-4 h-4 mr-1.5" />
           New Project
@@ -136,7 +136,7 @@ export default function ProjectsPage() {
       </div>
 
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-xl border border-border bg-card">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative flex-1 w-full sm:max-w-sm">
           <Input
             placeholder="Filter reports, slides & projects..."
             value={search}
@@ -146,7 +146,7 @@ export default function ProjectsPage() {
           <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
         </div>
 
-        <div className="flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-2 text-xs w-full sm:w-auto justify-between sm:justify-start">
           <button
             onClick={() => setShowFavoritesOnly(!showFavoritesOnly)}
             className={`px-3 py-1.5 rounded-lg border text-[11px] font-mono transition-colors flex items-center gap-1.5 ${
@@ -160,7 +160,7 @@ export default function ProjectsPage() {
           <select
             value={templateFilter}
             onChange={(e) => setTemplateFilter(e.target.value)}
-            className="h-8 px-2 text-[11px] rounded-lg border border-border bg-background text-foreground outline-none font-mono"
+            className="h-8 px-2 text-[11px] rounded-lg border border-border bg-background text-foreground outline-none font-mono flex-1 sm:flex-initial"
           >
             <option value="all">All Templates</option>
             <option value="Report">Seminar / Report</option>
@@ -177,14 +177,14 @@ export default function ProjectsPage() {
             <Card className="group p-4 rounded-2xl border border-border bg-card hover:border-amber-500/40 hover:bg-card/80 transition-all space-y-3 flex flex-col justify-between h-full shadow-sm">
               <div className="space-y-2">
                 <div className="flex items-start justify-between gap-2">
-                  <Link href={`/editor/${proj.id}`} className="space-y-0.5 block flex-1">
+                  <Link href={`/editor/${proj.id}`} className="space-y-0.5 block flex-1 min-w-0">
                     <h3 className="font-bold text-sm text-foreground group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors flex items-center gap-1.5 truncate">
                       <FileCode2 className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
-                      <span className="truncate">{proj.name}</span>
+                      <span className="truncate min-w-0">{proj.name}</span>
                     </h3>
                   </Link>
 
-                <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 shrink-0">
                     <button onClick={(e) => toggleFavorite(proj.id, e)} className="p-1 text-muted-foreground/60 hover:text-amber-400 transition-colors" title="Toggle Favorite">
                       <Star className={`w-3.5 h-3.5 ${proj.isFavorite ? "text-amber-400 fill-amber-400" : ""}`} />
                     </button>
@@ -209,14 +209,14 @@ export default function ProjectsPage() {
                 </p>
               </div>
 
-              <div className="pt-2 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-                <span className="px-2 py-0.5 rounded bg-muted text-foreground font-medium">
+              <div className="pt-2 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono gap-2">
+                <span className="px-2 py-0.5 rounded bg-muted text-foreground font-medium truncate">
                   {proj.template}
                 </span>
 
                 <button
                   onClick={() => setInviteModalProj(proj)}
-                  className="px-2.5 py-1 rounded-md border border-border hover:bg-amber-500/10 hover:text-amber-500 dark:hover:text-amber-400 transition-colors flex items-center gap-1 text-[10px]"
+                  className="px-2.5 py-1 rounded-md border border-border hover:bg-amber-500/10 hover:text-amber-500 dark:hover:text-amber-400 transition-colors flex items-center gap-1 text-[10px] shrink-0"
                 >
                   <UserPlus className="w-3 h-3 text-amber-500 dark:text-amber-400" />
                   <span>Invite Co-Author</span>
@@ -229,8 +229,8 @@ export default function ProjectsPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-sm w-full p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-4 sm:p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
             <div className="flex items-center gap-2.5 text-rose-500">
               <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
                 <AlertTriangle className="w-5 h-5" />
@@ -239,7 +239,7 @@ export default function ProjectsPage() {
             </div>
 
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Are you sure you want to delete <strong className="text-foreground">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, comments, and member access. This action cannot be undone.
+              Are you sure you want to delete <strong className="text-foreground">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, comments, and member access. Action cannot be undone.
             </p>
 
             <form onSubmit={handleDeleteProject} className="flex justify-end gap-2 pt-2 text-xs">
@@ -267,8 +267,8 @@ export default function ProjectsPage() {
 
       {/* Create Project Modal */}
       {newModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="max-w-sm w-full p-5 rounded-2xl border border-border bg-card shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-4 sm:p-5 rounded-2xl border border-border bg-card shadow-2xl space-y-4">
             <h3 className="text-sm font-bold text-foreground">Create LaTeX Project</h3>
             <form onSubmit={handleCreateProject} className="space-y-3">
               <Input
@@ -293,13 +293,13 @@ export default function ProjectsPage() {
 
       {/* Invite Collaborator Modal */}
       {inviteModalProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
-          <div className="max-w-sm w-full p-5 rounded-2xl border border-border bg-card shadow-2xl space-y-3">
-            <div className="flex items-center justify-between border-b border-border pb-2">
-              <span className="font-bold text-xs text-foreground truncate">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-4 sm:p-5 rounded-2xl border border-border bg-card shadow-2xl space-y-3">
+            <div className="flex items-center justify-between border-b border-border pb-2 gap-2">
+              <span className="font-bold text-xs text-foreground truncate min-w-0 flex-1">
                 Invite to: {inviteModalProj.name}
               </span>
-              <button onClick={() => setInviteModalProj(null)} className="text-muted-foreground hover:text-foreground">
+              <button onClick={() => setInviteModalProj(null)} className="text-muted-foreground hover:text-foreground shrink-0">
                 <X className="w-4 h-4" />
               </button>
             </div>

@@ -71,7 +71,7 @@ export function NotificationsPopover() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-11 z-50 w-80 sm:w-96 max-h-[80vh] overflow-y-auto rounded-2xl border border-border/70 bg-card/95 backdrop-blur-xl shadow-2xl p-4 space-y-4 font-sans">
+          <div className="absolute right-0 top-11 z-50 w-[calc(100vw-2rem)] max-w-sm sm:w-96 max-h-[80vh] overflow-y-auto rounded-2xl border border-border/70 bg-card/95 backdrop-blur-xl shadow-2xl p-3.5 sm:p-4 space-y-4 font-sans">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-sm text-foreground">Notification Center</span>

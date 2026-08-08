@@ -21,21 +21,21 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
   const pathSegments = pathname.split("/").filter(Boolean);
 
   return (
-    <header className="h-14 border-b border-border/40 bg-card/30 backdrop-blur-md px-4 flex items-center justify-between sticky top-0 z-20">
-      <div className="flex items-center gap-2">
+    <header className="h-14 border-b border-border/40 bg-card/30 backdrop-blur-md px-4 sm:px-6 md:px-8 flex items-center justify-between sticky top-0 z-20 min-w-0">
+      <div className="flex items-center gap-2 min-w-0 flex-1">
         {onToggleMobileSidebar && (
-          <Button variant="ghost" size="icon" onClick={onToggleMobileSidebar} className="md:hidden h-8 w-8">
-            <Menu className="w-4 h-4 text-muted-foreground" />
+          <Button variant="ghost" size="icon" onClick={onToggleMobileSidebar} className="md:hidden h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground">
+            <Menu className="w-4.5 h-4.5" />
           </Button>
         )}
-        <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground">
-          <Link href="/dashboard" className="hover:text-foreground transition-colors font-bold text-foreground">
+        <div className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground min-w-0 truncate">
+          <Link href="/dashboard" className="hover:text-foreground transition-colors font-bold text-foreground shrink-0">
             OverBranch
           </Link>
           {pathSegments.map((segment, index) => (
             <React.Fragment key={segment}>
-              <ChevronRight className="w-3 h-3 text-border" />
-              <span className={index === pathSegments.length - 1 ? "text-foreground font-medium capitalize" : "hover:text-foreground capitalize"}>
+              <ChevronRight className="w-3 h-3 text-border shrink-0" />
+              <span className={`capitalize truncate min-w-0 ${index === pathSegments.length - 1 ? "text-foreground font-medium" : "hover:text-foreground"}`}>
                 {segment}
               </span>
             </React.Fragment>

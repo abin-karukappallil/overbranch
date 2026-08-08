@@ -216,7 +216,7 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
             size="icon"
             onClick={() => setShowAiPanel(!showAiPanel)}
             className="hidden md:flex h-8 w-8 text-indigo-400 hover:bg-indigo-500/10"
-            title="Toggle AI Panel Mock"
+            title="Toggle Agent Mock"
           >
             <Bot className="w-4 h-4" />
           </Button>
