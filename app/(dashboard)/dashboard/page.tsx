@@ -20,6 +20,8 @@ import {
   Crown,
   Edit3,
   Eye,
+  Trash2,
+  AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -36,6 +38,7 @@ export default function DashboardPage() {
   const [filterTemplate, setFilterTemplate] = useState("all");
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [newProjName, setNewProjName] = useState("");
+  const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
   const utils = trpc.useUtils();
 
@@ -58,6 +61,17 @@ export default function DashboardPage() {
     },
     onError: (err) => {
       toast.error(err.message || "Failed to create project");
+    },
+  });
+
+  const deleteMutation = trpc.projects.deleteProject.useMutation({
+    onSuccess: () => {
+      toast.success("Project deleted successfully.");
+      setDeleteConfirmProj(null);
+      utils.projects.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to delete project");
     },
   });
 
@@ -90,6 +104,12 @@ export default function DashboardPage() {
       description: "Seminar report & academic project workspace",
       template: "Report",
     });
+  };
+
+  const handleDeleteSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deleteConfirmProj) return;
+    deleteMutation.mutate({ projectId: deleteConfirmProj.id });
   };
 
   return (
@@ -249,9 +269,22 @@ export default function DashboardPage() {
                               <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20">
-                            Owner
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20">
+                              Owner
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setDeleteConfirmProj(project);
+                              }}
+                              className="p-1 text-muted-foreground/60 hover:text-rose-400 transition-colors"
+                              title="Delete Project"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
@@ -326,6 +359,44 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmProj && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-full p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-rose-500">
+              <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <h3 className="text-sm font-bold text-foreground">Delete Project</h3>
+            </div>
+
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Are you sure you want to delete <strong className="text-foreground">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, comments, and member access. This action cannot be undone.
+            </p>
+
+            <form onSubmit={handleDeleteSubmit} className="flex justify-end gap-2 pt-2 text-xs">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteConfirmProj(null)}
+                className="h-8 text-xs rounded-xl"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={deleteMutation.isPending}
+                className="h-8 text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl shadow-md shadow-rose-600/20"
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Delete Permanently"}
+              </Button>
+            </form>
+          </div>
         </div>
       )}
 

@@ -846,7 +846,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5">
                       <Bot className="w-4 h-4 text-indigo-400" />
-                      <span className="font-bold text-foreground">AI RAG Assistant</span>
+                      <span className="font-bold text-foreground">Agentic</span>
                     </div>
                     <div className="flex items-center gap-1.5">
                       <button
@@ -1228,7 +1228,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Bot className="w-5 h-5 text-indigo-400" />
-                  <span className="font-bold text-sm text-foreground">AI RAG Assistant</span>
+                  <span className="font-bold text-sm text-foreground">Agentic Xperience</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <button

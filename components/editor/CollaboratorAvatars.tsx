@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
+import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Users, UserPlus, Share2, X, Trash2, Crown } from "lucide-react";
+import { Users, UserPlus, Share2, X, Trash2, Crown, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 
@@ -14,11 +15,13 @@ interface CollaboratorAvatarsProps {
 }
 
 export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
+  const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -64,6 +67,18 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
     },
     onError: (err) => {
       toast.error(err.message || "Failed to transfer ownership");
+    },
+  });
+
+  const deleteProjectMutation = trpc.projects.deleteProject.useMutation({
+    onSuccess: () => {
+      toast.success("Project deleted successfully.");
+      setModalOpen(false);
+      setDeleteConfirmOpen(false);
+      router.push("/dashboard");
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to delete project");
     },
   });
 
@@ -202,6 +217,52 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
             <Share2 className="w-3.5 h-3.5 mr-2 text-indigo-400" />
             {copied ? "Project Link Copied!" : "Copy Direct Project Link"}
           </Button>
+
+          {isOwner && (
+            <div className="pt-3 border-t border-rose-500/20 space-y-2">
+              <span className="text-[11px] font-bold text-rose-500 uppercase tracking-wider block font-mono">
+                Danger Zone
+              </span>
+              {!deleteConfirmOpen ? (
+                <Button
+                  onClick={() => setDeleteConfirmOpen(true)}
+                  variant="outline"
+                  className="w-full rounded-xl h-9 text-xs border-rose-500/40 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors flex items-center justify-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Project</span>
+                </Button>
+              ) : (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-2 font-sans animate-in fade-in">
+                  <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>Confirm Project Deletion</span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    This action is permanent and will delete all files and member permissions.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setDeleteConfirmOpen(false)}
+                      className="h-8 text-xs rounded-lg flex-1"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => deleteProjectMutation.mutate({ projectId: projectId! })}
+                      disabled={deleteProjectMutation.isPending}
+                      className="h-8 text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg flex-1 shadow-md shadow-rose-600/20"
+                    >
+                      {deleteProjectMutation.isPending ? "Deleting..." : "Confirm Delete"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

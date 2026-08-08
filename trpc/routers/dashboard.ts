@@ -1,14 +1,23 @@
-import { router, publicProcedure } from '../init';
+import { router, protectedProcedure } from '../init';
 import { db } from '@/db';
-import { projects } from '@/db/schema';
+import { projects, projectMembers } from '@/db/schema';
+import { eq, or } from 'drizzle-orm';
 
 export const dashboardRouter = router({
-  getStats: publicProcedure.query(async () => {
+  getStats: protectedProcedure.query(async ({ ctx }) => {
     try {
-      const dbProjects = await db.select().from(projects);
+      const userId = ctx.user.id;
+      const owned = await db.select().from(projects).where(eq(projects.ownerId, userId));
+      const shared = await db.select().from(projectMembers).where(eq(projectMembers.userId, userId));
+      
+      const totalProjects = new Set([
+        ...owned.map(p => p.id),
+        ...shared.map(s => s.projectId)
+      ]).size;
+
       return {
-        totalProjects: dbProjects.length,
-        activeCoAuthors: 1,
+        totalProjects,
+        activeCoAuthors: Math.max(1, shared.length),
         compilationEngineStatus: "pdfLaTeX Active",
         authStatus: "Better Auth + Drizzle Active",
         monthlyCompiles: 120,
@@ -24,10 +33,10 @@ export const dashboardRouter = router({
     }
   }),
 
-  getOverview: publicProcedure.query(async () => {
+  getOverview: protectedProcedure.query(async ({ ctx }) => {
     return {
-      workspaceName: "My LaTeX Research Workspace",
-      workspaceId: "ws_latex_pro",
+      workspaceName: `${ctx.user.name || 'User'}'s LaTeX Research Workspace`,
+      workspaceId: `ws_${ctx.user.id.slice(0, 8)}`,
       recentActivities: [],
     };
   }),

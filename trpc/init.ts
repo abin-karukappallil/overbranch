@@ -26,7 +26,7 @@ export const publicProcedure = t.procedure;
 
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.session?.user) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Authentication required - oomff' });
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Authentication required. Please sign in.' });
   }
   return next({
     ctx: {
@@ -37,7 +37,7 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
 });
 
 export const projectProcedure = protectedProcedure
-  .input(z.object({ projectId: z.string().uuid() }).passthrough())
+  .input(z.object({ projectId: z.string().min(1) }).passthrough())
   .use(async ({ ctx, input, next }) => {
     const userId = ctx.user.id;
     const projectId = input.projectId;
@@ -52,7 +52,7 @@ export const projectProcedure = protectedProcedure
         ctx: {
           ...ctx,
           project,
-          memberRole: 'Owner' as const,
+          memberRole: 'Owner' as 'Owner' | 'Editor' | 'Viewer',
         },
       });
     }
@@ -75,7 +75,7 @@ export const projectProcedure = protectedProcedure
   });
 
 export const ownerProcedure = protectedProcedure
-  .input(z.object({ projectId: z.string().uuid() }).passthrough())
+  .input(z.object({ projectId: z.string().min(1) }).passthrough())
   .use(async ({ ctx, input, next }) => {
     const userId = ctx.user.id;
     const projectId = input.projectId;

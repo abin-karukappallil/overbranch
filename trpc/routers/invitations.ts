@@ -12,6 +12,13 @@ export const invitationsRouter = router({
       role: z.enum(["Editor", "Viewer"]).default("Editor"),
     }))
     .mutation(async ({ input, ctx }) => {
+      if (ctx.memberRole === 'Viewer') {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Viewers do not have permission to send project invitations.',
+        });
+      }
+
       const email = input.email.trim().toLowerCase();
 
       const [targetUser] = await db.select().from(user).where(eq(user.email, email));
