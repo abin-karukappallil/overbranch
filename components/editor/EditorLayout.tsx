@@ -27,6 +27,8 @@ import {
   ShieldAlert,
   AlertTriangle,
   Lock,
+  Copy,
+  ClipboardPaste,
 } from "lucide-react";
 import { CompileToolbar } from "@/components/editor/CompileToolbar";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
@@ -308,6 +310,55 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   // Responsive Sidebar Panels
   const [aiOpen, setAiOpen] = useState(true);
   const [pdfOpen, setPdfOpen] = useState(true);
+  const [pasteModalOpen, setPasteModalOpen] = useState(false);
+  const [pasteInputValue, setPasteInputValue] = useState("");
+
+  const handleCustomCopy = async () => {
+    if (editorRef.current) {
+      const editor = editorRef.current;
+      const selection = editor.getSelection();
+      const model = editor.getModel();
+      const selectedText = selection && model ? model.getValueInRange(selection) : "";
+      const textToCopy = selectedText || editor.getValue();
+
+      if (!textToCopy) {
+        toast.info("Nothing to copy.");
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(textToCopy);
+        toast.success(selectedText ? "Copied selected code!" : "Copied full document code!");
+        return;
+      } catch (err) {
+        console.warn("Clipboard write API error:", err);
+      }
+    } else if (code) {
+      try {
+        await navigator.clipboard.writeText(code);
+        toast.success("Copied code to clipboard!");
+        return;
+      } catch (err) {}
+    }
+    toast.error("Unable to access clipboard for copy.");
+  };
+
+  const handleCustomPaste = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        const text = await navigator.clipboard.readText();
+        if (text) {
+          insertSymbol(text);
+          toast.success("Pasted clipboard text into editor!");
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn("Direct clipboard read blocked by browser permissions:", err);
+    }
+    // Fall back to crash-proof custom paste modal input
+    setPasteModalOpen(true);
+  };
 
   const toggleAi = () => {
     setAiOpen((prev) => {
@@ -488,6 +539,16 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     } catch (err) {
       console.warn("Failed to attach paste event listener:", err);
     }
+
+    // Override Ctrl+C / Cmd+C and Ctrl+V / Cmd+V shortcuts with our crash-proof functions
+    try {
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
+        handleCustomCopy();
+      });
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+        handleCustomPaste();
+      });
+    } catch (e) {}
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -985,6 +1046,24 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
                   Editing: {activeFilePath}
                 </span>
+                <button
+                  type="button"
+                  onClick={handleCustomCopy}
+                  className="px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
+                  title="Copy selected text or full document code"
+                >
+                  <Copy className="w-3 h-3 text-indigo-400" />
+                  <span>Copy</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCustomPaste}
+                  className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
+                  title="Safe Paste into TeX Editor"
+                >
+                  <ClipboardPaste className="w-3 h-3 text-emerald-400" />
+                  <span>Paste</span>
+                </button>
                 <span className="text-[10px] text-muted-foreground uppercase font-semibold shrink-0">Quick TeX:</span>
                 {quickSymbols.map((sym) => (
                   <button
@@ -1013,6 +1092,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   scrollBeyondLastLine: false,
                   wordWrap: "on",
                   automaticLayout: true,
+                  contextmenu: false,
                   readOnly: isViewer,
                 }}
               />
@@ -1289,10 +1369,26 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         {activeMobileTab === "code" && (
           <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
             <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0">
-              <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
+              <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate max-w-[90px]">
                 {activeFilePath}
               </span>
               <div className="flex items-center gap-1.5 overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={handleCustomCopy}
+                  className="px-2 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                >
+                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                  <span>Copy</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCustomPaste}
+                  className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                >
+                  <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Paste</span>
+                </button>
                 {quickSymbols.map((sym) => (
                   <button
                     key={sym.label}
@@ -1318,6 +1414,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     fontSize: 14,
                     wordWrap: "on",
                     automaticLayout: true,
+                    contextmenu: false,
                   }}
                 />
               </EditorErrorBoundary>
@@ -1665,6 +1762,54 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
+      {/* Crash-Proof Custom Paste Fallback Modal */}
+      {pasteModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-card border border-border/80 rounded-2xl p-4 w-full max-w-md space-y-3 shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between font-bold text-sm text-foreground">
+              <div className="flex items-center gap-2 text-emerald-400">
+                <ClipboardPaste className="w-4 h-4" />
+                <span>Paste Code / Text</span>
+              </div>
+              <button onClick={() => setPasteModalOpen(false)} className="text-muted-foreground p-1 hover:text-foreground">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <textarea
+              rows={5}
+              placeholder="Paste your text or code here..."
+              value={pasteInputValue}
+              onChange={(e) => setPasteInputValue(e.target.value)}
+              className="w-full p-3 rounded-xl bg-background border border-border/60 text-xs text-foreground outline-none focus:border-emerald-500 font-mono"
+              autoFocus
+            />
+
+            <div className="flex items-center gap-2 pt-1">
+              <Button
+                variant="outline"
+                onClick={() => setPasteModalOpen(false)}
+                className="flex-1 h-9 text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => {
+                  if (pasteInputValue) {
+                    insertSymbol(pasteInputValue);
+                    setPasteInputValue("");
+                    setPasteModalOpen(false);
+                    toast.success("Pasted text into TeX editor!");
+                  }
+                }}
+                className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20"
+              >
+                Insert into TeX
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
