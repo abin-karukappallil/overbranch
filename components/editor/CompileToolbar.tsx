@@ -26,7 +26,7 @@ export function CompileToolbar({ onCompile, isCompiling }: CompileToolbarProps) 
   };
 
   return (
-    <div className="h-12 px-3 sm:px-4 border-b border-border bg-card flex items-center justify-between gap-2 text-xs font-mono overflow-x-auto">
+    <div className="h-12 px-3 sm:px-4 border-b border-border bg-card flex items-center justify-between gap-2 text-xs font-mono overflow-x-auto shrink-0">
       <div className="flex items-center gap-2 shrink-0">
         <Button
           size="sm"

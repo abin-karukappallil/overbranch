@@ -269,10 +269,10 @@ export function ProjectFilesPanel({
 
   return (
     <div
-      className={`h-full border-r border-border/40 bg-card/50 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
+      className={`h-full border-r border-border/40 bg-card/50 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-full md:w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
         }`}
     >
-      <div className="flex flex-col h-full p-3 text-xs min-w-[256px] space-y-3">
+      <div className="flex flex-col h-full p-3 text-xs w-full min-w-0 md:min-w-[256px] space-y-3">
         {/* Panel Header */}
         <div className="border-b border-border/40 pb-2.5 shrink-0 space-y-2">
           <div className="flex items-center justify-between">

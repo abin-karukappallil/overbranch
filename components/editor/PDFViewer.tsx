@@ -124,7 +124,7 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
       <button
         onClick={onRecompile}
         disabled={isCompiling}
-        className="md:hidden fixed bottom-20 right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 text-white flex items-center justify-center shadow-2xl shadow-cyan-500/40 active:scale-95 transition-transform"
+        className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 text-white flex items-center justify-center shadow-2xl shadow-cyan-500/40 active:scale-95 transition-transform"
         title="Recompile TeX"
       >
         {isCompiling ? (

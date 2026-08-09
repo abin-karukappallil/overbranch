@@ -61,6 +61,45 @@ interface DiffData {
   explanation: string;
 }
 
+class EditorErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.warn("Monaco Editor exception intercepted by ErrorBoundary:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full p-4 bg-background text-foreground text-xs font-mono space-y-3">
+          <AlertTriangle className="w-8 h-8 text-amber-400" />
+          <span className="font-semibold text-amber-300">Editor Intercepted Event Exception</span>
+          <p className="text-muted-foreground text-center text-[11px] max-w-xs">
+            The editor safely recovered from clipboard/input exception.
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold shadow-md"
+          >
+            Reload Editor
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 // No mock code — real content loaded from backend API on mount
 const initialLatexCode = "";
 
@@ -413,6 +452,42 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+
+    // Safely attach paste listener to container DOM node to handle mobile/Gboard clipboard paste operations without crashing Monaco
+    try {
+      const containerNode = editor.getContainerDomNode();
+      if (containerNode) {
+        containerNode.addEventListener(
+          "paste",
+          (e: ClipboardEvent) => {
+            try {
+              const pastedText = e.clipboardData?.getData("text/plain");
+              if (pastedText !== undefined && pastedText !== null && editorRef.current) {
+                const activeEd = editorRef.current;
+                const selection = activeEd.getSelection();
+                if (selection) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  activeEd.executeEdits("safe-mobile-paste", [
+                    {
+                      range: selection,
+                      text: pastedText,
+                      forceMoveMarkers: true,
+                    },
+                  ]);
+                  handleCodeChange(activeEd.getValue());
+                }
+              }
+            } catch (pasteErr) {
+              console.warn("Handled mobile paste fallback exception:", pasteErr);
+            }
+          },
+          true
+        );
+      }
+    } catch (err) {
+      console.warn("Failed to attach paste event listener:", err);
+    }
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -789,7 +864,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   };
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-background overflow-hidden selection:bg-indigo-500/20 relative">
+    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-background overflow-hidden selection:bg-indigo-500/20 flex flex-col relative z-0">
       <header className="h-14 border-b border-border/40 bg-card/60 backdrop-blur-xl px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10">
         <div className="flex items-center gap-2 overflow-hidden">
           <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity">
@@ -1194,9 +1269,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       </div>
 
       {/* Mobile Viewports */}
-      <div className="flex md:hidden flex-1 overflow-hidden relative">
+      <div className="flex md:hidden flex-1 min-h-0 overflow-hidden relative">
         {activeMobileTab === "files" && (
-          <div className="flex-1 flex flex-col bg-background overflow-hidden relative">
+          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
             <ProjectFilesPanel
               projectId={projectId || "proj-1"}
               activeFilePath={activeFilePath}
@@ -1212,8 +1287,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         )}
 
         {activeMobileTab === "code" && (
-          <div className="flex-1 flex flex-col bg-background overflow-hidden relative">
-            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px]">
+          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
+            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0">
               <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
                 {activeFilePath}
               </span>
@@ -1229,21 +1304,23 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 ))}
               </div>
             </div>
-            <div className="flex-1 overflow-hidden relative">
-              <Editor
-                height="100%"
-                defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
-                theme="vs-dark"
-                value={code}
-                onMount={handleEditorMount}
-                onChange={handleCodeChange}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 14,
-                  wordWrap: "on",
-                  automaticLayout: true,
-                }}
-              />
+            <div className="flex-1 min-h-0 overflow-hidden relative">
+              <EditorErrorBoundary>
+                <Editor
+                  height="100%"
+                  defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
+                  theme="vs-dark"
+                  value={code}
+                  onMount={handleEditorMount}
+                  onChange={handleCodeChange}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 14,
+                    wordWrap: "on",
+                    automaticLayout: true,
+                  }}
+                />
+              </EditorErrorBoundary>
               {diffData && diffEditsList.length > 0 && (
                 <div className="absolute top-3 right-4 z-20 max-w-xs p-2.5 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
                   <div className="flex items-center justify-between font-bold text-slate-100">
@@ -1277,7 +1354,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         )}
 
         {activeMobileTab === "pdf" && (
-          <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden">
+          <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-h-0">
             <PDFViewer
               pdfBase64={pdfBase64}
               isCompiling={isCompiling}
@@ -1286,44 +1363,185 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             />
           </div>
         )}
+
+        {activeMobileTab === "ai" && (
+          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 p-3 space-y-3">
+            <div className="border-b border-border/40 pb-2 shrink-0 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bot className="w-5 h-5 text-indigo-400" />
+                  <span className="font-bold text-sm text-foreground">AI Assistant</span>
+                </div>
+                <button
+                  onClick={() => setShowConfigPanel(!showConfigPanel)}
+                  className="px-2 py-1 rounded-lg border border-border/60 bg-card text-xs font-mono flex items-center gap-1.5 text-indigo-300"
+                  title="Configure Groq API Key & Model"
+                >
+                  <Key className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
+                  <Settings2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {showConfigPanel && (
+                <div className="p-3 rounded-xl bg-card border border-border/60 space-y-2 font-mono text-xs shadow-lg animate-in fade-in">
+                  <div className="flex items-center justify-between font-bold text-indigo-400">
+                    <div className="flex items-center gap-1.5">
+                      <Key className="w-4 h-4 text-amber-400" />
+                      <span>Groq AI Settings</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground block font-semibold">Groq API Key:</label>
+                    <input
+                      type="password"
+                      placeholder="gsk_... (Blank = Groq gpt-oss-120b)"
+                      value={groqApiKey}
+                      onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
+                      className="w-full h-9 px-2.5 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground block font-semibold">Select Model:</label>
+                    <select
+                      value={groqModel}
+                      onChange={(e) => handleSaveGroqConfig(groqApiKey, e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
+                    >
+                      {GROQ_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 text-xs min-h-0 pr-1">
+              {messages.map((m) => (
+                <div
+                  key={m.id}
+                  className={`p-3 rounded-xl border space-y-1.5 ${
+                    m.sender === "user"
+                      ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
+                      : "bg-muted/40 border-border/40 text-foreground mr-4"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
+                    <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
+                    <span>{m.time}</span>
+                  </div>
+                  <p className="leading-relaxed text-sm">{m.text}</p>
+                </div>
+              ))}
+              {isAgentThinking && (
+                <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-xs animate-pulse font-mono">
+                  <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
+                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
+                </div>
+              )}
+              <div ref={mobileChatEndRef} />
+            </div>
+
+            {diffData && diffEditsList.length > 0 && (
+              <div className="p-2.5 rounded-xl bg-card border border-indigo-500/40 shadow-xl space-y-2 font-mono text-xs shrink-0">
+                <div className="flex items-center justify-between font-semibold text-indigo-300">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+                    <span>Proposed LaTeX Edit</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRejectAllEdits}
+                    className="flex-1 h-8 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Reject</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptAllEdits(diffEditsList)}
+                    className="flex-1 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Accept All</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <form onSubmit={handleSendPrompt} className="relative pt-1 border-t border-border/40 shrink-0">
+              <input
+                type="text"
+                placeholder="Ask assistant to edit TeX..."
+                value={chatInput}
+                disabled={isAgentThinking}
+                onChange={(e) => setChatInput(e.target.value)}
+                className="w-full h-11 pl-3 pr-10 rounded-xl border border-border/60 bg-background text-foreground text-sm outline-none focus:border-indigo-500 disabled:opacity-50"
+              />
+              <button
+                type="submit"
+                disabled={isAgentThinking || !chatInput.trim()}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 p-1 disabled:opacity-40"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        )}
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden h-14 border-t border-border/40 bg-card/95 backdrop-blur-xl flex items-center justify-around shrink-0 z-30">
-        <button
-          onClick={() => setActiveMobileTab("files")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
+      <nav className="md:hidden border-t border-border/40 bg-card/95 backdrop-blur-xl shrink-0 z-40 pb-[env(safe-area-inset-bottom,0px)]">
+        <div className="flex items-center justify-around w-full h-14">
+          <button
+            onClick={() => setActiveMobileTab("files")}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
             }`}
-        >
-          <FolderGit2 className="w-5 h-5" />
-          <span>Files</span>
-        </button>
+          >
+            <FolderGit2 className="w-4 h-4" />
+            <span>Files</span>
+          </button>
 
-        <button
-          onClick={() => setActiveMobileTab("code")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
+          <button
+            onClick={() => setActiveMobileTab("code")}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
             }`}
-        >
-          <FileCode2 className="w-5 h-5" />
-          <span>Code</span>
-        </button>
+          >
+            <FileCode2 className="w-4 h-4" />
+            <span>Code</span>
+          </button>
 
-        <button
-          onClick={() => setActiveMobileTab("pdf")}
-          className={`flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs min-h-[48px] ${activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-muted-foreground"
+          <button
+            onClick={() => setActiveMobileTab("pdf")}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-muted-foreground"
             }`}
-        >
-          <Eye className="w-5 h-5" />
-          <span>PDF</span>
-        </button>
+          >
+            <Eye className="w-4 h-4" />
+            <span>PDF</span>
+          </button>
 
-        <button
-          onClick={() => setMobileDrawerOpen(true)}
-          className="flex-1 h-full flex flex-col items-center justify-center gap-1 text-xs text-purple-400 min-h-[48px]"
-        >
-          <Bot className="w-5 h-5" />
-          <span>AI Assistant</span>
-        </button>
+          <button
+            onClick={() => {
+              setActiveMobileTab("ai");
+            }}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "ai" ? "text-purple-400 font-bold" : "text-muted-foreground"
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            <span>AI Assistant</span>
+          </button>
+        </div>
       </nav>
 
       {/* Mobile AI Assistant Drawer */}
