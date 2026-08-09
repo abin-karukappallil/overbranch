@@ -1,0 +1,56 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="obFaviconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="60%" stop-color="#059669" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+  </defs>
+
+  <!-- Dark rounded container background for high contrast across browser themes -->
+  <rect width="36" height="36" rx="8" fill="#090d16" />
+
+  <!-- Main Document Body Contour -->
+  <path
+    d="M10 6C10 4.89543 10.8954 4 12 4H22L27 9V30C27 31.1046 26.1046 32 25 32H12C10.8954 32 10 31.1046 10 30V6Z"
+    stroke="url(#obFaviconGrad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Folded Corner -->
+  <path
+    d="M22 4V9H27"
+    stroke="url(#obFaviconGrad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <!-- Central Branching Nodes (OverBranch) -->
+  <path
+    d="M18 27V15"
+    stroke="url(#obFaviconGrad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+  />
+  <path
+    d="M18 22L13 17"
+    stroke="url(#obFaviconGrad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+  />
+  <path
+    d="M18 22L23 17"
+    stroke="url(#obFaviconGrad)"
+    stroke-width="2.2"
+    stroke-linecap="round"
+  />
+
+  <!-- Node Dots -->
+  <circle cx="18" cy="27" r="2" fill="url(#obFaviconGrad)" />
+  <circle cx="13" cy="17" r="2" fill="url(#obFaviconGrad)" />
+  <circle cx="23" cy="17" r="2" fill="url(#obFaviconGrad)" />
+  <circle cx="18" cy="15" r="2" fill="url(#obFaviconGrad)" />
+</svg>

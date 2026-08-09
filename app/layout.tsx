@@ -23,10 +23,20 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OverBranch — Collaborative LaTeX Editor & Developer Workspace",
-  description: "Next-generation cloud workspace with instant web environments and seamless Git collaboration.",
-  keywords: ["OverBranch", "LaTeX Editor", "Collaborative Workspace", "Developer Tools", "Next.js", "TypeScript"],
+  title: "OverBranch — Agentic LaTeX Editor & Collaborative Workspace",
+  description: "Next-generation Agentic ide for latex with instant web environments and seamless Git collaboration.",
+  keywords: ["OverBranch", "LaTeX Editor", "Collaborative Workspace", "Developer Tools", "Next.js", "TypeScript","Agentic Ai latex","latex ai"],
   authors: [{ name: "OverBranch Team" }],
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon.png", type: "image/png" },
+    ],
+    apple: [
+      { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({
@@ -45,7 +55,7 @@ export default function RootLayout({
         >
           <TRPCProvider>
             {children}
-            <Toaster position="bottom-right" theme="dark" richColors />
+            <Toaster position="top-right" theme="dark" richColors />
           </TRPCProvider>
         </ThemeProvider>
       </body>
