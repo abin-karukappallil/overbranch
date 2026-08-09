@@ -109,6 +109,19 @@ export function extractChunkLatex(response: string): string | null {
   return extractLatexFromResponse(afterMarker);
 }
 
+export function sanitizeChunkReferences(text: string): string {
+  if (!text) return "";
+  let cleaned = text
+    .replace(/(?:\b(?:in|from|for|of)?\s*\[?CHUNK\s*\d+\]?:?\s*)/gi, "")
+    .replace(/^\s*[:\-]\s*/, "")
+    .replace(/\s+([.,!?;])/g, "$1")
+    .trim();
+  if (cleaned.length > 0) {
+    cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+  }
+  return cleaned;
+}
+
 export function extractChunkId(response: string): number | null {
   const match = response.match(/CHUNK_ID:\s*(\d+)/);
   return match ? parseInt(match[1], 10) : null;
@@ -502,7 +515,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       const data = await response.json();
       const assistantTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      const responseText = data.explanation || "I have processed your LaTeX request.";
+      const rawExplanation = data.explanation || "I have processed your LaTeX request.";
+      const responseText = sanitizeChunkReferences(rawExplanation);
 
       // Build explicit edits list
       let editsList: EditItem[] = (data.edits && Array.isArray(data.edits) && data.edits.length > 0)
@@ -512,20 +526,20 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             id: `edit-${Date.now()}-${idx}`,
             original_chunk: e.original_chunk || "",
             proposed_chunk: e.proposed_chunk || "",
-            explanation: e.explanation || data.explanation,
+            explanation: sanitizeChunkReferences(e.explanation || rawExplanation),
           }))
         : (data.original_chunk || data.proposed_chunk)
           ? [{
             id: `edit-${Date.now()}-0`,
             original_chunk: data.original_chunk || "",
             proposed_chunk: data.proposed_chunk || "",
-            explanation: data.explanation || "AI Proposed Edit",
+            explanation: sanitizeChunkReferences(data.explanation || "AI Proposed Edit"),
           }]
           : [];
 
       // Fallback: If no edits were parsed in JSON but responseText contains LaTeX code, extract as proposed edit
       if (editsList.length === 0) {
-        const extractedCode = extractLatexFromResponse(responseText);
+        const extractedCode = extractLatexFromResponse(rawExplanation);
         if (extractedCode) {
           editsList = [{
             id: `edit-${Date.now()}-fallback`,
@@ -554,7 +568,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         setDiffData({
           original_chunk: data.original_chunk || editsList[0].original_chunk,
           proposed_chunk: data.proposed_chunk || editsList[0].proposed_chunk,
-          explanation: data.explanation || "AI Suggested Modifications",
+          explanation: sanitizeChunkReferences(data.explanation || "AI Suggested Modifications"),
         });
       } else {
         setDiffEditsList([]);

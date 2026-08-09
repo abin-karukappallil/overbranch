@@ -46,6 +46,7 @@ CORE AGENTIC RULES
 4. EXACT MATCH IS MANDATORY: "original_chunk" must be a verbatim substring of a retrieved chunk. If adding new content, set "original_chunk": "".
 5. NO PLACEHOLDERS: Never say 'rest of code remains same'.
 6. NO MARKDOWN FENCES: Output raw JSON only.
+7. NO INTERNAL CHUNK NUMBERS: Do NOT include internal chunk numbers (e.g. 'CHUNK 1', 'chunk 2') in your 'explanation' or 'plan'. Describe your changes in clear, natural human-readable language.
 
 --------------------------------
 OUTPUT SCHEMA (RAW JSON ONLY)

@@ -122,7 +122,7 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                 "proposed_chunk": prop,
                 "explanation": exp,
             })
-            plans.append(f"Edit CHUNK {idx}: replace '{orig[:30]}...' with updated LaTeX.")
+            plans.append(f"Edit: replace '{orig[:30]}...' with updated LaTeX.")
 
         elif tool_name == "create_content":
             prop = args.get("new_code", "")
@@ -146,7 +146,7 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                 "proposed_chunk": "",
                 "explanation": exp,
             })
-            plans.append(f"Delete '{orig[:30]}...' from CHUNK {idx}.")
+            plans.append(f"Delete '{orig[:30]}...'.")
 
         elif tool_name == "find_and_replace_all":
             search_pat = args.get("search_pattern", "")
@@ -163,7 +163,7 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                         "chunk_index": c_idx,
                         "original_chunk": search_pat,
                         "proposed_chunk": replace_pat,
-                        "explanation": f"Global replace in CHUNK {c_idx}: {exp}",
+                        "explanation": exp,
                     })
             if not found_any and search_pat:
                 edits.append({

@@ -125,6 +125,21 @@ def get_chat_llm(
 
 # ─── Response Parsing Utilities ───────────────────────────────────────────────
 
+def sanitize_explanation_text(text: str) -> str:
+    """Removes internal chunk references (e.g. CHUNK 1, in CHUNK 2, from CHUNK 3) from user-facing text."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    # Strip phrases like "in CHUNK 1", "from CHUNK 2", "CHUNK 3:", "[CHUNK 4]", "CHUNK 5"
+    cleaned = re.sub(r'(?i)\b(?:in|from|for|of)?\s*\[?CHUNK\s*\d+\]?:?\s*', '', text)
+    # Remove leading colons, hyphens, or extra whitespace left over
+    cleaned = re.sub(r'^\s*[:\-]\s*', '', cleaned)
+    # Clean up spaces before punctuation
+    cleaned = re.sub(r'\s+([.,!?;])', r'\1', cleaned)
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned.strip()
+
+
 def auto_repair_truncated_json(text: str) -> str:
     """Attempts to auto-close unclosed strings and JSON object braces if LLM output was truncated."""
     s = text.strip()
@@ -479,7 +494,17 @@ def agent_chat(req: AgentChatRequest):
             first_orig = edits[0].get("original_chunk", "") if edits else parsed_result.get("original_chunk", "")
             first_prop = edits[0].get("proposed_chunk", "") if edits else parsed_result.get("proposed_chunk", "")
 
-        overall_exp = parsed_result.get("explanation", "") or (edits[0].get("explanation", "") if edits else "")
+        overall_exp = sanitize_explanation_text(
+            parsed_result.get("explanation", "") or (edits[0].get("explanation", "") if edits else "")
+        )
+        clean_plan = sanitize_explanation_text(parsed_result.get("plan", ""))
+
+        clean_edits = []
+        for e in edits:
+            item = dict(e)
+            if item.get("explanation"):
+                item["explanation"] = sanitize_explanation_text(item["explanation"])
+            clean_edits.append(item)
 
         # Step 8: Store in conversation memory
         chunk_summaries = [c.get("summary", "") for c in retrieved_chunks if c.get("summary")]
@@ -492,8 +517,8 @@ def agent_chat(req: AgentChatRequest):
         )
 
         return {
-            "plan": parsed_result.get("plan", ""),
-            "edits": edits,
+            "plan": clean_plan,
+            "edits": clean_edits,
             "original_chunk": first_orig,
             "proposed_chunk": first_prop,
             "explanation": overall_exp,
