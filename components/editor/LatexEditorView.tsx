@@ -295,7 +295,7 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
               <div className="flex items-center justify-between border-b border-border/40 pb-2">
                 <div className="flex items-center gap-2">
                   <Bot className="w-4 h-4 text-indigo-400" />
-                  <span className="font-bold text-foreground">AI Assistant</span>
+                  <span className="font-bold text-foreground">Agent</span>
                 </div>
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-mono text-[10px]">
                   <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
