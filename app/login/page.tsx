@@ -61,9 +61,8 @@ export default function LoginPage() {
         router.push("/dashboard");
         router.refresh();
       }
-    } catch {
-      toast.success("Signed in to OverBranch Session");
-      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err?.message || "Sign in failed. Please check your credentials.");
     } finally {
       setLoading(false);
     }
@@ -85,9 +84,8 @@ export default function LoginPage() {
       if (res?.error) {
         toast.error(res.error.message || "Google OAuth error");
       }
-    } catch {
-      toast.info("Navigating to OverBranch Dashboard");
-      router.push("/dashboard");
+    } catch (err: any) {
+      toast.error(err?.message || "Google sign in failed");
     } finally {
       setGoogleLoading(false);
     }

@@ -982,10 +982,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           {/* Panel 3 (Middle Right): PDF Viewer / Compiled Output */}
           <div
-            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${pdfOpen ? "w-[42%] min-w-[360px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
+            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col min-w-0 max-w-full ${pdfOpen ? "flex-1 min-w-[280px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
               }`}
           >
-            <div className="flex-1 h-full min-w-[360px] flex flex-col">
+            <div className="flex-1 h-full min-w-0 max-w-full w-full flex flex-col overflow-hidden">
               <PDFViewer
                 pdfBase64={pdfBase64}
                 isCompiling={isCompiling}

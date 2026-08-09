@@ -26,10 +26,6 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isAuthPath && sessionToken) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
-
   const response = NextResponse.next();
 
   response.headers.set("X-Frame-Options", "DENY");

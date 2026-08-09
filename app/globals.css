@@ -167,20 +167,35 @@ html, body {
   }
 }
 
-/* Custom Scrollbars */
+/* Premium Modern Custom Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(155, 155, 155, 0.2);
+  background: rgba(16, 185, 129, 0.35);
   border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: content-box;
+  transition: background-color 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(155, 155, 155, 0.4);
+  background: rgba(16, 185, 129, 0.65);
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(52, 211, 153, 0.35);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 211, 153, 0.7);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(52, 211, 153, 0.35) transparent;
 }
 
 /* Hairline rule panels */

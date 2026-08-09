@@ -14,9 +14,9 @@ export function UserProfileDropdown() {
   const { data: session } = authClient.useSession();
 
   const user = session?.user;
-  const userName = user?.name || "Alex Rivers";
-  const userEmail = user?.email || "alex@overbranch.dev";
-  const userImage = user?.image || "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80";
+  const userName = user?.name || user?.email?.split("@")[0] || "User";
+  const userEmail = user?.email || "";
+  const userImage = user?.image || "";
 
   const handleSignOut = async () => {
     try {

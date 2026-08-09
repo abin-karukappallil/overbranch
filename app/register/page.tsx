@@ -73,9 +73,8 @@ export default function RegisterPage() {
         router.push("/dashboard");
         router.refresh();
       }
-    } catch {
-      toast.success("Account created! Redirecting to OverBranch Dashboard...");
-      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err?.message || "Registration failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -97,9 +96,8 @@ export default function RegisterPage() {
       if (res?.error) {
         toast.error(res.error.message || "Google OAuth error");
       }
-    } catch {
-      toast.info("Navigating to OverBranch Dashboard");
-      router.push("/dashboard");
+    } catch (err: any) {
+      toast.error(err?.message || "Google sign in failed");
     } finally {
       setGoogleLoading(false);
     }

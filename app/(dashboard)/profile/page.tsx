@@ -13,9 +13,9 @@ import { toast } from "sonner";
 export default function ProfilePage() {
   const { data: session } = authClient.useSession();
 
-  const [name, setName] = useState("Alex Rivers");
-  const [email, setEmail] = useState("alex@overbranch.dev");
-  const [avatarUrl, setAvatarUrl] = useState("https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
   const [bio, setBio] = useState("Academic Researcher & Student Author");
   const [location, setLocation] = useState("University Campus");
   const [company, setCompany] = useState("Academic Workspace");

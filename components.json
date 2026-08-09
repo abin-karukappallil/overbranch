@@ -19,5 +19,7 @@
     "lib": "@/lib",
     "hooks": "@/hooks"
   },
-  "registries": {}
+  "registries": {
+    "@extend": "https://ui.extend.ai/r/{name}.json"
+  }
 }
