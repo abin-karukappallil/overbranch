@@ -1246,18 +1246,37 @@ function PDFViewerScrollArea({
     return () => setViewportRef(null)
   }, [resolveScrollAreaViewport, setViewportRef])
 
+  const handleWheel = React.useCallback(
+    (e: React.WheelEvent<HTMLDivElement>) => {
+      if (e.ctrlKey || e.metaKey) return
+      const container = containerRef.current
+      if (!container) return
+      const viewport = resolveScrollAreaViewport(container)
+      if (!viewport) return
+
+      if (e.deltaY) {
+        viewport.scrollTop += e.deltaY
+      }
+      if (e.deltaX) {
+        viewport.scrollLeft += e.deltaX
+      }
+    },
+    [resolveScrollAreaViewport]
+  )
+
   return (
     <div
       ref={containerRef}
+      onWheel={handleWheel}
       data-slot="pdf-viewer-scroll-area"
-      className={cn("size-full min-h-0", className)}
+      className={cn("size-full min-h-0 touch-pan-x touch-pan-y", className)}
     >
       <ScrollArea className="size-full min-h-0">
         <div
           {...resolvedViewportProps}
           data-slot="pdf-viewer-scroll-content"
           className={cn(
-            "min-h-full",
+            "min-h-full touch-pan-x touch-pan-y",
             viewportPropsClassName,
             viewportClassName
           )}
