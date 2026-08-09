@@ -1045,7 +1045,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         <label className="text-[10px] text-muted-foreground block font-semibold">Groq API Key:</label>
                         <input
                           type="password"
-                          placeholder="gsk_... (Blank = NVIDIA gpt-oss-120b)"
+                          placeholder="gsk_... (Blank = Groq gpt-oss-120b(server))"
                           value={groqApiKey}
                           onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
                           className="w-full h-8 px-2 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
@@ -1074,7 +1074,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       <span className="leading-snug">
-                        Groq API key not set. Using default NVIDIA model. If response fails, add your Groq key in AI settings (🔑).
+                        Groq API key not set. Using default Groq (openai/gpt-oss-120b) model.
                       </span>
                     </div>
                   )}
@@ -1099,7 +1099,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   {isAgentThinking && (
                     <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-[11px] animate-pulse font-mono">
                       <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq" : "NVIDIA (openai/gpt-oss-120b)"}...</span>
+                      <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
                     </div>
                   )}
                   <div ref={chatEndRef} />
@@ -1353,7 +1353,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <label className="text-xs text-muted-foreground block font-semibold">Groq API Key:</label>
                     <input
                       type="password"
-                      placeholder="gsk_... (Blank = NVIDIA gpt-oss-120b)"
+                      placeholder="gsk_... (Blank = Groq gpt-oss-120b)"
                       value={groqApiKey}
                       onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
                       className="w-full h-9 px-2.5 rounded-lg bg-card border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
@@ -1379,7 +1379,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
                       <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                       <span className="leading-snug">
-                        Groq API key not set. Using default NVIDIA model. If response fails, add your Groq key in AI settings (🔑).
+                        Groq API key not set. Using default Groq (openai/gpt-oss-120b) model.
                       </span>
                     </div>
                   )}
@@ -1406,7 +1406,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               {isAgentThinking && (
                 <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-xs animate-pulse font-mono">
                   <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
-                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq" : "NVIDIA (openai/gpt-oss-120b)"}...</span>
+                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
                 </div>
               )}
               <div ref={mobileChatEndRef} />

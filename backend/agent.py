@@ -63,16 +63,15 @@ def get_chat_llm(
 ):
     """
     Main Agent LLM Engine selection:
-    1. If user provided a Groq API key in UI: Use ChatGroq with user_groq_key.
-    2. If use_server_groq_first and GROQ_API_KEY is in .env: Use ChatGroq with server GROQ_API_KEY (~500 tok/s speed).
-    3. If NVIDIA_API_KEY is in .env: Use ChatNVIDIA with 30s timeout.
-    4. Fallback to server GROQ_API_KEY if present.
+    1. If user provided a Groq API key in UI: Use ChatGroq with user_groq_key and selected model.
+    2. If user did not provide Groq API key: Use Groq with server GROQ_API_KEY and model 'openai/gpt-oss-120b' instead of NVIDIA.
+    3. Fallback to ChatNVIDIA if server GROQ_API_KEY is not set.
     """
     has_user_groq = bool(user_groq_key and user_groq_key.strip())
     server_groq_key = os.getenv("GROQ_API_KEY")
 
     if HAS_GROQ and has_user_groq:
-        selected_model = model_override or user_groq_model or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
+        selected_model = model_override or user_groq_model or os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
         logger.info(f"MAIN AGENT GROQ ENGINE (User Key): Executing Groq Model '{selected_model}'")
         return ChatGroq(
             model_name=selected_model,
@@ -82,10 +81,10 @@ def get_chat_llm(
             request_timeout=30.0
         )
 
-    # If server GROQ_API_KEY is configured in .env, prioritize it over NVIDIA NIM for ultra-fast, zero-timeout response (~500 tokens/sec)
-    if HAS_GROQ and server_groq_key and server_groq_key.strip() and use_server_groq_first:
-        selected_model = model_override or os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
-        logger.info(f"MAIN AGENT GROQ ENGINE (Server Key): Executing Groq Model '{selected_model}'")
+    # If user didn't provide a Groq API key: Use server GROQ_API_KEY with 'openai/gpt-oss-120b' instead of NVIDIA
+    if HAS_GROQ and server_groq_key and server_groq_key.strip():
+        selected_model = model_override or os.getenv("GROQ_DEFAULT_MODEL", "openai/gpt-oss-120b")
+        logger.info(f"MAIN AGENT GROQ ENGINE (Server Key - gpt-oss-120b): Executing Groq Model '{selected_model}'")
         return ChatGroq(
             model_name=selected_model,
             groq_api_key=server_groq_key.strip(),
@@ -98,7 +97,7 @@ def get_chat_llm(
     if nvidia_api_key and nvidia_api_key.strip():
         env_model = os.getenv("NVIDIA_LLM_MODEL")
         nvidia_model = "openai/gpt-oss-120b" if (not env_model or env_model in ["meta/llama-3.3-70b-instruct", "z-ai/glm-5.2"]) else env_model
-        logger.info(f"MAIN AGENT NVIDIA ENGINE: User Groq key absent, using ChatNVIDIA model '{nvidia_model}'")
+        logger.info(f"MAIN AGENT NVIDIA ENGINE: Groq key absent and server Groq key missing, using ChatNVIDIA model '{nvidia_model}'")
         try:
             return ChatNVIDIA(
                 model=nvidia_model,
@@ -112,7 +111,7 @@ def get_chat_llm(
 
     # Fallback to server GROQ_API_KEY if not used earlier
     if HAS_GROQ and server_groq_key and server_groq_key.strip():
-        selected_model = model_override or "qwen/qwen3.6-27b"
+        selected_model = model_override or "openai/gpt-oss-120b"
         return ChatGroq(
             model_name=selected_model,
             groq_api_key=server_groq_key.strip(),
@@ -372,7 +371,7 @@ def agent_chat(req: AgentChatRequest):
         )
 
         # Step 6: Invoke LLM (Only bind tools for EDIT_DOCUMENT mode to prevent Groq API 'json' tool errors)
-        print(f"  ► Invoking LLM Engine (Selected Model: '{req.groq_model or 'qwen/qwen3.6-27b'}'), Mode={mode}...")
+        print(f"  ► Invoking LLM Engine (Selected Model: '{req.groq_model or 'openai/gpt-oss-120b'}'), Mode={mode}...")
         try:
             llm = get_chat_llm(user_groq_key=req.groq_api_key, user_groq_model=req.groq_model)
             if mode == "EDIT_DOCUMENT":
@@ -399,7 +398,7 @@ def agent_chat(req: AgentChatRequest):
             print("  Retrying with fallback Groq engine...")
             try:
                 llm = get_chat_llm(
-                    model_override="qwen/qwen3.6-27b",
+                    model_override="openai/gpt-oss-120b",
                     user_groq_key=req.groq_api_key,
                     use_server_groq_first=True
                 )
