@@ -18,6 +18,7 @@ import {
   GlobalPointerProvider,
   InteractionManagerPluginPackage,
   PagePointerProvider,
+  useInteractionManagerCapability,
 } from "@embedpdf/plugin-interaction-manager/react"
 import { RenderLayer, RenderPluginPackage } from "@embedpdf/plugin-render/react"
 import { Rotate, RotatePluginPackage } from "@embedpdf/plugin-rotate/react"
@@ -1269,14 +1270,14 @@ function PDFViewerScrollArea({
       ref={containerRef}
       onWheel={handleWheel}
       data-slot="pdf-viewer-scroll-area"
-      className={cn("size-full min-h-0 touch-pan-x touch-pan-y", className)}
+      className={cn("size-full min-h-0 touch-auto", className)}
     >
       <ScrollArea className="size-full min-h-0">
         <div
           {...resolvedViewportProps}
           data-slot="pdf-viewer-scroll-content"
           className={cn(
-            "min-h-full touch-pan-x touch-pan-y",
+            "min-h-full touch-auto",
             viewportPropsClassName,
             viewportClassName
           )}
@@ -2163,6 +2164,18 @@ function PDFViewerInner({
   const { state: zoomState, provides: zoom } = useZoom(documentId)
   const { provides: thumbnails } = useThumbnailCapability()
   const { plugin: thumbnailPlugin } = useThumbnailPlugin()
+  const { provides: interactionManager } = useInteractionManagerCapability()
+
+  React.useEffect(() => {
+    if (!interactionManager) return
+    interactionManager.registerMode({
+      id: "pointerMode",
+      scope: "page",
+      exclusive: false,
+      cursor: "auto",
+      wantsRawTouch: false,
+    })
+  }, [interactionManager])
   const [sidebarOpen, setSidebarOpen] = React.useState(false)
   const [isPreparingDownload, setIsPreparingDownload] = React.useState(false)
   const [pageRotationDeltas, setPageRotationDeltas] =
@@ -2501,7 +2514,7 @@ function PDFViewerInner({
             key={`${page.pageIndex}-${pageRotation}`}
             data-pdf-viewer-page={pageNumber}
             className={cn(
-              "relative border border-transparent bg-transparent shadow-xs select-none selection:bg-transparent selection:text-inherit",
+              "relative border border-transparent bg-transparent shadow-xs select-none selection:bg-transparent selection:text-inherit touch-auto",
               pageClassName?.(pageNumber)
             )}
             style={{ backgroundColor: "transparent" }}
@@ -2645,7 +2658,7 @@ function PDFViewerInner({
             <PDFViewerViewportBridge viewportElementRef={viewportElementRef} />
             <PDFViewerSelectionCopyShortcut documentId={documentId} />
             <PDFViewerSelectionReleaseGuard documentId={documentId} />
-            <GlobalPointerProvider documentId={documentId}>
+            <GlobalPointerProvider documentId={documentId} className="touch-auto">
               <PDFViewerScroller
                 basePageRotations={basePageRotations}
                 documentId={documentId}
