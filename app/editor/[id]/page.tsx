@@ -8,6 +8,8 @@ import { trpc } from "@/trpc/client";
 import { ShieldAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+import { RealtimeProvider } from "@/providers/RealtimeProvider";
+
 interface StandaloneProjectEditorPageProps {
   params: Promise<{ id: string }>;
 }
@@ -56,5 +58,9 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     );
   }
 
-  return <EditorLayout projectId={projectId} />;
+  return (
+    <RealtimeProvider projectId={projectId}>
+      <EditorLayout projectId={projectId} />
+    </RealtimeProvider>
+  );
 }

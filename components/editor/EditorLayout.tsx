@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
 import Editor, { OnMount } from "@monaco-editor/react";
 import { Drawer } from "vaul";
@@ -29,12 +29,21 @@ import {
   Lock,
   Copy,
   ClipboardPaste,
+  MessageSquare,
+  MessageCircle,
 } from "lucide-react";
 import { CompileToolbar } from "@/components/editor/CompileToolbar";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
+import { RemoteCursors } from "@/components/editor/RemoteCursors";
+import { RemoteSelections } from "@/components/editor/RemoteSelections";
+import { ChatPanel } from "@/components/editor/ChatPanel";
+import { ConnectionStatusIndicator } from "@/providers/RealtimeProvider";
+import { useYjsDocument, useYjsText } from "@/lib/yjs/hooks";
+import { useDocumentPresence } from "@/lib/realtime/presence";
+import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -189,6 +198,26 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
 
+  // Real-time Chat Panel State
+  const [chatOpen, setChatOpen] = useState(false);
+
+  // User session
+  const { data: sessionData } = authClient.useSession();
+  const currentUser = sessionData?.user;
+
+  // Yjs CRDT Document Provider & State (spec section 1)
+  const { provider, doc, isLoading: isYjsLoading } = useYjsDocument(
+    activeFilePath,
+    projectId || "default"
+  );
+  const { text: yjsTextContent, setText: setYjsText } = useYjsText(doc);
+
+  // Presence for multi-user cursors & selections (spec section 2, 4)
+  const { remoteCursors, updateCursor, updateSelection } = useDocumentPresence(
+    activeFilePath,
+    currentUser ? { id: currentUser.id, name: currentUser.name, image: currentUser.image } : null
+  );
+
   // Groq API & Model Config States
   const [groqApiKey, setGroqApiKey] = useState("");
   const [groqModel, setGroqModel] = useState(DEFAULT_MODEL);
@@ -233,10 +262,30 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
   const editorRef = useRef<any>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const decorationsRef = useRef<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const mobileChatEndRef = useRef<HTMLDivElement>(null);
+
+  const getPixelPosition = useCallback((pos: { lineNumber: number; column: number }) => {
+    if (!editorRef.current) return null;
+    const p = editorRef.current.getScrolledVisiblePosition(pos);
+    return p ? { top: p.top, left: p.left } : null;
+  }, []);
+
+  const getSelectionRects = useCallback((s: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }) => {
+    if (!editorRef.current) return [];
+    const startPos = editorRef.current.getScrolledVisiblePosition({ lineNumber: s.startLineNumber, column: s.startColumn });
+    const endPos = editorRef.current.getScrolledVisiblePosition({ lineNumber: s.endLineNumber, column: s.endColumn });
+    if (!startPos || !endPos) return [];
+    return [{
+      top: startPos.top,
+      left: startPos.left,
+      width: Math.max(endPos.left - startPos.left, 4),
+      height: 18,
+    }];
+  }, []);
 
   // Render 403 Forbidden Access Denied screen if user lacks authorization
   if (projectId && isProjectError) {
@@ -414,91 +463,80 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   const storageKey = `overbranch_code_${projectId || 'default'}_${activeFilePath}`;
 
-  // 1. Load saved code from backend API (Supabase DB + Disk) or LocalStorage when activeFilePath or projectId changes
+  // Sync Yjs CRDT text content into local state & Monaco editor model
   useEffect(() => {
-    const loadSavedDocument = async () => {
-      try {
-        const activeProj = projectId || "proj-1";
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-        const res = await fetch(`${backendUrl}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.raw_code !== undefined) {
-            setCode(data.raw_code);
-            setSaveStatus("saved");
-            localStorage.setItem(storageKey, data.raw_code);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("Backend load failed, falling back to LocalStorage:", err);
+    if (yjsTextContent) {
+      setCode(yjsTextContent);
+      if (editorRef.current && editorRef.current.getValue() !== yjsTextContent) {
+        editorRef.current.setValue(yjsTextContent);
       }
+    } else if (doc && !isYjsLoading) {
+      // Yjs text is empty — seed initial content from backend API or LocalStorage
+      const seedInitialContent = async () => {
+        let initialText = "";
+        try {
+          const activeProj = projectId || "proj-1";
+          const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+          const res = await fetch(`${backendUrl}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.raw_code) initialText = data.raw_code;
+          }
+        } catch (e) {}
 
-      // Fallback to LocalStorage
-      try {
-        const savedCode = localStorage.getItem(storageKey);
-        if (savedCode !== null) {
-          setCode(savedCode);
-          setSaveStatus("saved");
+        if (!initialText) {
+          try {
+            const saved = localStorage.getItem(storageKey);
+            if (saved) initialText = saved;
+          } catch (e) {}
         }
-      } catch (e) { }
-    };
 
-    loadSavedDocument();
-  }, [projectId, activeFilePath, storageKey]);
+        if (initialText) {
+          setYjsText(initialText);
+          setCode(initialText);
+        }
+      };
 
-  // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
+      seedInitialContent();
+    }
+  }, [yjsTextContent, doc, isYjsLoading, activeFilePath, storageKey]);
+
+  // Save Document function — persists Yjs binary snapshot to Postgres via tRPC (spec section 1)
   const saveDocument = async (newCode: string, showToast = true) => {
     setSaveStatus("saving");
-    const activeProj = projectId || "proj-1";
-
     try {
-      // Always save to LocalStorage immediately for crash protection
       localStorage.setItem(storageKey, newCode);
-
-      // Save to Supabase latex_documents DB + Local Disk + Qdrant Vector Sync
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-      const res = await fetch(`${backendUrl}/api/projects/save-file`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: activeProj,
-          file_path: activeFilePath,
-          raw_code: newCode,
-        }),
-      });
-
-      if (res.ok) {
-        setSaveStatus("saved");
-        if (showToast) {
-          toast.success(`Saved ${activeFilePath}!`);
-        }
-      } else {
-        setSaveStatus("unsaved");
+      if (provider) {
+        await provider.save();
+      }
+      setSaveStatus("saved");
+      if (showToast) {
+        toast.success(`Saved ${activeFilePath}!`);
       }
     } catch (err) {
       setSaveStatus("unsaved");
-      console.error("Save document failed:", err);
+      console.error("Save document snapshot failed:", err);
     }
   };
 
-
-  // 3. Handle code changes with debounced auto-save
+  // Handle code changes — apply update to Yjs CRDT (spec section 1, 15)
   const handleCodeChange = (newCode: string | undefined) => {
     const updated = newCode ?? "";
     setCode(updated);
     setSaveStatus("unsaved");
 
-    // Instantly persist in LocalStorage for crash resilience
+    // Instantly apply edit to Yjs CRDT (local-first by design)
+    setYjsText(updated);
+
     try {
       localStorage.setItem(storageKey, updated);
     } catch (e) { }
 
-    // Debounced vector sync after 1.5s inactivity
+    // Debounced snapshot save after 2.5s inactivity
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       saveDocument(updated, false);
-    }, 1500);
+    }, 2500);
   };
 
   const handleEditorMount: OnMount = (editor, monaco) => {
@@ -549,6 +587,28 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         handleCustomPaste();
       });
     } catch (e) {}
+
+    // Track cursor position & selection for multi-user presence (spec section 2, 4)
+    try {
+      editor.onDidChangeCursorPosition((e: any) => {
+        updateCursor({
+          lineNumber: e.position.lineNumber,
+          column: e.position.column,
+        });
+      });
+
+      editor.onDidChangeCursorSelection((e: any) => {
+        const s = e.selection;
+        updateSelection({
+          startLineNumber: s.startLineNumber,
+          startColumn: s.startColumn,
+          endLineNumber: s.endLineNumber,
+          endColumn: s.endColumn,
+        });
+      });
+    } catch (err) {
+      console.warn("Failed to attach presence cursor listeners:", err);
+    }
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -993,19 +1053,22 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               <span>Agent <span className="text-[9px] opacity-60 ml-0.5">(Cmd+L)</span></span>
             </Button>
 
-            {/* PDF Preview Toggle Button */}
+            {/* Realtime Connection Status */}
+            <ConnectionStatusIndicator />
+
+            {/* Chat Panel Toggle Button */}
             <Button
               variant="outline"
               size="sm"
-              onClick={togglePdf}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
-                  ? "bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-500/30 text-cyan-300 font-semibold"
+              onClick={() => setChatOpen(!chatOpen)}
+              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${chatOpen
+                  ? "bg-purple-500/10 hover:bg-purple-500/20 border-purple-500/30 text-purple-300 font-semibold"
                   : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
                 }`}
-              title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
+              title={chatOpen ? "Hide Chat Panel" : "Show Chat Panel"}
             >
-              <Eye className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Preview</span>
+              <MessageSquare className="w-3.5 h-3.5 text-purple-400" />
+              <span>Chat</span>
             </Button>
 
             <Button
@@ -1020,7 +1083,21 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             </Button>
           </div>
 
-          <CollaboratorAvatars projectId={projectId} />
+          <CollaboratorAvatars
+            projectId={projectId}
+            activeDocumentId={activeFilePath}
+            onFollowUser={(userId) => {
+              const targetCursor = remoteCursors.find((c) => c.userId === userId);
+              if (targetCursor?.cursorPos && editorRef.current) {
+                editorRef.current.revealLineInCenter(targetCursor.cursorPos.lineNumber);
+                editorRef.current.setPosition({
+                  lineNumber: targetCursor.cursorPos.lineNumber,
+                  column: targetCursor.cursorPos.column,
+                });
+                toast.info(`Following ${targetCursor.name}`);
+              }
+            }}
+          />
         </div>
       </header>
 
@@ -1077,7 +1154,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               </div>
             </div>
 
-            <div className="flex-1 overflow-hidden relative">
+            <div className="flex-1 overflow-hidden relative" ref={editorContainerRef}>
+              <RemoteCursors
+                cursors={remoteCursors}
+                editorElement={editorContainerRef.current}
+                getPixelPosition={getPixelPosition}
+              />
+              <RemoteSelections
+                cursors={remoteCursors}
+                editorElement={editorContainerRef.current}
+                getSelectionRects={getSelectionRects}
+              />
+
               <Editor
                 height="100%"
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
@@ -1343,6 +1431,20 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
                 </form>
               </div>
+            </div>
+          </div>
+
+          {/* Panel 5 (Far Right): Real-Time Chat */}
+          <div
+            className={`h-full border-l border-border/40 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${chatOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
+              }`}
+          >
+            <div className="w-[340px] h-full">
+              <ChatPanel
+                projectId={projectId || "default"}
+                isOpen={chatOpen}
+                onClose={() => setChatOpen(false)}
+              />
             </div>
           </div>
         </div>

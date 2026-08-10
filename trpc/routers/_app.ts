@@ -8,6 +8,10 @@ import { preferencesRouter } from './preferences';
 import { notificationsRouter } from './notifications';
 import { invitationsRouter } from './invitations';
 import { commentsRouter } from './comments';
+import { documentsRouter } from './documents';
+import { chatRouter } from './chat';
+import { reactionsRouter } from './reactions';
+import { realtimeCommentsRouter } from './realtime-comments';
 
 export const appRouter = router({
   hello: publicProcedure
@@ -31,6 +35,12 @@ export const appRouter = router({
   notifications: notificationsRouter,
   invitations: invitationsRouter,
   comments: commentsRouter,
+
+  // Real-time collaboration routers
+  documents: documentsRouter,
+  chat: chatRouter,
+  reactions: reactionsRouter,
+  realtimeComments: realtimeCommentsRouter,
 });
 
 export type AppRouter = typeof appRouter;
