@@ -10,11 +10,16 @@ import { Users, UserPlus, Share2, X, Trash2, Crown, AlertTriangle } from "lucide
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 
+import { authClient } from "@/lib/auth-client";
+import { useProjectPresence } from "@/lib/realtime/presence";
+
 interface CollaboratorAvatarsProps {
   projectId?: string;
+  activeDocumentId?: string;
+  onFollowUser?: (userId: string) => void;
 }
 
-export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
+export function CollaboratorAvatars({ projectId, activeDocumentId, onFollowUser }: CollaboratorAvatarsProps) {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -22,6 +27,9 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  const { data: sessionData } = authClient.useSession();
+  const currentUser = sessionData?.user;
 
   useEffect(() => {
     setMounted(true);
@@ -31,8 +39,16 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
 
   const { data: membersList = [] } = trpc.projects.getMembers.useQuery(
     { projectId: projectId! },
-    { enabled: !!projectId, refetchInterval: 5000 }
+    { enabled: !!projectId }
   );
+
+  const { onlineUsers } = useProjectPresence(
+    projectId || null,
+    currentUser ? { id: currentUser.id, name: currentUser.name, image: currentUser.image } : null,
+    activeDocumentId
+  );
+
+  const onlineUserIds = new Set(onlineUsers.map((u) => u.userId));
 
   const { data: projectInfo } = trpc.projects.getById.useQuery(
     { projectId: projectId! },
@@ -275,26 +291,57 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
         className="flex items-center -space-x-2 overflow-hidden cursor-pointer"
         title="Manage Project Co-Authors"
       >
-        {membersList.map((m) => (
-          <div key={m.id} className="relative group">
-            <Avatar className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-background shadow-md">
-              <AvatarImage src={m.avatar} alt={m.name || 'Member'} />
-              <AvatarFallback className="bg-indigo-600 text-white text-[10px] font-bold">
-                {(m.name || 'U').slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
+        {membersList.map((m) => {
+          const isOnline = onlineUserIds.has(m.id);
+          const presenceMeta = onlineUsers.find((u) => u.userId === m.id);
 
-            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-emerald-400 border border-background" />
+          return (
+            <div
+              key={m.id}
+              className="relative group"
+              onClick={(e) => {
+                if (onFollowUser && isOnline && m.id !== currentUser?.id) {
+                  e.stopPropagation();
+                  onFollowUser(m.id);
+                }
+              }}
+            >
+              <Avatar className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-background shadow-md ${!isOnline ? "opacity-60" : ""}`}>
+                <AvatarImage src={m.avatar} alt={m.name || 'Member'} />
+                <AvatarFallback className="bg-indigo-600 text-white text-[10px] font-bold">
+                  {(m.name || 'U').slice(0, 2).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
 
-            <div className="absolute right-0 top-10 hidden group-hover:block z-50 p-2.5 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-2xl text-xs whitespace-nowrap space-y-1">
-              <p className="font-bold text-foreground flex items-center gap-1">
-                {m.isOwner && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
-                <span>{m.name || m.email}</span>
-              </p>
-              <p className="text-[10px] text-indigo-400 font-mono">Role: {m.role}</p>
+              <span
+                className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-background ${
+                  isOnline ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground/40"
+                }`}
+                title={isOnline ? "Online" : "Offline"}
+              />
+
+              <div className="absolute right-0 top-10 hidden group-hover:block z-50 p-2.5 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-2xl text-xs whitespace-nowrap space-y-1">
+                <p className="font-bold text-foreground flex items-center gap-1">
+                  {m.isOwner && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                  <span>{m.name || m.email}</span>
+                </p>
+                <p className="text-[10px] text-indigo-400 font-mono">
+                  Role: {m.role} • {isOnline ? "Online" : "Offline"}
+                </p>
+                {presenceMeta?.currentDocumentId && (
+                  <p className="text-[9px] text-muted-foreground font-mono">
+                    Doc: {presenceMeta.currentDocumentId}
+                  </p>
+                )}
+                {isOnline && m.id !== currentUser?.id && onFollowUser && (
+                  <p className="text-[9px] text-indigo-400 font-semibold mt-1">
+                    Click to follow collaborator
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <Button
