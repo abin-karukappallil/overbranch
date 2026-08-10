@@ -1,4 +1,11 @@
-import { pgTable, text, timestamp, boolean, integer, jsonb, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, jsonb, unique, customType } from "drizzle-orm/pg-core";
+
+// Custom type for binary data (Yjs snapshots)
+const bytea = customType<{ data: Buffer; dpiMode: string }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -99,15 +106,79 @@ export const notifications = pgTable("notifications", {
   createdAt: timestamp("created_at").notNull().defaultNow()
 });
 
+// ─── Real-Time Collaboration Tables ──────────────────────────────────
+
+/**
+ * Extended comments table — document-scoped, threaded, with open/resolved status.
+ * Replaces the old project-only comments table.
+ */
 export const comments = pgTable("comments", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  documentId: text("document_id"),
   authorId: text("author_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  parentId: text("parent_id"),
   content: text("content").notNull(),
+  status: text("status").notNull().default("open"),
   resolved: boolean("resolved").notNull().default(false),
+  mentionedUserIds: jsonb("mentioned_user_ids").$type<string[]>().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow()
 });
+
+/**
+ * Yjs binary document snapshots — debounced persistence (spec section 1).
+ * Each snapshot stores the full Yjs encoded state at a point in time.
+ */
+export const documentSnapshots = pgTable("document_snapshots", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  documentId: text("document_id").notNull(),
+  snapshot: text("snapshot").notNull(), // base64-encoded Yjs state
+  version: integer("version").notNull().default(1),
+  savedBy: text("saved_by").references(() => user.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+});
+
+/**
+ * Project-scoped chat messages (spec section 5).
+ * DB-write-then-broadcast pattern — message history and live delivery never disagree.
+ */
+export const chatMessages = pgTable("chat_messages", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  authorId: text("author_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  body: text("body").notNull(),
+  mentionedUserIds: jsonb("mentioned_user_ids").$type<string[]>().default([]),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
+});
+
+/**
+ * Per-user per-project last-read message tracking (spec section 7).
+ */
+export const chatReadState = pgTable("chat_read_state", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  lastReadMessageId: text("last_read_message_id"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
+}, (t) => ({
+  unq: unique().on(t.userId, t.projectId),
+}));
+
+/**
+ * Emoji reactions on chat messages (spec section 8).
+ */
+export const messageReactions = pgTable("message_reactions", {
+  id: text("id").primaryKey(),
+  messageId: text("message_id").notNull().references(() => chatMessages.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  emoji: text("emoji").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow()
+}, (t) => ({
+  unq: unique().on(t.messageId, t.userId, t.emoji),
+}));
 
 export const templates = pgTable("templates", {
   id: text("id").primaryKey(),
@@ -140,9 +211,15 @@ export const editorPreferences = pgTable("editor_preferences", {
   lineNumbers: boolean("line_numbers").notNull().default(true)
 });
 
+// ─── Type Exports ──────────────────────────────────────────────────────
+
 export type User = typeof user.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectInvitation = typeof projectInvitations.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
+export type DocumentSnapshot = typeof documentSnapshots.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;
+export type ChatReadState = typeof chatReadState.$inferSelect;
+export type MessageReaction = typeof messageReactions.$inferSelect;
