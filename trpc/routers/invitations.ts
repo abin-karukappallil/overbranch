@@ -5,6 +5,8 @@ import { projects, projectMembers, projectInvitations, notifications, user } fro
 import { eq, and } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 
+import { serverBroadcast } from '@/lib/supabase';
+
 export const invitationsRouter = router({
   sendInvite: projectProcedure
     .input(z.object({
@@ -97,6 +99,13 @@ export const invitationsRouter = router({
           message: `${ctx.user.name || ctx.user.email} invited you to co-author "${ctx.project.name}".`,
         });
       });
+
+      // Real-time server broadcast to target user's personal channel
+      serverBroadcast(`user:${targetUser.id}`, 'notification.new', {
+        type: 'ProjectInvite',
+        title: 'Project Invitation',
+        message: `${ctx.user.name || ctx.user.email} invited you to co-author "${ctx.project.name}".`,
+      }).catch((err) => console.warn('Failed to broadcast invite notification:', err));
 
       return {
         success: true,

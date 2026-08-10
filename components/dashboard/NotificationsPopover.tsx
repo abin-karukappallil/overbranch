@@ -6,19 +6,48 @@ import { Button } from "@/components/ui/button";
 import { trpc } from "@/trpc/client";
 import { toast } from "sonner";
 
+import { useEffect } from "react";
+import { authClient } from "@/lib/auth-client";
+import { getSupabaseClient } from "@/lib/supabase-client";
+
 export function NotificationsPopover() {
   const [open, setOpen] = useState(false);
 
+  const { data: sessionData } = authClient.useSession();
+  const currentUser = sessionData?.user;
+
   const utils = trpc.useUtils();
   const { data: notificationsList } = trpc.notifications.listNotifications.useQuery(undefined, {
-    refetchInterval: 5000,
+    refetchInterval: 10000,
   });
   const { data: pendingInvites } = trpc.invitations.listPending.useQuery(undefined, {
-    refetchInterval: 5000,
+    refetchInterval: 10000,
   });
   const { data: unreadCount = 0 } = trpc.notifications.unreadCount.useQuery(undefined, {
-    refetchInterval: 5000,
+    refetchInterval: 10000,
   });
+
+  // Subscribe to real-time user notification channel
+  useEffect(() => {
+    if (!currentUser?.id) return;
+
+    const supabase = getSupabaseClient();
+    const channel = supabase.channel(`user:${currentUser.id}`);
+
+    channel
+      .on("broadcast", { event: "notification.new" }, (payload: any) => {
+        toast.info(payload.payload.title || "New Notification", {
+          description: payload.payload.message,
+        });
+        utils.notifications.invalidate();
+        utils.invitations.invalidate();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser?.id, utils]);
 
   const markAllReadMutation = trpc.notifications.markAllAsRead.useMutation({
     onSuccess: () => {
