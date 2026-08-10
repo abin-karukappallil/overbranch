@@ -66,12 +66,12 @@ OverBranch is a modern, open-source collaborative LaTeX and Beamer slides worksp
 
 ##  Features
 
-- ** Instant TeX & Beamer Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
-- ** Built-in AI Copilot Router**: Instant AI LaTeX edits powered by NVIDIA NIM (`openai/gpt-oss-120b`) and Groq (`qwen/qwen3.6-27b`).
-- ** Real-time Collaborative Editing**: Seamless multi-user co-authoring with cursor presence and automatic document saving.
-- ** Asset Manager & Inline Preview**: Upload images and assets with one-click LaTeX code copying and instant image preview modal.
-- ** Fully Responsive**: Custom layout collapsed drawers for mobile & tablet authoring.
-- ** 100% Self-Contained Docker Container**: Zero external cloud dependency. Runs on any Azure VM, Linux server, Windows, or Mac.
+- **Instant TeX & Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
+- **Built-in AI Copilot Router**: Instant Agentic LaTeX edits powered by groq free models(can use own api key or default).
+- **Real-time Collaborative Editing**: Seamless multi-user co-authoring with cursor presence and automatic document saving.
+- **Asset Manager & Inline Preview**: Upload images and assets with one-click LaTeX code copying and instant image preview modal.
+- **Fully Responsive**: Custom layout collapsed drawers for mobile & tablet authoring.
+- **100% Self-Contained Docker Container**: Zero external cloud dependency. Runs on any Azure VM, Linux server, Windows, or Mac.
 
 ---
 
