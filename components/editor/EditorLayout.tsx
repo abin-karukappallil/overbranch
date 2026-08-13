@@ -29,8 +29,14 @@ import {
   Lock,
   Copy,
   ClipboardPaste,
+  CheckSquare,
+  MousePointerClick,
+  Paperclip,
+  Square,
+  FileText,
+  File,
+  AlertCircle,
 } from "lucide-react";
-import { CompileToolbar } from "@/components/editor/CompileToolbar";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
@@ -50,6 +56,8 @@ interface ChatMessage {
   sender: "user" | "assistant";
   text: string;
   time: string;
+  edits?: EditItem[];
+  isApplied?: boolean;
   diff?: {
     original_chunk: string;
     proposed_chunk: string;
@@ -117,18 +125,7 @@ const quickSymbols = [
   { label: "\\sum", insert: "\\sum_{i=1}^{N}" },
 ];
 
-export const GROQ_MODELS = [
-  { id: "qwen/qwen3.6-27b", name: "Qwen 3.6 27B" },
-  { id: "qwen-qwq-32b", name: "Qwen QWQ 32B" },
-  { id: "llama-3.3-70b-versatile", name: "Llama 3.3 70B" },
-  { id: "llama-3.1-8b-instant", name: "Llama 3.1 8B Instant" },
-  { id: "gemma2-9b-it", name: "Gemma 2 9B" },
-  { id: "mixtral-8x7b-32768", name: "Mixtral 8x7B" },
-  { id: "deepseek-r1-distill-llama-70b", name: "DeepSeek R1 70B" },
-  { id: "openai/gpt-oss-20b", name: "OpenAI GPT OSS 20B" },
-  { id: "openai/gpt-oss-120b", name: "OpenAI GPT OSS 120B" },
-];
-export const DEFAULT_MODEL = "qwen/qwen3.6-27b";
+export const DEFAULT_MODEL = "gemini-3.1-pro";
 
 export function extractLatexFromResponse(response: string): string | null {
   const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
@@ -189,28 +186,74 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
 
-  // Groq API & Model Config States
-  const [groqApiKey, setGroqApiKey] = useState("");
-  const [groqModel, setGroqModel] = useState(DEFAULT_MODEL);
-  const [showConfigPanel, setShowConfigPanel] = useState(false);
+  // AI Agent Assistant & Editor Refs
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastSelectionRef = useRef<any>(null);
+  const lastPositionRef = useRef<any>(null);
+  const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
+  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.1-flash-lite");
+  const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
+  const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const savedKey = localStorage.getItem("groq_api_key");
-      const savedModel = localStorage.getItem("groq_model");
-      if (savedKey) setGroqApiKey(savedKey);
-      if (savedModel) setGroqModel(savedModel);
-    }
-  }, []);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (!selectedFile) return;
 
-  const handleSaveGroqConfig = (key: string, model: string) => {
-    setGroqApiKey(key);
-    setGroqModel(model);
-    if (typeof window !== "undefined") {
-      if (key && key.trim()) localStorage.setItem("groq_api_key", key.trim());
-      else localStorage.removeItem("groq_api_key");
-      localStorage.setItem("groq_model", model);
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      toast.error("File size exceeds 10MB limit.");
+      return;
     }
+
+    const reader = new FileReader();
+    const filename = selectedFile.name;
+    const lowerName = filename.toLowerCase();
+    const fileType = selectedFile.type || (lowerName.endsWith(".pdf") ? "application/pdf" : "text/plain");
+
+    const isBinaryOrPdf = fileType.startsWith("image/") || fileType === "application/pdf" || lowerName.endsWith(".pdf");
+
+    if (isBinaryOrPdf) {
+      reader.readAsDataURL(selectedFile);
+      reader.onload = () => {
+        setAttachedFile({
+          filename,
+          content: reader.result as string,
+          file_type: fileType,
+        });
+        const label = fileType.includes("pdf") || lowerName.endsWith(".pdf") ? "PDF document" : "file";
+        toast.success(`Attached ${label} ${filename}`);
+      };
+    } else {
+      reader.readAsText(selectedFile);
+      reader.onload = () => {
+        setAttachedFile({
+          filename,
+          content: reader.result as string,
+          file_type: fileType,
+        });
+        toast.success(`Attached file ${filename}`);
+      };
+    }
+
+    if (e.target) e.target.value = "";
+  };
+
+  const handleStopAgentResponse = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsAgentThinking(false);
+    toast.info("AI response generation stopped.");
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `ai-stop-${Date.now()}`,
+        sender: "assistant",
+        text: "Response generation was stopped by user.",
+        time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      },
+    ]);
   };
 
   // Fetch real project metadata & user authorization status
@@ -310,8 +353,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   // Responsive Sidebar Panels
   const [aiOpen, setAiOpen] = useState(true);
   const [pdfOpen, setPdfOpen] = useState(true);
-  const [pasteModalOpen, setPasteModalOpen] = useState(false);
-  const [pasteInputValue, setPasteInputValue] = useState("");
 
   const handleCustomCopy = async () => {
     if (editorRef.current) {
@@ -349,15 +390,52 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         const text = await navigator.clipboard.readText();
         if (text) {
           insertSymbol(text);
-          toast.success("Pasted clipboard text into editor!");
+          toast.success("Pasted text into TeX editor at cursor!");
           return;
         }
       }
     } catch (err) {
       console.warn("Direct clipboard read blocked by browser permissions:", err);
     }
-    // Fall back to crash-proof custom paste modal input
-    setPasteModalOpen(true);
+    if (editorRef.current) {
+      editorRef.current.focus();
+    }
+    toast.info("Use Ctrl+V or Cmd+V to paste directly into the editor at your cursor.");
+  };
+
+  const handleSelectAll = () => {
+    if (editorRef.current) {
+      const editor = editorRef.current;
+      editor.focus();
+      const model = editor.getModel();
+      if (model) {
+        const fullRange = model.getFullModelRange();
+        editor.setSelection(fullRange);
+        lastSelectionRef.current = fullRange;
+        toast.info("Selected entire document code.");
+      }
+    }
+  };
+
+  const handleSelectLine = () => {
+    if (editorRef.current) {
+      const editor = editorRef.current;
+      editor.focus();
+      const pos = lastPositionRef.current || editor.getPosition();
+      if (pos) {
+        const model = editor.getModel();
+        const maxCol = model ? model.getLineMaxColumn(pos.lineNumber) : 1;
+        const lineRange = {
+          startLineNumber: pos.lineNumber,
+          startColumn: 1,
+          endLineNumber: pos.lineNumber,
+          endColumn: maxCol,
+        };
+        editor.setSelection(lineRange);
+        lastSelectionRef.current = lineRange;
+        toast.info(`Selected line ${pos.lineNumber}`);
+      }
+    }
   };
 
   const toggleAi = () => {
@@ -504,6 +582,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
 
+    editor.onDidChangeCursorSelection((e) => {
+      if (e.selection) {
+        lastSelectionRef.current = e.selection;
+      }
+    });
+
+    editor.onDidChangeCursorPosition((e) => {
+      if (e.position) {
+        lastPositionRef.current = e.position;
+      }
+    });
+
     // Safely attach paste listener to container DOM node to handle mobile/Gboard clipboard paste operations without crashing Monaco
     try {
       const containerNode = editor.getContainerDomNode();
@@ -540,13 +630,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       console.warn("Failed to attach paste event listener:", err);
     }
 
-    // Override Ctrl+C / Cmd+C and Ctrl+V / Cmd+V shortcuts with our crash-proof functions
     try {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
         handleCustomCopy();
-      });
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
-        handleCustomPaste();
       });
     } catch (e) {}
 
@@ -613,43 +699,121 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   const handleSendPrompt = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || isAgentThinking) return;
+    if ((!chatInput.trim() && !attachedFile) || isAgentThinking) return;
 
-    const userText = chatInput.trim();
+    const userText = chatInput.trim() || (attachedFile ? `[Uploaded file: ${attachedFile.filename}]` : "");
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     setMessages((prev) => [
       ...prev,
-      { id: `user-${Date.now()}`, sender: "user", text: userText, time: now },
+      {
+        id: `user-${Date.now()}`,
+        sender: "user",
+        text: attachedFile
+          ? `${userText}\n\n📎 Attached File: ${attachedFile.filename}`
+          : userText,
+        time: now,
+      },
     ]);
-    setChatInput("");
-    setIsAgentThinking(true);
 
-    const userGroqKey = localStorage.getItem("groq_api_key") || groqApiKey;
-    const userGroqModel = localStorage.getItem("groq_model") || groqModel;
+    const currentFilePayload = attachedFile;
+    setChatInput("");
+    if (typeof document !== "undefined") {
+      document.querySelectorAll<HTMLTextAreaElement>("textarea[id*='chat-input']").forEach((el) => {
+        el.style.height = "auto";
+      });
+    }
+    setAttachedFile(null);
+    setIsAgentThinking(true);
+    setFallbackModelNotice(null);
+    setAgentProgressSteps([]);
+
+    abortControllerRef.current = new AbortController();
+    const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), 300000); // 300s timeout
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/agent/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: abortControllerRef.current.signal,
         body: JSON.stringify({
           project_id: projectId || "proj-default",
-          file_path: "main.tex",
+          file_path: activeFilePath || "main.tex",
           user_prompt: userText,
           current_code: code,
-          groq_api_key: userGroqKey,
-          groq_model: userGroqModel,
+          model: activeModelName || "gemini-3.1-flash-lite",
+          fallback_model: "gemini-2.5-flash",
+          attached_file: currentFilePayload ? {
+            filename: currentFilePayload.filename,
+            content: currentFilePayload.content,
+            file_type: currentFilePayload.file_type,
+          } : null,
         }),
       });
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        const detailMsg = errJson.detail || `AI Agent returned status ${response.status}`;
-        throw new Error(detailMsg);
+        const errText = await response.text();
+        throw new Error(errText || `AI Agent returned status ${response.status}`);
       }
 
-      const data = await response.json();
+      // Read SSE stream
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response stream");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalData: any = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // keep incomplete line
+
+        let currentEventType = "";
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const rawData = line.slice(6);
+            try {
+              const parsed = JSON.parse(rawData);
+
+              if (currentEventType === "progress") {
+                setAgentProgressSteps((prev) => [...prev, parsed]);
+              } else if (currentEventType === "result") {
+                finalData = parsed;
+              } else if (currentEventType === "error") {
+                throw new Error(parsed.message || "AI Agent error");
+              }
+            } catch (parseErr: any) {
+              if (parseErr.message && !parseErr.message.includes("JSON")) {
+                throw parseErr;
+              }
+            }
+            currentEventType = "";
+          }
+        }
+      }
+
+      if (!finalData) throw new Error("No result received from AI agent");
+
+      const data = finalData;
       const assistantTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      if (data.model_used) {
+        setActiveModelName(data.model_used);
+      }
+
+      if (data.is_fallback && data.fallback_notice) {
+        setFallbackModelNotice(data.fallback_notice);
+        toast.warning(data.fallback_notice, { duration: 6000 });
+      }
 
       const rawExplanation = data.explanation || "I have processed your LaTeX request.";
       const responseText = sanitizeChunkReferences(rawExplanation);
@@ -673,7 +837,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           }]
           : [];
 
-      // Fallback: If no edits were parsed in JSON but responseText contains LaTeX code, extract as proposed edit
+      // Fallback: extract LaTeX from raw explanation
       if (editsList.length === 0) {
         const extractedCode = extractLatexFromResponse(rawExplanation);
         if (extractedCode) {
@@ -693,8 +857,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         {
           id: `ai-${Date.now()}`,
           sender: "assistant",
-          text: responseText,
+          text: responseText + (data.is_fallback ? `\n\n*(⚠️ Fallback Model Used: ${data.model_used})*` : ""),
           time: assistantTime,
+          edits: editsList,
+          isApplied: false,
         },
       ]);
 
@@ -711,11 +877,22 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         setDiffData(null);
       }
     } catch (err: any) {
-      const isUnconfiguredGroq = !userGroqKey;
-      const warningMsg = isUnconfiguredGroq
-        ? `⚠️ LLM outage / timeout detected on default model. Please configure your own API key using Groq provider in the AI settings panel (🔑 Key icon).`
-        : `AI Agent Error: ${err.message || "Failed to reach AI service"}`;
+      clearTimeout(timeoutId);
+      if (err.name === "AbortError") {
+        console.log("AI Agent chat request aborted.");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `ai-abort-${Date.now()}`,
+            sender: "assistant",
+            text: "⏱️ Request timed out or was stopped. Try a simpler prompt or click Send again.",
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          },
+        ]);
+        return;
+      }
 
+      const warningMsg = `AI Agent Error: ${err.message || "Failed to reach AI service"}`;
       toast.error(warningMsg, { duration: 6000 });
       setMessages((prev) => [
         ...prev,
@@ -728,6 +905,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       ]);
     } finally {
       setIsAgentThinking(false);
+      setAgentProgressSteps([]);
+      abortControllerRef.current = null;
     }
   };
 
@@ -758,9 +937,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
     let updatedCode = code;
+    const model = editorRef.current?.getModel?.();
 
-    if (editorRef.current) {
-      const model = editorRef.current.getModel();
+    if (model) {
       const currentText = model.getValue();
 
       const escapedSearch = originalChunk
@@ -771,7 +950,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       if (originalChunk && regex && regex.test(currentText)) {
         updatedCode = replaceAllCaseInsensitive(currentText, originalChunk, proposedChunk);
       } else {
-        const selection = editorRef.current.getSelection();
+        const selection = editorRef.current?.getSelection?.();
         if (selection && !selection.isEmpty()) {
           editorRef.current.executeEdits("ai-agent", [
             { range: selection, text: proposedChunk, forceMoveMarkers: true },
@@ -806,8 +985,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     handleCompile(updatedCode);
   };
 
-  const handleAcceptAllEdits = (itemsToApply: EditItem[]) => {
-    let updatedCode = code;
+  const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
+    const model = editorRef.current?.getModel?.();
+    let updatedCode = model ? model.getValue() : code;
 
     itemsToApply.forEach((item) => {
       const orig = item.original_chunk;
@@ -820,13 +1000,24 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       }
     });
 
-    if (editorRef.current) {
-      editorRef.current.getModel().setValue(updatedCode);
+    if (model) {
+      model.setValue(updatedCode);
     }
 
     setCode(updatedCode);
     setDiffData(null);
     setDiffEditsList([]);
+
+    if (msgId) {
+      setMessages((prev) =>
+        prev.map((m) => (m.id === msgId ? { ...m, isApplied: true } : m))
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((m) => (m.edits && m.edits.length > 0 ? { ...m, isApplied: true } : m))
+      );
+    }
+
     toast.success(`Accepted ${itemsToApply.length} AI edit(s) into editor!`);
 
     saveDocument(updatedCode, true);
@@ -840,7 +1031,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   };
 
   const handleAcceptSingleEdit = (item: EditItem) => {
-    let updatedCode = code;
+    const model = editorRef.current?.getModel?.();
+    let updatedCode = model ? model.getValue() : code;
     const orig = item.original_chunk;
     const prop = item.proposed_chunk;
 
@@ -850,8 +1042,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       updatedCode = insertSnippetSafely(updatedCode, prop);
     }
 
-    if (editorRef.current) {
-      editorRef.current.getModel().setValue(updatedCode);
+    if (model) {
+      model.setValue(updatedCode);
     }
 
     setCode(updatedCode);
@@ -904,24 +1096,123 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     return "Document Edit";
   };
 
+  const renderMessageEditsCard = (m: ChatMessage) => {
+    if (!m.edits || m.edits.length === 0) return null;
+    const firstEdit = m.edits[0];
+
+    return (
+      <div className="mt-2.5 p-2.5 rounded-xl bg-[#161b22] border border-indigo-500/30 text-xs font-mono space-y-2">
+        <div className="flex items-center justify-between font-bold text-indigo-300">
+          <div className="flex items-center gap-1.5 text-xs">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <span>Proposed TeX Edit ({m.edits.length})</span>
+          </div>
+          {m.isApplied ? (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+              <Check className="w-3 h-3" /> Applied
+            </span>
+          ) : (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+              Pending
+            </span>
+          )}
+        </div>
+
+        {firstEdit && (firstEdit.original_chunk || firstEdit.proposed_chunk) && (
+          <div className="bg-black/60 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-border/40 font-mono max-h-28">
+            {firstEdit.original_chunk && (
+              <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
+                - {firstEdit.original_chunk.split("\n")[0]}
+              </div>
+            )}
+            {firstEdit.proposed_chunk && (
+              <div className="text-emerald-300 bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
+                + {firstEdit.proposed_chunk.split("\n")[0]}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!m.isApplied ? (
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => handleRejectAllEdits()}
+              className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Reject</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                handleAcceptAllEdits(m.edits!, m.id);
+                if (typeof window !== "undefined" && window.innerWidth < 768) {
+                  setActiveMobileTab("code");
+                }
+              }}
+              className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+            >
+              <Check className="w-3.5 h-3.5" />
+              <span>Accept Edit</span>
+            </button>
+          </div>
+        ) : (
+          <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 pt-0.5">
+            <Check className="w-3.5 h-3.5" />
+            <span>Applied changes to TeX editor</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const insertSymbol = (symbolInsert: string) => {
     if (editorRef.current) {
       const editor = editorRef.current;
-      const selection = editor.getSelection();
-      const id = { major: 1, minor: 1 };
-      const op = {
-        identifier: id,
-        range: selection,
-        text: symbolInsert,
-        forceMoveMarkers: true,
-      };
-      editor.executeEdits("my-source", [op]);
-      handleCodeChange(editor.getValue());
+      editor.focus();
+
+      const lastSel = lastSelectionRef.current;
+      const lastPos = lastPositionRef.current;
+      const currentSel = editor.getSelection();
+      const currentPos = editor.getPosition();
+
+      let targetRange = currentSel && !currentSel.isEmpty() ? currentSel : (lastSel && !lastSel.isEmpty() ? lastSel : null);
+
+      if (!targetRange || (typeof targetRange.isEmpty === "function" && targetRange.isEmpty())) {
+        const pos = currentPos || lastPos;
+        if (pos) {
+          targetRange = {
+            startLineNumber: pos.lineNumber,
+            startColumn: pos.column,
+            endLineNumber: pos.lineNumber,
+            endColumn: pos.column,
+          };
+        }
+      }
+
+      if (targetRange) {
+        editor.executeEdits("insert-symbol", [
+          {
+            range: targetRange,
+            text: symbolInsert,
+            forceMoveMarkers: true,
+          },
+        ]);
+        const endPos = editor.getPosition();
+        if (endPos) {
+          editor.setPosition(endPos);
+          editor.revealPositionInCenterIfOutsideViewport(endPos);
+        }
+        handleCodeChange(editor.getValue());
+      } else {
+        const newText = code ? `${code}\n${symbolInsert}` : symbolInsert;
+        handleCodeChange(newText);
+      }
     } else {
-      const newText = code + "\n" + symbolInsert;
+      const newText = code ? `${code}\n${symbolInsert}` : symbolInsert;
       handleCodeChange(newText);
     }
-    toast.info(`Inserted ${symbolInsert.split("{")[0]}`);
   };
 
   return (
@@ -1024,8 +1315,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         </div>
       </header>
 
-      <CompileToolbar onCompile={() => handleCompile()} isCompiling={isCompiling} />
-
       {/* Desktop Main Split View */}
       <div className="hidden md:flex flex-1 overflow-hidden relative">
         <div className="w-full h-full flex overflow-hidden">
@@ -1041,11 +1330,27 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
           <div className="flex-1 min-w-[320px] bg-background flex flex-col h-full border-r border-border/40 relative">
-            <div className="px-3 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0">
-              <div className="flex items-center gap-2 overflow-x-auto py-0.5">
-                <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate">
-                  Editing: {activeFilePath}
-                </span>
+            <div className="px-3 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
+
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
+                  title="Select All document code (Ctrl+A / Cmd+A)"
+                >
+                  <CheckSquare className="w-3 h-3 text-cyan-400" />
+                  <span>Select All</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectLine}
+                  className="px-2 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
+                  title="Select current cursor line"
+                >
+                  <MousePointerClick className="w-3 h-3 text-sky-400" />
+                  <span>Select Line</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleCustomCopy}
@@ -1059,7 +1364,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   type="button"
                   onClick={handleCustomPaste}
                   className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Safe Paste into TeX Editor"
+                  title="Paste clipboard text at cursor position"
                 >
                   <ClipboardPaste className="w-3 h-3 text-emerald-400" />
                   <span>Paste</span>
@@ -1177,74 +1482,23 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       <Bot className="w-4 h-4 text-indigo-400" />
                       <span className="font-bold text-foreground">Agent</span>
                     </div>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => setShowConfigPanel(!showConfigPanel)}
-                        className={`p-1 rounded-md border text-[10px] font-mono flex items-center gap-1 transition-colors ${showConfigPanel
-                            ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                            : groqApiKey
-                              ? "bg-indigo-500/10 text-indigo-300 border-indigo-500/30"
-                              : "bg-muted/40 text-muted-foreground border-border/40 hover:bg-accent"
-                          }`}
-                        title="Configure Groq API Key & Model"
-                      >
-                        <Key className="w-3 h-3 text-amber-400" />
-                        <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
-                        <Settings2 className="w-3 h-3" />
-                      </button>
-                      <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-mono text-[10px]">
+                    <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-[10px] border border-emerald-500/20">
                         <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
-                        <span>{isAgentThinking ? "Thinking..." : "Ready"}</span>
+                        <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Groq Settings Collapsible Panel */}
-                  {showConfigPanel && (
-                    <div className="p-2.5 rounded-xl bg-card border border-border/60 space-y-2 font-mono text-[11px] shadow-lg animate-in fade-in zoom-in-95">
-                      <div className="flex items-center justify-between font-bold text-indigo-400">
-                        <div className="flex items-center gap-1.5">
-                          <Key className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Groq AI Settings</span>
-                        </div>
-                        <span className="text-[10px] text-muted-foreground font-normal">Stored Locally</span>
+                  {fallbackModelNotice && (
+                    <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center justify-between gap-2 shrink-0">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                        <span className="truncate">{fallbackModelNotice}</span>
                       </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-muted-foreground block font-semibold">Groq API Key:</label>
-                        <input
-                          type="password"
-                          placeholder="gsk_... (Blank = Groq gpt-oss-120b(server))"
-                          value={groqApiKey}
-                          onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
-                          className="w-full h-8 px-2 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="text-[10px] text-muted-foreground block font-semibold">Select Model:</label>
-                        <select
-                          value={groqModel}
-                          onChange={(e) => handleSaveGroqConfig(groqApiKey, e.target.value)}
-                          className="w-full h-8 px-2 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                        >
-                          {GROQ_MODELS.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Small Warning Banner if Groq key is not configured */}
-                  {!groqApiKey && (
-                    <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span className="leading-snug">
-                        Groq API key not set. Using default Groq (openai/gpt-oss-120b) model.
-                      </span>
+                      <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                        <X className="w-3 h-3" />
+                      </button>
                     </div>
                   )}
                 </div>
@@ -1259,16 +1513,55 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                        <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
+                        <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
                         <span>{m.time}</span>
                       </div>
-                      <p className="leading-relaxed">{m.text}</p>
+                      <p className="leading-relaxed whitespace-pre-wrap break-words">{m.text}</p>
+                      {renderMessageEditsCard(m)}
                     </div>
                   ))}
                   {isAgentThinking && (
-                    <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-[11px] animate-pulse font-mono">
-                      <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-                      <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
+                    <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-[11px] space-y-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-1">
+                      <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-spin shrink-0" />
+                          <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleStopAgentResponse}
+                          className="px-2 py-0.5 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors shrink-0"
+                        >
+                          <Square className="w-2.5 h-2.5 fill-current" />
+                          <span>Stop</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+                        {agentProgressSteps.length === 0 ? (
+                          <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                            <span>Initializing AI pipeline...</span>
+                          </div>
+                        ) : (
+                          agentProgressSteps.map((s, idx) => {
+                            const isLatest = idx === agentProgressSteps.length - 1;
+                            return (
+                              <div
+                                key={idx}
+                                className={`flex items-center gap-2 transition-all ${
+                                  isLatest
+                                    ? "text-purple-200 font-bold animate-pulse"
+                                    : "text-purple-400/60 font-normal text-[10px]"
+                                }`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                                <span className="truncate">{s.message}</span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   )}
                   <div ref={chatEndRef} />
@@ -1324,23 +1617,89 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </div>
                 )}
 
-                <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0">
-                  <input
-                    id="ai-chat-input"
-                    type="text"
-                    placeholder="Ask assistant to edit TeX... (Cmd+L)"
-                    value={chatInput}
-                    disabled={isAgentThinking}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    className="w-full h-9 pl-3 pr-8 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
-                  />
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+
+                {attachedFile && (
+                  <div className="flex items-center justify-between px-2.5 py-1.5 mb-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-[11px] font-mono animate-in fade-in">
+                    <div className="flex items-center gap-2 truncate">
+                      <Paperclip className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                      <span className="font-semibold truncate">{attachedFile.filename}</span>
+                      <span className="text-[9px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded font-mono">
+                        {attachedFile.file_type || "file"}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setAttachedFile(null)}
+                      className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                      title="Remove attachment"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0 flex items-center gap-2">
                   <button
-                    type="submit"
-                    disabled={isAgentThinking || !chatInput.trim()}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300 disabled:opacity-40"
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isAgentThinking}
+                    className="p-2.5 rounded-xl bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/60 transition-colors disabled:opacity-50 shrink-0"
+                    title="Upload file (text, TeX, code, image)"
                   >
-                    <Send className="w-3.5 h-3.5" />
+                    <Paperclip className="w-4 h-4" />
                   </button>
+
+                  <div className="relative flex-1">
+                    <textarea
+                      id="ai-chat-input"
+                      rows={1}
+                      placeholder="Ask agent to edit LaTeX..."
+                      value={chatInput}
+                      disabled={isAgentThinking}
+                      onChange={(e) => {
+                        setChatInput(e.target.value);
+                        e.target.style.height = "auto";
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
+                            handleSendPrompt(e);
+                          }
+                        }
+                      }}
+                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
+                    />
+                  </div>
+
+                  {isAgentThinking ? (
+                    <Button
+                      type="button"
+                      onClick={handleStopAgentResponse}
+                      size="sm"
+                      variant="destructive"
+                      className="h-9 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/20 shrink-0 font-semibold flex items-center gap-1.5 text-xs"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <span>Stop</span>
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
+                      size="sm"
+                      className="h-9 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold shadow-md shadow-indigo-600/20 shrink-0 flex items-center gap-1 text-xs disabled:opacity-40"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
                 </form>
               </div>
             </div>
@@ -1368,11 +1727,24 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
         {activeMobileTab === "code" && (
           <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
-            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0">
-              <span className="text-[10px] text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 truncate max-w-[90px]">
-                {activeFilePath}
-              </span>
-              <div className="flex items-center gap-1.5 overflow-x-auto">
+            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
+              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
+                <button
+                  type="button"
+                  onClick={handleSelectAll}
+                  className="px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                >
+                  <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Select All</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSelectLine}
+                  className="px-2 py-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                >
+                  <MousePointerClick className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Select Line</span>
+                </button>
                 <button
                   type="button"
                   onClick={handleCustomCopy}
@@ -1419,7 +1791,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 />
               </EditorErrorBoundary>
               {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-3 right-4 z-20 max-w-xs p-2.5 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
+                <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
                   <div className="flex items-center justify-between font-bold text-slate-100">
                     <div className="flex items-center gap-1.5 text-indigo-400">
                       <Sparkles className="w-3.5 h-3.5" />
@@ -1469,51 +1841,21 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <Bot className="w-5 h-5 text-indigo-400" />
                   <span className="font-bold text-sm text-foreground">AI Assistant</span>
                 </div>
-                <button
-                  onClick={() => setShowConfigPanel(!showConfigPanel)}
-                  className="px-2 py-1 rounded-lg border border-border/60 bg-card text-xs font-mono flex items-center gap-1.5 text-indigo-300"
-                  title="Configure Groq API Key & Model"
-                >
-                  <Key className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
-                  <Settings2 className="w-3.5 h-3.5" />
-                </button>
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-xs border border-emerald-500/20">
+                  <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
+                  <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
+                </div>
               </div>
 
-              {showConfigPanel && (
-                <div className="p-3 rounded-xl bg-card border border-border/60 space-y-2 font-mono text-xs shadow-lg animate-in fade-in">
-                  <div className="flex items-center justify-between font-bold text-indigo-400">
-                    <div className="flex items-center gap-1.5">
-                      <Key className="w-4 h-4 text-amber-400" />
-                      <span>Groq AI Settings</span>
-                    </div>
+              {fallbackModelNotice && (
+                <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="truncate">{fallbackModelNotice}</span>
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground block font-semibold">Groq API Key:</label>
-                    <input
-                      type="password"
-                      placeholder="gsk_... (Blank = Groq gpt-oss-120b)"
-                      value={groqApiKey}
-                      onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
-                      className="w-full h-9 px-2.5 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground block font-semibold">Select Model:</label>
-                    <select
-                      value={groqModel}
-                      onChange={(e) => handleSaveGroqConfig(groqApiKey, e.target.value)}
-                      className="w-full h-9 px-2.5 rounded-lg bg-background border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                    >
-                      {GROQ_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               )}
             </div>
@@ -1529,16 +1871,55 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                    <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
+                    <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
                     <span>{m.time}</span>
                   </div>
-                  <p className="leading-relaxed text-sm">{m.text}</p>
+                  <p className="leading-relaxed text-sm whitespace-pre-wrap break-words">{m.text}</p>
+                  {renderMessageEditsCard(m)}
                 </div>
               ))}
               {isAgentThinking && (
-                <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-xs animate-pulse font-mono">
-                  <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
-                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
+                <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-xs space-y-2 shadow-lg animate-in fade-in slide-in-from-bottom-1">
+                  <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
+                      <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleStopAgentResponse}
+                      className="px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      <span>Stop</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {agentProgressSteps.length === 0 ? (
+                      <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                        <span>Initializing AI pipeline...</span>
+                      </div>
+                    ) : (
+                      agentProgressSteps.map((s, idx) => {
+                        const isLatest = idx === agentProgressSteps.length - 1;
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex items-center gap-2 transition-all ${
+                              isLatest
+                                ? "text-purple-200 font-bold animate-pulse"
+                                : "text-purple-400/60 font-normal text-[11px]"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                            <span className="truncate">{s.message}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               )}
               <div ref={mobileChatEndRef} />
@@ -1573,22 +1954,76 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               </div>
             )}
 
-            <form onSubmit={handleSendPrompt} className="relative pt-1 border-t border-border/40 shrink-0">
-              <input
-                type="text"
-                placeholder="Ask assistant to edit TeX..."
+            {attachedFile && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 mb-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-mono animate-in fade-in">
+                <div className="flex items-center gap-2 truncate">
+                  <Paperclip className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <span className="font-semibold truncate">{attachedFile.filename}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachedFile(null)}
+                  className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleSendPrompt} className="relative pt-1 border-t border-border/40 shrink-0 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isAgentThinking}
+                className="p-2.5 rounded-xl bg-muted/40 text-muted-foreground border border-border/60 shrink-0"
+                title="Upload file"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+
+              <textarea
+                id="ai-chat-input-2"
+                rows={1}
+                placeholder="Ask Gemini to edit LaTeX..."
                 value={chatInput}
                 disabled={isAgentThinking}
-                onChange={(e) => setChatInput(e.target.value)}
-                className="w-full h-11 pl-3 pr-10 rounded-xl border border-border/60 bg-background text-foreground text-sm outline-none focus:border-indigo-500 disabled:opacity-50"
+                onChange={(e) => {
+                  setChatInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
+                      handleSendPrompt(e);
+                    }
+                  }
+                }}
+                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-border/60 bg-background text-foreground text-sm outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
               />
-              <button
-                type="submit"
-                disabled={isAgentThinking || !chatInput.trim()}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 p-1 disabled:opacity-40"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+
+              {isAgentThinking ? (
+                <Button
+                  type="button"
+                  onClick={handleStopAgentResponse}
+                  size="sm"
+                  variant="destructive"
+                  className="h-11 px-3 rounded-xl bg-rose-600 text-white font-semibold flex items-center gap-1 text-xs shrink-0"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span>Stop</span>
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
+                  size="sm"
+                  className="h-11 px-4 bg-indigo-600 text-white rounded-xl font-semibold shrink-0 flex items-center justify-center disabled:opacity-40"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              )}
             </form>
           </div>
         )}
@@ -1651,67 +2086,28 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Bot className="w-5 h-5 text-indigo-400" />
-                  <span className="font-bold text-sm text-foreground">Agentic</span>
+                  <span className="font-bold text-sm text-foreground">AI Assistant</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowConfigPanel(!showConfigPanel)}
-                    className="px-2 py-1 rounded-lg border border-border/60 bg-card text-xs font-mono flex items-center gap-1.5 text-indigo-300"
-                    title="Configure Groq API Key & Model"
-                  >
-                    <Key className="w-3.5 h-3.5 text-amber-400" />
-                    <span className="truncate max-w-[90px]">{groqApiKey ? groqModel : "gpt-oss-120b"}</span>
-                    <Settings2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-xs border border-emerald-500/20">
+                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
+                    <span className="font-semibold">{isAgentThinking ? "Thinking..." : "Gemini 3.1 Flash-Lite"}</span>
+                  </div>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-muted-foreground p-1">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
               </div>
 
-              {showConfigPanel && (
-                <div className="p-3 rounded-xl bg-background border border-border/60 space-y-2 font-mono text-xs shadow-lg">
-                  <div className="flex items-center justify-between font-bold text-indigo-400">
-                    <div className="flex items-center gap-1.5">
-                      <Key className="w-4 h-4 text-amber-400" />
-                      <span>Groq AI Settings</span>
-                    </div>
+              {fallbackModelNotice && (
+                <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span className="truncate">{fallbackModelNotice}</span>
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground block font-semibold">Groq API Key:</label>
-                    <input
-                      type="password"
-                      placeholder="gsk_... (Blank = Groq gpt-oss-120b)"
-                      value={groqApiKey}
-                      onChange={(e) => handleSaveGroqConfig(e.target.value, groqModel)}
-                      className="w-full h-9 px-2.5 rounded-lg bg-card border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-xs text-muted-foreground block font-semibold">Select Model:</label>
-                    <select
-                      value={groqModel}
-                      onChange={(e) => handleSaveGroqConfig(groqApiKey, e.target.value)}
-                      className="w-full h-9 px-2.5 rounded-lg bg-card border border-border/60 text-xs text-foreground outline-none focus:border-indigo-500 font-mono"
-                    >
-                      {GROQ_MODELS.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {/* Small Warning Banner if Groq key is not configured */}
-                  {!groqApiKey && (
-                    <div className="px-2.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center gap-2 shrink-0">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                      <span className="leading-snug">
-                        Groq API key not set. Using default Groq (openai/gpt-oss-120b) model.
-                      </span>
-                    </div>
-                  )}
+                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               )}
             </div>
@@ -1726,90 +2122,134 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                    <span>{m.sender === "user" ? "You" : "Nemotron AI"}</span>
+                    <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
                     <span>{m.time}</span>
                   </div>
-                  <p className="leading-relaxed text-sm">{m.text}</p>
+                  <p className="leading-relaxed text-sm whitespace-pre-wrap break-words">{m.text}</p>
+                  {renderMessageEditsCard(m)}
                 </div>
               ))}
               {isAgentThinking && (
-                <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-xs animate-pulse font-mono">
-                  <Sparkles className="w-4 h-4 text-purple-400 shrink-0" />
-                  <span>Generating LaTeX edit proposal via {groqApiKey ? "Groq (" + groqModel + ")" : "Groq (openai/gpt-oss-120b)"}...</span>
+                <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-xs space-y-2 shadow-lg animate-in fade-in slide-in-from-bottom-1">
+                  <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
+                      <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleStopAgentResponse}
+                      className="px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
+                    >
+                      <Square className="w-3 h-3 fill-current" />
+                      <span>Stop</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {agentProgressSteps.length === 0 ? (
+                      <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
+                        <span>Initializing AI pipeline...</span>
+                      </div>
+                    ) : (
+                      agentProgressSteps.map((s, idx) => {
+                        const isLatest = idx === agentProgressSteps.length - 1;
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex items-center gap-2 transition-all ${
+                              isLatest
+                                ? "text-purple-200 font-bold animate-pulse"
+                                : "text-purple-400/60 font-normal text-[11px]"
+                            }`}
+                          >
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                            <span className="truncate">{s.message}</span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
               )}
               <div ref={mobileChatEndRef} />
             </div>
 
-            <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0">
-              <input
+            {attachedFile && (
+              <div className="flex items-center justify-between px-2.5 py-1.5 mb-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-mono animate-in fade-in">
+                <div className="flex items-center gap-2 truncate">
+                  <Paperclip className="w-4 h-4 text-indigo-400 shrink-0" />
+                  <span className="font-semibold truncate">{attachedFile.filename}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAttachedFile(null)}
+                  className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isAgentThinking}
+                className="p-2.5 rounded-xl bg-muted/40 text-muted-foreground border border-border/60 shrink-0"
+                title="Upload file"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+
+              <textarea
                 id="mobile-ai-chat-input"
-                type="text"
-                placeholder="Ask assistant to edit TeX..."
+                rows={1}
+                placeholder="Ask Gemini to edit LaTeX..."
                 value={chatInput}
                 disabled={isAgentThinking}
-                onChange={(e) => setChatInput(e.target.value)}
-                className="w-full h-11 pl-3 pr-10 rounded-xl border border-border/60 bg-background text-foreground text-base outline-none focus:border-indigo-500 disabled:opacity-50"
+                onChange={(e) => {
+                  setChatInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
+                      handleSendPrompt(e);
+                    }
+                  }
+                }}
+                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-border/60 bg-background text-foreground text-base outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
               />
-              <button
-                type="submit"
-                disabled={isAgentThinking || !chatInput.trim()}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-indigo-400 p-1 disabled:opacity-40"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+
+              {isAgentThinking ? (
+                <Button
+                  type="button"
+                  onClick={handleStopAgentResponse}
+                  size="sm"
+                  variant="destructive"
+                  className="h-11 px-3 rounded-xl bg-rose-600 text-white font-semibold flex items-center gap-1 text-xs shrink-0"
+                >
+                  <Square className="w-4 h-4 fill-current" />
+                  <span>Stop</span>
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
+                  size="sm"
+                  className="h-11 px-4 bg-indigo-600 text-white rounded-xl font-semibold shrink-0 flex items-center justify-center disabled:opacity-40"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              )}
             </form>
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
-      {/* Crash-Proof Custom Paste Fallback Modal */}
-      {pasteModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-card border border-border/80 rounded-2xl p-4 w-full max-w-md space-y-3 shadow-2xl animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between font-bold text-sm text-foreground">
-              <div className="flex items-center gap-2 text-emerald-400">
-                <ClipboardPaste className="w-4 h-4" />
-                <span>Paste Code / Text</span>
-              </div>
-              <button onClick={() => setPasteModalOpen(false)} className="text-muted-foreground p-1 hover:text-foreground">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <textarea
-              rows={5}
-              placeholder="Paste your text or code here..."
-              value={pasteInputValue}
-              onChange={(e) => setPasteInputValue(e.target.value)}
-              className="w-full p-3 rounded-xl bg-background border border-border/60 text-xs text-foreground outline-none focus:border-emerald-500 font-mono"
-              autoFocus
-            />
-
-            <div className="flex items-center gap-2 pt-1">
-              <Button
-                variant="outline"
-                onClick={() => setPasteModalOpen(false)}
-                className="flex-1 h-9 text-xs"
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => {
-                  if (pasteInputValue) {
-                    insertSymbol(pasteInputValue);
-                    setPasteInputValue("");
-                    setPasteModalOpen(false);
-                    toast.success("Pasted text into TeX editor!");
-                  }
-                }}
-                className="flex-1 h-9 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20"
-              >
-                Insert into TeX
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
