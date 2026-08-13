@@ -6,6 +6,7 @@ import {
   Play,
   Eye,
   AlertTriangle,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -59,8 +60,84 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
     }
   }, [pdfBase64]);
 
+  const handleDownloadPDF = () => {
+    if (!pdfBase64 && !blobUrl) {
+      toast.error("No compiled PDF available to download.");
+      return;
+    }
+
+    try {
+      if (blobUrl) {
+        const anchor = document.createElement("a");
+        anchor.href = blobUrl;
+        anchor.download = "document.pdf";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        toast.success("Downloading PDF document...");
+        return;
+      }
+
+      const cleanBase64 = (pdfBase64 || "").replace(/^data:application\/pdf;base64,/, "").trim();
+      const binaryString = atob(cleanBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "document.pdf";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.success("Downloading PDF document...");
+    } catch (err) {
+      console.error("PDF download error:", err);
+      toast.error("Failed to download PDF.");
+    }
+  };
+
   return (
     <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-hidden relative bg-background">
+      {/* PDF Header Bar */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-card/60 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-foreground font-mono">PDF Preview</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            onClick={onRecompile}
+            disabled={isCompiling}
+            className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5"
+            title="Compile TeX PDF"
+          >
+            {isCompiling ? (
+              <RotateCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current" />
+            )}
+            <span>Compile</span>
+          </Button>
+
+          {blobUrl && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleDownloadPDF}
+              className="h-7 px-2.5 text-xs font-medium border-border/60 hover:bg-muted text-foreground flex items-center gap-1.5"
+              title="Download PDF document"
+            >
+              <Download className="w-3.5 h-3.5 text-cyan-400" />
+              Download PDF
+            </Button>
+          )}
+        </div>
+      </div>
+
       {/* Loading Overlay */}
       {isCompiling && (
         <div className="absolute inset-0 z-20 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">

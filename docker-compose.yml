@@ -25,8 +25,8 @@ services:
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_LLM_MODEL=${NVIDIA_LLM_MODEL:-openai/gpt-oss-120b}
-      - GROQ_API_KEY=${GROQ_API_KEY}
-      - GROQ_LLM_MODEL=${GROQ_LLM_MODEL:-qwen/qwen3.6-27b}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-pro}
       - DATABASE_URL=${DATABASE_URL}
     env_file:
       - .env
