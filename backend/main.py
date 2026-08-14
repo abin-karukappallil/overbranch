@@ -8,6 +8,7 @@ from compiler import compile_latex
 import vector_sync
 import agent
 import project_storage
+import file_analyzer
 from typing import List, Optional, Dict, Any
 
 # Allow up to 100MB request bodies (large PDFs base64-encoded can be 10-50MB)
@@ -36,6 +37,7 @@ app.add_middleware(
 app.include_router(vector_sync.router)
 app.include_router(agent.router)
 app.include_router(project_storage.router)
+app.include_router(file_analyzer.router, prefix="/api")
 
 class FileAsset(BaseModel):
     filename: str

@@ -41,6 +41,7 @@ import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
+import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -194,6 +195,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const lastSelectionRef = useRef<any>(null);
   const lastPositionRef = useRef<any>(null);
   const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
+  const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [activeModelName, setActiveModelName] = useState<string>("gemini-3.1-flash-lite");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
@@ -1695,6 +1697,17 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <Paperclip className="w-4 h-4" />
                   </button>
 
+                  <button
+                    type="button"
+                    onClick={() => setIsFileAnalyzerOpen(true)}
+                    disabled={isAgentThinking}
+                    className="p-2 rounded-xl bg-gradient-to-r from-cyan-950/80 to-blue-950/80 hover:from-cyan-900 hover:to-blue-900 text-cyan-300 border border-cyan-700/50 transition-colors disabled:opacity-50 shrink-0 flex items-center gap-1.5 text-xs font-medium shadow-sm"
+                    title="Multimodal File Analyzer (Gemini Files API)"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                    <span className="hidden sm:inline">File Analyzer</span>
+                  </button>
+
                   <div className="relative flex-1">
                     <textarea
                       id="ai-chat-input"
@@ -2290,6 +2303,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
+
+      <FileAnalyzerModal
+        isOpen={isFileAnalyzerOpen}
+        onClose={() => setIsFileAnalyzerOpen(false)}
+      />
     </div>
   );
 }
