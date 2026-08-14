@@ -72,7 +72,7 @@ export const projectRouter = router({
       }
 
       try {
-        const backendUrl = process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+        const backendUrl = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000').replace(/\/$/, '');
         await fetch(`${backendUrl}/api/compile`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

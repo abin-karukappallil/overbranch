@@ -47,6 +47,8 @@ import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { FolderGit2 } from "lucide-react";
 
+const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
+
 interface EditorLayoutProps {
   projectId?: string;
 }
@@ -497,8 +499,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const loadSavedDocument = async () => {
       try {
         const activeProj = projectId || "proj-1";
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-        const res = await fetch(`${backendUrl}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+        const res = await fetch(`${BACKEND_URL}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
         if (res.ok) {
           const data = await res.json();
           if (data.raw_code !== undefined) {
@@ -535,8 +536,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       localStorage.setItem(storageKey, newCode);
 
       // Save to Supabase latex_documents DB + Local Disk + Qdrant Vector Sync
-      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
-      const res = await fetch(`${backendUrl}/api/projects/save-file`, {
+      const res = await fetch(`${BACKEND_URL}/api/projects/save-file`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -643,8 +643,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       handleCompile(currentVal);
     });
   };
-
-  const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
   const syncVectorDatabase = async (updatedCode: string) => {
     try {

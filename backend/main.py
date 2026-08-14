@@ -12,9 +12,21 @@ from typing import List, Optional, Dict, Any
 
 app = FastAPI(title="OverBranch TeX Engine API", version="1.0.0")
 
+import os
+
+allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
+origins = [o.strip() for o in allowed_origins_env.split(",")] if allowed_origins_env else [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://overbranch.abinthomas.dev"
+]
+if os.getenv("NEXT_PUBLIC_APP_URL"):
+    origins.append(os.getenv("NEXT_PUBLIC_APP_URL").rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000","https://overbranch.abinthomas.dev"],
+    allow_origins=origins,
+    allow_origin_regex=".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
