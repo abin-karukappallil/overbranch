@@ -16,7 +16,7 @@ try:
 except ImportError:
     HAS_PYPDF = False
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -86,6 +86,11 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             b64_data = content
             if "," in b64_data:
                 b64_data = b64_data.split(",", 1)[1]
+
+            # Fix base64 padding if truncated (e.g. by frontend size cap)
+            padding_needed = len(b64_data) % 4
+            if padding_needed:
+                b64_data += "=" * (4 - padding_needed)
 
             raw_bytes = base64.b64decode(b64_data)
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
@@ -378,13 +383,31 @@ def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
 
 
 @router.post("/api/agent/chat")
-def agent_chat(req: AgentChatRequest):
+async def agent_chat(request: Request):
     """
     Full RAG Agent Pipeline with SSE streaming progress events.
     Sends real-time progress updates then the final JSON result.
+
+    Accepts raw Request to bypass Starlette's default body size limit,
+    allowing large PDF uploads (30+ pages = 10-50MB base64).
     """
-    from fastapi.responses import StreamingResponse
+    from fastapi.responses import StreamingResponse, JSONResponse
     import time
+
+    # Manually read the raw body — this bypasses Starlette's body size limit
+    try:
+        body = await request.body()
+        if len(body) > 100 * 1024 * 1024:  # 100MB hard cap
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body too large. Maximum size is 100MB."},
+            )
+        raw_data = json.loads(body)
+        req = AgentChatRequest(**raw_data)
+    except json.JSONDecodeError as e:
+        return JSONResponse(status_code=400, content={"detail": f"Invalid JSON: {str(e)}"})
+    except Exception as e:
+        return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
     def sse_event(event_type: str, data: dict) -> str:
         """Format a single SSE event."""

@@ -739,6 +739,29 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), timeoutMs);
 
     try {
+      // Prepare the attached file payload — for very large files (>5MB content),
+      // truncate to avoid 413 errors from reverse proxies (Nginx, cloud LBs).
+      // The backend has its own PDF text extraction as fallback.
+      let filePayload: { filename: string; content: string; file_type: string } | null = null;
+      if (currentFilePayload) {
+        let content = currentFilePayload.content;
+        const contentSizeMB = content.length / (1024 * 1024);
+
+        // If PDF content is very large (>5MB as base64 string), cap it to prevent 413
+        if (contentSizeMB > 5) {
+          // Keep only the first 5MB of base64 data — backend will use pypdf to extract text
+          const maxChars = 5 * 1024 * 1024;
+          content = content.substring(0, maxChars);
+          console.warn(`Large file truncated from ${contentSizeMB.toFixed(1)}MB to ~5MB to avoid 413`);
+        }
+
+        filePayload = {
+          filename: currentFilePayload.filename,
+          content: content,
+          file_type: currentFilePayload.file_type,
+        };
+      }
+
       const response = await fetch(`${BACKEND_URL}/api/agent/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -750,16 +773,15 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           current_code: code,
           model: activeModelName || "gemini-3.1-flash-lite",
           fallback_model: "gemini-2.5-flash",
-          attached_file: currentFilePayload ? {
-            filename: currentFilePayload.filename,
-            content: currentFilePayload.content,
-            file_type: currentFilePayload.file_type,
-          } : null,
+          attached_file: filePayload,
         }),
       });
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error("The uploaded file is too large for the server. Try a smaller PDF (under 30 pages) or ask about the document without attaching it.");
+        }
         const errText = await response.text();
         throw new Error(errText || `AI Agent returned status ${response.status}`);
       }

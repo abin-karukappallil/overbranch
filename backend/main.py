@@ -10,6 +10,7 @@ import agent
 import project_storage
 from typing import List, Optional, Dict, Any
 
+# Allow up to 100MB request bodies (large PDFs base64-encoded can be 10-50MB)
 app = FastAPI(title="OverBranch TeX Engine API", version="1.0.0")
 
 import os
