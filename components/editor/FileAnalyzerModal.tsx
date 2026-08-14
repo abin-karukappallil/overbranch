@@ -52,7 +52,7 @@ export const FileAnalyzerModal: React.FC<FileAnalyzerModalProps> = ({
   const [analysisResult, setAnalysisResult] = useState<FileAnalysisResponse | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
-  const [selectedModel, setSelectedModel] = useState<string>("gemini-2.5-flash");
+  const [selectedModel, setSelectedModel] = useState<string>("openai/gpt-oss-120b");
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -271,9 +271,9 @@ export const FileAnalyzerModal: React.FC<FileAnalyzerModalProps> = ({
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 font-mono"
                 >
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-                  <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  <option value="openai/gpt-oss-120b">GPT-120B OSS (Groq / NVIDIA)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fallback File Upload)</option>
+                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Fallback File Upload)</option>
                 </select>
               </div>
             </div>

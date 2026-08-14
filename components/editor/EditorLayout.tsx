@@ -196,7 +196,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const lastPositionRef = useRef<any>(null);
   const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.1-flash-lite");
+  const [activeModelName, setActiveModelName] = useState<string>("openai/gpt-oss-120b");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
 

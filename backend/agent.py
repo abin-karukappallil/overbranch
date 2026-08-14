@@ -561,7 +561,7 @@ async def agent_chat(request: Request):
             contents_payload.append(user_content)
 
             client = get_genai_client()
-            primary_model = req.model or os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+            primary_model = req.model or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or os.getenv("GEMINI_MODEL", "openai/gpt-oss-120b")
             env_fallback = os.getenv("GEMINI_FALLBACK_MODEL") or os.getenv("FALLBACK_MODEL")
             req_fallback = req.fallback_model or env_fallback
 
@@ -573,13 +573,11 @@ async def agent_chat(request: Request):
             )
 
             default_fallbacks = [
+                "openai/gpt-oss-120b",
                 "gemini-2.5-flash",
+                "gemini-1.5-pro",
                 "gemini-3.1-flash-lite",
-                "gemini-3.5-flash-lite",
-                "gemini-2.5-flash-lite",
-                "gemini-3.6-flash",
                 "gemini-2.5-pro",
-                "gemini-1.5-flash",
             ]
 
             models_to_try = [primary_model]

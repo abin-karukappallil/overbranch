@@ -1,22 +1,24 @@
 """
 file_analyzer.py — AI File Analysis Module for OverBranch
 
-Supports direct FILE + USER PROMPT -> LLM multimodal analysis using Gemini Files API.
-Architecture is provider-independent (BaseFileAnalysisProvider) so future engines
-(OpenAI, Claude, etc.) can be seamlessly registered.
+Supports direct FILE + USER PROMPT -> LLM multimodal analysis.
+Primary model: GPT-120B OSS (Groq / NVIDIA endpoint) with built-in file content extraction.
+Fallback model: Gemini Files API upload model (gemini-2.5-flash / gemini-1.5-pro).
 """
 
 import os
 import re
 import time
+import json
 import uuid
 import shutil
 import tempfile
 import logging
 import mimetypes
+import requests
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Generator, Optional, List, AsyncGenerator
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Query
+from typing import Dict, Any, Generator, Optional, List
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -33,7 +35,6 @@ router = APIRouter()
 MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB max file size limit
 ALLOWED_MIME_PREFIXES = ("image/", "video/", "audio/", "text/", "application/")
 
-# Common extensions to MIME mapping fallback
 EXTENSION_MIME_MAP = {
     ".pdf": "application/pdf",
     ".csv": "text/csv",
@@ -72,10 +73,8 @@ def sanitize_filename(filename: str) -> str:
     """
     if not filename:
         return "unnamed_file"
-    # Remove directory separators and null bytes
     clean = os.path.basename(filename)
     clean = re.sub(r'[\r\n\t\0]', '', clean)
-    # Replace non-alphanumeric (except dot, dash, underscore) with underscore
     clean = re.sub(r'[^\w\.\-]', '_', clean)
     return clean[:255] or "unnamed_file"
 
@@ -85,8 +84,6 @@ def detect_mime_type(filename: str, header_mime: str, file_path: str) -> str:
     Uses magic bytes inspection + file extension mapping fallback.
     """
     ext = os.path.splitext(filename)[1].lower()
-    
-    # 1. Read first 2048 bytes for magic signature checks
     try:
         with open(file_path, "rb") as f:
             header = f.read(2048)
@@ -112,16 +109,13 @@ def detect_mime_type(filename: str, header_mime: str, file_path: str) -> str:
     except Exception as e:
         logger.warning(f"Error inspecting magic bytes for {filename}: {e}")
 
-    # 2. Check extension mapping table
     if ext in EXTENSION_MIME_MAP:
         return EXTENSION_MIME_MAP[ext]
 
-    # 3. Use standard mimetypes guess
     guessed_type, _ = mimetypes.guess_type(filename)
     if guessed_type:
         return guessed_type
 
-    # 4. Check client header if reasonable
     if header_mime and "/" in header_mime and not header_mime.endswith("octet-stream"):
         return header_mime
 
@@ -136,7 +130,7 @@ class AnalysisResult(BaseModel):
     mimeType: str
     analysis: str
     usage: Dict[str, Any] = Field(default_factory=dict)
-    provider: str = "gemini"
+    provider: str = "gpt-120b"
 
 
 class BaseFileAnalysisProvider(ABC):
@@ -167,17 +161,13 @@ class BaseFileAnalysisProvider(ABC):
         pass
 
 
-# ─── Gemini Provider Implementation ──────────────────────────────────────────
+# ─── Gemini Provider Implementation (File Upload Fallback Model) ─────────────
 
 class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
-    def __init__(self):
-        self._client = None
-
     def get_provider_name(self) -> str:
         return "gemini"
 
     def _get_client(self):
-        """Initializes and returns google-genai Client securely."""
         try:
             from google import genai
         except ImportError:
@@ -190,13 +180,9 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
         return genai.Client(api_key=api_key.strip())
 
     def _upload_and_wait(self, client, file_path: str, filename: str, mime_type: str):
-        """
-        Uploads file to Gemini Files API and waits until file state is ACTIVE.
-        Returns the Gemini File reference object.
-        """
         from google.genai import types
 
-        logger.info(f"Uploading file '{filename}' ({mime_type}) to Gemini Files API...")
+        logger.info(f"[Fallback Provider] Uploading file '{filename}' ({mime_type}) to Gemini Files API...")
         try:
             gemini_file = client.files.upload(
                 file=file_path,
@@ -211,23 +197,21 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
             if "429" in err_str or "quota" in err_str.lower() or "resource" in err_str.lower():
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Gemini API rate limit exceeded during file upload. Please wait a moment and try again."
+                    detail="Gemini API rate limit exceeded during file upload fallback."
                 )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to upload file to Gemini Files API: {err_str}"
             )
 
-        # Wait if file is processing (e.g. video/large file)
         poll_count = 0
-        max_polls = 60  # max 2 minutes wait
+        max_polls = 60
         while hasattr(gemini_file, "state") and str(gemini_file.state).upper() in ("PROCESSING", "STATE_PROCESSING"):
             if poll_count >= max_polls:
                 raise HTTPException(
                     status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                     detail=f"Timed out waiting for file '{filename}' processing on Gemini servers."
                 )
-            logger.info(f"Waiting for Gemini file '{filename}' processing... (poll {poll_count + 1})")
             time.sleep(2)
             gemini_file = client.files.get(name=gemini_file.name)
             poll_count += 1
@@ -239,21 +223,18 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
                 detail=f"Gemini file processing failed: {error_msg}"
             )
 
-        logger.info(f"Gemini file uploaded successfully: name={gemini_file.name}, uri={getattr(gemini_file, 'uri', 'N/A')}")
         return gemini_file
 
     def _cleanup_gemini_file(self, client, gemini_file):
-        """Cleanly deletes file from Gemini cloud storage after request completion."""
         if not gemini_file or not hasattr(gemini_file, "name"):
             return
         try:
             client.files.delete(name=gemini_file.name)
-            logger.info(f"Cleaned up Gemini file remote reference: {gemini_file.name}")
-        except Exception as e:
-            logger.warning(f"Failed to delete remote Gemini file {gemini_file.name}: {e}")
+        except Exception:
+            pass
 
     def _select_model(self, model_name: Optional[str]) -> str:
-        if model_name and model_name.strip():
+        if model_name and "gemini" in model_name.lower():
             return model_name.strip()
         env_model = os.getenv("GEMINI_MODEL")
         if env_model and env_model.strip():
@@ -273,13 +254,9 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
         gemini_file = None
 
         try:
-            # 1. Upload original file directly to Gemini Files API
             gemini_file = self._upload_and_wait(client, file_path, filename, mime_type)
-
-            # 2. Send uploaded file reference + user prompt in same request
             contents = [gemini_file, prompt]
 
-            logger.info(f"Sending file '{filename}' and prompt to Gemini model '{target_model}'...")
             response = client.models.generate_content(
                 model=target_model,
                 contents=contents
@@ -302,27 +279,7 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
                 mimeType=mime_type,
                 analysis=analysis_text,
                 usage=usage_data,
-                provider="gemini"
-            )
-
-        except HTTPException:
-            raise
-        except Exception as err:
-            err_str = str(err)
-            logger.error(f"Error during Gemini file analysis for '{filename}': {err_str}", exc_info=True)
-            if "429" in err_str or "quota" in err_str.lower() or "resource" in err_str.lower():
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Gemini API quota/rate limit exceeded. Please try again in a few moments."
-                )
-            elif "context" in err_str.lower() or "token" in err_str.lower() or "too large" in err_str.lower():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="File or prompt exceeds model context limits."
-                )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Gemini analysis error: {err_str}"
+                provider="gemini-files-fallback"
             )
         finally:
             if gemini_file:
@@ -344,7 +301,6 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
             gemini_file = self._upload_and_wait(client, file_path, filename, mime_type)
             contents = [gemini_file, prompt]
 
-            logger.info(f"Streaming file analysis for '{filename}' using model '{target_model}'...")
             response_stream = client.models.generate_content_stream(
                 model=target_model,
                 contents=contents
@@ -377,18 +333,204 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
                 }
             }
             yield f"data: {JSONResponse(final_meta).body.decode('utf-8')}\n\n"
-
-        except Exception as err:
-            err_str = str(err)
-            logger.error(f"Error during streaming Gemini file analysis for '{filename}': {err_str}", exc_info=True)
-            err_event = {
-                "error": True,
-                "detail": err_str
-            }
-            yield f"data: {JSONResponse(err_event).body.decode('utf-8')}\n\n"
         finally:
             if gemini_file:
                 self._cleanup_gemini_file(client, gemini_file)
+
+
+# ─── GPT-120B OSS Provider Implementation (Primary Model) ────────────────────
+
+class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
+    def __init__(self, fallback_provider: Optional[BaseFileAnalysisProvider] = None):
+        self.fallback_provider = fallback_provider or GeminiFileAnalysisProvider()
+
+    def get_provider_name(self) -> str:
+        return "gpt-120b"
+
+    def _get_api_credentials(self, model_override: Optional[str] = None):
+        model = model_override or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or "openai/gpt-oss-120b"
+
+        # Check Groq Key first if set
+        groq_key = os.getenv("GROQ_API_KEY")
+        if groq_key and groq_key.strip():
+            groq_model = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
+            return {
+                "key": groq_key.strip(),
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "model": groq_model
+            }
+
+        # Check NVIDIA Key (NVIDIA_LLM_MODEL="openai/gpt-oss-120b")
+        nvidia_key = os.getenv("NVIDIA_API_KEY")
+        if nvidia_key and nvidia_key.strip():
+            return {
+                "key": nvidia_key.strip(),
+                "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+                "model": "openai/gpt-oss-120b"
+            }
+
+        raise ValueError("No GROQ_API_KEY or NVIDIA_API_KEY configured for GPT-120B OSS model.")
+
+    def _extract_file_content(self, file_path: str, filename: str, mime_type: str) -> str:
+        """Inbuilt text and document content extractor for GPT-120B OSS file analysis."""
+        ext = os.path.splitext(filename)[1].lower()
+
+        # PDF Extraction
+        if mime_type == "application/pdf" or ext == ".pdf":
+            try:
+                import pypdf
+                reader = pypdf.PdfReader(file_path)
+                pages = []
+                for i in range(min(len(reader.pages), 50)):
+                    txt = reader.pages[i].extract_text() or ""
+                    if txt.strip():
+                        pages.append(f"[Page {i+1}]\n{txt.strip()}")
+                if pages:
+                    return "\n\n".join(pages)
+            except Exception as e:
+                logger.warning(f"pypdf extraction failed for {filename}: {e}")
+
+        # Text, Code, CSV, JSON, LOG, TeX, HTML
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read(120000)
+                return content
+        except Exception as e:
+            logger.warning(f"Text reading failed for {filename}: {e}")
+            return f"[Binary file content '{filename}' ({mime_type})]"
+
+    def analyze_file(
+        self,
+        file_path: str,
+        filename: str,
+        mime_type: str,
+        prompt: str,
+        model_name: Optional[str] = None
+    ) -> AnalysisResult:
+        try:
+            creds = self._get_api_credentials(model_name)
+            file_text = self._extract_file_content(file_path, filename, mime_type)
+
+            full_system_prompt = (
+                f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
+            )
+            user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+
+            logger.info(f"Sending file analysis request for '{filename}' to GPT-120B OSS model ({creds['model']})...")
+            headers = {
+                "Authorization": f"Bearer {creds['key']}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": creds["model"],
+                "messages": [
+                    {"role": "system", "content": full_system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 4096
+            }
+
+            resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
+            if resp.status_code == 200:
+                data = resp.json()
+                choices = data.get("choices", [])
+                analysis_text = choices[0]["message"]["content"] if choices else "No output generated."
+                usage = data.get("usage", {})
+                return AnalysisResult(
+                    success=True,
+                    filename=filename,
+                    mimeType=mime_type,
+                    analysis=analysis_text,
+                    usage={
+                        "promptTokens": usage.get("prompt_tokens", 0),
+                        "candidatesTokens": usage.get("completion_tokens", 0),
+                        "totalTokens": usage.get("total_tokens", 0)
+                    },
+                    provider="gpt-120b"
+                )
+            else:
+                logger.warning(f"GPT-120B API returned status {resp.status_code}: {resp.text[:200]}. Falling back to Gemini Files API...")
+
+        except Exception as err:
+            logger.warning(f"GPT-120B OSS analysis failed ({err}). Executing automatic fallback to Gemini Files API upload model...")
+
+        # Fallback to Gemini Files API upload model
+        return self.fallback_provider.analyze_file(
+            file_path=file_path,
+            filename=filename,
+            mime_type=mime_type,
+            prompt=prompt,
+            model_name=model_name
+        )
+
+    def analyze_file_stream(
+        self,
+        file_path: str,
+        filename: str,
+        mime_type: str,
+        prompt: str,
+        model_name: Optional[str] = None
+    ) -> Generator[str, None, None]:
+        try:
+            creds = self._get_api_credentials(model_name)
+            file_text = self._extract_file_content(file_path, filename, mime_type)
+
+            full_system_prompt = (
+                f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
+            )
+            user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+
+            logger.info(f"Streaming file analysis for '{filename}' with GPT-120B OSS ({creds['model']})...")
+            headers = {
+                "Authorization": f"Bearer {creds['key']}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "model": creds["model"],
+                "messages": [
+                    {"role": "system", "content": full_system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 4096,
+                "stream": True
+            }
+
+            resp = requests.post(creds["url"], headers=headers, json=payload, stream=True, timeout=90)
+            if resp.status_code == 200:
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    line_str = line.decode("utf-8")
+                    if line_str.startswith("data: "):
+                        data_content = line_str[6:].strip()
+                        if data_content == "[DONE]":
+                            break
+                        try:
+                            chunk_json = json.loads(data_content)
+                            delta = chunk_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if delta:
+                                yield f"data: {JSONResponse({'chunk': delta}).body.decode('utf-8')}\n\n"
+                        except Exception:
+                            continue
+
+                yield f"data: {JSONResponse({'done': True, 'filename': filename, 'mimeType': mime_type}).body.decode('utf-8')}\n\n"
+                return
+            else:
+                logger.warning(f"GPT-120B stream API returned status {resp.status_code}. Executing fallback stream to Gemini Files API...")
+
+        except Exception as err:
+            logger.warning(f"GPT-120B stream failed ({err}). Executing fallback stream to Gemini Files API...")
+
+        # Delegate streaming execution to Fallback Gemini Files API provider
+        yield from self.fallback_provider.analyze_file_stream(
+            file_path=file_path,
+            filename=filename,
+            mime_type=mime_type,
+            prompt=prompt,
+            model_name=model_name
+        )
 
 
 # ─── Provider Registry ────────────────────────────────────────────────────────
@@ -396,37 +538,26 @@ class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
 class FileAnalysisRegistry:
     def __init__(self):
         self._providers: Dict[str, BaseFileAnalysisProvider] = {}
-        self.register_provider("gemini", GeminiFileAnalysisProvider())
+        gemini_provider = GeminiFileAnalysisProvider()
+        gpt120b_provider = GPT120BFileAnalysisProvider(fallback_provider=gemini_provider)
+
+        self.register_provider("gpt-120b", gpt120b_provider)
+        self.register_provider("openai/gpt-oss-120b", gpt120b_provider)
+        self.register_provider("groq", gpt120b_provider)
+        self.register_provider("gemini", gemini_provider)
 
     def register_provider(self, name: str, provider: BaseFileAnalysisProvider):
         self._providers[name.lower()] = provider
 
-    def get_provider(self, name: str = "gemini") -> BaseFileAnalysisProvider:
+    def get_provider(self, name: str = "gpt-120b") -> BaseFileAnalysisProvider:
+        if not name or name.lower() in ("default", "gpt-120b", "openai/gpt-oss-120b", "groq"):
+            return self._providers.get("gpt-120b")
         provider = self._providers.get(name.lower())
         if not provider:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported LLM provider '{name}'. Available providers: {list(self._providers.keys())}"
-            )
+            return self._providers.get("gpt-120b")
         return provider
 
 registry = FileAnalysisRegistry()
-
-
-# ─── Fallback Helper for Unsupported Files ───────────────────────────────────
-
-def process_unsupported_file_fallback(file_path: str, filename: str, mime_type: str) -> str:
-    """
-    Fallback parser for text/code/custom binary files if direct native API upload
-    needs plain text extraction.
-    """
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read(100000)  # Read up to 100k chars
-            return f"[Extracted content from '{filename}']\n{text}"
-    except Exception as e:
-        logger.warning(f"Fallback reading failed for {filename}: {e}")
-        return f"[Binary file '{filename}' of type '{mime_type}']"
 
 
 # ─── Fast API Route Handler ───────────────────────────────────────────────────
@@ -435,14 +566,14 @@ def process_unsupported_file_fallback(file_path: str, filename: str, mime_type: 
 async def analyze_file_endpoint(
     file: UploadFile = File(..., description="Uploaded original file"),
     prompt: str = Form(..., description="User prompt describing analysis instructions"),
-    provider: Optional[str] = Form("gemini", description="LLM provider (default: gemini)"),
+    provider: Optional[str] = Form("gpt-120b", description="LLM provider (default: gpt-120b)"),
     model: Optional[str] = Form(None, description="Specific model override"),
     stream: Optional[bool] = Form(False, description="Stream output via SSE")
 ):
     """
     POST /api/ai/analyze-file
     Accepts multipart/form-data with original file and user prompt.
-    Uploads file to Gemini Files API and sends [uploaded_file, prompt] to Gemini.
+    Processes file via GPT-120B OSS with automatic fallback to Gemini Files API.
     """
     if not prompt or not prompt.strip():
         raise HTTPException(
@@ -450,16 +581,14 @@ async def analyze_file_endpoint(
             detail="Prompt is required. Please provide instructions for analyzing the file."
         )
 
-    # 1. Isolated temporary directory creation
     temp_dir = tempfile.mkdtemp(prefix="overbranch_ai_")
     safe_name = sanitize_filename(file.filename or "uploaded_file")
     temp_file_path = os.path.join(temp_dir, safe_name)
 
     try:
-        # 2. Save uploaded stream safely to disk
         file_size = 0
         with open(temp_file_path, "wb") as out_file:
-            while chunk := await file.read(1024 * 1024):  # 1MB chunk reading
+            while chunk := await file.read(1024 * 1024):
                 file_size += len(chunk)
                 if file_size > MAX_FILE_SIZE_BYTES:
                     raise HTTPException(
@@ -474,14 +603,11 @@ async def analyze_file_endpoint(
                 detail="Uploaded file is empty (0 bytes)."
             )
 
-        # 3. Detect true MIME type
         detected_mime = detect_mime_type(safe_name, file.content_type or "", temp_file_path)
         logger.info(f"Processing uploaded file: '{safe_name}' ({detected_mime}, {file_size} bytes)")
 
-        # 4. Fetch analysis provider
-        analysis_provider = registry.get_provider(provider or "gemini")
+        analysis_provider = registry.get_provider(provider or "gpt-120b")
 
-        # 5. Handle Streaming vs Non-streaming
         if stream:
             generator = analysis_provider.analyze_file_stream(
                 file_path=temp_file_path,
@@ -490,7 +616,7 @@ async def analyze_file_endpoint(
                 prompt=prompt.strip(),
                 model_name=model
             )
-            
+
             def safe_stream_wrapper():
                 try:
                     for chunk_data in generator:
