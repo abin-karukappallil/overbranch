@@ -91,20 +91,24 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
 
             extracted_pages = []
-            max_pages = min(len(reader.pages), 12)  # Cap at top 12 pages for ultra-fast parsing
+            max_pages = min(len(reader.pages), 50)  # Extract up to 50 pages for large documents
             for i in range(max_pages):
-                txt = reader.pages[i].extract_text() or ""
-                if txt.strip():
-                    extracted_pages.append(f"[Page {i+1}]\n{txt.strip()}")
+                try:
+                    txt = reader.pages[i].extract_text() or ""
+                    if txt.strip():
+                        extracted_pages.append(f"[Page {i+1}]\n{txt.strip()}")
+                except Exception:
+                    continue  # Skip unreadable pages gracefully
 
             if extracted_pages:
                 full_text = "\n\n".join(extracted_pages)
-                if len(full_text) > 6000:
-                    full_text = full_text[:6000] + "\n...[TRUNCATED FOR FAST PARSING]"
-                logger.info(f"Fast-extracted {len(extracted_pages)} text pages from PDF '{filename}'")
+                # Allow larger text for comprehensive document understanding
+                if len(full_text) > 15000:
+                    full_text = full_text[:15000] + f"\n...[TRUNCATED — showing {len(extracted_pages)} of {len(reader.pages)} pages]"
+                logger.info(f"Extracted {len(extracted_pages)} text pages from PDF '{filename}' ({len(reader.pages)} total pages)")
                 return full_text
             else:
-                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s)]"
+                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s), no extractable text found]"
         except Exception as pdf_err:
             logger.warning(f"Failed to extract text from PDF '{filename}': {pdf_err}")
             return f"[Uploaded PDF file: '{filename}']"
@@ -113,11 +117,11 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
         try:
             b64_data = content.split(";base64,", 1)[1]
             txt = base64.b64decode(b64_data).decode("utf-8", errors="replace")
-            return txt[:6000] if len(txt) > 6000 else txt
+            return txt[:15000] if len(txt) > 15000 else txt
         except Exception:
             return content
 
-    return content[:6000] if len(content) > 6000 else content
+    return content[:15000] if len(content) > 15000 else content
 
 
 def get_nvidia_embeddings() -> NVIDIAEmbeddings:
@@ -503,10 +507,16 @@ def agent_chat(req: AgentChatRequest):
                         if "," in b64_data:
                             b64_data = b64_data.split(",", 1)[1]
                         pdf_bytes = base64.b64decode(b64_data)
-                        pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
-                        contents_payload.append(pdf_part)
-                        yield sse_event("progress", {"step": "native_pdf", "message": f"Sending native PDF '{fn}' ({len(pdf_bytes)} bytes) to Gemini...", "icon": "file-text"})
-                        logger.info(f"Attached native Gemini PDF Part ({len(pdf_bytes)} bytes)")
+                        # Gemini has a ~20MB inline limit for native PDF parts;
+                        # for larger files, rely on extracted text instead
+                        if len(pdf_bytes) <= 20 * 1024 * 1024:
+                            pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
+                            contents_payload.append(pdf_part)
+                            yield sse_event("progress", {"step": "native_pdf", "message": f"Sending native PDF '{fn}' ({len(pdf_bytes) // 1024}KB) to Gemini...", "icon": "file-text"})
+                            logger.info(f"Attached native Gemini PDF Part ({len(pdf_bytes)} bytes)")
+                        else:
+                            yield sse_event("progress", {"step": "pdf_text_fallback", "message": f"PDF '{fn}' too large for native upload ({len(pdf_bytes) // (1024*1024)}MB), using extracted text...", "icon": "alert-triangle"})
+                            logger.info(f"PDF too large for native Gemini part ({len(pdf_bytes)} bytes), using text extraction fallback")
                     except Exception as pdf_part_err:
                         logger.warning(f"Native PDF Part construction note: {pdf_part_err}")
 
@@ -534,7 +544,7 @@ def agent_chat(req: AgentChatRequest):
 
             config = types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=6144,
+                max_output_tokens=8192,
                 system_instruction=system_content if system_content else None,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             )

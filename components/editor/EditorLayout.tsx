@@ -202,8 +202,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const selectedFile = e.target.files?.[0];
     if (!selectedFile) return;
 
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      toast.error("File size exceeds 10MB limit.");
+    // Allow up to 50MB for large PDFs (30+ pages)
+    if (selectedFile.size > 50 * 1024 * 1024) {
+      toast.error("File size exceeds 50MB limit.");
       return;
     }
 
@@ -214,6 +215,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
     const isBinaryOrPdf = fileType.startsWith("image/") || fileType === "application/pdf" || lowerName.endsWith(".pdf");
 
+    reader.onerror = () => {
+      toast.error(`Failed to read file: ${filename}. The file may be too large or corrupted.`);
+    };
+
     if (isBinaryOrPdf) {
       reader.readAsDataURL(selectedFile);
       reader.onload = () => {
@@ -222,8 +227,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           content: reader.result as string,
           file_type: fileType,
         });
+        const sizeMB = (selectedFile.size / (1024 * 1024)).toFixed(1);
         const label = fileType.includes("pdf") || lowerName.endsWith(".pdf") ? "PDF document" : "file";
-        toast.success(`Attached ${label} ${filename}`);
+        toast.success(`Attached ${label} ${filename} (${sizeMB}MB)`);
       };
     } else {
       reader.readAsText(selectedFile);
@@ -727,7 +733,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     setAgentProgressSteps([]);
 
     abortControllerRef.current = new AbortController();
-    const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), 300000); // 300s timeout
+    // Scale timeout based on whether there's a large attached file (600s for files, 300s otherwise)
+    const hasLargeFile = currentFilePayload && currentFilePayload.content && currentFilePayload.content.length > 500000;
+    const timeoutMs = hasLargeFile ? 600000 : 300000;
+    const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), timeoutMs);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/agent/chat`, {
@@ -763,22 +772,14 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       let buffer = "";
       let finalData: any = null;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events from buffer
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // keep incomplete line
-
+      const parseSSELines = (lines: string[]) => {
         let currentEventType = "";
         for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEventType = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            const rawData = line.slice(6);
+          const trimmed = line.replace(/\r$/, "");
+          if (trimmed.startsWith("event: ")) {
+            currentEventType = trimmed.slice(7).trim();
+          } else if (trimmed.startsWith("data: ")) {
+            const rawData = trimmed.slice(6);
             try {
               const parsed = JSON.parse(rawData);
 
@@ -797,6 +798,25 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             currentEventType = "";
           }
         }
+      };
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events from buffer
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // keep incomplete line
+        parseSSELines(lines);
+      }
+
+      // Flush any remaining data in the buffer after stream ends
+      if (buffer.trim()) {
+        const remainingLines = buffer.split("\n");
+        parseSSELines(remainingLines);
+        buffer = "";
       }
 
       if (!finalData) throw new Error("No result received from AI agent");

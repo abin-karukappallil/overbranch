@@ -139,10 +139,10 @@ def build_prompt(
 
     # Include the current document so original_chunk can match verbatim
     if current_code and current_code.strip():
-        # Cap at 10000 chars to keep request fast while providing enough context
+        # Cap at 15000 chars to keep request fast while providing enough context for large docs
         doc_text = current_code.strip()
-        if len(doc_text) > 10000:
-            doc_text = doc_text[:10000] + "\n...[DOCUMENT TRUNCATED AT 10000 CHARS]"
+        if len(doc_text) > 15000:
+            doc_text = doc_text[:15000] + "\n...[DOCUMENT TRUNCATED AT 15000 CHARS]"
         user_parts.append(
             f"CURRENT FULL DOCUMENT (the user's complete LaTeX source — use this for original_chunk matching):\n"
             f"```latex\n{doc_text}\n```"
