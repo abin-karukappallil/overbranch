@@ -566,7 +566,12 @@ async def agent_chat(request: Request):
 
             contents_payload.append(user_content)
 
-            primary_model = req.model or os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b"
+            # Sanitize model name: frontend may send display names like
+            # 'Groq Primary API (openai/gpt-oss-120b)' — extract raw model ID
+            raw_model = req.model or ""
+            if "(" in raw_model and raw_model.endswith(")"):
+                raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+            primary_model = raw_model.strip() if raw_model.strip() else (os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b")
             groq_key_1 = os.getenv("GROQ_API_KEY")
             groq_key_2 = os.getenv("GROQ_API_KEY_2")
             groq_key_3 = os.getenv("GROQ_API_KEY_3")
@@ -618,7 +623,7 @@ async def agent_chat(request: Request):
                         choices = data.get("choices", [])
                         if choices:
                             response_text = choices[0]["message"]["content"]
-                            model_used = f"{creds['name']} ({creds['model']})"
+                            model_used = creds["model"]
                             is_fallback = (idx > 0)
                             break
                     else:

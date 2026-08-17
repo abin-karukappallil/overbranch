@@ -773,8 +773,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,
           current_code: code,
-          model: activeModelName || "gemini-3.1-flash-lite",
-          fallback_model: "gemini-2.5-flash",
+          model: activeModelName || "openai/gpt-oss-120b",
           attached_file: filePayload,
         }),
       });
@@ -795,54 +794,64 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       const decoder = new TextDecoder();
       let buffer = "";
       let finalData: any = null;
+      let sseError: Error | null = null;
 
-      const parseSSELines = (lines: string[]) => {
-        let currentEventType = "";
-        for (const line of lines) {
-          const trimmed = line.replace(/\r$/, "");
-          if (trimmed.startsWith("event: ")) {
-            currentEventType = trimmed.slice(7).trim();
-          } else if (trimmed.startsWith("data: ")) {
-            const rawData = trimmed.slice(6);
-            try {
-              const parsed = JSON.parse(rawData);
+      try {
+        const parseSSELines = (lines: string[]) => {
+          let currentEventType = "";
+          for (const line of lines) {
+            const trimmed = line.replace(/\r$/, "");
+            if (trimmed.startsWith("event: ")) {
+              currentEventType = trimmed.slice(7).trim();
+            } else if (trimmed.startsWith("data: ")) {
+              const rawData = trimmed.slice(6);
+              try {
+                const parsed = JSON.parse(rawData);
 
-              if (currentEventType === "progress") {
-                setAgentProgressSteps((prev) => [...prev, parsed]);
-              } else if (currentEventType === "result") {
-                finalData = parsed;
-              } else if (currentEventType === "error") {
-                throw new Error(parsed.message || "AI Agent error");
+                if (currentEventType === "progress") {
+                  setAgentProgressSteps((prev) => [...prev, parsed]);
+                } else if (currentEventType === "result") {
+                  finalData = parsed;
+                } else if (currentEventType === "error") {
+                  sseError = new Error(parsed.message || "AI Agent error");
+                }
+              } catch (parseErr: any) {
+                if (parseErr.message && !parseErr.message.includes("JSON")) {
+                  sseError = parseErr;
+                }
               }
-            } catch (parseErr: any) {
-              if (parseErr.message && !parseErr.message.includes("JSON")) {
-                throw parseErr;
-              }
+              currentEventType = "";
             }
-            currentEventType = "";
           }
+        };
+
+        while (true) {
+          if (sseError) break;
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // keep incomplete line
+          parseSSELines(lines);
         }
-      };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // Parse SSE events from buffer
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // keep incomplete line
-        parseSSELines(lines);
+        // Flush any remaining data in the buffer after stream ends
+        if (buffer.trim() && !sseError) {
+          const remainingLines = buffer.split("\n");
+          parseSSELines(remainingLines);
+          buffer = "";
+        }
+      } finally {
+        // CRITICAL: Always release the reader so the browser connection is freed
+        // for the next request. Without this, the next fetch() will hang.
+        try { reader.cancel(); } catch (_) {}
+        try { reader.releaseLock(); } catch (_) {}
       }
 
-      // Flush any remaining data in the buffer after stream ends
-      if (buffer.trim()) {
-        const remainingLines = buffer.split("\n");
-        parseSSELines(remainingLines);
-        buffer = "";
-      }
-
+      if (sseError) throw sseError;
       if (!finalData) throw new Error("No result received from AI agent");
 
       const data = finalData;
