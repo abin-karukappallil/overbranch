@@ -614,7 +614,7 @@ async def agent_chat(request: Request):
                         "model": creds["model"],
                         "messages": messages_list,
                         "temperature": 0.1,
-                        "max_tokens": 2048
+                        "max_tokens": 4096
                     }
 
                     resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)

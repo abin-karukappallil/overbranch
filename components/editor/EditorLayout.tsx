@@ -797,8 +797,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       let sseError: Error | null = null;
 
       try {
+        // IMPORTANT: currentEventType must live OUTSIDE parseSSELines so it
+        // persists across calls. SSE event: and data: lines can arrive in
+        // different reader.read() chunks.
+        let currentEventType = "";
+
         const parseSSELines = (lines: string[]) => {
-          let currentEventType = "";
           for (const line of lines) {
             const trimmed = line.replace(/\r$/, "");
             if (trimmed.startsWith("event: ")) {
@@ -820,6 +824,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   sseError = parseErr;
                 }
               }
+              currentEventType = "";
+            } else if (trimmed === "") {
+              // Empty line = end of SSE event block, reset event type
               currentEventType = "";
             }
           }
