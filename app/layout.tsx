@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Archivo_Black, Space_Mono, Inter } from "next/font/google";
 import "./globals.css";
 import { TRPCProvider } from "@/trpc/client";
 import { ThemeProvider } from "@/providers/ThemeProvider";
 import { Toaster } from "sonner";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const archivoBlack = Archivo_Black({
+  weight: "400",
   subsets: ["latin"],
+  variable: "--font-archivo",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const spaceMono = Space_Mono({
+  weight: ["400", "700"],
   subsets: ["latin"],
+  variable: "--font-space-mono",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
 });
 
 export const viewport = {
@@ -24,9 +31,9 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OverBranch — Agentic LaTeX Editor & Collaborative Workspace",
-  description: "Next-generation Agentic ide for latex with instant web environments and seamless Git collaboration.",
-  keywords: ["OverBranch", "LaTeX Editor", "Collaborative Workspace", "Developer Tools", "Next.js", "TypeScript","Agentic Ai latex","latex ai"],
+  title: "OverBranch — 100% Free & Open-Source AI Development Platform",
+  description: "Your AI. Your Code. Your Infrastructure. OverBranch is a free, open-source, self-hostable AI development platform.",
+  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure"],
   authors: [{ name: "OverBranch Team" }],
   icons: {
     icon: [
@@ -47,11 +54,13 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className="scroll-smooth dark">
-      <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased bg-background text-foreground min-h-screen selection:bg-indigo-500/20 selection:text-indigo-300`}>
+      <body
+        className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} font-sans antialiased bg-[#00CC68] text-black min-h-screen selection:bg-black selection:text-[#00CC68]`}
+      >
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
-          enableSystem
+          enableSystem={false}
           disableTransitionOnChange
         >
           <TRPCProvider>

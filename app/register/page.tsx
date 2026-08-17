@@ -16,16 +16,14 @@ import {
   Lock,
   Mail,
   User,
-  ShieldCheck,
   CheckCircle2,
   FileCode2,
   Users,
+  ArrowRight,
 } from "lucide-react";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-/* Hallmark · archetype: Workbench · component: RegisterPage · theme: Garden */
 export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -106,97 +104,104 @@ export default function RegisterPage() {
   const isPasswordMatching = password && confirmPassword && password === confirmPassword;
 
   return (
-    <div className="min-h-screen bg-background relative flex flex-col lg:flex-row overflow-x-clip">
-      {/* Left Specimen Workbench Panel */}
-      <div className="hidden lg:flex lg:w-[42%] xl:w-[40%] bg-card border-r border-border flex-col justify-between p-10 shrink-0 select-none">
-        <div className="space-y-8 relative z-10">
-          <Link href="/" className="flex items-center gap-3">
-            <OverBranchLogo size="lg" variant="full" colored />
+    <div className="min-h-screen bg-[#00CC68] text-black relative flex flex-col lg:flex-row select-none overflow-x-clip font-sans">
+      {/* Left Specimen Panel */}
+      <div className="hidden lg:flex lg:w-[45%] bg-black text-white p-12 flex-col justify-between border-r border-black relative z-10 shrink-0">
+        <div className="space-y-10">
+          <Link href="/" className="inline-flex items-center gap-3">
+            <OverBranchLogo size="md" variant="full" colored />
           </Link>
 
           <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono font-bold text-emerald-500 dark:text-emerald-400">
-              <ShieldCheck className="w-3.5 h-3.5" /> ACADEMIC LATEX WORKSPACE
+            <div className="font-mono text-xs font-bold text-[#00CC68] tracking-wider uppercase">
+              01 // FREE REGISTRATION
             </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground leading-snug">
-              Claim your report & presentation workspace in 60 seconds.
+            <h2 className="font-archivo font-black uppercase text-4xl xl:text-5xl text-white tracking-tight leading-tight">
+              CREATE YOUR FREE ACCOUNT.
             </h2>
+            <p className="font-sans text-sm text-zinc-400 font-normal leading-relaxed max-w-md">
+              Start writing LaTeX with agentic AI assistance, instant compilation vs Overleaf, and unlimited co-authors.
+            </p>
           </div>
 
-          {/* Live TeX Specimen Sandbox Card */}
-          <div className="rounded-2xl border border-border bg-background p-5 font-mono text-xs space-y-3 shadow-sm">
-            <div className="flex items-center justify-between border-b border-border pb-2 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1.5 font-bold text-foreground">
-                <FileCode2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
+          {/* Live TeX Code Box */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 font-mono text-xs space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 text-xs">
+              <span className="flex items-center gap-2 font-bold text-white uppercase">
+                <FileCode2 className="w-4 h-4 text-[#00CC68]" />
                 references.bib
               </span>
-              <span className="text-emerald-500 dark:text-emerald-400 font-bold">✓ 42 Citations Resolved</span>
+              <span className="text-[#00CC68] font-bold text-[11px]">✓ 42 CITATIONS RESOLVED</span>
             </div>
 
-            <div className="space-y-1 text-[11px]">
-              <div className="text-muted-foreground">@article&#123;overbranch2026,</div>
-              <div className="text-emerald-500 dark:text-emerald-400 pl-3">author = &#123;Vance, Alice and Chen, Bob&#125;,</div>
-              <div className="text-foreground pl-3">title = &#123;Real-time Academic Document Platform&#125;,</div>
-              <div className="text-foreground/80 pl-3">journal = &#123;Academic Software Engineering&#125;, year = &#123;2026&#125;</div>
+            <div className="space-y-1.5 text-xs text-zinc-300">
+              <div className="text-zinc-500">@article&#123;overbranch2026,</div>
+              <div className="text-[#00CC68] font-medium pl-4">author = &#123;Vance, Alice and Chen, Bob&#125;,</div>
+              <div className="text-zinc-100 pl-4">title = &#123;Agentic LaTeX Document Platform&#125;,</div>
+              <div className="text-zinc-400 pl-4">journal = &#123;Academic Software Engineering&#125;, year = &#123;2026&#125;</div>
             </div>
 
-            <div className="pt-2 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Users className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> Team Project Ready
+            <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-[11px] text-zinc-400 font-mono">
+              <span className="flex items-center gap-1.5 text-[#00CC68]">
+                <Users className="w-3.5 h-3.5" /> UNLIMITED CO-AUTHORS
               </span>
-              <span>Real-Time Sync • Instant Recompile</span>
+              <span>REALTIME SYNC</span>
             </div>
           </div>
 
-          <ul className="space-y-2.5 text-xs text-muted-foreground font-mono">
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              Seminar, lab assignment & project report templates
+          <ul className="space-y-3 font-sans text-xs text-zinc-300">
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Unlimited LaTeX compilation speed compared to Overleaf</span>
             </li>
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              Beamer presentation slides & PPT layout support
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Agentic AI assistant for document drafting</span>
             </li>
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              Zero-latency PDF compilation & cursor tracking
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Add unlimited co-authors to every project</span>
             </li>
           </ul>
         </div>
 
-        <div className="relative z-10 pt-6 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-          <span>OverBranch Academic Workspace</span>
-          <span>v1.0.4</span>
+        <div className="pt-8 border-t border-zinc-800 flex items-center justify-between text-xs font-mono text-zinc-500 uppercase">
+          <span>OVERBRANCH</span>
+          <span>100% FREE & OPEN SOURCE</span>
         </div>
       </div>
 
-      {/* Right Form Container */}
-      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-12 relative overflow-y-auto min-h-screen">
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" asChild className="text-xs font-mono">
-            <Link href="/">
-              <ArrowLeft className="w-4 h-4 mr-2 text-emerald-500 dark:text-emerald-400" />
-              Back to Home
-            </Link>
-          </Button>
-          <ThemeToggle />
+      {/* Right Modern Form Container */}
+      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-14 relative z-10 min-h-screen overflow-y-auto">
+        <div className="flex items-center justify-between max-w-md w-full mx-auto">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 bg-black text-white font-mono text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-full hover:bg-white hover:text-black transition-colors shadow-md"
+          >
+            <ArrowLeft className="w-4 h-4 text-[#00CC68]" />
+            <span>BACK TO HOME</span>
+          </Link>
+
+          <span className="font-mono text-xs font-bold uppercase tracking-widest text-black/80">
+            OVERBRANCH
+          </span>
         </div>
 
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="max-w-md w-full mx-auto my-auto p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-xl space-y-5"
+          transition={{ duration: 0.25 }}
+          className="max-w-md w-full mx-auto my-auto p-8 sm:p-10 bg-white text-zinc-900 rounded-3xl border border-black/10 shadow-2xl space-y-5"
         >
-          <div className="text-center sm:text-left space-y-1.5">
-            <span className="text-[11px] font-mono text-emerald-500 dark:text-emerald-400 font-bold uppercase tracking-widest">
-              STUDENT & AUTHOR REGISTRATION
+          <div className="space-y-1.5">
+            <span className="font-mono text-[11px] font-bold text-[#00CC68] uppercase tracking-wider block">
+              LATEX CODE EDITOR
             </span>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-              Create your account
+            <h1 className="font-archivo font-black uppercase text-3xl text-zinc-950 tracking-tight">
+              CREATE ACCOUNT
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Start co-authoring seminar reports, assignments & slides with your team.
+            <p className="font-sans text-xs sm:text-sm text-zinc-600 leading-relaxed">
+              Start writing LaTeX manuscripts with agentic AI and unlimited co-authors.
             </p>
           </div>
 
@@ -204,10 +209,10 @@ export default function RegisterPage() {
             variant="outline"
             onClick={handleGoogleSignIn}
             disabled={googleLoading}
-            className="w-full h-11 border-border bg-background hover:bg-accent font-mono font-medium rounded-xl text-xs flex items-center justify-center gap-3 shadow-xs"
+            className="w-full h-11 border border-zinc-200 bg-white hover:bg-zinc-50 font-sans text-xs font-semibold rounded-xl flex items-center justify-center gap-3 shadow-xs transition-colors cursor-pointer"
           >
             {googleLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-600" />
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -219,24 +224,26 @@ export default function RegisterPage() {
             <span>Sign up with Google</span>
           </Button>
 
-          <div className="relative flex items-center justify-center">
+          <div className="relative flex items-center justify-center my-3">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
+              <div className="w-full border-t border-zinc-200" />
             </div>
-            <span className="relative px-3 bg-card text-[11px] font-mono text-muted-foreground uppercase">
-              Or email sign up
+            <span className="relative px-3 bg-white font-mono text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
+              Or email registration
             </span>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3.5">
             {error && (
-              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs text-center font-mono font-semibold">
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 font-sans text-xs rounded-xl text-center font-medium">
                 {error}
               </div>
             )}
 
             <div className="space-y-1">
-              <Label htmlFor="name" className="text-xs font-mono">Full Name</Label>
+              <Label htmlFor="name" className="font-mono text-xs font-semibold text-zinc-800">
+                Full Name
+              </Label>
               <div className="relative">
                 <Input
                   id="name"
@@ -246,14 +253,16 @@ export default function RegisterPage() {
                   onChange={(e) => setName(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <User className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <User className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="email" className="text-xs font-mono">Work / University Email</Label>
+              <Label htmlFor="email" className="font-mono text-xs font-semibold text-zinc-800">
+                Email Address
+              </Label>
               <div className="relative">
                 <Input
                   id="email"
@@ -263,14 +272,16 @@ export default function RegisterPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
             <div className="space-y-1">
-              <Label htmlFor="password" className="text-xs font-mono">Password</Label>
+              <Label htmlFor="password" className="font-mono text-xs font-semibold text-zinc-800">
+                Password
+              </Label>
               <div className="relative">
                 <Input
                   id="password"
@@ -280,25 +291,27 @@ export default function RegisterPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 pr-10 text-xs font-mono border-border bg-background"
+                  className="h-10 pl-10 pr-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Lock className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-              <p className="text-[10px] text-muted-foreground font-mono">Minimum 8 characters</p>
+              <p className="font-mono text-[10px] text-zinc-500">Minimum 8 characters</p>
             </div>
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <Label htmlFor="confirmPassword" className="text-xs font-mono">Confirm Password</Label>
+                <Label htmlFor="confirmPassword" className="font-mono text-xs font-semibold text-zinc-800">
+                  Confirm Password
+                </Label>
                 {isPasswordMatching && (
-                  <span className="text-[10px] font-mono text-emerald-500 dark:text-emerald-400 font-bold">
+                  <span className="font-mono text-[10px] text-[#00CC68] font-bold">
                     ✓ Passwords Match
                   </span>
                 )}
@@ -312,38 +325,41 @@ export default function RegisterPage() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Lock className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl text-xs shadow-xs"
+              className="w-full h-12 bg-black text-white hover:bg-[#00CC68] hover:text-black font-mono text-xs font-bold uppercase tracking-wider rounded-full shadow-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Creating Workspace...
+                  <Loader2 className="w-4 h-4 animate-spin text-[#00CC68]" />
+                  <span>Creating Workspace...</span>
                 </>
               ) : (
-                "Create Free Workspace Account"
+                <>
+                  <span>Create Free Account</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
               )}
             </Button>
           </form>
 
-          <p className="text-center text-xs text-muted-foreground font-mono pt-1">
+          <p className="text-center font-sans text-xs text-zinc-600 pt-1">
             Already have an account?{" "}
-            <Link href="/login" className="font-bold text-foreground hover:underline">
+            <Link href="/login" className="font-bold text-zinc-950 hover:underline">
               Sign in
             </Link>
           </p>
         </motion.div>
 
-        <div className="text-[11px] text-center text-muted-foreground font-mono py-2">
-          Built for High-Velocity Scientific Research
+        <div className="font-mono text-xs text-center text-black/80 max-w-md mx-auto py-2">
+          100% FREE AND OPEN SOURCE
         </div>
       </div>
     </div>

@@ -2,189 +2,168 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Menu, X, LayoutDashboard, User } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { motion, AnimatePresence } from "framer-motion";
-import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
+import { Menu, X, ArrowUpRight, LayoutDashboard, Star } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { GithubIcon } from "@/components/ui/github-icon";
+import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-/* Hallmark · archetype: N5 Floating pill · nav: N5 · theme: Garden */
 export function LandingHeader() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session } = authClient.useSession();
   const isAuthenticated = Boolean(session?.user);
 
-  const userName = session?.user?.name || "User";
-  const userImage = session?.user?.image || undefined;
-
   return (
-    <header className="sticky top-3 z-40 w-full px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto pointer-events-none">
-      <div className="pointer-events-auto rounded-full border border-border bg-card/80 backdrop-blur-2xl px-5 h-14 flex items-center justify-between shadow-lg shadow-black/5 transition-all">
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <OverBranchLogo size="md" variant="full" colored />
-        </Link>
+    <header className="fixed top-4 left-0 right-0 z-50 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex items-center justify-between gap-3 pointer-events-none">
+      {/* Left Branding with Logo */}
+      <Link
+        href="/"
+        className="pointer-events-auto shrink-0 flex items-center gap-2 font-archivo text-lg sm:text-xl font-black uppercase tracking-[-0.04em] text-black bg-[#00CC68] px-3 py-1.5 border-2 border-black shadow-[3px_3px_0px_0px_#000000] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all duration-150"
+      >
+        <OverBranchLogo size="sm" variant="icon" colored={false} iconClassName="text-black stroke-black" />
+        <span>OVERBRANCH</span>
+      </Link>
 
-        <nav className="hidden md:flex items-center gap-6 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          <a href="#workspace" className="hover:text-foreground transition-colors">
-            Workspace
-          </a>
-          <a href="#specs" className="hover:text-foreground transition-colors">
-            Technical Specs
-          </a>
-          <a href="#showcase" className="hover:text-foreground transition-colors">
-            Document Engine
-          </a>
-          <a
-            href="https://github.com/abin-karukappallil/overbranch"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors flex items-center gap-1.5 text-foreground/80 font-bold"
-            title="OverBranch Open Source GitHub Repository"
-          >
-            <GithubIcon className="w-3.5 h-3.5" />
-            <span>GitHub</span>
-          </a>
-        </nav>
+      {/* Center Navigation Pill */}
+      <nav className="pointer-events-auto hidden lg:flex items-center gap-1 bg-black text-white px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider shadow-2xl shrink-0">
+        <a
+          href="#features"
+          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
+        >
+          FEATURES
+        </a>
+        <a
+          href="#self-host"
+          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
+        >
+          SELF-HOST
+        </a>
+        <a
+          href="https://github.com/abin-karukappallil/overbranch"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-2.5 py-1 rounded-full text-[#00CC68] hover:bg-white hover:text-black transition-all duration-150 flex items-center gap-1 font-bold"
+        >
+          <Star className="w-3 h-3 fill-[#00CC68]" />
+          <span>GITHUB</span>
+        </a>
+        <a
+          href="#self-host"
+          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
+        >
+          DOCS
+        </a>
+      </nav>
 
-        <div className="hidden md:flex items-center gap-2.5">
-          <ThemeToggle />
-          
-          {isPending ? (
-            <div className="h-8 w-20 bg-muted rounded-full animate-pulse" />
-          ) : isAuthenticated ? (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                asChild
-                className="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-full text-xs shadow-xs"
-              >
-                <Link href="/dashboard" className="flex items-center gap-1.5">
-                  <LayoutDashboard className="w-3.5 h-3.5" />
-                  <span>Go to Workspace</span>
-                </Link>
-              </Button>
-              <Link href="/profile" title={userName} className="hover:opacity-90 transition-opacity">
-                <Avatar className="w-8 h-8 rounded-full border border-border">
-                  <AvatarImage src={userImage} />
-                  <AvatarFallback className="bg-emerald-600 text-white font-bold text-xs">
-                    {userName.slice(0, 2).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-              </Link>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" asChild className="h-8 px-3 text-xs font-medium rounded-full">
-                <Link href="/login">Sign In</Link>
-              </Button>
-              <Button
-                size="sm"
-                asChild
-                className="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-full text-xs shadow-xs"
-              >
-                <Link href="/register" className="flex items-center gap-1">
-                  <span>Start Free</span>
-                  <ArrowRight className="w-3 h-3" />
-                </Link>
-              </Button>
-            </div>
-          )}
+      {/* Right Controls / Auth */}
+      <div className="pointer-events-auto hidden lg:flex items-center gap-2.5 shrink-0">
+        <div className="bg-black text-[#00CC68] px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-[#00CC68] animate-pulse" />
+          <span>OPEN SOURCE</span>
         </div>
 
-        <div className="flex items-center gap-2 md:hidden">
-          <ThemeToggle />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="h-8 w-8 text-muted-foreground rounded-full"
+        {isAuthenticated ? (
+          <Link
+            href="/dashboard"
+            className="bg-black text-white px-4 py-1.5 rounded-full font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider border-2 border-black hover:bg-white hover:text-black transition-all duration-150 flex items-center gap-1.5 shrink-0"
           >
-            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          </Button>
-        </div>
+            <LayoutDashboard className="w-3.5 h-3.5 text-[#00CC68]" />
+            <span>WORKSPACE</span>
+          </Link>
+        ) : (
+          <Link
+            href="/login"
+            className="bg-black text-white px-4 py-1.5 rounded-full font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider border-2 border-black hover:bg-white hover:text-black transition-all duration-150 shrink-0"
+          >
+            SIGN IN
+          </Link>
+        )}
       </div>
 
-      <AnimatePresence>
-        {mobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: -10 }}
-            animate={{ opacity: 1, scale: 1, y: 8 }}
-            exit={{ opacity: 0, scale: 0.95, y: -10 }}
-            transition={{ duration: 0.15 }}
-            className="pointer-events-auto md:hidden rounded-2xl border border-border/80 bg-card/95 backdrop-blur-2xl p-5 shadow-2xl space-y-4"
-          >
-            <nav className="flex flex-col space-y-2 font-medium text-sm">
-              <a
-                href="#workspace"
+      {/* Mobile / Tablet Menu Button */}
+      <button
+        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        className="pointer-events-auto lg:hidden bg-black text-white p-2.5 rounded-full border-2 border-black shrink-0"
+        aria-label="Toggle navigation menu"
+      >
+        {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
+      {/* Mobile Dropdown Menu */}
+      {mobileMenuOpen && (
+        <div className="pointer-events-auto md:hidden fixed inset-x-4 top-20 bg-black text-white p-6 border-4 border-black rounded-3xl shadow-2xl font-mono text-sm font-bold uppercase tracking-wider space-y-4 z-50">
+          <div className="flex flex-col space-y-3">
+            <a
+              href="#product"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-white"
+            >
+              PRODUCT
+            </a>
+            <a
+              href="#features"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-white"
+            >
+              FEATURES
+            </a>
+            <a
+              href="#self-host"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-white"
+            >
+              SELF-HOST
+            </a>
+            <a
+              href="https://github.com/abin-karukappallil/overbranch"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-[#00CC68] flex items-center justify-between font-bold"
+            >
+              <div className="flex items-center gap-2">
+                <Star className="w-4 h-4 fill-[#00CC68]" />
+                <span>STAR ON GITHUB</span>
+              </div>
+              <ArrowUpRight className="w-4 h-4" />
+            </a>
+            <a
+              href="#self-host"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-white"
+            >
+              DOCUMENTATION
+            </a>
+          </div>
+
+          <div className="pt-4 border-t-2 border-white/20 flex flex-col gap-3">
+            {isAuthenticated ? (
+              <Link
+                href="/dashboard"
                 onClick={() => setMobileMenuOpen(false)}
-                className="px-3 py-2 rounded-xl hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+                className="bg-[#00CC68] text-black text-center py-3 rounded-full font-bold uppercase tracking-wider"
               >
-                Workspace
-              </a>
-              <a
-                href="#specs"
-                onClick={() => setMobileMenuOpen(false)}
-                className="px-3 py-2 rounded-xl hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Technical Specs
-              </a>
-              <a
-                href="#showcase"
-                onClick={() => setMobileMenuOpen(false)}
-                className="px-3 py-2 rounded-xl hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-              >
-                Document Engine
-              </a>
-              <a
-                href="https://github.com/abin-karukappallil/overbranch"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => setMobileMenuOpen(false)}
-                className="px-3 py-2 rounded-xl hover:bg-accent text-emerald-400 font-semibold transition-colors flex items-center gap-2"
-              >
-                <GithubIcon className="w-4 h-4" />
-                <span>GitHub Repository (Open Source)</span>
-              </a>
-            </nav>
-            <div className="pt-3 border-t border-border/40 flex flex-col gap-2">
-              {isAuthenticated ? (
-                <>
-                  <Button asChild className="w-full justify-center bg-indigo-600 text-white rounded-xl">
-                    <Link href="/dashboard" onClick={() => setMobileMenuOpen(false)}>
-                      <LayoutDashboard className="w-4 h-4 mr-2" />
-                      Go to Workspace
-                    </Link>
-                  </Button>
-                  <Button variant="outline" asChild className="w-full justify-center rounded-xl">
-                    <Link href="/profile" onClick={() => setMobileMenuOpen(false)}>
-                      <User className="w-4 h-4 mr-2" />
-                      Profile ({userName})
-                    </Link>
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="outline" asChild className="w-full justify-center rounded-xl">
-                    <Link href="/login" onClick={() => setMobileMenuOpen(false)}>
-                      Sign In
-                    </Link>
-                  </Button>
-                  <Button asChild className="w-full justify-center bg-indigo-600 text-white rounded-xl">
-                    <Link href="/register" onClick={() => setMobileMenuOpen(false)}>
-                      Start Free Project
-                      <ArrowRight className="w-4 h-4 ml-1.5" />
-                    </Link>
-                  </Button>
-                </>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                GO TO WORKSPACE
+              </Link>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <Link
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="bg-white/10 text-white text-center py-3 rounded-full font-bold uppercase"
+                >
+                  SIGN IN
+                </Link>
+                <Link
+                  href="/register"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="bg-[#00CC68] text-black text-center py-3 rounded-full font-bold uppercase"
+                >
+                  GET STARTED
+                </Link>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }
-

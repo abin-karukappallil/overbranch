@@ -1,244 +1,84 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import gsap from "gsap";
-import {
-  ArrowRight,
-  FileCode2,
-  CheckCircle2,
-  LayoutDashboard,
-  FolderGit2,
-  Terminal,
-  Zap,
-} from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/badge-custom";
+import { Star, ArrowUpRight, ArrowRight, LayoutDashboard } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
-import { GithubIcon } from "@/components/ui/github-icon";
 
-/* Hallmark · macrostructure: Workbench · theme: Garden · HP: HP1 Vertical-rail */
 export function LandingHero() {
-  const headlineRef = useRef<HTMLHeadingElement>(null);
   const { data: session } = authClient.useSession();
   const isAuthenticated = Boolean(session?.user);
 
-  useEffect(() => {
-    if (headlineRef.current) {
-      gsap.fromTo(
-        headlineRef.current,
-        { opacity: 0, y: 24 },
-        { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }
-      );
-    }
-  }, []);
-
   return (
-    <section id="workspace" className="relative pt-10 pb-20 md:pt-16 md:pb-28 px-4 sm:px-6 lg:px-8 overflow-hidden">
-      <div className="max-w-5xl mx-auto text-center space-y-7">
-        <motion.div
-          initial={{ opacity: 0, y: -8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="inline-flex items-center gap-2"
-        >
-          <a
-            href="https://github.com/abin-karukappallil/overbranch"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:opacity-90 transition-opacity"
-          >
-            <StatusBadge variant="outline" dotPulse dotColor="bg-emerald-400">
-              <span className="text-xs font-mono tracking-wide flex items-center gap-1.5">
-                <GithubIcon className="w-3.5 h-3.5 text-foreground" />
-                OverBranch — Fully Free and Open-Source
-              </span>
-            </StatusBadge>
-          </a>
-        </motion.div>
-
-        <h1
-          ref={headlineRef}
-          className="text-3xl sm:text-5xl md:text-6xl font-extrabold tracking-tight leading-[1.12] text-foreground max-w-4xl mx-auto"
-        >
-          Collaborative LaTeX & Slides Workspace for Seminars, Reports & Papers.
+    <section id="product" className="relative min-h-screen bg-[#00CC68] text-black flex flex-col justify-between pt-28 pb-10 px-4 sm:px-8 lg:px-12 select-none border-b-2 border-black overflow-hidden">
+      {/* Top / Main Hero Content */}
+      <div className="relative z-10 flex-1 flex flex-col justify-center items-center text-center my-auto">
+        <h1 className="font-archivo font-black uppercase text-4xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-[8vw] tracking-[-0.04em] leading-[0.9] text-black max-w-full drop-shadow-sm">
+          OVERBRANCH
         </h1>
 
-        <motion.p
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.15 }}
-          className="max-w-2xl mx-auto text-base sm:text-lg text-muted-foreground leading-relaxed"
-        >
-          Co-author seminar reports, lab assignments, final-year project theses, Beamer slide presentations, and journal papers with real-time cursors and sub-10ms PDF compilation.
-        </motion.p>
+        <h2 className="font-archivo font-black uppercase text-lg sm:text-3xl lg:text-4xl tracking-[-0.03em] leading-[1.05] text-black max-w-4xl mt-4 px-2">
+          AGENTIC LATEX CODE EDITOR FOR STUDENTS AND RESEARCHERS
+        </h2>
 
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, delay: 0.25 }}
-          className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-1"
-        >
+        <p className="font-mono text-xs sm:text-base lg:text-lg font-bold uppercase tracking-tight text-black max-w-4xl mt-4 px-2 leading-relaxed">
+          LIKE ANTIGRAVITY FOR LATEX • UNLIMITED FAST COMPILATION VS OVERLEAF • AGENTIC AI & UNLIMITED CO-AUTHORS
+        </p>
+
+        {/* Hero CTA Action Button Pair */}
+        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-4">
           {isAuthenticated ? (
-            <>
-              <Button
-                size="lg"
-                asChild
-                className="w-full sm:w-auto h-11 px-7 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-md rounded-full text-sm"
-              >
-                <Link href="/dashboard" className="flex items-center gap-2">
-                  <LayoutDashboard className="w-4 h-4" />
-                  <span>Open Workspace</span>
-                </Link>
-              </Button>
-              <Button
-                variant="outline"
-                size="lg"
-                asChild
-                className="w-full sm:w-auto h-11 px-6 border-border bg-card hover:bg-accent font-medium rounded-full text-sm"
-              >
-                <a
-                  href="https://github.com/abin-karukappallil/overbranch"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2"
-                >
-                  <GithubIcon className="w-4 h-4 text-foreground" />
-                  <span>GitHub Repository</span>
-                </a>
-              </Button>
-            </>
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-3 bg-black text-white px-7 py-4 rounded-full font-mono text-sm sm:text-base font-bold uppercase tracking-wider border-2 border-black hover:bg-white hover:text-black shadow-[5px_5px_0px_0px_#000000] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all duration-150"
+            >
+              <LayoutDashboard className="w-5 h-5 text-[#00CC68]" />
+              <span>GO TO WORKSPACE</span>
+              <ArrowRight className="w-4 h-4 text-[#00CC68]" />
+            </Link>
           ) : (
-            <>
-              <Button
-                size="lg"
-                asChild
-                className="w-full sm:w-auto h-11 px-7 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-md rounded-full text-sm"
-              >
-                <Link href="/register" className="flex items-center gap-2">
-                  <span>Start Free Project</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              </Button>
-
-              <Button
-                variant="outline"
-                size="lg"
-                asChild
-                className="w-full sm:w-auto h-11 px-6 border-border bg-card hover:bg-accent font-medium rounded-full text-sm"
-              >
-                <a
-                  href="https://github.com/abin-karukappallil/overbranch"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-2"
-                >
-                  <GithubIcon className="w-4 h-4 text-foreground" />
-                  <span>Star on GitHub</span>
-                </a>
-              </Button>
-            </>
+            <Link
+              href="/register"
+              className="inline-flex items-center gap-3 bg-black text-white px-7 py-4 rounded-full font-mono text-sm sm:text-base font-bold uppercase tracking-wider border-2 border-black hover:bg-white hover:text-black shadow-[5px_5px_0px_0px_#000000] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all duration-150"
+            >
+              <span>GET STARTED FREE</span>
+              <ArrowRight className="w-4 h-4 text-[#00CC68]" />
+            </Link>
           )}
-        </motion.div>
 
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.35 }}
-          className="flex flex-wrap items-center justify-center gap-6 text-xs text-muted-foreground font-mono pt-1"
-        >
           <a
             href="https://github.com/abin-karukappallil/overbranch"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 hover:text-foreground transition-colors"
+            className="inline-flex items-center gap-3 bg-white text-black px-7 py-4 rounded-full font-mono text-sm sm:text-base font-bold uppercase tracking-wider border-2 border-black hover:bg-black hover:text-white shadow-[5px_5px_0px_0px_#000000] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all duration-150"
           >
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>100% Free & Open-Source</span>
+            <Star className="w-5 h-5 text-[#00CC68] fill-[#00CC68]" />
+            <span>STAR ON GITHUB</span>
+            <ArrowUpRight className="w-4 h-4" />
           </a>
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>Seminar & Report Templates</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>Beamer Slides & PPT</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span>Journal & Conference Layouts</span>
-          </div>
-        </motion.div>
+        </div>
+      </div>
 
-        {/* Workbench Macrostructure Feature Window */}
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.4 }}
-          className="mt-10 max-w-5xl mx-auto rounded-2xl border border-border/80 bg-card shadow-2xl overflow-hidden text-left"
-        >
-          <div className="flex flex-wrap items-center justify-between px-4 py-2.5 border-b border-border bg-muted/40 text-xs font-mono">
-            <div className="flex items-center gap-2">
-              <FileCode2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              <span className="font-bold text-foreground">Seminar_Project_Report.tex</span>
-              <span className="text-muted-foreground text-[11px] hidden sm:inline">• main.tex</span>
-            </div>
-            <div className="flex items-center gap-3 text-muted-foreground text-[11px]">
-              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20 font-semibold">
-                3 Team Authors Active
-              </span>
-              <span className="flex items-center gap-1 text-emerald-500 dark:text-emerald-400">
-                <Zap className="w-3 h-3" /> Compiled 4ms ago
-              </span>
-            </div>
+      {/* Hero Footer Area with 2px Black Divider */}
+      <div className="w-full mt-10">
+        <div className="w-full border-b-2 border-black mb-6" />
+
+        <div className="flex flex-col md:flex-row items-center justify-between gap-6 font-mono text-xs sm:text-sm font-bold uppercase tracking-wider">
+          {/* Left Metadata */}
+          <div className="text-center md:text-left">
+            <span className="text-2xl sm:text-4xl font-archivo font-black tracking-tighter block text-black">
+              Fully Free and Fast
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-12 min-h-[360px] font-mono text-xs">
-            <div className="md:col-span-7 p-5 bg-background/60 border-r border-border space-y-2 leading-relaxed overflow-x-auto">
-              <p className="text-purple-400">\documentclass<span className="text-emerald-400">[12pt,report]&#123;report&#125;</span></p>
-              <p className="text-purple-400">\usepackage<span className="text-emerald-400">&#123;graphicx, amsmath, hyperref&#125;</span></p>
-              <br />
-              <p className="text-emerald-500 dark:text-emerald-400">\title<span className="text-foreground">&#123;Seminar Report: Deep Learning Architecture&#125;</span></p>
-              <p className="text-muted-foreground flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-                <span className="text-emerald-300 dark:text-emerald-300">\author&#123;Student Team: Alex Rivers, Sam Vance&#125;</span>
-              </p>
-              <br />
-              <p className="text-purple-400">\begin<span className="text-emerald-400">&#123;abstract&#125;</span></p>
-              <p className="pl-4 text-foreground/90">This seminar report presents an in-depth review of modern neural networks, prepared for academic evaluation and journal publication.</p>
-              <p className="text-purple-400">\end<span className="text-emerald-400">&#123;abstract&#125;</span></p>
-              <br />
-              <p className="text-purple-400">\section<span className="text-emerald-400">&#123;Project Methodology&#125;</span></p>
-              <p className="pl-4 text-foreground/80">See Figure 1 for system architecture block diagram.</p>
-            </div>
-
-            <div className="md:col-span-5 p-6 bg-card flex flex-col justify-between border-t md:border-t-0 border-border">
-              <div className="space-y-4 p-5 rounded-xl border border-border bg-background text-foreground font-serif text-[11px] leading-relaxed shadow-sm">
-                <div className="text-center space-y-1 border-b border-border pb-2">
-                  <p className="font-bold text-xs">Seminar Report: Deep Learning Architecture</p>
-                  <p className="text-[10px] text-muted-foreground italic">Student Team: Alex Rivers, Sam Vance</p>
-                </div>
-                <div className="space-y-1">
-                  <span className="font-sans font-bold text-[9px] uppercase tracking-widest text-emerald-500 dark:text-emerald-400">Abstract</span>
-                  <p className="text-muted-foreground leading-normal">This seminar report presents an in-depth review of modern neural networks, prepared for academic evaluation and journal publication.</p>
-                </div>
-                <div className="py-1.5 text-center bg-muted/50 rounded border border-border/40 font-mono text-[10px] text-emerald-500 dark:text-emerald-400 font-semibold">
-                  Section 1 • Project Methodology
-                </div>
-              </div>
-
-              <div className="pt-4 flex items-center justify-between text-[11px] font-mono text-muted-foreground">
-                <span className="flex items-center gap-1.5 text-emerald-500 dark:text-emerald-400">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Live PDF Compiled
-                </span>
-                <span className="px-2 py-0.5 rounded bg-muted text-foreground">Project Report Format</span>
-              </div>
-            </div>
+          {/* Right Metadata */}
+          <div className="text-center md:text-right space-y-1 text-black/90">
+            <div>FASTER THAN OVERLEAF</div>
+            <div>UNLIMITED CO-AUTHORS</div>
+            <div>AGENTIC AI ASSISTANT</div>
           </div>
-        </motion.div>
+        </div>
       </div>
     </section>
   );
 }
-

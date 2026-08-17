@@ -62,9 +62,9 @@ export function OverBranchLogo({
           >
             <defs>
               <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#10b981" />
-                <stop offset="60%" stopColor="#059669" />
-                <stop offset="100%" stopColor="#d97706" />
+                <stop offset="0%" stopColor="#00CC68" />
+                <stop offset="60%" stopColor="#00E676" />
+                <stop offset="100%" stopColor="#00B359" />
               </linearGradient>
             </defs>
 
@@ -72,7 +72,7 @@ export function OverBranchLogo({
             <path
               d="M10 6C10 4.89543 10.8954 4 12 4H22L27 9V30C27 31.1046 26.1046 32 25 32H12C10.8954 32 10 31.1046 10 30V6Z"
               stroke={strokeColor}
-              strokeWidth="2.2"
+              strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -81,7 +81,7 @@ export function OverBranchLogo({
             <path
               d="M22 4V9H27"
               stroke={strokeColor}
-              strokeWidth="2.2"
+              strokeWidth="2.5"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
@@ -90,34 +90,34 @@ export function OverBranchLogo({
             <path
               d="M18 27V15"
               stroke={strokeColor}
-              strokeWidth="2.2"
+              strokeWidth="2.5"
               strokeLinecap="round"
             />
             <path
               d="M18 22L13 17"
               stroke={strokeColor}
-              strokeWidth="2.2"
+              strokeWidth="2.5"
               strokeLinecap="round"
             />
             <path
               d="M18 22L23 17"
               stroke={strokeColor}
-              strokeWidth="2.2"
+              strokeWidth="2.5"
               strokeLinecap="round"
             />
 
             {/* Node Dots */}
-            <circle cx="18" cy="27" r="2" fill={fillColor} />
-            <circle cx="13" cy="17" r="2" fill={fillColor} />
-            <circle cx="23" cy="17" r="2" fill={fillColor} />
-            <circle cx="18" cy="15" r="2" fill={fillColor} />
+            <circle cx="18" cy="27" r="2.2" fill={fillColor} />
+            <circle cx="13" cy="17" r="2.2" fill={fillColor} />
+            <circle cx="23" cy="17" r="2.2" fill={fillColor} />
+            <circle cx="18" cy="15" r="2.2" fill={fillColor} />
           </svg>
         </div>
       )}
 
       {showText && (
         <span
-          className={`font-extrabold tracking-tight text-foreground font-sans ${
+          className={`font-archivo font-black uppercase tracking-[-0.04em] text-foreground ${
             size === "sm"
               ? "text-sm"
               : size === "md"
