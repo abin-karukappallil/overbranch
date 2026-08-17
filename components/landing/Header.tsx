@@ -25,12 +25,6 @@ export function LandingHeader() {
       {/* Center Navigation Pill */}
       <nav className="pointer-events-auto hidden lg:flex items-center gap-1 bg-black text-white px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider shadow-2xl shrink-0">
         <a
-          href="#product"
-          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
-        >
-          PRODUCT
-        </a>
-        <a
           href="#features"
           className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
         >

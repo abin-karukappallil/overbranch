@@ -15,17 +15,14 @@ import {
   EyeOff,
   Lock,
   Mail,
-  ShieldCheck,
   CheckCircle2,
   FileCode2,
   Users,
-  Sparkles,
+  ArrowRight,
 } from "lucide-react";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-/* Hallmark · archetype: Workbench · component: LoginPage · theme: Garden */
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -98,99 +95,106 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background relative flex flex-col lg:flex-row overflow-x-clip">
-      {/* Left Specimen Workbench Panel */}
-      <div className="hidden lg:flex lg:w-[42%] xl:w-[40%] bg-card border-r border-border flex-col justify-between p-10 shrink-0 select-none">
-        <div className="space-y-8 relative z-10">
-          <Link href="/" className="flex items-center gap-3">
-            <OverBranchLogo size="lg" variant="full" colored />
+    <div className="min-h-screen bg-[#00CC68] text-black relative flex flex-col lg:flex-row select-none overflow-x-clip font-sans">
+      {/* Left Specimen Panel */}
+      <div className="hidden lg:flex lg:w-[45%] bg-black text-white p-12 flex-col justify-between border-r border-black relative z-10 shrink-0">
+        <div className="space-y-10">
+          <Link href="/" className="inline-flex items-center gap-3">
+            <OverBranchLogo size="md" variant="full" colored />
           </Link>
 
           <div className="space-y-4">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-xs font-mono font-bold text-emerald-500 dark:text-emerald-400">
-              <ShieldCheck className="w-3.5 h-3.5" /> ACADEMIC WORKSPACE
+            <div className="font-mono text-xs font-bold text-[#00CC68] tracking-wider uppercase">
+              01 // AGENTIC LATEX EDITOR
             </div>
-            <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground leading-snug">
-              Co-author seminar reports, assignments & slides with zero friction.
+            <h2 className="font-archivo font-black uppercase text-4xl xl:text-5xl text-white tracking-tight leading-tight">
+              FAST COMPILATION. UNLIMITED CO-AUTHORS.
             </h2>
+            <p className="font-sans text-sm text-zinc-400 font-normal leading-relaxed max-w-md">
+              Free and open-source agentic LaTeX code editor for students and researchers.
+            </p>
           </div>
 
-          {/* Live TeX Specimen Sandbox Card */}
-          <div className="rounded-2xl border border-border bg-background p-5 font-mono text-xs space-y-3 shadow-sm">
-            <div className="flex items-center justify-between border-b border-border pb-2 text-[11px] text-muted-foreground">
-              <span className="flex items-center gap-1.5 font-bold text-foreground">
-                <FileCode2 className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
-                seminar_report.tex
+          {/* Live TeX Code Box */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-6 font-mono text-xs space-y-4 shadow-xl">
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 text-xs">
+              <span className="flex items-center gap-2 font-bold text-white uppercase">
+                <FileCode2 className="w-4 h-4 text-[#00CC68]" />
+                paper_draft.tex
               </span>
-              <span className="text-emerald-500 dark:text-emerald-400 font-bold">✓ Compiled in 6ms</span>
+              <span className="text-[#00CC68] font-bold text-[11px]">✓ COMPILED IN 6ms</span>
             </div>
 
-            <div className="space-y-1 text-[11px]">
-              <div className="text-muted-foreground">\documentclass&#123;report&#125;</div>
-              <div className="text-emerald-500 dark:text-emerald-400">\usepackage&#123;overbranch&#125;</div>
-              <div className="text-foreground pl-3">\begin&#123;document&#125;</div>
-              <div className="text-foreground/90 pl-6">\section&#123;Project Methodology&#125;</div>
-              <div className="text-foreground/80 pl-6">$ E = mc^2 $</div>
-              <div className="text-foreground pl-3">\end&#123;document&#125;</div>
+            <div className="space-y-1.5 text-xs text-zinc-300">
+              <div className="text-zinc-500">\documentclass&#123;article&#123;</div>
+              <div className="text-[#00CC68] font-medium">\usepackage&#123;overbranch&#125;</div>
+              <div className="text-white pl-4">\begin&#123;document&#125;</div>
+              <div className="text-zinc-200 pl-8">\section&#123;Agentic LaTeX Workflow&#125;</div>
+              <div className="text-zinc-400 pl-8">$ \lim_&#123;t \to \infty&#125; \text&#123;Speed&#125; = \infty $</div>
+              <div className="text-white pl-4">\end&#123;document&#125;</div>
             </div>
 
-            <div className="pt-2 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Users className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> 2 Team Authors Active
+            <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-[11px] text-zinc-400 font-mono">
+              <span className="flex items-center gap-1.5 text-[#00CC68]">
+                <Users className="w-3.5 h-3.5" /> UNLIMITED CO-AUTHORS
               </span>
-              <span>pdfLaTeX • SyncTeX</span>
+              <span>NO OVERLEAF LIMITS</span>
             </div>
           </div>
 
-          <ul className="space-y-2.5 text-xs text-muted-foreground font-mono">
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              Seminar, lab assignment & project report templates
+          <ul className="space-y-3 font-sans text-xs text-zinc-300">
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Blazing fast compilation compared to Overleaf</span>
             </li>
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              Instant multi-author SyncTeX cursor navigation
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Agentic AI assistance for LaTeX generation</span>
             </li>
-            <li className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
-              BibTeX reference manager & instant citation lookup
+            <li className="flex items-center gap-3">
+              <CheckCircle2 className="w-4 h-4 text-[#00CC68] shrink-0" />
+              <span>Add unlimited co-authors per project</span>
             </li>
           </ul>
         </div>
 
-        <div className="relative z-10 pt-6 border-t border-border flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-          <span>OverBranch Academic Suite</span>
-          <span>v1.0.4</span>
+        <div className="pt-8 border-t border-zinc-800 flex items-center justify-between text-xs font-mono text-zinc-500 uppercase">
+          <span>OVERBRANCH</span>
+          <span>100% FREE & OPEN SOURCE</span>
         </div>
       </div>
 
-      {/* Right Auth Form */}
-      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-12 relative overflow-y-auto min-h-screen">
-        <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" asChild className="text-xs font-mono">
-            <Link href="/">
-              <ArrowLeft className="w-4 h-4 mr-2 text-emerald-500 dark:text-emerald-400" />
-              Back to Home
-            </Link>
-          </Button>
-          <ThemeToggle />
+      {/* Right Modern Auth Form */}
+      <div className="flex-1 flex flex-col justify-between p-6 sm:p-10 lg:p-14 relative z-10 min-h-screen">
+        <div className="flex items-center justify-between max-w-md w-full mx-auto">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 bg-black text-white font-mono text-xs font-bold uppercase tracking-wider px-4 py-2 rounded-full hover:bg-white hover:text-black transition-colors shadow-md"
+          >
+            <ArrowLeft className="w-4 h-4 text-[#00CC68]" />
+            <span>BACK TO HOME</span>
+          </Link>
+
+          <span className="font-mono text-xs font-bold uppercase tracking-widest text-black/80">
+            OVERBRANCH
+          </span>
         </div>
 
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="max-w-md w-full mx-auto my-auto p-6 sm:p-8 rounded-2xl border border-border bg-card shadow-xl space-y-6"
+          transition={{ duration: 0.25 }}
+          className="max-w-md w-full mx-auto my-auto p-8 sm:p-10 bg-white text-zinc-900 rounded-3xl border border-black/10 shadow-2xl space-y-6"
         >
-          <div className="text-center sm:text-left space-y-1.5">
-            <span className="text-[11px] font-mono text-emerald-500 dark:text-emerald-400 font-bold uppercase tracking-widest">
-              STUDENT & AUTHOR PORTAL
+          <div className="space-y-1.5">
+            <span className="font-mono text-[11px] font-bold text-[#00CC68] uppercase tracking-wider block">
+              LATEX CODE EDITOR
             </span>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-              Sign in to OverBranch
+            <h1 className="font-archivo font-black uppercase text-3xl text-zinc-950 tracking-tight">
+              SIGN IN
             </h1>
-            <p className="text-xs sm:text-sm text-muted-foreground">
-              Access your seminar reports, project assignments, slides & papers.
+            <p className="font-sans text-xs sm:text-sm text-zinc-600 leading-relaxed">
+              Access your LaTeX projects and collaborative workspace.
             </p>
           </div>
 
@@ -198,10 +202,10 @@ export default function LoginPage() {
             variant="outline"
             onClick={handleGoogleSignIn}
             disabled={googleLoading}
-            className="w-full h-11 border-border bg-background hover:bg-accent font-mono font-medium rounded-xl text-xs flex items-center justify-center gap-3 shadow-xs"
+            className="w-full h-11 border border-zinc-200 bg-white hover:bg-zinc-50 font-sans text-xs font-semibold rounded-xl flex items-center justify-center gap-3 shadow-xs transition-colors cursor-pointer"
           >
             {googleLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              <Loader2 className="w-4 h-4 animate-spin text-zinc-600" />
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -213,24 +217,26 @@ export default function LoginPage() {
             <span>Sign in with Google</span>
           </Button>
 
-          <div className="relative flex items-center justify-center">
+          <div className="relative flex items-center justify-center my-4">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
+              <div className="w-full border-t border-zinc-200" />
             </div>
-            <span className="relative px-3 bg-card text-[11px] font-mono text-muted-foreground uppercase">
+            <span className="relative px-3 bg-white font-mono text-[11px] font-medium text-zinc-500 uppercase tracking-wider">
               Or email credentials
             </span>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-xs text-center font-mono font-semibold">
+              <div className="p-3 bg-red-50 border border-red-200 text-red-700 font-sans text-xs rounded-xl text-center font-medium">
                 {error}
               </div>
             )}
 
             <div className="space-y-1.5">
-              <Label htmlFor="email" className="text-xs font-mono">Work / University Email</Label>
+              <Label htmlFor="email" className="font-mono text-xs font-semibold text-zinc-800">
+                Email Address
+              </Label>
               <div className="relative">
                 <Input
                   id="email"
@@ -240,19 +246,21 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 text-xs font-mono border-border bg-background"
+                  className="h-11 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Mail className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
             </div>
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-xs font-mono">Password</Label>
+                <Label htmlFor="password" className="font-mono text-xs font-semibold text-zinc-800">
+                  Password
+                </Label>
                 <button
                   type="button"
                   onClick={() => setForgotModalOpen(true)}
-                  className="text-xs text-emerald-500 dark:text-emerald-400 hover:underline font-mono"
+                  className="font-mono text-xs font-semibold text-[#00CC68] hover:underline"
                 >
                   Forgot password?
                 </button>
@@ -266,13 +274,13 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 pr-10 text-xs font-mono border-border bg-background"
+                  className="h-11 pl-10 pr-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
                 />
-                <Lock className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                <Lock className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -282,59 +290,72 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-11 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold rounded-xl text-xs shadow-xs"
+              className="w-full h-12 bg-black text-white hover:bg-[#00CC68] hover:text-black font-mono text-xs font-bold uppercase tracking-wider rounded-full shadow-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
                 <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Verifying Account...
+                  <Loader2 className="w-4 h-4 animate-spin text-[#00CC68]" />
+                  <span>Verifying Account...</span>
                 </>
               ) : (
-                "Open Manuscript Workspace"
+                <>
+                  <span>Open Workspace</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
               )}
             </Button>
           </form>
 
-          <p className="text-center text-xs text-muted-foreground font-mono pt-1">
+          <p className="text-center font-sans text-xs text-zinc-600 pt-2">
             New to OverBranch?{" "}
-            <Link href="/register" className="font-bold text-foreground hover:underline">
+            <Link href="/register" className="font-bold text-zinc-950 hover:underline">
               Create a free account
             </Link>
           </p>
         </motion.div>
 
-        <div className="text-[11px] text-center text-muted-foreground font-mono py-2">
-          Protected by Encrypted Enterprise Session Security
+        <div className="font-mono text-xs text-center text-black/80 max-w-md mx-auto">
+          100% FREE AND OPEN SOURCE
         </div>
       </div>
 
       <AnimatePresence>
         {forgotModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-md">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
             <motion.div
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="max-w-md w-full p-6 rounded-2xl border border-border bg-card shadow-2xl space-y-4"
+              className="max-w-md w-full p-8 bg-white text-zinc-900 rounded-3xl border border-zinc-200 shadow-2xl space-y-4 font-sans"
             >
-              <h3 className="text-base font-bold text-foreground">Reset Password</h3>
-              <p className="text-xs text-muted-foreground">
+              <h3 className="font-archivo text-xl font-bold uppercase text-zinc-950">
+                Reset Password
+              </h3>
+              <p className="text-xs text-zinc-600">
                 Enter your registered account email to receive reset instructions.
               </p>
-              <form onSubmit={handleForgotSubmit} className="space-y-4 pt-1">
+              <form onSubmit={handleForgotSubmit} className="space-y-4 pt-2">
                 <Input
                   type="email"
                   placeholder="author@university.edu"
                   value={forgotEmail}
                   onChange={(e) => setForgotEmail(e.target.value)}
                   required
-                  className="h-10 text-xs font-mono"
+                  className="h-11 font-sans text-xs border border-zinc-200 bg-zinc-50 rounded-xl"
                 />
-                <div className="flex items-center justify-end gap-2 text-xs">
-                  <Button variant="ghost" type="button" onClick={() => setForgotModalOpen(false)}>
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={() => setForgotModalOpen(false)}
+                    className="font-sans text-xs font-semibold text-zinc-600"
+                  >
                     Cancel
                   </Button>
-                  <Button type="submit" className="bg-emerald-600 dark:bg-emerald-500 text-white dark:text-zinc-950 font-bold">
+                  <Button
+                    type="submit"
+                    className="bg-black text-white font-mono text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-full shadow-md"
+                  >
                     Send Reset Link
                   </Button>
                 </div>

@@ -11,9 +11,6 @@ export function LandingHero() {
 
   return (
     <section id="product" className="relative min-h-screen bg-[#00CC68] text-black flex flex-col justify-between pt-28 pb-10 px-4 sm:px-8 lg:px-12 select-none border-b-2 border-black overflow-hidden">
-      {/* Ambient Top Light Flare Overlay */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_25%,rgba(255,255,255,0.35)_0%,transparent_70%)] pointer-events-none -z-0" />
-
       {/* Top / Main Hero Content */}
       <div className="relative z-10 flex-1 flex flex-col justify-center items-center text-center my-auto">
         <h1 className="font-archivo font-black uppercase text-4xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-[8vw] tracking-[-0.04em] leading-[0.9] text-black max-w-full drop-shadow-sm">
