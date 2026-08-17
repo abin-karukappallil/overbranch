@@ -1,131 +1,93 @@
 "use client";
 
 import React from "react";
-import { motion } from "framer-motion";
-import {
-  Zap,
-  ShieldCheck,
-  GitPullRequest,
-  Terminal,
-  Cpu,
-  Layers,
-  Code,
-  ServerOff
-} from "lucide-react";
+import { ArrowRight } from "lucide-react";
 
-/* Hallmark · archetype: F3 Tabular spec sheet · feature: F3 · theme: Cobalt */
-const specRows = [
-  {
-    code: "01",
-    label: "TeX Recompilation Engine",
-    spec: "pdfLaTeX, XeLaTeX & LuaLaTeX",
-    detail: "Incremental compilation pipelines with sub-10ms UI sync and live PDF preview.",
-    icon: Zap,
-  },
-  {
-    code: "02",
-    label: "Multi-Author Co-Authoring",
-    spec: "Real-time presence & live cursors",
-    detail: "Conflict-free document state synchronization with role-based invitation control.",
-    icon: Layers,
-  },
-  {
-    code: "03",
-    label: "Document Tree & BibTeX",
-    spec: "Multi-file .tex & .bib resolution",
-    detail: "Instant citation key autocompletion and package dependency tracking.",
-    icon: GitPullRequest,
-  },
-  {
-    code: "04",
-    label: "Command Palette & Shortcuts",
-    spec: "Global Cmd+K spotlight matrix",
-    detail: "Keyboard-driven project search, dark/light theme switching, and quick actions.",
-    icon: Terminal,
-  },
-  {
-    code: "05",
-    label: "Enterprise Session Protection",
-    spec: "Encrypted session & API security",
-    detail: "Strict session management, secure cookies, and type-safe server queries.",
-    icon: ShieldCheck,
-  },
-  {
-    code: "06",
-    label: "Universal Responsiveness",
-    spec: "320px to 4K display adaptation",
-    detail: "Mobile-tested layout collapse, no horizontal scroll, and touch-optimized hit targets.",
-    icon: Cpu,
-  },
-  {
-    code: "07",
-    label: "Free and Open Source",
-    spec: "Open Source",
-    detail: "Fully Free and Open-Source",
-    icon: Code,
-  },
-  {
-    code: "08",
-    label: "Self hostable",
-    spec: "Host on your own server/system",
-    detail: "Use your own compute resources instead of relying on cloud providers..using docker self-host is like plug-and-play",
-    icon: ServerOff,
-  }
+interface FeatureRow {
+  index: string;
+  title: string;
+  tags: string[];
+}
 
+const features: FeatureRow[] = [
+  {
+    index: "01",
+    title: "AGENTIC AI FOR LATEX",
+    tags: ["AGENTIC ASSISTANT", "DOCUMENT DRAFTING", "AUTO-FIX ERRORS", "ANTIGRAVITY IDE"],
+  },
+  {
+    index: "02",
+    title: "BLAZING FAST COMPILATION",
+    tags: ["UNLIMITED COMPILES", "FASTER THAN OVERLEAF", "INSTANT PDF", "ZERO TIMEOUTS"],
+  },
+  {
+    index: "03",
+    title: "UNLIMITED COLLABORATION",
+    tags: ["UNLIMITED CO-AUTHORS", "REALTIME CO-AUTHORING", "NO TEAM LIMITS", "PROJECT SHARING"],
+  },
+  {
+    index: "04",
+    title: "100% FREE & OPEN SOURCE",
+    tags: ["NO SUBSCRIPTIONS", "SELF-HOSTABLE", "TRANSPARENT CODE", "NO PAYWALLS"],
+  },
+  {
+    index: "05",
+    title: "RESEARCHER & STUDENT FIRST",
+    tags: ["PRIVATE DATA", "LOCAL MODELS", "GIT COLLABORATION", "YOUR SERVER"],
+  },
 ];
 
 export function LandingFeatures() {
   return (
-    <section id="specs" className="py-20 px-4 sm:px-6 lg:px-8 border-t border-border bg-card/40">
-      <div className="max-w-6xl mx-auto space-y-12">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-border pb-6">
-          <div className="space-y-2">
-            <span className="text-xs font-mono text-indigo-400 font-bold uppercase tracking-widest">
-              SYSTEM ARCHITECTURE
-            </span>
-            <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-foreground">
-              Technical Specifications & Engine Capabilities
-            </h2>
-          </div>
-          <p className="text-xs font-mono text-muted-foreground max-w-xs">
-            Built for student seminars, project reports, assignments, slides, and journal publications.
-          </p>
+    <section id="features" className="bg-black text-white py-24 border-b-2 border-white/20 select-none">
+      <div className="max-w-7xl mx-auto px-4 sm:px-8 mb-12">
+        <div className="font-mono text-xs sm:text-sm font-bold text-[#00CC68] tracking-widest uppercase mb-2">
+          SYSTEM CORE FEATURES
         </div>
+        <h2 className="font-archivo font-black uppercase text-3xl sm:text-5xl text-white tracking-tight">
+          BUILT FOR ABSOLUTE CONTROL.
+        </h2>
+      </div>
 
-        <div className="divide-y divide-border border-y border-border">
-          {specRows.map((row, idx) => (
-            <motion.div
-              key={row.code}
-              initial={{ opacity: 0, y: 15 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.4, delay: idx * 0.05 }}
-              className="py-5 grid grid-cols-1 md:grid-cols-12 gap-4 items-start hover:bg-accent/40 transition-colors px-3 rounded-lg"
-            >
-              <div className="md:col-span-1 text-xs font-mono text-indigo-400 font-bold">
-                {row.code}
+      {/* Feature Service List Rows */}
+      <div className="divide-y-2 divide-white/10 border-y-2 border-white/10">
+        {features.map((feature) => (
+          <div
+            key={feature.index}
+            className="group px-4 sm:px-8 lg:px-16 py-8 hover:bg-white/5 transition-colors duration-150 ease-out cursor-pointer"
+          >
+            <div className="max-w-7xl mx-auto flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
+              {/* Index & Title */}
+              <div className="flex items-center gap-6 group-hover:translate-x-4 transition-transform duration-150 ease-out">
+                <span className="font-mono text-base sm:text-xl font-bold text-[#00CC68]">
+                  {feature.index}
+                </span>
+                <h3 className="font-archivo font-black uppercase text-2xl sm:text-4xl lg:text-5xl text-white tracking-[-0.03em]">
+                  {feature.title}
+                </h3>
               </div>
 
-              <div className="md:col-span-4 space-y-1">
-                <div className="flex items-center gap-2">
-                  <row.icon className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <h3 className="text-sm font-bold text-foreground">
-                    {row.label}
-                  </h3>
+              {/* Tags & Arrow */}
+              <div className="flex items-center justify-between w-full lg:w-auto gap-6 pt-2 lg:pt-0">
+                <div className="flex flex-wrap gap-2">
+                  {feature.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="font-mono text-[10px] sm:text-xs font-bold uppercase tracking-wider bg-white/10 px-2.5 py-1 text-zinc-300 group-hover:text-white group-hover:bg-white/20 transition-colors"
+                    >
+                      {tag}
+                    </span>
+                  ))}
                 </div>
-                <p className="text-xs font-mono text-muted-foreground">
-                  {row.spec}
-                </p>
-              </div>
 
-              <div className="md:col-span-7 text-xs text-muted-foreground leading-relaxed font-sans">
-                {row.detail}
+                <div className="text-[#00CC68] group-hover:rotate-45 transition-transform duration-150 ease-out shrink-0">
+                  <ArrowRight className="w-8 h-8 sm:w-10 sm:h-10 stroke-[2.5]" />
+                </div>
               </div>
-            </motion.div>
-          ))}
-        </div>
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
-
