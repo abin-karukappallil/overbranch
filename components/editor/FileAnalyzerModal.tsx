@@ -271,9 +271,9 @@ export const FileAnalyzerModal: React.FC<FileAnalyzerModalProps> = ({
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500 font-mono"
                 >
-                  <option value="openai/gpt-oss-120b">GPT-120B OSS (Groq / NVIDIA)</option>
-                  <option value="gemini-2.5-flash">Gemini 2.5 Flash (Fallback File Upload)</option>
-                  <option value="gemini-1.5-pro">Gemini 1.5 Pro (Fallback File Upload)</option>
+                  <option value="openai/gpt-oss-120b">GPT-120B OSS (Groq API 1)</option>
+                  <option value="openai/gpt-oss-120b-fallback-2">GPT-120B OSS (Groq API 2 Fallback)</option>
+                  <option value="openai/gpt-oss-120b-fallback-3">GPT-120B OSS (Groq API 3 Fallback)</option>
                 </select>
               </div>
             </div>

@@ -1697,17 +1697,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <Paperclip className="w-4 h-4" />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsFileAnalyzerOpen(true)}
-                    disabled={isAgentThinking}
-                    className="p-2 rounded-xl bg-gradient-to-r from-cyan-950/80 to-blue-950/80 hover:from-cyan-900 hover:to-blue-900 text-cyan-300 border border-cyan-700/50 transition-colors disabled:opacity-50 shrink-0 flex items-center gap-1.5 text-xs font-medium shadow-sm"
-                    title="Multimodal File Analyzer (Gemini Files API)"
-                  >
-                    <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-                    <span className="hidden sm:inline">File Analyzer</span>
-                  </button>
-
                   <div className="relative flex-1">
                     <textarea
                       id="ai-chat-input"
@@ -2303,11 +2292,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
-
-      <FileAnalyzerModal
-        isOpen={isFileAnalyzerOpen}
-        onClose={() => setIsFileAnalyzerOpen(false)}
-      />
     </div>
   );
 }

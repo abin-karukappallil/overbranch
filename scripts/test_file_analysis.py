@@ -13,10 +13,9 @@ from file_analyzer import (
     sanitize_filename,
     detect_mime_type,
     registry,
-    GeminiFileAnalysisProvider,
-    router
+    GPT120BFileAnalysisProvider
 )
-from fastapi import FastAPI
+from main import app
 from fastapi.testclient import TestClient
 
 def test_sanitization_and_mime():
@@ -37,15 +36,13 @@ def test_sanitization_and_mime():
 
 def test_provider_registry():
     print("--- 2. Testing Provider Registry ---")
-    provider = registry.get_provider("gemini")
-    assert isinstance(provider, GeminiFileAnalysisProvider)
-    assert provider.get_provider_name() == "gemini"
+    provider = registry.get_provider("gpt-120b")
+    assert isinstance(provider, GPT120BFileAnalysisProvider)
+    assert provider.get_provider_name() == "gpt-120b"
     print("OK: Provider registry lookup passed.")
 
 def test_fastapi_endpoint():
     print("--- 3. Testing FastAPI endpoint /api/ai/analyze-file ---")
-    app = FastAPI()
-    app.include_router(router, prefix="/api")
     client = TestClient(app)
 
     # Test missing prompt validation

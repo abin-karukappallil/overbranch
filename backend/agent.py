@@ -566,80 +566,67 @@ async def agent_chat(request: Request):
 
             contents_payload.append(user_content)
 
-            primary_model = req.model or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or "openai/gpt-oss-120b"
+            primary_model = req.model or os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b"
+            groq_key_1 = os.getenv("GROQ_API_KEY")
+            groq_key_2 = os.getenv("GROQ_API_KEY_2")
+            groq_key_3 = os.getenv("GROQ_API_KEY_3")
             nvidia_key = os.getenv("NVIDIA_API_KEY")
-            groq_key = os.getenv("GROQ_API_KEY")
+
+            candidates = []
+            if groq_key_1 and groq_key_1.strip():
+                candidates.append({"name": "Groq Primary API", "key": groq_key_1.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if groq_key_2 and groq_key_2.strip():
+                candidates.append({"name": "Groq API 2", "key": groq_key_2.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if groq_key_3 and groq_key_3.strip():
+                candidates.append({"name": "Groq API 3", "key": groq_key_3.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if nvidia_key and nvidia_key.strip():
+                candidates.append({"name": "NVIDIA NIM API", "key": nvidia_key.strip(), "url": "https://integrate.api.nvidia.com/v1/chat/completions", "model": os.getenv("NVIDIA_LLM_MODEL", "openai/gpt-oss-120b")})
 
             response_text = None
             model_used = None
             is_fallback = False
             last_error = None
 
-            # 1. Primary Engine: Groq / NVIDIA NIM (openai/gpt-oss-120b)
-            if nvidia_key or groq_key:
-                yield sse_event("progress", {"step": "llm", "message": f"Generating with GPT OSS 120B ({primary_model})...", "icon": "sparkles"})
-                try:
-                    import requests
-                    api_key = groq_key.strip() if (groq_key and groq_key.strip()) else nvidia_key.strip()
-                    api_url = "https://api.groq.com/openai/v1/chat/completions" if (groq_key and groq_key.strip()) else "https://integrate.api.nvidia.com/v1/chat/completions"
+            safe_user_content = user_content
+            if len(safe_user_content) > 25000:
+                safe_user_content = safe_user_content[:25000] + "\n...[Content capped for token/payload limit]"
 
+            messages_list = []
+            if system_content:
+                messages_list.append({"role": "system", "content": system_content})
+            messages_list.append({"role": "user", "content": safe_user_content})
+
+            import requests
+            for idx, creds in enumerate(candidates):
+                step_name = f"llm_try_{idx+1}"
+                yield sse_event("progress", {"step": step_name, "message": f"Generating with {creds['name']} ({creds['model']})...", "icon": "sparkles"})
+                try:
                     headers = {
-                        "Authorization": f"Bearer {api_key}",
+                        "Authorization": f"Bearer {creds['key']}",
                         "Content-Type": "application/json"
                     }
-                    safe_user_content = user_content
-                    if len(safe_user_content) > 25000:
-                        safe_user_content = safe_user_content[:25000] + "\n...[Content capped for token/payload limit]"
-
-                    messages_list = []
-                    if system_content:
-                        messages_list.append({"role": "system", "content": system_content})
-                    messages_list.append({"role": "user", "content": safe_user_content})
-
                     payload = {
-                        "model": primary_model,
+                        "model": creds["model"],
                         "messages": messages_list,
                         "temperature": 0.1,
                         "max_tokens": 2048
                     }
 
-                    resp = requests.post(api_url, headers=headers, json=payload, timeout=90)
+                    resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
                     if resp.status_code == 200:
                         data = resp.json()
                         choices = data.get("choices", [])
                         if choices:
                             response_text = choices[0]["message"]["content"]
-                            model_used = f"GPT OSS 120B ({primary_model})"
+                            model_used = f"{creds['name']} ({creds['model']})"
+                            is_fallback = (idx > 0)
+                            break
                     else:
-                        print(f"  GPT OSS 120B API returned status {resp.status_code}: {resp.text[:200]}")
-                        last_error = f"API HTTP {resp.status_code}"
+                        print(f"  {creds['name']} returned HTTP {resp.status_code}: {resp.text[:200]}. Trying next Groq fallback key...")
+                        last_error = f"{creds['name']} HTTP {resp.status_code}"
                 except Exception as err:
-                    print(f"  GPT OSS 120B API call failed: {err}")
-                    last_error = err
-
-            # 2. Secondary Engine: Gemini fallback if client is configured
-            if response_text is None:
-                client = get_genai_client()
-                if client and HAS_GENAI:
-                    yield sse_event("progress", {"step": "fallback_gemini", "message": "Trying Gemini fallback...", "icon": "refresh-cw"})
-                    try:
-                        config = types.GenerateContentConfig(
-                            temperature=0.1,
-                            max_output_tokens=8192,
-                            system_instruction=system_content if system_content else None,
-                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                        )
-                        response = client.models.generate_content(
-                            model="gemini-2.5-flash",
-                            contents=contents_payload,
-                            config=config,
-                        )
-                        response_text = stringify_content(getattr(response, "text", response))
-                        model_used = "gemini-2.5-flash"
-                        is_fallback = True
-                    except Exception as gem_err:
-                        print(f"  Gemini fallback failed: {gem_err}")
-                        last_error = gem_err
+                    print(f"  {creds['name']} call failed: {err}. Trying next Groq fallback key...")
+                    last_error = f"{creds['name']} error: {err}"
 
             if response_text is None:
                 yield sse_event("error", {"message": f"All primary and fallback models failed. Last error: {str(last_error)}"})

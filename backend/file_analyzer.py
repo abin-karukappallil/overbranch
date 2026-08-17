@@ -2,8 +2,8 @@
 file_analyzer.py — AI File Analysis Module for OverBranch
 
 Supports direct FILE + USER PROMPT -> LLM multimodal analysis.
-Primary model: GPT-120B OSS (Groq / NVIDIA endpoint) with built-in file content extraction.
-Fallback model: Gemini Files API upload model (gemini-2.5-flash / gemini-1.5-pro).
+Primary model: GPT-120B OSS (Groq / NVIDIA endpoints).
+Multi-key fallback: GROQ_API_KEY -> GROQ_API_KEY_2 -> GROQ_API_KEY_3 -> NVIDIA_API_KEY.
 """
 
 import os
@@ -161,215 +161,67 @@ class BaseFileAnalysisProvider(ABC):
         pass
 
 
-# ─── Gemini Provider Implementation (File Upload Fallback Model) ─────────────
-
-class GeminiFileAnalysisProvider(BaseFileAnalysisProvider):
-    def get_provider_name(self) -> str:
-        return "gemini"
-
-    def _get_client(self):
-        try:
-            from google import genai
-        except ImportError:
-            raise RuntimeError("The 'google-genai' package is not installed on the server.")
-
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-        if not api_key or not api_key.strip():
-            raise ValueError("No GEMINI_API_KEY or GOOGLE_API_KEY configured in backend environment (.env).")
-
-        return genai.Client(api_key=api_key.strip())
-
-    def _upload_and_wait(self, client, file_path: str, filename: str, mime_type: str):
-        from google.genai import types
-
-        logger.info(f"[Fallback Provider] Uploading file '{filename}' ({mime_type}) to Gemini Files API...")
-        try:
-            gemini_file = client.files.upload(
-                file=file_path,
-                config=types.UploadFileConfig(
-                    mime_type=mime_type,
-                    display_name=filename
-                )
-            )
-        except Exception as upload_err:
-            err_str = str(upload_err)
-            logger.error(f"Gemini file upload failed for '{filename}': {err_str}")
-            if "429" in err_str or "quota" in err_str.lower() or "resource" in err_str.lower():
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Gemini API rate limit exceeded during file upload fallback."
-                )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload file to Gemini Files API: {err_str}"
-            )
-
-        poll_count = 0
-        max_polls = 60
-        while hasattr(gemini_file, "state") and str(gemini_file.state).upper() in ("PROCESSING", "STATE_PROCESSING"):
-            if poll_count >= max_polls:
-                raise HTTPException(
-                    status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail=f"Timed out waiting for file '{filename}' processing on Gemini servers."
-                )
-            time.sleep(2)
-            gemini_file = client.files.get(name=gemini_file.name)
-            poll_count += 1
-
-        if hasattr(gemini_file, "state") and str(gemini_file.state).upper() in ("FAILED", "STATE_FAILED"):
-            error_msg = getattr(gemini_file, "error", "File processing failed on Gemini servers.")
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Gemini file processing failed: {error_msg}"
-            )
-
-        return gemini_file
-
-    def _cleanup_gemini_file(self, client, gemini_file):
-        if not gemini_file or not hasattr(gemini_file, "name"):
-            return
-        try:
-            client.files.delete(name=gemini_file.name)
-        except Exception:
-            pass
-
-    def _select_model(self, model_name: Optional[str]) -> str:
-        if model_name and "gemini" in model_name.lower():
-            return model_name.strip()
-        env_model = os.getenv("GEMINI_MODEL")
-        if env_model and env_model.strip():
-            return env_model.strip()
-        return "gemini-2.5-flash"
-
-    def analyze_file(
-        self,
-        file_path: str,
-        filename: str,
-        mime_type: str,
-        prompt: str,
-        model_name: Optional[str] = None
-    ) -> AnalysisResult:
-        client = self._get_client()
-        target_model = self._select_model(model_name)
-        gemini_file = None
-
-        try:
-            gemini_file = self._upload_and_wait(client, file_path, filename, mime_type)
-            contents = [gemini_file, prompt]
-
-            response = client.models.generate_content(
-                model=target_model,
-                contents=contents
-            )
-
-            usage_data = {}
-            if hasattr(response, "usage_metadata") and response.usage_metadata:
-                um = response.usage_metadata
-                usage_data = {
-                    "promptTokens": getattr(um, "prompt_token_count", 0),
-                    "candidatesTokens": getattr(um, "candidates_token_count", 0),
-                    "totalTokens": getattr(um, "total_token_count", 0),
-                }
-
-            analysis_text = response.text if hasattr(response, "text") and response.text else "No analysis output returned."
-
-            return AnalysisResult(
-                success=True,
-                filename=filename,
-                mimeType=mime_type,
-                analysis=analysis_text,
-                usage=usage_data,
-                provider="gemini-files-fallback"
-            )
-        finally:
-            if gemini_file:
-                self._cleanup_gemini_file(client, gemini_file)
-
-    def analyze_file_stream(
-        self,
-        file_path: str,
-        filename: str,
-        mime_type: str,
-        prompt: str,
-        model_name: Optional[str] = None
-    ) -> Generator[str, None, None]:
-        client = self._get_client()
-        target_model = self._select_model(model_name)
-        gemini_file = None
-
-        try:
-            gemini_file = self._upload_and_wait(client, file_path, filename, mime_type)
-            contents = [gemini_file, prompt]
-
-            response_stream = client.models.generate_content_stream(
-                model=target_model,
-                contents=contents
-            )
-
-            prompt_tokens = 0
-            candidates_tokens = 0
-            total_tokens = 0
-
-            for chunk in response_stream:
-                chunk_text = getattr(chunk, "text", "") or ""
-                if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
-                    um = chunk.usage_metadata
-                    prompt_tokens = getattr(um, "prompt_token_count", prompt_tokens)
-                    candidates_tokens = getattr(um, "candidates_token_count", candidates_tokens)
-                    total_tokens = getattr(um, "total_token_count", total_tokens)
-
-                if chunk_text:
-                    payload = f"data: {JSONResponse({'chunk': chunk_text}).body.decode('utf-8')}\n\n"
-                    yield payload
-
-            final_meta = {
-                "done": True,
-                "filename": filename,
-                "mimeType": mime_type,
-                "usage": {
-                    "promptTokens": prompt_tokens,
-                    "candidatesTokens": candidates_tokens,
-                    "totalTokens": total_tokens
-                }
-            }
-            yield f"data: {JSONResponse(final_meta).body.decode('utf-8')}\n\n"
-        finally:
-            if gemini_file:
-                self._cleanup_gemini_file(client, gemini_file)
-
-
-# ─── GPT-120B OSS Provider Implementation (Primary Model) ────────────────────
+# ─── GPT-120B OSS Provider Implementation (Groq Multi-Key Fallback) ─────────────
 
 class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
-    def __init__(self, fallback_provider: Optional[BaseFileAnalysisProvider] = None):
-        self.fallback_provider = fallback_provider or GeminiFileAnalysisProvider()
-
     def get_provider_name(self) -> str:
         return "gpt-120b"
 
-    def _get_api_credentials(self, model_override: Optional[str] = None):
-        model = model_override or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or "openai/gpt-oss-120b"
+    def _get_credential_candidates(self, model_override: Optional[str] = None) -> List[Dict[str, str]]:
+        """
+        Collects all configured Groq and NVIDIA API keys for failover:
+        1. GROQ_API_KEY (Groq Primary)
+        2. GROQ_API_KEY_2 (Groq API 2 Fallback)
+        3. GROQ_API_KEY_3 (Groq API 3 Fallback)
+        4. NVIDIA_API_KEY (NVIDIA NIM API Fallback)
+        """
+        default_model = model_override or os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b"
+        candidates = []
 
-        # Check Groq Key first if set
-        groq_key = os.getenv("GROQ_API_KEY")
-        if groq_key and groq_key.strip():
-            groq_model = os.getenv("GROQ_LLM_MODEL", "qwen/qwen3.6-27b")
-            return {
-                "key": groq_key.strip(),
+        # Groq API Key 1
+        key1 = os.getenv("GROQ_API_KEY")
+        if key1 and key1.strip():
+            candidates.append({
+                "name": "Groq Primary API",
+                "key": key1.strip(),
                 "url": "https://api.groq.com/openai/v1/chat/completions",
-                "model": groq_model
-            }
+                "model": default_model
+            })
 
-        # Check NVIDIA Key (NVIDIA_LLM_MODEL="openai/gpt-oss-120b")
-        nvidia_key = os.getenv("NVIDIA_API_KEY")
-        if nvidia_key and nvidia_key.strip():
-            return {
-                "key": nvidia_key.strip(),
+        # Groq API Key 2
+        key2 = os.getenv("GROQ_API_KEY_2")
+        if key2 and key2.strip():
+            candidates.append({
+                "name": "Groq API 2",
+                "key": key2.strip(),
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "model": default_model
+            })
+
+        # Groq API Key 3
+        key3 = os.getenv("GROQ_API_KEY_3")
+        if key3 and key3.strip():
+            candidates.append({
+                "name": "Groq API 3",
+                "key": key3.strip(),
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "model": default_model
+            })
+
+        # NVIDIA NIM API Key
+        nv_key = os.getenv("NVIDIA_API_KEY")
+        if nv_key and nv_key.strip():
+            candidates.append({
+                "name": "NVIDIA NIM API",
+                "key": nv_key.strip(),
                 "url": "https://integrate.api.nvidia.com/v1/chat/completions",
-                "model": "openai/gpt-oss-120b"
-            }
+                "model": os.getenv("NVIDIA_LLM_MODEL", "openai/gpt-oss-120b")
+            })
 
-        raise ValueError("No GROQ_API_KEY or NVIDIA_API_KEY configured for GPT-120B OSS model.")
+        if not candidates:
+            raise ValueError("No GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3, or NVIDIA_API_KEY configured in environment.")
+
+        return candidates
 
     def _extract_file_content(self, file_path: str, filename: str, mime_type: str) -> str:
         """Inbuilt text and document content extractor for GPT-120B OSS file analysis."""
@@ -412,18 +264,20 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
         prompt: str,
         model_name: Optional[str] = None
     ) -> AnalysisResult:
-        try:
-            creds = self._get_api_credentials(model_name)
-            file_text = self._extract_file_content(file_path, filename, mime_type)
+        candidates = self._get_credential_candidates(model_name)
+        file_text = self._extract_file_content(file_path, filename, mime_type)
 
-            full_system_prompt = (
-                f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
-            )
-            user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
-            if len(user_content) > 25000:
-                user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
+        full_system_prompt = (
+            f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
+        )
+        user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+        if len(user_content) > 25000:
+            user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
 
-            logger.info(f"Sending file analysis request for '{filename}' to GPT-120B OSS model ({creds['model']})...")
+        last_error = None
+
+        for creds in candidates:
+            logger.info(f"Sending file analysis request for '{filename}' to {creds['name']} ({creds['model']})...")
             headers = {
                 "Authorization": f"Bearer {creds['key']}",
                 "Content-Type": "application/json"
@@ -438,47 +292,35 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 "max_tokens": 2048
             }
 
-            resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
-            if resp.status_code == 200:
-                data = resp.json()
-                choices = data.get("choices", [])
-                analysis_text = choices[0]["message"]["content"] if choices else "No output generated."
-                usage = data.get("usage", {})
-                return AnalysisResult(
-                    success=True,
-                    filename=filename,
-                    mimeType=mime_type,
-                    analysis=analysis_text,
-                    usage={
-                        "promptTokens": usage.get("prompt_tokens", 0),
-                        "candidatesTokens": usage.get("completion_tokens", 0),
-                        "totalTokens": usage.get("total_tokens", 0)
-                    },
-                    provider="gpt-120b"
-                )
-            else:
-                logger.warning(f"GPT-120B API returned status {resp.status_code}: {resp.text[:200]}")
-                last_err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
-
-        except Exception as err:
-            logger.warning(f"GPT-120B OSS analysis error: {err}")
-            last_err_msg = str(err)
-
-        # Fallback to Gemini Files API upload model only if Gemini API key is configured
-        has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-        if has_gemini_key:
-            logger.info("Executing automatic fallback to Gemini Files API upload model...")
-            return self.fallback_provider.analyze_file(
-                file_path=file_path,
-                filename=filename,
-                mime_type=mime_type,
-                prompt=prompt,
-                model_name=model_name
-            )
+            try:
+                resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    choices = data.get("choices", [])
+                    analysis_text = choices[0]["message"]["content"] if choices else "No output generated."
+                    usage = data.get("usage", {})
+                    return AnalysisResult(
+                        success=True,
+                        filename=filename,
+                        mimeType=mime_type,
+                        analysis=analysis_text,
+                        usage={
+                            "promptTokens": usage.get("prompt_tokens", 0),
+                            "candidatesTokens": usage.get("completion_tokens", 0),
+                            "totalTokens": usage.get("total_tokens", 0)
+                        },
+                        provider=f"gpt-120b ({creds['name']})"
+                    )
+                else:
+                    logger.warning(f"{creds['name']} returned status {resp.status_code}: {resp.text[:150]}. Trying next Groq fallback key...")
+                    last_error = f"{creds['name']} HTTP {resp.status_code}: {resp.text[:150]}"
+            except Exception as err:
+                logger.warning(f"{creds['name']} error: {err}. Trying next Groq fallback key...")
+                last_error = f"{creds['name']} error: {str(err)}"
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"GPT-120B OSS File Analysis failed: {last_err_msg or 'API call failed'}"
+            detail=f"All Groq and NVIDIA API keys failed for GPT-120B. Last error: {last_error}"
         )
 
     def analyze_file_stream(
@@ -490,17 +332,24 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
         model_name: Optional[str] = None
     ) -> Generator[str, None, None]:
         try:
-            creds = self._get_api_credentials(model_name)
-            file_text = self._extract_file_content(file_path, filename, mime_type)
+            candidates = self._get_credential_candidates(model_name)
+        except Exception as e:
+            err_event = {"error": True, "detail": str(e)}
+            yield f"data: {JSONResponse(err_event).body.decode('utf-8')}\n\n"
+            return
 
-            full_system_prompt = (
-                f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
-            )
-            user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
-            if len(user_content) > 25000:
-                user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
+        file_text = self._extract_file_content(file_path, filename, mime_type)
+        full_system_prompt = (
+            f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
+        )
+        user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+        if len(user_content) > 25000:
+            user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
 
-            logger.info(f"Streaming file analysis for '{filename}' with GPT-120B OSS ({creds['model']})...")
+        last_error = None
+
+        for creds in candidates:
+            logger.info(f"Streaming file analysis for '{filename}' with {creds['name']} ({creds['model']})...")
             headers = {
                 "Authorization": f"Bearer {creds['key']}",
                 "Content-Type": "application/json"
@@ -516,50 +365,39 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 "stream": True
             }
 
-            resp = requests.post(creds["url"], headers=headers, json=payload, stream=True, timeout=90)
-            if resp.status_code == 200:
-                for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    line_str = line.decode("utf-8")
-                    if line_str.startswith("data: "):
-                        data_content = line_str[6:].strip()
-                        if data_content == "[DONE]":
-                            break
-                        try:
-                            chunk_json = json.loads(data_content)
-                            delta = chunk_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                            if delta:
-                                yield f"data: {JSONResponse({'chunk': delta}).body.decode('utf-8')}\n\n"
-                        except Exception:
+            try:
+                resp = requests.post(creds["url"], headers=headers, json=payload, stream=True, timeout=90)
+                if resp.status_code == 200:
+                    for line in resp.iter_lines():
+                        if not line:
                             continue
+                        line_str = line.decode("utf-8")
+                        if line_str.startswith("data: "):
+                            data_content = line_str[6:].strip()
+                            if data_content == "[DONE]":
+                                break
+                            try:
+                                chunk_json = json.loads(data_content)
+                                delta = chunk_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if delta:
+                                    yield f"data: {JSONResponse({'chunk': delta}).body.decode('utf-8')}\n\n"
+                            except Exception:
+                                continue
 
-                yield f"data: {JSONResponse({'done': True, 'filename': filename, 'mimeType': mime_type}).body.decode('utf-8')}\n\n"
-                return
-            else:
-                logger.warning(f"GPT-120B stream API returned status {resp.status_code}: {resp.text[:200]}")
-                last_err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    yield f"data: {JSONResponse({'done': True, 'filename': filename, 'mimeType': mime_type}).body.decode('utf-8')}\n\n"
+                    return
+                else:
+                    logger.warning(f"{creds['name']} stream returned status {resp.status_code}: {resp.text[:150]}. Trying next Groq fallback key...")
+                    last_error = f"{creds['name']} stream HTTP {resp.status_code}"
+            except Exception as err:
+                logger.warning(f"{creds['name']} stream error: {err}. Trying next Groq fallback key...")
+                last_error = f"{creds['name']} stream error: {str(err)}"
 
-        except Exception as err:
-            logger.warning(f"GPT-120B stream error: {err}")
-            last_err_msg = str(err)
-
-        has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
-        if has_gemini_key:
-            logger.info("Executing fallback stream to Gemini Files API...")
-            yield from self.fallback_provider.analyze_file_stream(
-                file_path=file_path,
-                filename=filename,
-                mime_type=mime_type,
-                prompt=prompt,
-                model_name=model_name
-            )
-        else:
-            err_event = {
-                "error": True,
-                "detail": f"GPT-120B Stream Analysis failed: {last_err_msg or 'API call failed'}"
-            }
-            yield f"data: {JSONResponse(err_event).body.decode('utf-8')}\n\n"
+        err_event = {
+            "error": True,
+            "detail": f"All Groq and NVIDIA API keys failed for GPT-120B stream. Last error: {last_error}"
+        }
+        yield f"data: {JSONResponse(err_event).body.decode('utf-8')}\n\n"
 
 
 # ─── Provider Registry ────────────────────────────────────────────────────────
@@ -567,24 +405,17 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
 class FileAnalysisRegistry:
     def __init__(self):
         self._providers: Dict[str, BaseFileAnalysisProvider] = {}
-        gemini_provider = GeminiFileAnalysisProvider()
-        gpt120b_provider = GPT120BFileAnalysisProvider(fallback_provider=gemini_provider)
+        gpt120b_provider = GPT120BFileAnalysisProvider()
 
         self.register_provider("gpt-120b", gpt120b_provider)
         self.register_provider("openai/gpt-oss-120b", gpt120b_provider)
         self.register_provider("groq", gpt120b_provider)
-        self.register_provider("gemini", gemini_provider)
 
     def register_provider(self, name: str, provider: BaseFileAnalysisProvider):
         self._providers[name.lower()] = provider
 
     def get_provider(self, name: str = "gpt-120b") -> BaseFileAnalysisProvider:
-        if not name or name.lower() in ("default", "gpt-120b", "openai/gpt-oss-120b", "groq"):
-            return self._providers.get("gpt-120b")
-        provider = self._providers.get(name.lower())
-        if not provider:
-            return self._providers.get("gpt-120b")
-        return provider
+        return self._providers.get("gpt-120b")
 
 registry = FileAnalysisRegistry()
 
@@ -602,7 +433,7 @@ async def analyze_file_endpoint(
     """
     POST /api/ai/analyze-file
     Accepts multipart/form-data with original file and user prompt.
-    Processes file via GPT-120B OSS with automatic fallback to Gemini Files API.
+    Processes file via GPT-120B OSS with Groq Multi-Key failover (GROQ_API_KEY -> GROQ_API_KEY_2 -> GROQ_API_KEY_3).
     """
     if not prompt or not prompt.strip():
         raise HTTPException(
