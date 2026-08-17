@@ -381,19 +381,24 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 import pypdf
                 reader = pypdf.PdfReader(file_path)
                 pages = []
-                for i in range(min(len(reader.pages), 50)):
+                for i in range(min(len(reader.pages), 30)):
                     txt = reader.pages[i].extract_text() or ""
                     if txt.strip():
                         pages.append(f"[Page {i+1}]\n{txt.strip()}")
                 if pages:
-                    return "\n\n".join(pages)
+                    full_pdf_text = "\n\n".join(pages)
+                    if len(full_pdf_text) > 24000:
+                        full_pdf_text = full_pdf_text[:24000] + f"\n...[TRUNCATED to 24k chars — total pages: {len(reader.pages)}]"
+                    return full_pdf_text
             except Exception as e:
                 logger.warning(f"pypdf extraction failed for {filename}: {e}")
 
         # Text, Code, CSV, JSON, LOG, TeX, HTML
         try:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read(120000)
+                content = f.read(24000)
+                if len(content) >= 24000:
+                    content += f"\n...[TRUNCATED to 24k chars]"
                 return content
         except Exception as e:
             logger.warning(f"Text reading failed for {filename}: {e}")
@@ -415,6 +420,8 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
             )
             user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+            if len(user_content) > 25000:
+                user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
 
             logger.info(f"Sending file analysis request for '{filename}' to GPT-120B OSS model ({creds['model']})...")
             headers = {
@@ -428,7 +435,7 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                     {"role": "user", "content": user_content}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 4096
+                "max_tokens": 2048
             }
 
             resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
@@ -450,18 +457,28 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                     provider="gpt-120b"
                 )
             else:
-                logger.warning(f"GPT-120B API returned status {resp.status_code}: {resp.text[:200]}. Falling back to Gemini Files API...")
+                logger.warning(f"GPT-120B API returned status {resp.status_code}: {resp.text[:200]}")
+                last_err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
 
         except Exception as err:
-            logger.warning(f"GPT-120B OSS analysis failed ({err}). Executing automatic fallback to Gemini Files API upload model...")
+            logger.warning(f"GPT-120B OSS analysis error: {err}")
+            last_err_msg = str(err)
 
-        # Fallback to Gemini Files API upload model
-        return self.fallback_provider.analyze_file(
-            file_path=file_path,
-            filename=filename,
-            mime_type=mime_type,
-            prompt=prompt,
-            model_name=model_name
+        # Fallback to Gemini Files API upload model only if Gemini API key is configured
+        has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+        if has_gemini_key:
+            logger.info("Executing automatic fallback to Gemini Files API upload model...")
+            return self.fallback_provider.analyze_file(
+                file_path=file_path,
+                filename=filename,
+                mime_type=mime_type,
+                prompt=prompt,
+                model_name=model_name
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"GPT-120B OSS File Analysis failed: {last_err_msg or 'API call failed'}"
         )
 
     def analyze_file_stream(
@@ -480,6 +497,8 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 f"You are OverBranch's GPT-120B OSS AI File Analyzer. Analyze the attached file carefully according to user instructions."
             )
             user_content = f"📎 Attached File: '{filename}' ({mime_type})\n\n--- FILE CONTENT START ---\n{file_text}\n--- FILE CONTENT END ---\n\nUser Prompt: {prompt}"
+            if len(user_content) > 25000:
+                user_content = user_content[:25000] + "\n...[Content capped to prevent API 413 payload limit]"
 
             logger.info(f"Streaming file analysis for '{filename}' with GPT-120B OSS ({creds['model']})...")
             headers = {
@@ -493,7 +512,7 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                     {"role": "user", "content": user_content}
                 ],
                 "temperature": 0.2,
-                "max_tokens": 4096,
+                "max_tokens": 2048,
                 "stream": True
             }
 
@@ -518,19 +537,29 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                 yield f"data: {JSONResponse({'done': True, 'filename': filename, 'mimeType': mime_type}).body.decode('utf-8')}\n\n"
                 return
             else:
-                logger.warning(f"GPT-120B stream API returned status {resp.status_code}. Executing fallback stream to Gemini Files API...")
+                logger.warning(f"GPT-120B stream API returned status {resp.status_code}: {resp.text[:200]}")
+                last_err_msg = f"HTTP {resp.status_code}: {resp.text[:200]}"
 
         except Exception as err:
-            logger.warning(f"GPT-120B stream failed ({err}). Executing fallback stream to Gemini Files API...")
+            logger.warning(f"GPT-120B stream error: {err}")
+            last_err_msg = str(err)
 
-        # Delegate streaming execution to Fallback Gemini Files API provider
-        yield from self.fallback_provider.analyze_file_stream(
-            file_path=file_path,
-            filename=filename,
-            mime_type=mime_type,
-            prompt=prompt,
-            model_name=model_name
-        )
+        has_gemini_key = bool(os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
+        if has_gemini_key:
+            logger.info("Executing fallback stream to Gemini Files API...")
+            yield from self.fallback_provider.analyze_file_stream(
+                file_path=file_path,
+                filename=filename,
+                mime_type=mime_type,
+                prompt=prompt,
+                model_name=model_name
+            )
+        else:
+            err_event = {
+                "error": True,
+                "detail": f"GPT-120B Stream Analysis failed: {last_err_msg or 'API call failed'}"
+            }
+            yield f"data: {JSONResponse(err_event).body.decode('utf-8')}\n\n"
 
 
 # ─── Provider Registry ────────────────────────────────────────────────────────

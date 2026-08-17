@@ -137,15 +137,21 @@ def get_nvidia_embeddings() -> NVIDIAEmbeddings:
     )
 
 
-def get_genai_client() -> genai.Client:
+def get_genai_client():
     """
-    Main Agent LLM Engine selection using native Google GenAI SDK:
-    Reads GEMINI_API_KEY or GOOGLE_API_KEY from environment.
+    Optional Google GenAI SDK client getter.
+    Returns None safely if GEMINI_API_KEY is not configured or genai is missing.
     """
+    if not HAS_GENAI:
+        return None
     gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not gemini_key or not gemini_key.strip():
-        raise ValueError("No valid GEMINI_API_KEY configured in backend environment (.env).")
-    return genai.Client(api_key=gemini_key.strip())
+        return None
+    try:
+        return genai.Client(api_key=gemini_key.strip())
+    except Exception as e:
+        logger.warning(f"Could not initialize GenAI client: {e}")
+        return None
 
 
 
@@ -418,7 +424,7 @@ async def agent_chat(request: Request):
             # Step 1: Categorize intent
             yield sse_event("progress", {"step": "analyze", "message": "Analyzing prompt...", "icon": "zap"})
             mode, is_search_needed = categorize_user_intent(req.user_prompt)
-            print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  ► Prompt: '{req.user_prompt}'\n  ► Project ID: {req.project_id}\n  ► Mode: {mode} (Vector Search = {is_search_needed})")
+            print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})")
 
             # Fast-path: Bypass vector search for attached files & new presentation generation to save 2-3s
             is_new_doc_request = any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
@@ -560,78 +566,80 @@ async def agent_chat(request: Request):
 
             contents_payload.append(user_content)
 
-            client = get_genai_client()
-            primary_model = req.model or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or os.getenv("GEMINI_MODEL", "openai/gpt-oss-120b")
-            env_fallback = os.getenv("GEMINI_FALLBACK_MODEL") or os.getenv("FALLBACK_MODEL")
-            req_fallback = req.fallback_model or env_fallback
-
-            config = types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=8192,
-                system_instruction=system_content if system_content else None,
-                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-            )
-
-            default_fallbacks = [
-                "openai/gpt-oss-120b",
-                "gemini-2.5-flash",
-                "gemini-1.5-pro",
-                "gemini-3.1-flash-lite",
-                "gemini-2.5-pro",
-            ]
-
-            models_to_try = [primary_model]
-            if req_fallback and req_fallback not in models_to_try:
-                models_to_try.append(req_fallback)
-            for m in default_fallbacks:
-                if m not in models_to_try:
-                    models_to_try.append(m)
-
-            yield sse_event("progress", {"step": "llm", "message": f"Generating with {primary_model}...", "icon": "sparkles"})
+            primary_model = req.model or os.getenv("NVIDIA_LLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or "openai/gpt-oss-120b"
+            nvidia_key = os.getenv("NVIDIA_API_KEY")
+            groq_key = os.getenv("GROQ_API_KEY")
 
             response_text = None
             model_used = None
             is_fallback = False
             last_error = None
 
-            for idx, current_model in enumerate(models_to_try):
+            # 1. Primary Engine: Groq / NVIDIA NIM (openai/gpt-oss-120b)
+            if nvidia_key or groq_key:
+                yield sse_event("progress", {"step": "llm", "message": f"Generating with GPT OSS 120B ({primary_model})...", "icon": "sparkles"})
                 try:
-                    if idx > 0:
-                        yield sse_event("progress", {"step": "fallback", "message": f"Trying fallback model: {current_model}...", "icon": "refresh-cw"})
-                    response = client.models.generate_content(
-                        model=current_model,
-                        contents=contents_payload,
-                        config=config,
-                    )
-                    response_text = stringify_content(getattr(response, "text", response))
-                    model_used = current_model
-                    is_fallback = (idx > 0)
-                    break
-                except Exception as genai_err:
-                    last_error = genai_err
-                    print(f"  Model '{current_model}' failed: {genai_err}")
+                    import requests
+                    api_key = groq_key.strip() if (groq_key and groq_key.strip()) else nvidia_key.strip()
+                    api_url = "https://api.groq.com/openai/v1/chat/completions" if (groq_key and groq_key.strip()) else "https://integrate.api.nvidia.com/v1/chat/completions"
 
-            # Cross-provider fallback to NVIDIA NIM if all Gemini models fail and NVIDIA_API_KEY is available
-            if response_text is None and os.getenv("NVIDIA_API_KEY"):
-                nvidia_model = os.getenv("NVIDIA_LLM_MODEL", "openai/gpt-oss-120b")
-                yield sse_event("progress", {"step": "fallback_nvidia", "message": f"Trying NVIDIA NIM fallback ({nvidia_model})...", "icon": "refresh-cw"})
-                try:
-                    nvidia_llm = ChatNVIDIA(
-                        model=nvidia_model,
-                        nvidia_api_key=os.getenv("NVIDIA_API_KEY"),
-                        temperature=0.1,
-                    )
-                    prompt_msgs = []
+                    headers = {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    safe_user_content = user_content
+                    if len(safe_user_content) > 25000:
+                        safe_user_content = safe_user_content[:25000] + "\n...[Content capped for token/payload limit]"
+
+                    messages_list = []
                     if system_content:
-                        prompt_msgs.append(SystemMessage(content=system_content))
-                    prompt_msgs.append(HumanMessage(content=user_content))
-                    nv_res = nvidia_llm.invoke(prompt_msgs)
-                    response_text = stringify_content(getattr(nv_res, "content", nv_res))
-                    model_used = f"NVIDIA NIM ({nvidia_model})"
-                    is_fallback = True
-                except Exception as nv_err:
-                    print(f"  NVIDIA NIM fallback failed: {nv_err}")
-                    last_error = nv_err
+                        messages_list.append({"role": "system", "content": system_content})
+                    messages_list.append({"role": "user", "content": safe_user_content})
+
+                    payload = {
+                        "model": primary_model,
+                        "messages": messages_list,
+                        "temperature": 0.1,
+                        "max_tokens": 2048
+                    }
+
+                    resp = requests.post(api_url, headers=headers, json=payload, timeout=90)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        choices = data.get("choices", [])
+                        if choices:
+                            response_text = choices[0]["message"]["content"]
+                            model_used = f"GPT OSS 120B ({primary_model})"
+                    else:
+                        print(f"  GPT OSS 120B API returned status {resp.status_code}: {resp.text[:200]}")
+                        last_error = f"API HTTP {resp.status_code}"
+                except Exception as err:
+                    print(f"  GPT OSS 120B API call failed: {err}")
+                    last_error = err
+
+            # 2. Secondary Engine: Gemini fallback if client is configured
+            if response_text is None:
+                client = get_genai_client()
+                if client and HAS_GENAI:
+                    yield sse_event("progress", {"step": "fallback_gemini", "message": "Trying Gemini fallback...", "icon": "refresh-cw"})
+                    try:
+                        config = types.GenerateContentConfig(
+                            temperature=0.1,
+                            max_output_tokens=8192,
+                            system_instruction=system_content if system_content else None,
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+                        )
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=contents_payload,
+                            config=config,
+                        )
+                        response_text = stringify_content(getattr(response, "text", response))
+                        model_used = "gemini-2.5-flash"
+                        is_fallback = True
+                    except Exception as gem_err:
+                        print(f"  Gemini fallback failed: {gem_err}")
+                        last_error = gem_err
 
             if response_text is None:
                 yield sse_event("error", {"message": f"All primary and fallback models failed. Last error: {str(last_error)}"})
