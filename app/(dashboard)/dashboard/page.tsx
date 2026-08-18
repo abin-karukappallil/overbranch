@@ -115,30 +115,25 @@ export default function DashboardPage() {
   return (
     <div className="space-y-8 animate-fade-in pb-12">
       {/* Header Banner */}
-      <div className="relative p-4 sm:p-8 rounded-2xl border border-border bg-card shadow-sm overflow-hidden">
+      <div className="relative p-6 sm:p-8 rounded-2xl border border-zinc-800 bg-zinc-900 shadow-xl overflow-hidden">
         <div className="relative z-10 space-y-4 sm:space-y-5">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge variant="outline" dotPulse dotColor="bg-emerald-400">
-                  Real-Time Workspace Sync Active
-                </StatusBadge>
-                <span className="text-xs font-mono text-muted-foreground">TeX Engine: pdfLaTeX</span>
-              </div>
-              <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-                Academic Document Workspace
+            <div className="space-y-1.5">
+              
+              <h1 className="text-xl sm:text-3xl font-archivo font-black uppercase tracking-tight text-white">
+                LaTeX Projects Workspace
               </h1>
-              <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl">
-                Co-author seminar reports, assignments, project reports, slides, and papers with real-time compilation and SyncTeX.
+              <p className="text-xs sm:text-sm text-zinc-400 max-w-2xl leading-relaxed">
+                Co-author seminar reports, assignments, project reports, slides, and research papers with real-time compilation and SyncTeX.
               </p>
             </div>
 
             <Button
               onClick={() => setNewModalOpen(true)}
               size="lg"
-              className="h-9 sm:h-10 w-full sm:w-auto px-5 bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 text-white dark:text-zinc-950 font-semibold shadow-xs rounded-xl shrink-0 text-xs justify-center"
+              className="h-10 sm:h-11 w-full sm:w-auto px-6 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider shadow-[4px_4px_0px_0px_#000000] border border-black rounded-xl shrink-0 text-xs justify-center cursor-pointer transition-all"
             >
-              <Plus className="w-4 h-4 mr-1.5" />
+              <Plus className="w-4 h-4 mr-1.5 text-black stroke-[3]" />
               New Project
             </Button>
           </div>
@@ -147,14 +142,14 @@ export default function DashboardPage() {
 
       {/* Pending Invitations Section */}
       {pendingInvites && pendingInvites.length > 0 && (
-        <div className="p-5 rounded-2xl border border-indigo-500/40 bg-indigo-500/10 backdrop-blur-md space-y-4 shadow-xl">
+        <div className="p-5 rounded-2xl border border-[#00CC68]/40 bg-zinc-900 space-y-4 shadow-xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-indigo-400" />
-              <h2 className="font-bold text-base text-foreground tracking-tight">
+              <UserPlus className="w-5 h-5 text-[#00CC68]" />
+              <h2 className="font-archivo font-black uppercase text-base text-white tracking-tight">
                 Pending Team Invitations
               </h2>
-              <span className="px-2 py-0.5 rounded-full bg-indigo-600 text-white text-xs font-mono font-bold">
+              <span className="px-2 py-0.5 rounded-full bg-[#00CC68] text-black text-xs font-mono font-bold">
                 {pendingInvites.length}
               </span>
             </div>
@@ -164,18 +159,18 @@ export default function DashboardPage() {
             {pendingInvites.map((invite) => (
               <div
                 key={invite.id}
-                className="p-4 rounded-xl border border-border/50 bg-card/60 space-y-3 flex flex-col justify-between"
+                className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 space-y-3 flex flex-col justify-between"
               >
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-mono text-indigo-400 font-bold">
+                  <div className="flex items-center justify-between text-xs font-mono text-[#00CC68] font-bold">
                     <span>Role: {invite.role}</span>
-                    <span className="text-[10px] text-muted-foreground">
+                    <span className="text-[10px] text-zinc-500">
                       {invite.createdAt ? new Date(invite.createdAt).toLocaleDateString() : "Recent"}
                     </span>
                   </div>
-                  <h3 className="font-bold text-sm text-foreground">{invite.projectName}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Invited by: <span className="text-foreground font-medium">{invite.senderName || invite.senderEmail}</span>
+                  <h3 className="font-archivo font-bold text-sm text-white">{invite.projectName}</h3>
+                  <p className="text-xs text-zinc-400">
+                    Invited by: <span className="text-white font-medium">{invite.senderName || invite.senderEmail}</span>
                   </p>
                 </div>
 
@@ -184,7 +179,7 @@ export default function DashboardPage() {
                     size="sm"
                     onClick={() => acceptInviteMutation.mutate({ invitationId: invite.id })}
                     disabled={acceptInviteMutation.isPending}
-                    className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg flex-1 font-medium shadow-md"
+                    className="h-8 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-lg flex-1 shadow-md cursor-pointer"
                   >
                     <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
                     Accept & Join
@@ -194,7 +189,7 @@ export default function DashboardPage() {
                     variant="outline"
                     onClick={() => declineInviteMutation.mutate({ invitationId: invite.id })}
                     disabled={declineInviteMutation.isPending}
-                    className="h-8 text-xs border-border/60 hover:bg-accent rounded-lg flex-1 font-medium"
+                    className="h-8 text-xs border-zinc-800 hover:bg-zinc-900 text-zinc-300 rounded-lg flex-1 font-mono font-bold"
                   >
                     <XCircle className="w-3.5 h-3.5 mr-1.5" />
                     Decline
@@ -252,25 +247,25 @@ export default function DashboardPage() {
           {/* Owned Projects */}
           {ownedProjects.length > 0 && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-bold text-amber-500 dark:text-amber-400 uppercase tracking-wider font-mono">
-                <Crown className="w-4 h-4 text-amber-500 dark:text-amber-400" />
+              <div className="flex items-center gap-2 text-xs font-bold text-[#00CC68] uppercase tracking-wider font-mono">
+                <Crown className="w-4 h-4 text-[#00CC68]" />
                 <span>Owned Projects ({ownedProjects.length})</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {ownedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-2xl border border-border bg-card hover:border-amber-500/50 hover:bg-card/80 transition-all space-y-4 flex flex-col justify-between h-full shadow-sm">
+                    <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-bold text-base text-foreground group-hover:text-amber-500 dark:group-hover:text-amber-400 transition-colors flex items-center gap-2 truncate">
-                              <FileCode2 className="w-4 h-4 text-amber-500 dark:text-amber-400 shrink-0" />
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
                               <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-amber-500/10 text-amber-500 dark:text-amber-400 border border-amber-500/20">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
                               Owner
                             </span>
                             <button
@@ -279,7 +274,7 @@ export default function DashboardPage() {
                                 e.stopPropagation();
                                 setDeleteConfirmProj(project);
                               }}
-                              className="p-1 text-muted-foreground/60 hover:text-rose-400 transition-colors"
+                              className="p-1 text-zinc-500 hover:text-rose-400 transition-colors"
                               title="Delete Project"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -287,21 +282,21 @@ export default function DashboardPage() {
                           </div>
                         </div>
 
-                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                        <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed font-sans">
                           {project.description}
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-muted text-foreground font-medium">
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
                           {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-600 dark:hover:bg-amber-500 text-amber-600 dark:text-amber-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
                         >
-                          <span>Open Editor</span>
+                          <span>Open Editor →</span>
                         </Link>
                       </div>
                     </Card>
@@ -314,43 +309,43 @@ export default function DashboardPage() {
           {/* Shared With Me Projects */}
           {sharedProjects.length > 0 && (
             <div className="space-y-3 pt-4">
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-500 dark:text-emerald-400 uppercase tracking-wider font-mono">
-                <Users className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
+              <div className="flex items-center gap-2 text-xs font-bold text-[#00CC68] uppercase tracking-wider font-mono">
+                <Users className="w-4 h-4 text-[#00CC68]" />
                 <span>Shared With Me ({sharedProjects.length})</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {sharedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-2xl border border-border bg-card hover:border-emerald-500/50 hover:bg-card/80 transition-all space-y-4 flex flex-col justify-between h-full shadow-sm">
+                    <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-bold text-base text-foreground group-hover:text-emerald-500 dark:group-hover:text-emerald-400 transition-colors flex items-center gap-2 truncate">
-                              <FileCode2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400 shrink-0" />
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
+                              <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
                               <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
                             {project.role}
                           </span>
                         </div>
 
-                        <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
+                        <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed font-sans">
                           {project.description}
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-border flex items-center justify-between text-xs text-muted-foreground font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-muted text-foreground font-medium">
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
                           {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-600 dark:hover:bg-emerald-500 text-emerald-600 dark:text-emerald-400 hover:text-white transition-all flex items-center gap-1.5 font-sans font-medium text-xs"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
                         >
-                          <span>Open Editor</span>
+                          <span>Open Editor →</span>
                         </Link>
                       </div>
                     </Card>
@@ -364,26 +359,26 @@ export default function DashboardPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-sm w-[calc(100vw-2rem)] p-4 sm:p-5 rounded-2xl border border-rose-500/30 bg-card shadow-2xl space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-5 rounded-2xl border border-rose-500/40 bg-zinc-900 text-white shadow-2xl space-y-4">
             <div className="flex items-center gap-2.5 text-rose-500">
               <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20">
                 <AlertTriangle className="w-5 h-5" />
               </div>
-              <h3 className="text-sm font-bold text-foreground">Delete Project</h3>
+              <h3 className="text-sm font-archivo font-bold uppercase text-white">Delete Project</h3>
             </div>
 
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Are you sure you want to delete <strong className="text-foreground">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, comments, and member access. This action cannot be undone.
+            <p className="text-xs text-zinc-400 leading-relaxed font-sans">
+              Are you sure you want to delete <strong className="text-white">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, comments, and member access.
             </p>
 
-            <form onSubmit={handleDeleteSubmit} className="flex justify-end gap-2 pt-2 text-xs">
+            <form onSubmit={handleDeleteSubmit} className="flex justify-end gap-2 pt-2 text-xs font-mono font-bold">
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setDeleteConfirmProj(null)}
-                className="h-8 text-xs rounded-xl"
+                className="h-8 text-xs rounded-xl border-zinc-800 text-zinc-300"
               >
                 Cancel
               </Button>
@@ -391,7 +386,7 @@ export default function DashboardPage() {
                 type="submit"
                 size="sm"
                 disabled={deleteMutation.isPending}
-                className="h-8 text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl shadow-md shadow-rose-600/20"
+                className="h-8 text-xs bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold rounded-xl shadow-md"
               >
                 {deleteMutation.isPending ? "Deleting..." : "Delete Permanently"}
               </Button>
@@ -402,36 +397,36 @@ export default function DashboardPage() {
 
       {/* New Project Modal */}
       {newModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-background/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-md w-[calc(100vw-2rem)] p-4 sm:p-6 rounded-2xl border border-border/60 bg-card shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-foreground">Create LaTeX Project</h3>
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
-              <div className="space-y-1">
-                <label className="text-xs text-muted-foreground">Project Name</label>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="max-w-md w-[calc(100vw-2rem)] p-6 rounded-2xl border border-zinc-800 bg-zinc-900 text-white shadow-2xl space-y-4">
+            <h3 className="text-base font-archivo font-black uppercase text-white">Create LaTeX Project</h3>
+            <form onSubmit={handleCreateSubmit} className="space-y-4 font-mono">
+              <div className="space-y-1.5">
+                <label className="text-xs text-zinc-400 font-bold uppercase">Project Name</label>
                 <Input
                   autoFocus
                   placeholder="e.g. Quantum_State_Paper_2026"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
-                  className="h-10 text-sm"
+                  className="h-10 text-xs font-mono border-zinc-800 bg-zinc-950 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              <div className="flex justify-end gap-2 pt-2 text-xs font-bold">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setNewModalOpen(false)}
-                  className="h-9 text-xs"
+                  className="h-9 text-xs border-zinc-800 text-zinc-300"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   disabled={createMutation.isPending || !newProjName.trim()}
-                  className="h-9 text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-medium"
+                  className="h-9 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black font-bold border border-black shadow-[3px_3px_0px_0px_#000000] cursor-pointer"
                 >
-                  {createMutation.isPending ? "Creating..." : "Create Project"}
+                  {createMutation.isPending ? "Creating..." : "Create Project →"}
                 </Button>
               </div>
             </form>
