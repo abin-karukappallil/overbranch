@@ -59,7 +59,6 @@ export default function ForgotPasswordPage() {
               Back to Login
             </Link>
           </Button>
-          <ThemeToggle />
         </div>
 
         <div className="max-w-md w-full mx-auto py-12 space-y-6 animate-fade-in">
