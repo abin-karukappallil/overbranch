@@ -36,6 +36,8 @@ import {
   FileText,
   File,
   AlertCircle,
+  Palette,
+  Zap,
 } from "lucide-react";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
@@ -199,6 +201,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [activeModelName, setActiveModelName] = useState<string>("openai/gpt-oss-120b");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
+  const monacoRef = useRef<any>(null);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -587,8 +590,76 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     }, 1500);
   };
 
+  const setupDefaultLatexSyntaxAndEmeraldTheme = (monaco: any, editor: any) => {
+    if (!monaco || !editor) return;
+
+    try {
+      // Register custom LaTeX monarch syntax token rules with single-line TeX comment scoping
+      monaco.languages.register({ id: "latex" });
+      monaco.languages.setMonarchTokensProvider("latex", {
+        defaultToken: "",
+        tokenPostfix: ".latex",
+        tokenizer: {
+          root: [
+            [/%[^\r\n]*/, "comment.latex"],
+            [/\\@?[a-zA-Z]+/, "keyword.latex"],
+            [/\$\$?/, "delimiter.math.latex", "@math"],
+            [/\{/, "delimiter.bracket.latex"],
+            [/\}/, "delimiter.bracket.latex"],
+            [/\[/, "delimiter.square.latex"],
+            [/\]/, "delimiter.square.latex"],
+          ],
+          math: [
+            [/\$\$?/, "delimiter.math.latex", "@pop"],
+            [/\\@?[a-zA-Z]+/, "keyword.math.latex"],
+            [/[0-9]+(?:\.[0-9]+)?/, "number.math.latex"],
+            [/[a-zA-Z]+/, "variable.math.latex"],
+            [/./, "string.math.latex"],
+          ],
+        },
+      });
+
+      // Define default Kinetic Emerald Theme with high contrast & crisp comments
+      monaco.editor.defineTheme("kinetic-emerald", {
+        base: "vs-dark",
+        inherit: true,
+        rules: [
+          { token: "", foreground: "ffffff" },
+          { token: "keyword.latex", foreground: "00CC68", fontStyle: "bold" },
+          { token: "keyword", foreground: "00CC68", fontStyle: "bold" },
+          { token: "comment.latex", foreground: "a1a1aa", fontStyle: "italic" },
+          { token: "comment", foreground: "a1a1aa", fontStyle: "italic" },
+          { token: "delimiter.math.latex", foreground: "38bdf8", fontStyle: "bold" },
+          { token: "keyword.math.latex", foreground: "34d399", fontStyle: "bold" },
+          { token: "number.math.latex", foreground: "fbbf24" },
+          { token: "variable.math.latex", foreground: "ffffff" },
+          { token: "delimiter.bracket.latex", foreground: "6ee7b7", fontStyle: "bold" },
+          { token: "delimiter.square.latex", foreground: "f472b6" },
+          { token: "string.math.latex", foreground: "e4e4e7" },
+        ],
+        colors: {
+          "editor.background": "#121b17", // Kinetic emerald slightly lighter dark background
+          "editor.foreground": "#ffffff",
+          "editor.lineHighlightBackground": "#1c2b25",
+          "editorCursor.foreground": "#00CC68",
+          "editorLineNumber.foreground": "#71717a",
+          "editorLineNumber.activeForeground": "#00CC68",
+          "editorIndentGuide.background": "#273e35",
+          "editorIndentGuide.activeBackground": "#00CC68",
+        },
+      });
+
+      monaco.editor.setTheme("kinetic-emerald");
+    } catch (e) {
+      console.warn("Handled LaTeX syntax initialization exception:", e);
+    }
+  };
+
   const handleEditorMount: OnMount = (editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
+
+    setupDefaultLatexSyntaxAndEmeraldTheme(monaco, editor);
 
     editor.onDidChangeCursorSelection((e) => {
       if (e.selection) {
@@ -1159,32 +1230,32 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const firstEdit = m.edits[0];
 
     return (
-      <div className="mt-2.5 p-2.5 rounded-xl bg-[#161b22] border border-indigo-500/30 text-xs font-mono space-y-2">
-        <div className="flex items-center justify-between font-bold text-indigo-300">
+      <div className="mt-2.5 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono space-y-2">
+        <div className="flex items-center justify-between font-bold text-[#00CC68]">
           <div className="flex items-center gap-1.5 text-xs">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+            <Sparkles className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
             <span>Proposed TeX Edit ({m.edits.length})</span>
           </div>
           {m.isApplied ? (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold flex items-center gap-1">
               <Check className="w-3 h-3" /> Applied
             </span>
           ) : (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
               Pending
             </span>
           )}
         </div>
 
         {firstEdit && (firstEdit.original_chunk || firstEdit.proposed_chunk) && (
-          <div className="bg-black/60 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-border/40 font-mono max-h-28">
+          <div className="bg-black/80 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-zinc-800 font-mono max-h-28">
             {firstEdit.original_chunk && (
               <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
                 - {firstEdit.original_chunk.split("\n")[0]}
               </div>
             )}
             {firstEdit.proposed_chunk && (
-              <div className="text-emerald-300 bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
+              <div className="text-[#00CC68] bg-[#00CC68]/10 px-1.5 py-0.5 rounded border-l-2 border-[#00CC68] truncate">
                 + {firstEdit.proposed_chunk.split("\n")[0]}
               </div>
             )}
@@ -1192,11 +1263,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         )}
 
         {!m.isApplied ? (
-          <div className="flex items-center gap-2 pt-1">
+          <div className="flex items-center gap-2 pt-1 font-bold">
             <button
               type="button"
               onClick={() => handleRejectAllEdits()}
-              className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+              className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               <span>Reject</span>
@@ -1209,14 +1280,14 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   setActiveMobileTab("code");
                 }
               }}
-              className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+              className="flex-1 h-7 rounded-lg bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
             >
-              <Check className="w-3.5 h-3.5" />
+              <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
               <span>Accept Edit</span>
             </button>
           </div>
         ) : (
-          <div className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 pt-0.5">
+          <div className="text-[11px] text-[#00CC68] font-mono font-bold flex items-center gap-1 pt-0.5">
             <Check className="w-3.5 h-3.5" />
             <span>Applied changes to TeX editor</span>
           </div>
@@ -1274,40 +1345,40 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-background overflow-hidden selection:bg-indigo-500/20 flex flex-col relative z-0">
-      <header className="h-14 border-b border-border/40 bg-card/60 backdrop-blur-xl px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10">
+    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-zinc-950 text-zinc-100 overflow-hidden selection:bg-[#00CC68]/30 selection:text-[#00CC68] flex flex-col relative z-0">
+      <header className="h-14 border-b border-zinc-800 bg-zinc-950 px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10 select-none">
         <div className="flex items-center gap-2 overflow-hidden">
           <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity">
             <OverBranchLogo size="sm" variant="icon" colored />
           </Link>
           <div className="truncate">
-            <h1 className="font-bold text-xs sm:text-sm text-foreground tracking-tight truncate">
+            <h1 className="font-archivo font-bold text-xs sm:text-sm text-white tracking-tight truncate">
               {projectDetail?.name || (projectId ? `${projectId}.tex` : "main.tex")}
             </h1>
-            <p className="text-[10px] text-muted-foreground font-mono truncate">{projectDetail?.template || "LaTeX"} · main.tex</p>
+            <p className="text-[10px] text-zinc-400 font-mono truncate">{projectDetail?.template || "LaTeX"} · main.tex</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           {/* Save Status Badge & Manual Save Button */}
           <div className="flex items-center gap-2">
-            <span className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-card border border-border/40 text-[11px] font-mono">
+            <span className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono">
               {saveStatus === "saved" && (
                 <>
-                  <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400 font-semibold">Saved</span>
+                  <CheckCheck className="w-3.5 h-3.5 text-[#00CC68]" />
+                  <span className="text-[#00CC68] font-bold">Saved</span>
                 </>
               )}
               {saveStatus === "saving" && (
                 <>
                   <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span className="text-amber-400 font-semibold">Saving...</span>
+                  <span className="text-amber-400 font-bold">Saving...</span>
                 </>
               )}
               {saveStatus === "unsaved" && (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
-                  <span className="text-muted-foreground">Unsaved</span>
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span className="text-zinc-400 font-bold">Unsaved</span>
                 </>
               )}
             </span>
@@ -1318,12 +1389,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={() => setFilesOpen(!filesOpen)}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${filesOpen
-                  ? "bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-300 font-semibold"
-                  : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={filesOpen ? "Hide Project Files" : "Show Project Files"}
             >
-              <FolderGit2 className="w-3.5 h-3.5 text-emerald-400" />
+              <FolderGit2 className="w-3.5 h-3.5 text-[#00CC68]" />
               <span>Files</span>
             </Button>
 
@@ -1333,12 +1404,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={toggleAi}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${aiOpen
-                  ? "bg-indigo-500/10 hover:bg-indigo-500/20 border-indigo-500/30 text-indigo-300 font-semibold"
-                  : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
             >
-              <Bot className="w-3.5 h-3.5 text-indigo-400" />
+              <Bot className="w-3.5 h-3.5 text-[#00CC68]" />
               <span>Agent <span className="text-[9px] opacity-60 ml-0.5">(Cmd+L)</span></span>
             </Button>
 
@@ -1348,8 +1419,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={togglePdf}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
-                  ? "bg-cyan-500/10 hover:bg-cyan-500/20 border-cyan-500/30 text-cyan-300 font-semibold"
-                  : "bg-card/80 hover:bg-card border-border/60 text-muted-foreground"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
             >
@@ -1361,10 +1432,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               variant="outline"
               size="sm"
               onClick={() => saveDocument(code, true)}
-              className="h-8 px-2.5 bg-card/80 hover:bg-card border-border/60 text-xs font-mono flex items-center gap-1.5"
+              className="h-8 px-2.5 bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white text-xs font-mono flex items-center gap-1.5 cursor-pointer"
               title="Save Document (Ctrl+S)"
             >
-              <Save className="w-3.5 h-3.5 text-indigo-400" />
+              <Save className="w-3.5 h-3.5 text-[#00CC68]" />
               <span className="hidden sm:inline">Save</span>
             </Button>
           </div>
@@ -1529,21 +1600,21 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           {/* Panel 4 (Far Right): Agent Experience */}
           <div
-            className={`h-full border-l border-border/40 bg-card/40 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
+            className={`h-full border-l border-zinc-800 bg-zinc-950 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-zinc-100 ${aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
               }`}
           >
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
-                <div className="border-b border-border/40 pb-2 shrink-0 space-y-2">
+                <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Bot className="w-4 h-4 text-indigo-400" />
-                      <span className="font-bold text-foreground">Agent</span>
+                    <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold">
+                      <Bot className="w-4 h-4 text-[#00CC68]" />
+                      <span>Agent</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-[10px] border border-emerald-500/20">
-                        <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
-                        <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
+                      <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold">
+                        <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                        <span>{isAgentThinking ? "Thinking..." : activeModelName}</span>
                       </div>
                     </div>
                   </div>
@@ -1561,45 +1632,45 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   )}
                 </div>
 
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1 font-mono">
                   {messages.map((m) => (
                     <div
                       key={m.id}
-                      className={`p-2.5 rounded-xl border space-y-1.5 ${m.sender === "user"
-                          ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
-                          : "bg-muted/40 border-border/40 text-foreground mr-4"
+                      className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
+                          ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                         }`}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                        <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
+                      <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                        <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                         <span>{m.time}</span>
                       </div>
-                      <p className="leading-relaxed whitespace-pre-wrap break-words">{m.text}</p>
+                      <p className="leading-relaxed whitespace-pre-wrap break-words text-xs">{m.text}</p>
                       {renderMessageEditsCard(m)}
                     </div>
                   ))}
                   {isAgentThinking && (
-                    <div className="p-2.5 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-[11px] space-y-1.5 shadow-lg animate-in fade-in slide-in-from-bottom-1">
-                      <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                    <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-[11px] space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
+                      <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
                         <div className="flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-purple-400 animate-spin shrink-0" />
-                          <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                          <Sparkles className="w-3.5 h-3.5 text-[#00CC68] animate-spin shrink-0" />
+                          <span>AI Agent Reasoning...</span>
                         </div>
                         <button
                           type="button"
                           onClick={handleStopAgentResponse}
-                          className="px-2 py-0.5 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-[10px] font-bold flex items-center gap-1 transition-colors shrink-0"
+                          className="px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors shrink-0"
                         >
-                          <Square className="w-2.5 h-2.5 fill-current" />
+                          <Square className="w-2.5 h-2.5 fill-current text-rose-300" />
                           <span>Stop</span>
                         </button>
                       </div>
 
                       <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
                         {agentProgressSteps.length === 0 ? (
-                          <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
-                            <span>Initializing AI pipeline...</span>
+                          <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-[10px]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
+                            <span>Initializing TeX intelligence engine...</span>
                           </div>
                         ) : (
                           agentProgressSteps.map((s, idx) => {
@@ -1607,13 +1678,13 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                             return (
                               <div
                                 key={idx}
-                                className={`flex items-center gap-2 transition-all ${
+                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${
                                   isLatest
-                                    ? "text-purple-200 font-bold animate-pulse"
-                                    : "text-purple-400/60 font-normal text-[10px]"
+                                    ? "text-[#00CC68] font-bold animate-pulse"
+                                    : "text-zinc-400 font-normal"
                                 }`}
                               >
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                                 <span className="truncate">{s.message}</span>
                               </div>
                             );
@@ -1627,37 +1698,37 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
                 {/* Sleek Diff Control Card directly above Chat Input */}
                 {diffData && diffEditsList.length > 0 && (
-                  <div className="mb-2 p-2.5 rounded-xl bg-card border border-indigo-500/30 shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex items-center justify-between font-semibold text-indigo-300">
+                  <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between font-bold text-[#00CC68]">
                       <div className="flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                        <span>Proposed LaTeX Edit</span>
+                        <Sparkles className="w-3.5 h-3.5 text-[#00CC68]" />
+                        <span>Proposed TeX Edit</span>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold">
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
                         {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
                       </span>
                     </div>
 
                     {/* Compact Line-by-line Preview */}
-                    <div className="max-h-28 overflow-y-auto bg-black/40 p-2 rounded-lg text-[10px] space-y-0.5 font-mono border border-border/40">
+                    <div className="max-h-28 overflow-y-auto bg-black/80 p-2 rounded-xl text-[10px] space-y-1 font-mono border border-zinc-800">
                       {diffEditsList[0].original_chunk && (
-                        <div className="text-rose-400 bg-rose-950/30 px-1 py-0.5 rounded line-through truncate font-mono">
+                        <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
                           - {diffEditsList[0].original_chunk.split("\n")[0]}
                         </div>
                       )}
                       {diffEditsList[0].proposed_chunk && (
-                        <div className="text-emerald-400 bg-emerald-950/30 px-1 py-0.5 rounded truncate font-mono">
+                        <div className="text-[#00CC68] bg-[#00CC68]/10 px-1.5 py-0.5 rounded border-l-2 border-[#00CC68] truncate font-bold">
                           + {diffEditsList[0].proposed_chunk.split("\n")[0]}
                         </div>
                       )}
                     </div>
 
                     {/* Action Buttons Directly Above Chat Input */}
-                    <div className="flex items-center gap-2 pt-1">
+                    <div className="flex items-center gap-2 pt-1 font-bold">
                       <button
                         type="button"
                         onClick={handleRejectAllEdits}
-                        className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                        className="flex-1 h-8 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                         <span>Reject</span>
@@ -1666,9 +1737,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       <button
                         type="button"
                         onClick={() => handleAcceptAllEdits(diffEditsList)}
-                        className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-600/20"
+                        className="flex-1 h-8 rounded-xl bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
                       >
-                        <Check className="w-3.5 h-3.5" />
+                        <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
                         <span>Accept All</span>
                       </button>
                     </div>
@@ -1683,18 +1754,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 />
 
                 {attachedFile && (
-                  <div className="flex items-center justify-between px-2.5 py-1.5 mb-1.5 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-[11px] font-mono animate-in fade-in">
+                  <div className="flex items-center justify-between px-3 py-2 mb-1.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-[11px] font-mono animate-in fade-in font-bold">
                     <div className="flex items-center gap-2 truncate">
-                      <Paperclip className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                      <span className="font-semibold truncate">{attachedFile.filename}</span>
-                      <span className="text-[9px] text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded font-mono">
+                      <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                      <span className="truncate">{attachedFile.filename}</span>
+                      <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
                         {attachedFile.file_type || "file"}
                       </span>
                     </div>
                     <button
                       type="button"
                       onClick={() => setAttachedFile(null)}
-                      className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                      className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
                       title="Remove attachment"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -1702,18 +1773,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </div>
                 )}
 
-                <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0 flex items-center gap-2">
+                <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isAgentThinking}
-                    className="p-2.5 rounded-xl bg-muted/40 hover:bg-muted/80 text-muted-foreground hover:text-foreground border border-border/60 transition-colors disabled:opacity-50 shrink-0"
+                    className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
                     title="Upload file (text, TeX, code, image)"
                   >
-                    <Paperclip className="w-4 h-4" />
+                    <Paperclip className="w-4 h-4 text-[#00CC68]" />
                   </button>
 
-                  <div className="relative flex-1">
+                  <div className="relative flex-1 font-mono">
                     <textarea
                       id="ai-chat-input"
                       rows={1}
@@ -1733,7 +1804,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                           }
                         }
                       }}
-                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
+                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
                     />
                   </div>
 
@@ -1743,7 +1814,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       onClick={handleStopAgentResponse}
                       size="sm"
                       variant="destructive"
-                      className="h-9 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white shadow-md shadow-rose-600/20 shrink-0 font-semibold flex items-center gap-1.5 text-xs"
+                      className="h-9 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold shrink-0 flex items-center gap-1.5 text-xs shadow-md cursor-pointer"
                     >
                       <Square className="w-3.5 h-3.5 fill-current" />
                       <span>Stop</span>
@@ -1753,9 +1824,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       type="submit"
                       disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                       size="sm"
-                      className="h-9 px-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold shadow-md shadow-indigo-600/20 shrink-0 flex items-center gap-1 text-xs disabled:opacity-40"
+                      className="h-9 px-3.5 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center gap-1 text-xs disabled:opacity-40 cursor-pointer"
                     >
-                      <Send className="w-3.5 h-3.5" />
+                      <Send className="w-3.5 h-3.5 text-black stroke-[3]" />
                     </Button>
                   )}
                 </form>
@@ -1892,15 +1963,15 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         )}
 
         {activeMobileTab === "ai" && (
-          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 p-3 space-y-3">
-            <div className="border-b border-border/40 pb-2 shrink-0 space-y-2">
+          <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans">
+            <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-indigo-400" />
-                  <span className="font-bold text-sm text-foreground">AI Assistant</span>
+                <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold">
+                  <Bot className="w-4 h-4 text-[#00CC68]" />
+                  <span>Agent</span>
                 </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-xs border border-emerald-500/20">
-                  <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold">
+                  <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
                   <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
                 </div>
               </div>
@@ -1911,53 +1982,53 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span className="truncate">{fallbackModelNotice}</span>
                   </div>
-                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5 cursor-pointer">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 text-xs min-h-0 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-3 text-xs font-mono min-h-0 pr-1">
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-3 rounded-xl border space-y-1.5 ${
+                  className={`p-3 rounded-2xl border space-y-1.5 ${
                     m.sender === "user"
-                      ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
-                      : "bg-muted/40 border-border/40 text-foreground mr-4"
+                      ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                      : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                   }`}
                 >
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                    <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                    <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                     <span>{m.time}</span>
                   </div>
-                  <p className="leading-relaxed text-sm whitespace-pre-wrap break-words">{m.text}</p>
+                  <p className="leading-relaxed text-xs whitespace-pre-wrap break-words">{m.text}</p>
                   {renderMessageEditsCard(m)}
                 </div>
               ))}
               {isAgentThinking && (
-                <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-xs space-y-2 shadow-lg animate-in fade-in slide-in-from-bottom-1">
-                  <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-xs space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
+                  <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
                     <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
-                      <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                      <Zap className="w-4 h-4 text-[#00CC68] animate-pulse shrink-0" />
+                      <span>AI Agent Reasoning...</span>
                     </div>
                     <button
                       type="button"
                       onClick={handleStopAgentResponse}
-                      className="px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
+                      className="px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-mono font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
                     >
-                      <Square className="w-3 h-3 fill-current" />
+                      <Square className="w-3 h-3 fill-current text-rose-300" />
                       <span>Stop</span>
                     </button>
                   </div>
 
                   <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
                     {agentProgressSteps.length === 0 ? (
-                      <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
-                        <span>Initializing AI pipeline...</span>
+                      <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
+                        <span>Initializing TeX intelligence engine...</span>
                       </div>
                     ) : (
                       agentProgressSteps.map((s, idx) => {
@@ -1965,13 +2036,13 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all ${
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
                               isLatest
-                                ? "text-purple-200 font-bold animate-pulse"
-                                : "text-purple-400/60 font-normal text-[11px]"
+                                ? "text-[#00CC68] font-bold animate-pulse"
+                                : "text-zinc-400 font-normal"
                             }`}
                           >
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
                           </div>
                         );
@@ -1984,18 +2055,21 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             </div>
 
             {diffData && diffEditsList.length > 0 && (
-              <div className="p-2.5 rounded-xl bg-card border border-indigo-500/40 shadow-xl space-y-2 font-mono text-xs shrink-0">
-                <div className="flex items-center justify-between font-semibold text-indigo-300">
+              <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-xs shrink-0 animate-in fade-in slide-in-from-bottom-2">
+                <div className="flex items-center justify-between font-bold text-[#00CC68]">
                   <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Proposed LaTeX Edit</span>
+                    <Zap className="w-3.5 h-3.5 text-[#00CC68]" />
+                    <span>Proposed TeX Edit</span>
                   </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
+                    {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
+                  </span>
                 </div>
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex items-center gap-2 pt-1 font-bold">
                   <button
                     type="button"
                     onClick={handleRejectAllEdits}
-                    className="flex-1 h-8 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                    className="flex-1 h-8 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
                     <X className="w-3.5 h-3.5" />
                     <span>Reject</span>
@@ -2003,9 +2077,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <button
                     type="button"
                     onClick={() => handleAcceptAllEdits(diffEditsList)}
-                    className="flex-1 h-8 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+                    className="flex-1 h-8 rounded-xl bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
                   >
-                    <Check className="w-3.5 h-3.5" />
+                    <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
                     <span>Accept All</span>
                   </button>
                 </div>
@@ -2013,36 +2087,39 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             )}
 
             {attachedFile && (
-              <div className="flex items-center justify-between px-2.5 py-1.5 mb-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-mono animate-in fade-in">
+              <div className="flex items-center justify-between px-3 py-2 mb-1.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
                 <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <span className="font-semibold truncate">{attachedFile.filename}</span>
+                  <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                  <span className="truncate">{attachedFile.filename}</span>
+                  <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
+                    {attachedFile.file_type || "file"}
+                  </span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setAttachedFile(null)}
-                  className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                  className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             )}
 
-            <form onSubmit={handleSendPrompt} className="relative pt-1 border-t border-border/40 shrink-0 flex items-center gap-2">
+            <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2 font-mono">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isAgentThinking}
-                className="p-2.5 rounded-xl bg-muted/40 text-muted-foreground border border-border/60 shrink-0"
+                className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 shrink-0 cursor-pointer disabled:opacity-50"
                 title="Upload file"
               >
-                <Paperclip className="w-4 h-4" />
+                <Paperclip className="w-4 h-4 text-[#00CC68]" />
               </button>
 
               <textarea
                 id="ai-chat-input-2"
                 rows={1}
-                placeholder="Ask Gemini to edit LaTeX..."
+                placeholder="Ask agent to edit LaTeX..."
                 value={chatInput}
                 disabled={isAgentThinking}
                 onChange={(e) => {
@@ -2058,7 +2135,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     }
                   }
                 }}
-                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-border/60 bg-background text-foreground text-sm outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
+                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
               />
 
               {isAgentThinking ? (
@@ -2067,7 +2144,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   onClick={handleStopAgentResponse}
                   size="sm"
                   variant="destructive"
-                  className="h-11 px-3 rounded-xl bg-rose-600 text-white font-semibold flex items-center gap-1 text-xs shrink-0"
+                  className="h-11 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold shrink-0 flex items-center gap-1 text-xs cursor-pointer"
                 >
                   <Square className="w-4 h-4 fill-current" />
                   <span>Stop</span>
@@ -2077,9 +2154,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   type="submit"
                   disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                   size="sm"
-                  className="h-11 px-4 bg-indigo-600 text-white rounded-xl font-semibold shrink-0 flex items-center justify-center disabled:opacity-40"
+                  className="h-11 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4 text-black stroke-[3]" />
                 </Button>
               )}
             </form>
@@ -2088,12 +2165,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       </div>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden border-t border-border/40 bg-card/95 backdrop-blur-xl shrink-0 z-40 pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="flex items-center justify-around w-full h-14">
+      <nav className="md:hidden border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-xl shrink-0 z-40 pb-[env(safe-area-inset-bottom,0px)]">
+        <div className="flex items-center justify-around w-full h-14 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "files" ? "text-emerald-400 font-bold" : "text-muted-foreground"
+              activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
             }`}
           >
             <FolderGit2 className="w-4 h-4" />
@@ -2103,7 +2180,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           <button
             onClick={() => setActiveMobileTab("code")}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "code" ? "text-indigo-400 font-bold" : "text-muted-foreground"
+              activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
             }`}
           >
             <FileCode2 className="w-4 h-4" />
@@ -2113,7 +2190,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           <button
             onClick={() => setActiveMobileTab("pdf")}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-muted-foreground"
+              activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
             }`}
           >
             <Eye className="w-4 h-4" />
@@ -2125,11 +2202,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               setActiveMobileTab("ai");
             }}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "ai" ? "text-purple-400 font-bold" : "text-muted-foreground"
+              activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
             }`}
           >
             <Bot className="w-4 h-4" />
-            <span>AI Assistant</span>
+            <span>Agent</span>
           </button>
         </div>
       </nav>
@@ -2138,20 +2215,20 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <Drawer.Root open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
         <Drawer.Portal>
           <Drawer.Overlay className="fixed inset-0 bg-black/60 z-50 backdrop-blur-sm" />
-          <Drawer.Content className="fixed bottom-0 left-0 right-0 max-h-[85vh] h-[80vh] z-50 bg-card border-t border-border/80 rounded-t-3xl flex flex-col p-4 space-y-3">
-            <div className="w-12 h-1.5 rounded-full bg-border/60 mx-auto shrink-0" />
-            <div className="border-b border-border/40 pb-2 shrink-0 space-y-2">
+          <Drawer.Content className="fixed bottom-0 left-0 right-0 max-h-[85vh] h-[80vh] z-50 bg-zinc-950 border-t border-zinc-800 rounded-t-3xl flex flex-col p-4 space-y-3 text-zinc-100 font-sans">
+            <div className="w-12 h-1.5 rounded-full bg-zinc-800 mx-auto shrink-0" />
+            <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-indigo-400" />
-                  <span className="font-bold text-sm text-foreground">AI Assistant</span>
+                <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold">
+                  <Bot className="w-5 h-5 text-[#00CC68]" />
+                  <span className="font-bold text-sm text-white">OverBranch Agent</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono text-xs border border-emerald-500/20">
-                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-emerald-400"}`} />
-                    <span className="font-semibold">{isAgentThinking ? "Thinking..." : "Gemini 3.1 Flash-Lite"}</span>
+                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold">
+                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                    <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
                   </div>
-                  <button onClick={() => setMobileDrawerOpen(false)} className="text-muted-foreground p-1">
+                  <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
@@ -2163,24 +2240,24 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
                     <span className="truncate">{fallbackModelNotice}</span>
                   </div>
-                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5 cursor-pointer">
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
               )}
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 text-xs">
+            <div className="flex-1 overflow-y-auto space-y-3 text-xs font-mono">
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-3 rounded-xl border space-y-1.5 ${m.sender === "user"
-                      ? "bg-indigo-500/10 border-indigo-500/20 text-indigo-200 ml-4"
-                      : "bg-muted/40 border-border/40 text-foreground mr-4"
+                  className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
+                      ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                      : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                     }`}
                 >
-                  <div className="flex items-center justify-between text-[10px] text-muted-foreground font-mono">
-                    <span>{m.sender === "user" ? "You" : "Gemini AI"}</span>
+                  <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                    <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                     <span>{m.time}</span>
                   </div>
                   <p className="leading-relaxed text-sm whitespace-pre-wrap break-words">{m.text}</p>
@@ -2188,27 +2265,27 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 </div>
               ))}
               {isAgentThinking && (
-                <div className="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-purple-200 font-mono text-xs space-y-2 shadow-lg animate-in fade-in slide-in-from-bottom-1">
-                  <div className="flex items-center justify-between font-semibold border-b border-purple-500/20 pb-1.5">
+                <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-xs space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
+                  <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
                     <div className="flex items-center gap-1.5">
-                      <Sparkles className="w-4 h-4 text-purple-400 animate-spin shrink-0" />
-                      <span className="text-purple-300 font-bold">AI Agent Thinking</span>
+                      <Zap className="w-4 h-4 text-[#00CC68] animate-pulse shrink-0" />
+                      <span>AI Agent Reasoning...</span>
                     </div>
                     <button
                       type="button"
                       onClick={handleStopAgentResponse}
-                      className="px-2 py-1 rounded bg-rose-600/30 hover:bg-rose-600/50 text-rose-300 border border-rose-500/40 text-xs font-bold flex items-center gap-1 transition-colors shrink-0"
+                      className="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-mono font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
                     >
-                      <Square className="w-3 h-3 fill-current" />
+                      <Square className="w-3 h-3 fill-current text-rose-300" />
                       <span>Stop</span>
                     </button>
                   </div>
 
                   <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
                     {agentProgressSteps.length === 0 ? (
-                      <div className="flex items-center gap-2 text-purple-300/80 animate-pulse py-0.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-ping" />
-                        <span>Initializing AI pipeline...</span>
+                      <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-xs">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
+                        <span>Initializing TeX intelligence engine...</span>
                       </div>
                     ) : (
                       agentProgressSteps.map((s, idx) => {
@@ -2216,13 +2293,13 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all ${
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
                               isLatest
-                                ? "text-purple-200 font-bold animate-pulse"
-                                : "text-purple-400/60 font-normal text-[11px]"
+                                ? "text-[#00CC68] font-bold animate-pulse"
+                                : "text-zinc-400 font-normal"
                             }`}
                           >
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-purple-400 animate-ping" : "bg-purple-600"}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
                           </div>
                         );
@@ -2235,36 +2312,36 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             </div>
 
             {attachedFile && (
-              <div className="flex items-center justify-between px-2.5 py-1.5 mb-1 rounded-lg bg-indigo-500/10 border border-indigo-500/30 text-indigo-200 text-xs font-mono animate-in fade-in">
+              <div className="flex items-center justify-between px-3 py-2 mb-1 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
                 <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <span className="font-semibold truncate">{attachedFile.filename}</span>
+                  <Paperclip className="w-4 h-4 text-[#00CC68] shrink-0" />
+                  <span className="truncate">{attachedFile.filename}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setAttachedFile(null)}
-                  className="p-1 text-muted-foreground hover:text-rose-400 transition-colors rounded-md"
+                  className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             )}
 
-            <form onSubmit={handleSendPrompt} className="relative pt-2 border-t border-border/40 shrink-0 flex items-center gap-2">
+            <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2 font-mono">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isAgentThinking}
-                className="p-2.5 rounded-xl bg-muted/40 text-muted-foreground border border-border/60 shrink-0"
+                className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 shrink-0 cursor-pointer disabled:opacity-50"
                 title="Upload file"
               >
-                <Paperclip className="w-4 h-4" />
+                <Paperclip className="w-4 h-4 text-[#00CC68]" />
               </button>
 
               <textarea
                 id="mobile-ai-chat-input"
                 rows={1}
-                placeholder="Ask Gemini to edit LaTeX..."
+                placeholder="Ask agent to edit LaTeX..."
                 value={chatInput}
                 disabled={isAgentThinking}
                 onChange={(e) => {
@@ -2280,7 +2357,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     }
                   }
                 }}
-                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-border/60 bg-background text-foreground text-base outline-none focus:border-indigo-500 transition-all disabled:opacity-50 resize-none overflow-y-auto"
+                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
               />
 
               {isAgentThinking ? (
@@ -2289,7 +2366,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   onClick={handleStopAgentResponse}
                   size="sm"
                   variant="destructive"
-                  className="h-11 px-3 rounded-xl bg-rose-600 text-white font-semibold flex items-center gap-1 text-xs shrink-0"
+                  className="h-11 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold flex items-center gap-1 text-xs shrink-0 cursor-pointer"
                 >
                   <Square className="w-4 h-4 fill-current" />
                   <span>Stop</span>
@@ -2299,9 +2376,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   type="submit"
                   disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                   size="sm"
-                  className="h-11 px-4 bg-indigo-600 text-white rounded-xl font-semibold shrink-0 flex items-center justify-center disabled:opacity-40"
+                  className="h-11 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4 text-black stroke-[3]" />
                 </Button>
               )}
             </form>

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { User, Mail, MapPin, Building, Shield, Save, CheckCircle2 } from "lucide-react";
+import { User, Mail, Save, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,9 +16,6 @@ export default function ProfilePage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [avatarUrl, setAvatarUrl] = useState("");
-  const [bio, setBio] = useState("Academic Researcher & Student Author");
-  const [location, setLocation] = useState("University Campus");
-  const [company, setCompany] = useState("Academic Workspace");
 
   useEffect(() => {
     if (session?.user) {
@@ -34,66 +31,75 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 animate-fade-in pb-12 max-w-3xl">
-      <div className="space-y-1">
-        <h1 className="text-xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-          User Profile Customization
+    <div className="space-y-6 sm:space-y-8 animate-fade-in pb-12 max-w-3xl font-sans text-zinc-100">
+      <div className="space-y-1.5">
+        <h1 className="text-xl sm:text-3xl font-archivo font-black uppercase tracking-tight text-white">
+          User Profile Settings
         </h1>
-        <p className="text-xs sm:text-sm text-muted-foreground">
-          Manage personal avatar, display name, academic affiliations, and co-author identities.
+        <p className="text-xs sm:text-sm text-zinc-400">
+          Manage your display name, account email, and avatar photo across OverBranch.
         </p>
       </div>
 
-      <Card className="p-4 sm:p-8 rounded-2xl border border-border/60 bg-card/60 backdrop-blur-xl space-y-6">
-        <div className="flex items-center gap-3.5 sm:gap-4">
-          <Avatar className="w-14 h-14 sm:w-16 sm:h-16 border-2 border-indigo-500/40 shrink-0">
+      <Card className="p-6 sm:p-8 rounded-2xl border border-zinc-800 bg-zinc-900 shadow-xl space-y-6">
+        <div className="flex items-center gap-4">
+          <Avatar className="w-16 h-16 sm:w-20 sm:h-20 border-2 border-[#00CC68] shrink-0 shadow-lg">
             <AvatarImage src={avatarUrl} />
-            <AvatarFallback className="bg-indigo-600 text-white font-bold">
-              {name.slice(0, 2).toUpperCase()}
+            <AvatarFallback className="bg-[#00CC68] text-black font-archivo font-bold text-lg">
+              {(name || 'U').slice(0, 2).toUpperCase()}
             </AvatarFallback>
           </Avatar>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-base sm:text-lg font-bold text-foreground truncate">{name}</h2>
-            <p className="text-xs text-muted-foreground font-mono truncate">{email}</p>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h2 className="text-lg sm:text-xl font-archivo font-bold text-white truncate">{name || "OverBranch User"}</h2>
+            <p className="text-xs text-[#00CC68] font-mono truncate">{email || "user@example.com"}</p>
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5 font-mono">
           <div className="space-y-2">
-            <Label htmlFor="prof-name">Full Name / Academic Co-Author Signature</Label>
-            <Input id="prof-name" value={name} onChange={(e) => setName(e.target.value)} className="h-11" />
+            <Label htmlFor="prof-name" className="text-xs font-bold text-zinc-400 uppercase">
+              Full Name / Co-Author Display Name
+            </Label>
+            <Input
+              id="prof-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="h-11 text-xs font-mono border-zinc-800 bg-zinc-950 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
+            />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="prof-email">Verified Session Email</Label>
-            <Input id="prof-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-11" />
+            <Label htmlFor="prof-email" className="text-xs font-bold text-zinc-400 uppercase">
+              Account Email
+            </Label>
+            <Input
+              id="prof-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="h-11 text-xs font-mono border-zinc-800 bg-zinc-950 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
+            />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="prof-avatar">Avatar Image URL</Label>
-            <Input id="prof-avatar" value={avatarUrl} onChange={(e) => setAvatarUrl(e.target.value)} className="h-11 font-mono text-xs" />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="prof-bio">Author Bio & Research Focus</Label>
-            <Input id="prof-bio" value={bio} onChange={(e) => setBio(e.target.value)} className="h-11" />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="prof-company">Organization / University</Label>
-              <Input id="prof-company" value={company} onChange={(e) => setCompany(e.target.value)} className="h-11" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="prof-loc">Location</Label>
-              <Input id="prof-loc" value={location} onChange={(e) => setLocation(e.target.value)} className="h-11" />
-            </div>
+            <Label htmlFor="prof-avatar" className="text-xs font-bold text-zinc-400 uppercase">
+              Avatar Image URL
+            </Label>
+            <Input
+              id="prof-avatar"
+              value={avatarUrl}
+              onChange={(e) => setAvatarUrl(e.target.value)}
+              placeholder="https://..."
+              className="h-11 text-xs font-mono border-zinc-800 bg-zinc-950 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
+            />
           </div>
 
           <div className="pt-4 flex justify-end">
-            <Button type="submit" className="bg-indigo-600 text-white rounded-xl">
-              <Save className="w-4 h-4 mr-2" />
+            <Button
+              type="submit"
+              className="h-10 px-6 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-xl border border-black shadow-[3px_3px_0px_0px_#000000] cursor-pointer"
+            >
+              <Save className="w-4 h-4 mr-2 text-black" />
               Save Profile
             </Button>
           </div>

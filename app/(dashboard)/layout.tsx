@@ -23,9 +23,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isPending) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-3 text-muted-foreground">
-        <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
-        <span className="text-xs font-mono">Verifying workspace session...</span>
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center gap-3 text-zinc-400 font-sans">
+        <Loader2 className="w-8 h-8 animate-spin text-[#00CC68]" />
+        <span className="text-xs font-mono font-bold tracking-wider uppercase text-zinc-400">Verifying session...</span>
       </div>
     );
   }
@@ -35,10 +35,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen bg-background relative selection:bg-indigo-500/20 selection:text-indigo-300">
-      <div className="fixed inset-0 bg-grid-pattern opacity-30 pointer-events-none -z-20" />
-      <div className="fixed inset-0 bg-mesh-dark opacity-50 pointer-events-none -z-10" />
-
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 relative font-sans selection:bg-[#00CC68]/30 selection:text-[#00CC68]">
       <DashboardSidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}
@@ -49,7 +46,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <div
         className={`transition-all duration-300 flex flex-col min-h-screen pl-0 ${
-          collapsed ? "md:pl-20" : "md:pl-64"
+          collapsed ? "md:pl-28" : "md:pl-72"
         }`}
       >
         <DashboardTopNav
