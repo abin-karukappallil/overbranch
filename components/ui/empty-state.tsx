@@ -26,25 +26,34 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <div
-      className={`flex flex-col items-center justify-center p-12 text-center border border-dashed border-border/70 rounded-2xl bg-card/30 backdrop-blur-sm ${className}`}
+      className={`flex flex-col items-center justify-center p-10 sm:p-14 text-center border border-dashed border-zinc-800 rounded-3xl bg-zinc-950/60 font-sans ${className}`}
     >
-      <div className="w-14 h-14 rounded-2xl bg-muted/80 flex items-center justify-center mb-4 text-muted-foreground border border-border/40 shadow-inner">
-        <Icon className="w-7 h-7 text-indigo-400" />
+      <div className="w-14 h-14 rounded-2xl bg-zinc-900 flex items-center justify-center mb-4 text-[#00CC68] border border-zinc-800 shadow-xl">
+        <Icon className="w-7 h-7 text-[#00CC68]" />
       </div>
-      <h3 className="text-lg font-semibold text-foreground tracking-tight mb-1">
+      <h3 className="text-lg sm:text-xl font-archivo font-bold text-white tracking-tight uppercase mb-2">
         {title}
       </h3>
-      <p className="text-sm text-muted-foreground max-w-md mb-6 leading-relaxed">
+      <p className="text-xs sm:text-sm text-zinc-400 max-w-md mb-6 leading-relaxed font-sans">
         {description}
       </p>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center justify-center gap-3">
         {secondaryActionLabel && onSecondaryAction && (
-          <Button variant="outline" size="sm" onClick={onSecondaryAction}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSecondaryAction}
+            className="h-10 px-5 border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white font-mono font-bold rounded-xl cursor-pointer"
+          >
             {secondaryActionLabel}
           </Button>
         )}
         {primaryActionLabel && onPrimaryAction && (
-          <Button size="sm" onClick={onPrimaryAction} className="bg-gradient-to-r from-indigo-600 to-cyan-600 text-white hover:opacity-90">
+          <Button
+            size="sm"
+            onClick={onPrimaryAction}
+            className="h-10 px-6 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider border border-black shadow-[3px_3px_0px_0px_#000000] rounded-xl cursor-pointer transition-all"
+          >
             {primaryActionLabel}
           </Button>
         )}
