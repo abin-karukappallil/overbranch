@@ -256,11 +256,11 @@ export function ProjectFilesPanel({
     if (type === "image" || [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"].includes(ext)) {
       return <ImageIcon className="w-4 h-4 text-purple-400 shrink-0" />;
     }
-    if (ext === ".tex") return <FileText className="w-4 h-4 text-emerald-400 shrink-0" />;
+    if (ext === ".tex") return <FileText className="w-4 h-4 text-[#00CC68] shrink-0" />;
     if (ext === ".bib") return <BookOpen className="w-4 h-4 text-amber-400 shrink-0" />;
-    if ([".cls", ".sty"].includes(ext)) return <FileCode className="w-4 h-4 text-indigo-400 shrink-0" />;
+    if ([".cls", ".sty"].includes(ext)) return <FileCode className="w-4 h-4 text-emerald-400 shrink-0" />;
     if (ext === ".pdf") return <FileCheck className="w-4 h-4 text-rose-400 shrink-0" />;
-    return <File className="w-4 h-4 text-slate-400 shrink-0" />;
+    return <File className="w-4 h-4 text-zinc-400 shrink-0" />;
   };
 
   const filteredFiles = files.filter((f) =>
@@ -269,17 +269,17 @@ export function ProjectFilesPanel({
 
   return (
     <div
-      className={`h-full border-r border-border/40 bg-card/50 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-full md:w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
+      className={`h-full border-r border-zinc-800 bg-zinc-950 text-zinc-100 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-full md:w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
         }`}
     >
       <div className="flex flex-col h-full p-3 text-xs w-full min-w-0 md:min-w-[256px] space-y-3">
         {/* Panel Header */}
-        <div className="border-b border-border/40 pb-2.5 shrink-0 space-y-2">
+        <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-bold text-foreground">
-              <FolderGit2 className="w-4 h-4 text-emerald-400" />
+            <div className="flex items-center gap-1.5 font-bold font-archivo uppercase text-white">
+              <FolderGit2 className="w-4 h-4 text-[#00CC68]" />
               <span>Project Files</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 font-mono">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono">
                 {files.length}
               </span>
             </div>
@@ -289,7 +289,7 @@ export function ProjectFilesPanel({
                 size="icon"
                 variant="ghost"
                 onClick={() => fileInputRef.current?.click()}
-                className="h-7 w-7 text-indigo-400 hover:bg-indigo-500/10 rounded-lg"
+                className="h-7 w-7 text-[#00CC68] hover:bg-[#00CC68]/10 rounded-lg"
                 title="Upload Asset Files"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -299,7 +299,7 @@ export function ProjectFilesPanel({
                 size="icon"
                 variant="ghost"
                 onClick={() => setNewFileModal(true)}
-                className="h-7 w-7 text-emerald-400 hover:bg-emerald-500/10 rounded-lg"
+                className="h-7 w-7 text-[#00CC68] hover:bg-[#00CC68]/10 rounded-lg"
                 title="Create New TeX File"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -322,9 +322,9 @@ export function ProjectFilesPanel({
               placeholder="Search files & assets..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-8 pl-7 text-[11px] bg-background/80 border-border/60"
+              className="h-8 pl-7 text-[11px] font-mono bg-zinc-900 border-zinc-800 text-zinc-200"
             />
-            <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-2 top-1/2 -translate-y-1/2" />
           </div>
         </div>
 
@@ -336,16 +336,16 @@ export function ProjectFilesPanel({
             handleFileUpload(e.dataTransfer.files);
           }}
           onClick={() => fileInputRef.current?.click()}
-          className="p-2.5 rounded-xl border border-dashed border-indigo-500/30 bg-indigo-500/5 hover:bg-indigo-500/10 transition-colors text-center cursor-pointer space-y-1 shrink-0 group"
+          className="p-2.5 rounded-xl border border-dashed border-[#00CC68]/30 bg-[#00CC68]/5 hover:bg-[#00CC68]/10 transition-colors text-center cursor-pointer space-y-1 shrink-0 group"
         >
           {isUploading ? (
-            <div className="flex items-center justify-center gap-2 text-indigo-400 font-mono text-[11px] py-1">
+            <div className="flex items-center justify-center gap-2 text-[#00CC68] font-mono text-[11px] py-1">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>Uploading assets...</span>
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-center gap-1.5 text-indigo-400 font-medium text-[11px] group-hover:text-indigo-300">
+              <div className="flex items-center justify-center gap-1.5 text-[#00CC68] font-mono font-bold text-[11px]">
                 <Upload className="w-3.5 h-3.5" />
                 <span>Upload Project Assets</span>
               </div>

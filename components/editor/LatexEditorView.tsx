@@ -208,32 +208,32 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] bg-background overflow-hidden border border-border/60 rounded-2xl shadow-2xl relative">
-      <div className="h-14 px-3 sm:px-4 border-b border-border/40 bg-card/60 backdrop-blur-xl flex items-center justify-between gap-2 shrink-0">
+    <div className="flex flex-col h-[calc(100vh-4rem)] bg-zinc-950 text-zinc-100 overflow-hidden border border-zinc-800 rounded-2xl shadow-2xl relative font-sans">
+      <div className="h-14 px-3 sm:px-4 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between gap-2 shrink-0 select-none">
         <div className="flex items-center gap-2 overflow-hidden">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => setShowAiPanel(!showAiPanel)}
-            className="hidden md:flex h-8 w-8 text-indigo-400 hover:bg-indigo-500/10"
-            title="Toggle Agent Mock"
+            className="hidden md:flex h-8 w-8 text-[#00CC68] hover:bg-[#00CC68]/10"
+            title="Toggle Agent"
           >
             <Bot className="w-4 h-4" />
           </Button>
 
-          <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
+          <div className="p-1.5 rounded-lg bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 shrink-0">
             <FileCode2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div className="truncate">
             <div className="flex items-center gap-1.5">
-              <h1 className="font-bold text-xs sm:text-sm text-foreground tracking-tight truncate">
+              <h1 className="font-archivo font-bold text-xs sm:text-sm text-white tracking-tight truncate">
                 {getProjectName()}
               </h1>
-              <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                Mobile Ready
+              <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
+                Active Session
               </span>
             </div>
-            <p className="text-[10px] text-muted-foreground font-mono truncate">{getTemplateTag()}</p>
+            <p className="text-[10px] text-zinc-400 font-mono truncate">{getTemplateTag()}</p>
           </div>
         </div>
 
@@ -242,44 +242,44 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
 
       <CompileToolbar onCompile={handleCompile} isCompiling={isCompiling} />
 
-      <div className="flex md:hidden items-center border-b border-border/40 bg-muted/40 p-1 gap-1 text-xs font-mono shrink-0">
+      <div className="flex md:hidden items-center border-b border-zinc-800 bg-zinc-900 p-1 gap-1 text-xs font-mono shrink-0 select-none">
         <button
           onClick={() => setMobileMode("code")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "code" ? "bg-card text-foreground font-bold shadow-sm" : "text-muted-foreground"
+            mobileMode === "code" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
           }`}
         >
-          <FileCode2 className="w-3.5 h-3.5 text-indigo-400" />
+          <FileCode2 className="w-3.5 h-3.5 text-[#00CC68]" />
           <span>Code</span>
         </button>
 
         <button
           onClick={() => setMobileMode("pdf")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "pdf" ? "bg-card text-foreground font-bold shadow-sm" : "text-muted-foreground"
+            mobileMode === "pdf" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
           }`}
         >
-          <Eye className="w-3.5 h-3.5 text-cyan-400" />
+          <Eye className="w-3.5 h-3.5 text-[#00CC68]" />
           <span>PDF</span>
         </button>
 
         <button
           onClick={() => setMobileMode("ai")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "ai" ? "bg-card text-foreground font-bold shadow-sm" : "text-muted-foreground"
+            mobileMode === "ai" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
           }`}
         >
-          <Bot className="w-3.5 h-3.5 text-purple-400" />
+          <Bot className="w-3.5 h-3.5 text-[#00CC68]" />
           <span>Assistant</span>
         </button>
 
         <button
           onClick={() => setMobileMode("files")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "files" ? "bg-card text-foreground font-bold shadow-sm" : "text-muted-foreground"
+            mobileMode === "files" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
           }`}
         >
-          <Folder className="w-3.5 h-3.5 text-amber-400" />
+          <Folder className="w-3.5 h-3.5 text-[#00CC68]" />
           <span>Files</span>
         </button>
       </div>
@@ -321,8 +321,8 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
                   </div>
                 ))}
 
-                <div className="p-2 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 flex items-center gap-2 text-[11px] animate-pulse font-mono">
-                  <Sparkles className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                <div className="p-2.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/20 text-[#00CC68] flex items-center gap-2 text-[11px] animate-pulse font-mono font-bold">
+                  <Zap className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
                   <span>Agent ready for prompt input...</span>
                 </div>
               </div>

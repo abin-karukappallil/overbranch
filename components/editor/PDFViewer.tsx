@@ -101,24 +101,24 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-hidden relative bg-background">
+    <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-hidden relative bg-zinc-950 text-zinc-100">
       {/* PDF Header Bar */}
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-border/40 bg-card/60 shrink-0">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800 bg-zinc-950 shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-foreground font-mono">PDF Preview</span>
+          <span className="text-xs font-mono font-bold text-white uppercase">PDF Preview</span>
         </div>
         <div className="flex items-center gap-2">
           <Button
             size="sm"
             onClick={onRecompile}
             disabled={isCompiling}
-            className="h-7 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs shadow-xs flex items-center gap-1.5"
+            className="h-7 px-3 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-lg text-xs border border-black shadow-[3px_3px_0px_0px_#000000] flex items-center gap-1.5 cursor-pointer"
             title="Compile TeX PDF"
           >
             {isCompiling ? (
-              <RotateCw className="w-3.5 h-3.5 animate-spin" />
+              <RotateCw className="w-3.5 h-3.5 animate-spin text-black" />
             ) : (
-              <Play className="w-3.5 h-3.5 fill-current" />
+              <Play className="w-3.5 h-3.5 fill-current text-black" />
             )}
             <span>Compile</span>
           </Button>
@@ -128,11 +128,11 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
               size="sm"
               variant="outline"
               onClick={handleDownloadPDF}
-              className="h-7 px-2.5 text-xs font-medium border-border/60 hover:bg-muted text-foreground flex items-center gap-1.5"
+              className="h-7 px-2.5 text-xs font-mono font-bold border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white flex items-center gap-1.5"
               title="Download PDF document"
             >
-              <Download className="w-3.5 h-3.5 text-cyan-400" />
-              Download PDF
+              <Download className="w-3.5 h-3.5 text-[#00CC68]" />
+              <span>Download PDF</span>
             </Button>
           )}
         </div>
@@ -140,9 +140,9 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
 
       {/* Loading Overlay */}
       {isCompiling && (
-        <div className="absolute inset-0 z-20 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
-          <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
-          <span className="text-xs font-mono text-cyan-400 font-semibold tracking-wide">
+        <div className="absolute inset-0 z-20 bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-3">
+          <RotateCw className="w-8 h-8 text-[#00CC68] animate-spin" />
+          <span className="text-xs font-mono text-[#00CC68] font-bold tracking-wider uppercase">
             Compiling TeX PDF...
           </span>
         </div>
@@ -150,16 +150,16 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
 
       {/* Error Overlay */}
       {errorLog && !isCompiling && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 gap-3 bg-background/90">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 gap-3 bg-zinc-950/95">
           <AlertTriangle className="w-10 h-10 text-amber-400" />
-          <span className="text-sm font-bold text-amber-400">Compilation Error</span>
-          <pre className="text-[11px] text-muted-foreground font-mono max-w-full overflow-auto bg-card border border-border/50 rounded-xl p-3 max-h-56 whitespace-pre-wrap select-all">
+          <span className="text-sm font-mono font-bold uppercase text-amber-400">Compilation Error</span>
+          <pre className="text-[11px] text-zinc-300 font-mono max-w-full overflow-auto bg-zinc-900 border border-zinc-800 rounded-xl p-3 max-h-56 whitespace-pre-wrap select-all">
             {errorLog}
           </pre>
           <Button
             size="sm"
             onClick={onRecompile}
-            className="bg-amber-600 hover:bg-amber-500 text-white rounded-xl h-8 text-xs mt-2"
+            className="bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl h-8 text-xs mt-2 border border-black shadow-[3px_3px_0px_0px_#000000]"
           >
             <RotateCw className="w-3.5 h-3.5 mr-1.5" />
             Retry Compilation
@@ -169,7 +169,7 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
 
       {/* PDF Render Block */}
       {blobUrl && !errorLog && (
-        <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-zinc-950/60 overflow-hidden">
+        <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-zinc-950 overflow-hidden">
           <ExtendPDFViewer
             src={blobUrl}
             defaultZoom="automatic"
@@ -183,15 +183,15 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
 
       {/* Empty State */}
       {!blobUrl && !errorLog && !isCompiling && (
-        <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
-          <Eye className="w-12 h-12 opacity-25 text-cyan-400" />
-          <span className="text-xs font-mono">No PDF compiled yet</span>
+        <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-400 font-mono">
+          <Eye className="w-12 h-12 opacity-30 text-[#00CC68]" />
+          <span className="text-xs font-bold uppercase tracking-wider">No PDF compiled yet</span>
           <Button
             size="sm"
             onClick={onRecompile}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl h-8 text-xs shadow-lg shadow-emerald-600/20"
+            className="bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-xl h-8 text-xs border border-black shadow-[3px_3px_0px_0px_#000000] cursor-pointer"
           >
-            <Play className="w-3.5 h-3.5 mr-1.5 fill-current" />
+            <Play className="w-3.5 h-3.5 mr-1.5 fill-current text-black" />
             Compile PDF Now
           </Button>
         </div>
@@ -201,13 +201,13 @@ export function PDFViewer({ pdfBase64, isCompiling, onRecompile, errorLog }: PDF
       <button
         onClick={onRecompile}
         disabled={isCompiling}
-        className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 w-12 h-12 rounded-full bg-gradient-to-r from-cyan-500 to-emerald-500 text-white flex items-center justify-center shadow-2xl shadow-cyan-500/40 active:scale-95 transition-transform"
+        className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 w-12 h-12 rounded-full bg-[#00CC68] text-black flex items-center justify-center shadow-2xl border-2 border-black active:scale-95 transition-transform"
         title="Recompile TeX"
       >
         {isCompiling ? (
-          <RotateCw className="w-5 h-5 animate-spin" />
+          <RotateCw className="w-5 h-5 animate-spin text-black" />
         ) : (
-          <Play className="w-5 h-5 fill-current ml-0.5" />
+          <Play className="w-5 h-5 fill-current ml-0.5 text-black" />
         )}
       </button>
     </div>
