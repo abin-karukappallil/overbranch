@@ -38,6 +38,7 @@ import {
   AlertCircle,
   Palette,
   Zap,
+  ChevronDown,
 } from "lucide-react";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
@@ -130,7 +131,24 @@ const quickSymbols = [
   { label: "\\sum", insert: "\\sum_{i=1}^{N}" },
 ];
 
-export const DEFAULT_MODEL = "gemini-3.1-pro";
+export const DEFAULT_MODEL = "openai/gpt-oss-120b";
+
+// ─── Model Selector Types & Config ───────────────────────────────────────────
+interface ModelOption {
+  id: string;
+  label: string;
+  default?: boolean;
+}
+
+interface ProviderGroup {
+  name: string;
+  models: ModelOption[];
+}
+
+interface ModelsResponse {
+  providers: ProviderGroup[];
+  default_model: string;
+}
 
 export function extractLatexFromResponse(response: string): string | null {
   const pattern = new RegExp("```(?:latex)?\\s*\\n([\\s\\S]*?)```");
@@ -202,6 +220,61 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
   const monacoRef = useRef<any>(null);
+
+  // ─── Model Selector State ────────────────────────────────────────────────
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
+  const modelSelectorRef = useRef<HTMLDivElement>(null);
+
+  // Fetch available models from backend on mount
+  useEffect(() => {
+    const fetchModels = async () => {
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/models`);
+        if (res.ok) {
+          const data: ModelsResponse = await res.json();
+          setAvailableModels(data.providers || []);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch models:", err);
+        // Fallback: hardcode defaults so selector still works
+        setAvailableModels([
+          { name: "Groq", models: [{ id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: true }] },
+          { name: "Gemini", models: [
+            { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+            { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+            { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+            { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
+            { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
+          ]},
+        ]);
+      }
+    };
+    fetchModels();
+  }, []);
+
+  // Close model selector on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelSelectorRef.current && !modelSelectorRef.current.contains(e.target as Node)) {
+        setModelSelectorOpen(false);
+      }
+    };
+    if (modelSelectorOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelSelectorOpen]);
+
+  // Helper: get display label for a model ID
+  const getModelLabel = (modelId: string): string => {
+    for (const provider of availableModels) {
+      for (const m of provider.models) {
+        if (m.id === modelId) return m.label;
+      }
+    }
+    return modelId;
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -1021,7 +1094,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         return;
       }
 
-      const warningMsg = `AI Agent Error: ${err.message || "Failed to reach AI service"}`;
+      let userErrMsg = err.message || "Failed to reach AI service";
+      if (userErrMsg.includes("input stream") || userErrMsg.includes("network") || userErrMsg.includes("Failed to fetch")) {
+        userErrMsg = "Connection interrupted while streaming. Please try sending your request again.";
+      }
+      const warningMsg = `AI Agent Error: ${userErrMsg}`;
       toast.error(warningMsg, { duration: 6000 });
       setMessages((prev) => [
         ...prev,
@@ -1611,11 +1688,44 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       <Bot className="w-4 h-4 text-[#00CC68]" />
                       <span>Agent</span>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold">
+                    <div className="flex items-center gap-1 relative" ref={modelSelectorRef}>
+                      <button
+                        onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                        disabled={isAgentThinking}
+                        className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                      >
                         <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                        <span>{isAgentThinking ? "Thinking..." : activeModelName}</span>
-                      </div>
+                        <span className="truncate max-w-[140px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                        {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                      </button>
+
+                      {modelSelectorOpen && (
+                        <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden">
+                          {availableModels.map((provider) => (
+                            <div key={provider.name}>
+                              <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800">
+                                {provider.name}
+                              </div>
+                              {provider.models.map((m) => (
+                                <button
+                                  key={m.id}
+                                  onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                  className={`w-full text-left px-3 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                    activeModelName === m.id
+                                      ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                      : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                  }`}
+                                >
+                                  <span className="truncate">
+                                    {m.label}{m.default ? " (Default)" : ""}
+                                  </span>
+                                  {activeModelName === m.id && <Check className="w-3 h-3 text-[#00CC68] shrink-0" />}
+                                </button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -1970,9 +2080,44 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <Bot className="w-4 h-4 text-[#00CC68]" />
                   <span>Agent</span>
                 </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold">
-                  <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                  <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
+                <div className="relative">
+                  <button
+                    onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                    disabled={isAgentThinking}
+                    className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                    <span className="font-semibold truncate max-w-[120px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                    {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                  </button>
+
+                  {modelSelectorOpen && (
+                    <div className="absolute top-full right-0 mt-1.5 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
+                      {availableModels.map((provider) => (
+                        <div key={provider.name}>
+                          <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
+                            {provider.name}
+                          </div>
+                          {provider.models.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                              className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                activeModelName === m.id
+                                  ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                  : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                              }`}
+                            >
+                              <span className="truncate">
+                                {m.label}{m.default ? " (Default)" : ""}
+                              </span>
+                              {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2224,9 +2369,44 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <span className="font-bold text-sm text-white">OverBranch Agent</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold">
-                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="font-semibold">{isAgentThinking ? "Thinking..." : activeModelName}</span>
+                  <div className="relative">
+                    <button
+                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                      disabled={isAgentThinking}
+                      className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                    >
+                      <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="font-semibold truncate max-w-[140px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                      {!isAgentThinking && <ChevronDown className={`w-3.5 h-3.5 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                    </button>
+
+                    {modelSelectorOpen && (
+                      <div className="absolute top-full right-0 mt-1.5 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[60] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[60vh] overflow-y-auto">
+                        {availableModels.map((provider) => (
+                          <div key={provider.name}>
+                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
+                              {provider.name}
+                            </div>
+                            {provider.models.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                  activeModelName === m.id
+                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                }`}
+                              >
+                                <span className="truncate">
+                                  {m.label}{m.default ? " (Default)" : ""}
+                                </span>
+                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
