@@ -29,6 +29,7 @@ import context_builder
 import prompt_builder
 from memory import conversation_memory, project_memory
 from tools import AI_TOOLS, process_tool_calls
+from providers import provider_router, LLMProviderError
 
 load_dotenv(override=True)
 
@@ -159,14 +160,18 @@ def get_genai_client():
 # ─── Response Parsing Utilities ───────────────────────────────────────────────
 
 def sanitize_explanation_text(text: str) -> str:
-    """Removes internal chunk references (e.g. CHUNK 1, in CHUNK 2, from CHUNK 3) from user-facing text."""
+    """Removes internal chunk references and web2api chip URLs from user-facing text."""
     if not text or not isinstance(text, str):
         return text or ""
     # Strip phrases like "in CHUNK 1", "from CHUNK 2", "CHUNK 3:", "[CHUNK 4]", "CHUNK 5"
     cleaned = re.sub(r'(?i)\b(?:in|from|for|of)?\s*\[?CHUNK\s*\d+\]?:?\s*', '', text)
+    # Strip web2api chip URLs (e.g. http://googleusercontent.com/immersive_entry_chip/0)
+    cleaned = re.sub(r'https?://[^\s]*googleusercontent[^\s]*', '', cleaned)
+    cleaned = re.sub(r'Generating slides\.\.\.\s*', '', cleaned)
     # Remove leading colons, hyphens, or extra whitespace left over
     cleaned = re.sub(r'^\s*[:\-]\s*', '', cleaned)
-    # Clean up spaces before punctuation
+    # Clean up multiple newlines or spaces
+    cleaned = re.sub(r'\n\s*\n+', '\n', cleaned)
     cleaned = re.sub(r'\s+([.,!?;])', r'\1', cleaned)
     if cleaned and cleaned[0].islower():
         cleaned = cleaned[0].upper() + cleaned[1:]
@@ -571,26 +576,11 @@ async def agent_chat(request: Request):
             raw_model = req.model or ""
             if "(" in raw_model and raw_model.endswith(")"):
                 raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
-            primary_model = raw_model.strip() if raw_model.strip() else (os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b")
-            groq_key_1 = os.getenv("GROQ_API_KEY")
-            groq_key_2 = os.getenv("GROQ_API_KEY_2")
-            groq_key_3 = os.getenv("GROQ_API_KEY_3")
-            nvidia_key = os.getenv("NVIDIA_API_KEY")
-
-            candidates = []
-            if groq_key_1 and groq_key_1.strip():
-                candidates.append({"name": "Groq Primary API", "key": groq_key_1.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
-            if groq_key_2 and groq_key_2.strip():
-                candidates.append({"name": "Groq API 2", "key": groq_key_2.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
-            if groq_key_3 and groq_key_3.strip():
-                candidates.append({"name": "Groq API 3", "key": groq_key_3.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
-            if nvidia_key and nvidia_key.strip():
-                candidates.append({"name": "NVIDIA NIM API", "key": nvidia_key.strip(), "url": "https://integrate.api.nvidia.com/v1/chat/completions", "model": os.getenv("NVIDIA_LLM_MODEL", "openai/gpt-oss-120b")})
+            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
 
             response_text = None
             model_used = None
             is_fallback = False
-            last_error = None
 
             safe_user_content = user_content
             if len(safe_user_content) > 25000:
@@ -601,40 +591,28 @@ async def agent_chat(request: Request):
                 messages_list.append({"role": "system", "content": system_content})
             messages_list.append({"role": "user", "content": safe_user_content})
 
-            import requests
-            for idx, creds in enumerate(candidates):
-                step_name = f"llm_try_{idx+1}"
-                yield sse_event("progress", {"step": step_name, "message": f"Generating with {creds['name']} ({creds['model']})...", "icon": "sparkles"})
-                try:
-                    headers = {
-                        "Authorization": f"Bearer {creds['key']}",
-                        "Content-Type": "application/json"
-                    }
-                    payload = {
-                        "model": creds["model"],
-                        "messages": messages_list,
-                        "temperature": 0.1,
-                        "max_tokens": 4096
-                    }
+            # Route to the correct provider via the provider router
+            provider = provider_router.route(primary_model)
+            provider_name = provider.get_provider_name()
+            yield sse_event("progress", {"step": "llm_call", "message": f"Generating with {provider_name} ({primary_model})...", "icon": "sparkles"})
 
-                    resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        choices = data.get("choices", [])
-                        if choices:
-                            response_text = choices[0]["message"]["content"]
-                            model_used = creds["model"]
-                            is_fallback = (idx > 0)
-                            break
-                    else:
-                        print(f"  {creds['name']} returned HTTP {resp.status_code}: {resp.text[:200]}. Trying next Groq fallback key...")
-                        last_error = f"{creds['name']} HTTP {resp.status_code}"
-                except Exception as err:
-                    print(f"  {creds['name']} call failed: {err}. Trying next Groq fallback key...")
-                    last_error = f"{creds['name']} error: {err}"
+            try:
+                llm_result = provider.chat(
+                    messages=messages_list,
+                    model=primary_model,
+                    temperature=0.1,
+                    max_tokens=4096,
+                )
+                response_text = llm_result["content"]
+                model_used = llm_result["model_used"]
+                is_fallback = llm_result.get("is_fallback", False)
+            except LLMProviderError as provider_err:
+                logger.error(f"Provider {provider_name} failed: {provider_err}")
+                yield sse_event("error", {"message": f"{provider_name} failed: {str(provider_err)}"})
+                return
 
             if response_text is None:
-                yield sse_event("error", {"message": f"All primary and fallback models failed. Last error: {str(last_error)}"})
+                yield sse_event("error", {"message": "No response received from AI provider."})
                 return
 
             # Step 7: Parse response
@@ -661,6 +639,42 @@ async def agent_chat(request: Request):
                         "proposed_chunk": extracted_latex,
                         "explanation": "Extracted LaTeX document proposal."
                     }]
+
+            # Fallback for presentation requests if LLM output slide chip text without code
+            if not edits and is_new_doc_request:
+                clean_topic = re.sub(r'(?i)\b(?:create|make|turn|generate|a|an|the|ppt|presentation|slide|slides|deck|on|for|about)\b', '', req.user_prompt).strip()
+                topic_title = clean_topic.title() if clean_topic else "Presentation"
+                fallback_beamer = (
+                    "\\documentclass[aspectratio=169, 11pt]{beamer}\n"
+                    "\\usetheme{Madrid}\n"
+                    "\\usepackage{graphicx}\n\\usepackage{booktabs}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n\\usepackage{xcolor}\n\n"
+                    "\\definecolor{primary}{RGB}{15, 23, 42}\n"
+                    "\\definecolor{accent}{RGB}{0, 204, 104}\n"
+                    "\\definecolor{cardbg}{RGB}{240, 247, 255}\n\n"
+                    "\\setbeamercolor{structure}{fg=accent}\n"
+                    "\\setbeamercolor{frametitle}{fg=white, bg=primary}\n"
+                    "\\setbeamercolor{block title}{fg=white, bg=primary}\n"
+                    "\\setbeamercolor{block body}{bg=cardbg, fg=black}\n\n"
+                    f"\\title{{{topic_title}}}\n"
+                    f"\\subtitle{{Overview \\& Strategic Highlights}}\n"
+                    "\\author{Presentation}\n"
+                    "\\date{\\today}\n\n"
+                    "\\begin{document}\n\n"
+                    "\\begin{frame}\n  \\titlepage\n\\end{frame}\n\n"
+                    "\\begin{frame}{Agenda}\n  \\tableofcontents\n\\end{frame}\n\n"
+                    "\\section{Overview}\n"
+                    f"\\begin{{frame}}{{Overview of {topic_title}}}\n"
+                    "  \\begin{block}{Key Focus}\n"
+                    f"    Presentation overview and key points regarding {topic_title}.\n"
+                    "  \\end{block}\n"
+                    "\\end{frame}\n\n"
+                    "\\end{document}"
+                )
+                edits = [{
+                    "original_chunk": req.current_code or "",
+                    "proposed_chunk": fallback_beamer,
+                    "explanation": f"Generated 16:9 Beamer presentation for '{topic_title}'."
+                }]
 
             # Step 8: Compute edit line ranges for progress display
             if mode != "EDIT_DOCUMENT":
@@ -740,3 +754,12 @@ async def agent_chat(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/api/models")
+def get_available_models():
+    """
+    Returns the list of available LLM models grouped by provider.
+    Used by the frontend model selector dropdown.
+    """
+    return provider_router.get_available_models()
