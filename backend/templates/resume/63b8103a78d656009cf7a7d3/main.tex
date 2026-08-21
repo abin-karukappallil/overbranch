@@ -1,0 +1,217 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Cies Resume/CV
+% LaTeX Template
+% Version 1.1 (20/7/14)
+%
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% Original author:
+% Cies Breijs (cies@kde.nl)
+% https://github.com/cies/resume with extensive modifications by:
+% Vel (vel@latextemplates.com)
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/)
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[10pt,a4paper]{article} % Font size (10-12pt) and paper size (a4paper, letterpaper, legalpaper, etc)
+
+\include{structure} % Include structure.tex which contains packages and document layout definitions
+
+\hyphenation{Some-long-word} % Specify custom hyphenation points in words with dashes where you would like hyphenation to occur, or alternatively, don't put any dashes in a word to stop hyphenation altogether
+
+\begin{document} 
+
+%----------------------------------------------------------------------------------------
+%	NAME AND CONTACT INFORMATION
+%----------------------------------------------------------------------------------------
+
+\maintitle{John Smith}{November 20, 1987}  % Your name and date of birth or subtitle
+
+\noindent\href{mailto:john@smith.com}{john@smith.com}\bull % Your email address
+\textsmaller{+}1 (111) 111-1112\bull smith01 \textit{(Skype)}\bull % Your phone number(s) and Skype username
+\href{http://www.johnsmith.com}{www.johnsmith.com}\\ % Your URL
+123 Broadway\bull City, 12345\bull State\bull Country % Your address
+
+\spacedhrule{0.9em}{-0.4em} % Horizontal rule - the first bracket is whitespace before and the second is after
+
+%----------------------------------------------------------------------------------------
+%	SUMMARY SECTION
+%----------------------------------------------------------------------------------------
+
+\roottitle{Summary} % Root section title
+
+\vspace{-1.3em} % Reduce whitespace after the Summary heading and the two-column content
+
+\begin{multicols}{2}  % Start a two-column layout
+\noindent \textit{A summary of your interests, achievements, history, topic of study or any other short summary of your professional life.}\\\\
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nunc iaculis scelerisque vestibulum. Sed ut sapien et dui mollis condimentum. Phasellus enim lectus, dignissim vitae velit sit amet, porttitor tincidunt lectus. Vivamus adipiscing volutpat lacinia. Sed dui ipsum, iaculis id facilisis sed, dapibus quis lacus. Quisque blandit hendrerit malesuada. Nunc sollicitudin nisl nunc, vitae luctus leo tincidunt vel.
+
+Pellentesque bibendum convallis adipiscing. Suspendisse facilisis id massa a lacinia. Nullam odio nibh, placerat at fermentum in, tincidunt eu ipsum. Nullam adipiscing lacus id dui suscipit commodo. Vestibulum iaculis leo imperdiet, porta lorem eu, tempus tortor. Donec interdum risus ullamcorper, vestibulum nulla ut, tincidunt ante. Duis adipiscing auctor nisi, quis tempor tortor ornare aliquet. Aenean at tempor leo. Nam eleifend venenatis elit id aliquet. Mauris quis lacinia dolor, a posuere tellus. Suspendisse nec augue pretium, condimentum risus vitae, dignissim tellus. Proin gravida ante eget massa lacinia consequat. Integer pharetra vel ligula sed vulputate. Integer eget erat quam. Proin adipiscing lorem ac purus adipiscing, non ullamcorper nisi porttitor. 
+\end{multicols}
+
+\spacedhrule{0.5em}{-0.4em} % Horizontal rule - the first bracket is whitespace before and the second is after
+
+%----------------------------------------------------------------------------------------
+%	EXPERIENCE SECTION
+%----------------------------------------------------------------------------------------
+
+\roottitle{Experience} % Top level section
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{\href{http://www.intellecap.com}{Intellecap}/\href{http://istpl.in}{\acr{ISTPL}}}
+{\textsc{Mumbai, Pune \& Hyderabad, India}} {
+
+\headedsubsection % Job title entry for the current employer
+{\acr{IT} Consultant}
+{Nov '08 -- Feb '09}
+{\bodytext{Intellecap is a social-sector advisory firm serving corporates, non-profits, development agencies and governments working in developing markets. I assessed their software development team and methodologies, trained their developers and build several web applications. One of those apps is \href{http://www.mostfit.org}{Mostfit}, an open source \acr{MIS} for \href{http://en.wikipedia.org/wiki/Microcredit}{microcredit} lenders.}}
+
+\headedsubsection % Job title entry for the current employer
+{\acr{IT} \& Strategy Consultant}
+{Jan '10 -- Aug '11}
+{\bodytext{\href{http://www.mostfit.org}{Mostfit} became a success and I was called in to solve several technical challenges, look at potential growth strategies, and assist in making a business case for this product in a company of its own.}}
+
+\headedsubsection % Job title entry for the current employer
+{Chief Technology Officer}
+{Oct '11 -- present}
+{\bodytext{Joined the \acr{C}-family to make \href{http://www.mostfit.org}{Mostfit} the nr.1 software solution for micro credit lenders around the globe.}}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{\href{http://www.dharmapublishing.com}{Dharma Publishing}}
+{\textsc{near San Francisco (\acr{CA}), \acr{USA}}} {
+
+\headedsubsection % Job title entry for the current employer
+{\acr{IT} Consultant}
+{Nov '09 -- Dec '09}
+{\bodytext{Dharma Publishing, the worlds largest Buddhist publisher, is a non-profit, all-volunteer organization that helps to preserve Tibetan Buddhism and culture. I build them a \href{http://www.dharmapublishing.com}{web store}, and moved the infrastructure of all their web media to a nearly zero maintenance setup that they can maintain themselves.}}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{\href{http://www.kde.org}{KDE}}
+{\href{http://edu.kde.org/kturtle}{edu.kde.org/kturtle}} {
+
+\headedsubsection % Job title entry for the current employer
+{Software Engineer}
+{Dec '03 -- present}
+{\bodytext{KTurtle is an educational programming environment that simplifies learning the basics of programming. At early age I learned programming using \acr{MSX-LOGO}, by creating KTurtle I want to ensure future generation's access to a similar piece of software. I was honored when KTurtle got admitted to \acr{KDE} in 2003.}}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{\href{http://truetopiaproject.org}{Truetopia Project}}
+{\href{http://truetopiaproject.org}{truetopiaproject.org}} {
+
+\headedsubsection % Job title entry for the current employer
+{Initiator}
+{Nov '07 -- Apr '10}
+{\bodytext{The Truetopia Project is an open source web application (Rails) to facilitate self-governing communities. It provides a workflow for collaborative problem identification and solution design.}}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{\href{http://www.opendream.th}{Opendream}}
+{\textsc{Bangkok, Thailand}} {
+
+\headedsubsection % Job title entry for the current employer
+{\acr{IT} Consultant}
+{Aug '09 -- Sep '09}
+{\bodytext{Architected and largely implemented an open source media sharing web service (\acr{REST} api) that facilitates video uploads, transcoding and streaming. Coached their development team on system design, Ruby development (using Merb/Rails) and testing strategies such as \acr{TDD}/\acr{BDD}.}}
+}
+
+%------------------------------------------------
+
+\begin{center}
+\textit{Please refer to \href{http://www.linkedin.com/in/ciesbreijs}{my Linkedin profile} for the complete list of work experiences along with recommendations.}
+\end{center}
+
+%------------------------------------------------
+
+\spacedhrule{-0.2em}{-0.4em} % Horizontal rule - the first bracket is whitespace before and the second is after
+
+%----------------------------------------------------------------------------------------
+%	EDUCATION SECTION
+%----------------------------------------------------------------------------------------
+
+\roottitle{Education} % Top level section
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{Erasmus University Rotterdam}
+{\textsc{Rotterdam, The Netherlands}} {
+
+\headedsubsection % Job title entry for the current employer
+{Bachelor degree in Computer Science \& Economics}
+{2004 -- 2007}
+{\bodytext{Focussed on the economics of open source, rapid application development (\acr{RAD}) and the semantic web technology stack (\acr{RDF}/\acr{RDFS}, \acr{OWL} and \acr{SPARQL}).}}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{Technical University Delft}
+{\textsc{Delft, The Netherlands}} {
+
+\headedsubsection % Job title entry for the current employer
+{Industrial Design Engineering \textnormal{(discontinued)}}
+{2001 -- 2002} {}
+}
+
+%------------------------------------------------
+
+\headedsection % Employer name which can include a hyperlink and location/URL on the right side of the page
+{Libanon Lyceum}
+{\textsc{Rotterdam, The Netherlands}} {
+
+\headedsubsection % Job title entry for the current employer
+{\acr{VWO} \textnormal{(pre-university secondary education)}}
+{1994 -- 2000} {}
+}
+
+\spacedhrule{0.5em}{-0.4em} % Horizontal rule - the first bracket is whitespace before and the second is after
+
+%----------------------------------------------------------------------------------------
+%	SKILLS SECTION
+%----------------------------------------------------------------------------------------
+
+\roottitle{Skills} % Top level section
+
+\inlineheadsection % Special section that has an inline header with a 'hanging' paragraph
+{Technical specialties:}
+{Software design and implementation, with(in) a team. I love Ruby/Python/Java/C++ and flirt regularly with Haskell. Solid knowledge of web technologies:\ \acr{HTML+CSS}, \acr{XML}, \acr{RDF}, \acr{REST}, \acr{SOAP} and JavaScript (mainly jQuery). Linux administration skills:\ bash, Apache, My\acr{SQL}, Postgres\acr{SQL}, virtualization/cloud (Open\acr{VZ}, \acr{VM}ware, \acr{KVM}, Xen and \acr{EC}2), datacenter automation (Puppet and Chef), continuous integration (Hudson/Jenkins).}
+
+%------------------------------------------------
+
+\inlineheadsection % Special section that has an inline header with a 'hanging' paragraph
+{Natural languages:}
+{Dutch \textit{(mother tongue)}, English \textit{(full professional proficiency)}, German \textit{(limited working proficiency)}, French \textit{(elementary proficiency)} and Mandarin Chinese \textit{(beginner)}.}
+
+%------------------------------------------------
+
+\spacedhrule{1.6em}{-0.4em} % Horizontal rule - the first bracket is whitespace before and the second is after
+
+%----------------------------------------------------------------------------------------
+%	INTERESTS SECTION
+%----------------------------------------------------------------------------------------
+
+\roottitle{Interests} % Top level section
+
+\inlineheadsection % Special section that has an inline header with a 'hanging' paragraph
+{Non-exhaustive and in alphabetical order:}
+{Art, Buddhism, cryptography, music, open source, philosophy, software engineering, travel, typography (e.g.\ graphic design, \LaTeX), \acr{UI}/\acr{UX} and vegetarian cooking.}
+
+%----------------------------------------------------------------------------------------
+
+\end{document}

@@ -1,0 +1,126 @@
+\documentclass[
+    11pt, % Set the default font size, options include: 8pt, 9pt, 10pt, 11pt, 12pt, 14pt, 17pt, 20pt
+    aspectratio=169, % Set aspect ratio to 16:9 widescreen
+]{beamer}
+
+\graphicspath{{Images/}{./}} % Specifies where to look for included images
+\usepackage{booktabs} % Allows the use of \toprule, \midrule and \bottomrule
+\usepackage{xcolor}
+
+%%% Customize Theme %%%%%%%%%%%%%%%%%%%%%%
+\usetheme{Madrid} % Madrid theme customized with Virginia Tech colors
+
+\definecolor{myRed}{RGB}{120,4,4}
+\definecolor{myOrange}{RGB}{227, 125, 0}
+
+% Structure and Palette Colors
+\setbeamercolor*{structure}{bg=myRed!20,fg=myRed}
+
+\setbeamercolor*{palette primary}{fg=white,bg=myRed}
+\setbeamercolor*{palette secondary}{fg=white,bg=myRed!85}
+\setbeamercolor*{palette tertiary}{fg=white,bg=myRed!70}
+
+% Slide Title & Header Bar
+\setbeamercolor{frametitle}{bg=myRed,fg=white}
+
+% Title Slide Header Box
+\setbeamercolor{title}{bg=myRed,fg=white}
+\setbeamercolor{subtitle}{fg=white}
+\setbeamercolor{author}{fg=black}
+\setbeamercolor{institute}{fg=black}
+\setbeamercolor{date}{fg=black}
+\setbeamertemplate{title page}[default][colsep=-4bp,rounded=true,shadow=true]
+
+% Navigation Miniframes & Footer Bar
+\setbeamercolor{section in head/foot}{fg=myOrange, bg=white}
+\setbeamercolor{author in head/foot}{bg=myRed,fg=white}
+\setbeamercolor{title in head/foot}{bg=myRed,fg=white}
+\setbeamercolor{date in head/foot}{bg=myRed,fg=white}
+
+% Specific Colors
+\setbeamercolor{item projected}{bg=myOrange,fg=white}
+\setbeamertemplate{enumerate items}[circle]
+\setbeamercolor{itemize item}{fg=myOrange}
+\setbeamercolor{itemize subitem}{fg=myOrange}
+\setbeamercolor{button}{bg=myOrange}
+
+% Table of Contents Styling
+\setbeamercolor{section in toc}{fg=black}
+\setbeamercolor{subsection in toc}{fg=black}
+\setbeamercolor{section in toc projected}{bg=myOrange,fg=white}
+\setbeamertemplate{sections/subsections in toc}[sections numbered]
+
+% Block Colors
+\setbeamercolor{block title}{bg=myOrange, fg=white}
+\setbeamercolor{block body}{bg=myOrange!20}
+
+%---------------------------------------------------------
+%	SELECT FONT THEME & FONTS
+%---------------------------------------------------------
+\usefonttheme{default}
+\usepackage{palatino}
+\useinnertheme{circles}
+\useoutertheme{miniframes}
+
+%---------------------------------------------------------
+%	PRESENTATION INFORMATION
+%---------------------------------------------------------
+
+\title[Presentation Overview]{Project Presentation Title}
+\subtitle{Mock Demonstration Deck}
+\author[Author Name]{Author: Presentation Speaker}
+
+\institute[]{Department of Research \\ \smallskip \textit{speaker@university.edu}}
+\date[\today]{\today}
+
+\logo{\includegraphics[width=1.5cm]{Hokie2.png}}
+
+%---------------------------------------------------------
+\begin{document}
+
+% Slide 1: Title Slide
+\begin{frame}
+	\titlepage
+\end{frame}
+
+% Slide 2: Table of Contents
+\section{Overview}
+\begin{frame}{Presentation Agenda}
+	\tableofcontents
+\end{frame}
+
+% Slide 3: Executive Summary & Highlights
+\section{Key Highlights}
+\begin{frame}{Executive Summary}
+	\begin{block}{Project Goals}
+		This presentation template demonstrates clean widescreen formatting, customized color palettes, and structured Beamer slides.
+	\end{block}
+
+	\vspace{0.5em}
+	\begin{columns}[t]
+		\begin{column}{0.5\textwidth}
+			\textbf{Core Features:}
+			\begin{itemize}
+				\item Widescreen 16:9 aspect ratio
+				\item Custom color palette \& title blocks
+				\item Clean section navigation
+			\end{itemize}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\centering
+			\includegraphics[width=2.5cm]{Hokie2.png}
+		\end{column}
+	\end{columns}
+\end{frame}
+
+% Slide 4: Conclusion & Q&A
+\section{Conclusion}
+\begin{frame}{Conclusion \& Q\&A}
+	\centering
+	\Large \textbf{Thank You for Your Attention!} \par
+	\vspace{1.5em}
+	\normalsize
+	Feel free to replace this mock text with your presentation slides, diagrams, and research findings.
+\end{frame}
+
+\end{document}
