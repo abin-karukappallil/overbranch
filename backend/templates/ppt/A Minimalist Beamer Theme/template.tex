@@ -1,38 +1,6 @@
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-% Focus Beamer Presentation
-% LaTeX Template
-% Version 1.0 (8/8/18)
-%
-% This template has been downloaded from:
-% http://www.LaTeXTemplates.com
-%
-% Original author:
-% Pasquale Africa (https://github.com/elauksap/focus-beamertheme) with modifications by 
-% Vel (vel@LaTeXTemplates.com)
-%
-% Template license:
-% GNU GPL v3.0 License
-%
-% Important note:
-% The bibliography/references need to be compiled with bibtex.
-%
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%----------------------------------------------------------------------------------------
-%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
-%----------------------------------------------------------------------------------------
-
 \documentclass[aspectratio=169]{beamer}
 
-\usetheme{focus} % Use the Focus theme supplied with the template
-% Add option [numbering=none] to disable the footer progress bar
-% Add option [numbering=fullbar] to show the footer progress bar as always full with a slide count
-
-% Uncomment to enable the ice-blue theme
-%\definecolor{main}{RGB}{92, 138, 168}
-%\definecolor{background}{RGB}{240, 247, 255}
-
-%------------------------------------------------
+\usetheme{focus} % Use the Focus theme
 
 \usepackage{booktabs} % Required for better table rules
 
@@ -40,193 +8,74 @@
 %	 TITLE SLIDE
 %----------------------------------------------------------------------------------------
 
-\title{Focus: \\ A Minimalist Beamer Theme}
+\title{Focus: \\ Minimalist Presentation}
 
-\subtitle{Subtitle}
+\subtitle{Mock Demonstration Deck}
 
-\author{Author 1 \\ Author 2}
+\author{Author Name}
 
-\titlegraphic{\includegraphics[scale=1.25]{Images/focuslogo.pdf}} % Optional title page image, comment this line to remove it
+\titlegraphic{\includegraphics[scale=1.25]{Images/focuslogo.pdf}}
 
-\institute{Institute Name \\ Institute Address}
+\institute{Research Institute \\ City, Country}
 
-\date{dd mm yyyy}
+\date{\today}
 
-%------------------------------------------------
-
+%----------------------------------------------------------------------------------------
 \begin{document}
 
-%------------------------------------------------
-
+% Slide 1: Title Slide
 \begin{frame}
-	\maketitle % Automatically created using the information in the commands above
+	\maketitle
 \end{frame}
 
-%----------------------------------------------------------------------------------------
-%	 SECTION 1
-%----------------------------------------------------------------------------------------
+% Slide 2: Minimalist Overview
+\section{Overview}
 
-\section{Section 1} % Section title slide, unnumbered
-
-%------------------------------------------------
-
-\begin{frame}{Simple Slide}
-	This is a simple slide.
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}[plain]{Plain Slide}
-	This is a slide with the plain style and it is numbered.
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}[t]
-	This slide has an empty title and is aligned to top.
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}[noframenumbering]{No Slide Numbering}
-	This slide is not numbered and is citing reference \cite{knuth74}.
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}{Typesetting and Math}
-	The packages \texttt{inputenc} and \texttt{FiraSans}\footnote{\url{https://fonts.google.com/specimen/Fira+Sans}}\textsuperscript{,}\footnote{\url{http://mozilla.github.io/Fira/}} are used to properly set the main fonts.
+\begin{frame}{Project Overview}
+	This template provides a sleek, minimalist presentation style with clean typography and focused slide transitions.
 	\vfill
-	This theme provides styling commands to typeset \emph{emphasized}, \alert{alerted}, \textbf{bold}, \textcolor{example}{example text}, \dots
-	\vfill
-	\texttt{FiraSans} also provides support for mathematical symbols:
-	\begin{equation*}
-		e^{i\pi} + 1 = 0.
-	\end{equation*}
+	\begin{itemize}
+		\item \textbf{Minimalist Layout}: Clean headers and progress footbar
+		\item \textbf{Focus Blocks}: Highlighting key takeaways
+		\item \textbf{Widescreen Support}: Native 16:9 aspect ratio
+	\end{itemize}
 \end{frame}
 
-%----------------------------------------------------------------------------------------
-%	 SECTION 2
-%----------------------------------------------------------------------------------------
+% Slide 3: Highlights & Focus Block
+\section{Highlights}
 
-\section{Section 2}
-
-%------------------------------------------------
-
-\begin{frame}{Blocks}
-	These blocks are part of 1 slide, to be displayed consecutively.
-	\begin{block}{Block}
-		Text.
+\begin{frame}{Key Performance \& Features}
+	\begin{block}{Demonstration Block}
+		Replace this sample text with your presentation arguments, equations, or research findings.
 	\end{block}
-	\pause % Automatically creates a new "page" split between the above and above + below
-	\begin{alertblock}{Alert block}
-		Alert \alert{text}.
-	\end{alertblock}
-	\pause % Automatically creates a new "page" split between the above and above + below
-	\begin{exampleblock}{Example block}
-		Example \textcolor{example}{text}.
-	\end{exampleblock}
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}{Columns}
-	\begin{columns}
-		\column{0.5\textwidth}
-			This text appears in the left column and wraps neatly with a margin between columns.
-		
-		\column{0.5\textwidth}
-			\includegraphics[width=\linewidth]{Images/placeholder.jpg}
-	\end{columns}
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}{Lists}
-	\begin{columns}[T, onlytextwidth] % T for top align, onlytextwidth to suppress the margin between columns
-		\column{0.33\textwidth}
-			Items:
-			\begin{itemize}
-				\item Item 1
-				\begin{itemize}
-					\item Subitem 1.1
-					\item Subitem 1.2
-				\end{itemize}
-				\item Item 2
-				\item Item 3
-			\end{itemize}
-		
-		\column{0.33\textwidth}
-			Enumerations:
-			\begin{enumerate}
-				\item First
-				\item Second
-				\begin{enumerate}
-					\item Sub-first
-					\item Sub-second
-				\end{enumerate}
-				\item Third
-			\end{enumerate}
-		
-		\column{0.33\textwidth}
-			Descriptions:
-			\begin{description}
-				\item[First] Yes.
-				\item[Second] No.
-			\end{description}
-	\end{columns}
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}{Table}
-	\begin{table}
-		\centering % Centre the table on the slide
-		\begin{tabular}{l c}
-			\toprule
-			Discipline & Avg. Salary \\
-			\toprule
-			\textbf{Engineering} & \textbf{\$66,521} \\
-			Computer Sciences & \$60,005\\
-			Mathematics and Sciences & \$61,867\\
-			Business & \$56,720\\
-			Humanities \& Social Sciences & \$56,669\\
-			Agriculture and Natural Resources & \$53,565\\
-			Communications & \$51,448\\
-			\midrule
-			\textbf{Average for All Disciplines} & \textbf{\$58,114}\\
-			\bottomrule
-		\end{tabular}
-	\caption{Table caption}
-	\end{table}
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}[focus]
-	Thanks for using \textbf{Focus}!
-\end{frame}
-
-%----------------------------------------------------------------------------------------
-%	 CLOSING/SUPPLEMENTARY SLIDES
-%----------------------------------------------------------------------------------------
-
-\appendix
-
-\begin{frame}{References}
-	\nocite{*} % Display all references regardless of if they were cited
-	\bibliography{example.bib}
-	\bibliographystyle{plain}
-\end{frame}
-
-%------------------------------------------------
-
-\begin{frame}{Backup Slide}
-	This is a backup slide, useful to include additional materials to answer questions from the audience.
+	
 	\vfill
-	The package \texttt{appendixnumberbeamer} is used to refrain from numbering appendix slides.
+	\begin{columns}[t]
+		\begin{column}{0.5\textwidth}
+			\alert{High Priority Item 1}
+			\begin{itemize}
+				\item Performance analysis
+				\item Quantitative results
+			\end{itemize}
+		\end{column}
+		\begin{column}{0.5\textwidth}
+			\textbf{High Priority Item 2}
+			\begin{itemize}
+				\item System architecture
+				\item Module integration
+			\end{itemize}
+		\end{column}
+	\end{columns}
 \end{frame}
 
-%----------------------------------------------------------------------------------------
+% Slide 4: Conclusion
+\section{Conclusion}
+
+\begin{frame}{Conclusion}
+	\centering
+	\Large \textbf{Questions \& Answers} \par
+	\vspace{1.5em}
+	\normalsize Thank you for using the Minimalist Focus Theme!
+\end{frame}
 
 \end{document}
