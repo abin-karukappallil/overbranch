@@ -1,0 +1,226 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+% \usepackage[utf8]{inputenc}
+% \usepackage{xeCJK}
+\usepackage{graphicx}
+\usepackage {mathtools}
+% \usepackage{utopia} %font utopia imported
+\usetheme{CambridgeUS}
+\usecolortheme{dolphin}
+
+% set colors
+\definecolor{myNewColorA}{RGB}{255,189,0}
+\definecolor{myNewcolorA}{RGB}{255,189,0}
+\definecolor{myNewcolorA}{RGB}{255,189,0}
+\setbeamercolor{block title}{bg=myNewColorA,fg=black}
+\setbeamercolor{block body}{bg=myNewColorA!20,fg=black}
+\setbeamercolor{block title alerted}{bg=black, fg=myNewColorA}
+\setbeamercolor{block body alerted}{bg=black!20, fg=black}
+
+\setbeamercolor*{block title example}{bg=myNewColorA, fg = black}
+\setbeamercolor*{block body example}{bg=myNewColorA!20, fg = black}
+\usebeamercolor[myNewColorA]{block title alerted}
+\setbeamercolor*{palette primary}{bg=myNewcolorA}
+\setbeamercolor*{palette secondary}{bg=myNewcolorA, fg = white}
+\setbeamercolor*{palette tertiary}{bg=myNewColorA, fg = white}
+\setbeamercolor*{titlelike}{fg=myNewColorA}
+\setbeamercolor*{title}{bg=myNewColorA}
+\setbeamercolor*{item}{fg=myNewColorA}
+\setbeamercolor*{caption name}{fg=myNewColorA}
+\usefonttheme{professionalfonts}
+\usepackage{natbib}
+\usepackage{hyperref}
+%------------------------------------------------------------
+\titlegraphic{\includegraphics[height=1.5cm]{photo.png}} 
+
+\setbeamerfont{title}{size=\large}
+\setbeamerfont{subtitle}{size=\small}
+\setbeamerfont{author}{size=\small}
+\setbeamerfont{date}{size=\small}
+\setbeamerfont{institute}{size=\small}
+\title[University of Wisconsin Milwaukee]{Enter Your Study Title Here}
+\subtitle{ Your Subtitle is Here}
+\author[Your Name]{Your Name}
+
+\institute[]{University of Wisconsin Milwaukee}
+\date[\textcolor{white}{\today} ]
+{\today}
+
+%------------------------------------------------------------
+%This block of commands puts the table of contents at the 
+%beginning of each section and highlights the current section:
+%\AtBeginSection[]
+%{
+%  \begin{frame}
+%    \frametitle{Contents}
+%    \tableofcontents[currentsection]
+%  \end{frame}
+%}
+\AtBeginSection[]{
+  \begin{frame}
+  \vfill
+  \centering
+  \begin{beamercolorbox}[sep=8pt,center,shadow=true,rounded=true]{title}
+    \usebeamerfont{title}\insertsectionhead\par%
+  \end{beamercolorbox}
+  \vfill
+  \end{frame}
+}
+%------------------------------------------------------------
+\begin{document}
+%The next statement creates the title page.
+\frame{\titlepage}
+\begin{frame}
+\frametitle{Table of Contents}
+\tableofcontents
+\end{frame}
+
+%------------------------------------------------------------
+\section{Introduction}
+    \begin{frame}{Introduction}
+    \frametitle{Introduction}
+        \begin{itemize}
+            \item Point A
+            \item Point B
+        \begin{itemize}
+            \item part B.1: adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+            \item part B.2: Lorem ipsum dolor sit amet, consectetur 
+        \end{itemize}
+            \item Point C: Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+            \item Point D: Sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+        \end{itemize}
+    \end{frame}
+\section{Literature Review}
+
+\begin{frame}{Literature Review}
+    
+	
+    \begin{itemize}
+        \item  Study (Last Name, 2019) discovers ...
+        \item  Study (Last Name, 2020) propose a system that ...
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Literature Review}
+    \frametitle{Literature Review in Two Columns}
+    \begin{columns}
+    
+    \column{0.4\textwidth}
+    Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+    
+    \column{0.4\textwidth}
+    Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+    
+    \end{columns}
+\end{frame}
+
+\begin{frame}{Literature Review}
+    \frametitle{Pictures from Literature}
+    \begin{columns}
+        \column{0.4\textwidth}
+        \begin{figure}
+        \includegraphics[height=0.8\textwidth]{mascot.jpg}
+        \caption{panther!}
+        \end{figure}
+        \column{0.4\textwidth}
+        \begin{figure}
+        \includegraphics[height=0.8\textwidth]{panther.jpeg}
+        \caption{panther!}
+        \end{figure}
+    
+    \end{columns}
+\end{frame}
+
+
+\section{Methods}
+    \begin{frame}{Acronyms and Abbreviations}
+     \begin{description}
+        \item[API] Application Programming Interface
+        \item[LAN] Local Area Network
+        \item[ASCII] American Standard Code for Information Interchange
+    \end{description}
+    \end{frame}
+
+
+\section{Results}
+\begin{frame}{Results}
+	\begin{enumerate}
+	    \item This is your first \textbf{Bolded} Results.  
+         \item This is your first \textit{Italic} Results.  
+         \item This is your third \underline{underlined} Results.
+        
+	\end{enumerate}
+\end{frame}
+\begin{frame}{Results}
+
+\begin{block}{Block }
+Lorem ipsum dolor sit amet, consectetur adipisicing elit, 
+sed do eiusmod tempor incididunt ut labore et 
+dolore magna aliqua.
+\end{block}
+
+\begin{alertblock}{Alert}
+Lorem ipsum dolor sit amet, consectetur adipisicing elit, 
+sed do eiusmod tempor incididunt ut labore et 
+dolore magna aliqua.
+\end{alertblock}
+
+\begin{definition}
+A prime number is a number that...
+\end{definition}
+
+\begin{example}
+Lorem ipsum dolor sit amet, consectetur adipisicing elit, 
+sed do eiusmod tempor incididunt ut labore et
+dolore magna aliqua.
+\end{example}
+
+\end{frame}
+
+\begin{frame}{Results}
+    \begin{table}
+        \begin{tabular}{l | c | c | c | c }
+        Competitor Name & Swim & Cycle & Run & Total \\
+        \hline \hline
+        John T & 13:04 & 24:15 & 18:34 & 55:53 \\ 
+        Norman P & 8:00 & 22:45 & 23:02 & 53:47\\
+        Alex K & 14:00 & 28:00 & n/a & n/a\\
+        Sarah H & 9:22 & 21:10 & 24:03 & 54:35 
+        \end{tabular}
+        \caption{Triathlon results}
+    \end{table}
+\end{frame}
+
+\begin{frame}{Results}
+    \begin{theorem}[Pythagoras] 
+      $ a^2 + b^2 = c^2$
+    \end{theorem}
+    \begin{corollary}
+     $ x + y = y + x  $
+    \end{corollary}
+    \begin{proof}
+     $\omega +\phi = \epsilon $
+    \end{proof}
+\end{frame}
+
+
+\section{Conclusion}
+
+\begin{frame}{Conclusion}
+    \frametitle{Your Conclusion Title}
+	\begin{itemize}
+	    \item Conclusion 1: Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+            \item Conclusion 2: Dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+            \item Conclusion 3: Consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+	\end{itemize}
+\end{frame}
+
+
+\section*{Acknowledgement}  
+\begin{frame}
+\textcolor{myNewColorA}{\Huge{\centerline{Thank you!}}}
+\end{frame}
+
+\end{document}
+
+
+

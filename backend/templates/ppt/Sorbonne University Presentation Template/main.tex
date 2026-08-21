@@ -1,0 +1,133 @@
+\documentclass[compress,xcolor=table,aspectratio=169]{beamer}
+
+% Packages
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{datetime}
+
+% Possible options of the package (add/remove below in \usetheme call):
+%  - nosectionpages: no pages between sections
+%  - flama: use flama font, requires xelatex/lualatex + the font to compile
+%  - compressminiframes: put the heading list bullets indications pages on 1 line
+\usetheme[compressminiframes]{sorbonne}
+
+% Title page
+\title{Lorem Ipsum \newline Dolor Sit Amet}
+\foottitle{Lorem Ipsum Dolor Sit Amet} % optional, printed at the bottom of the slides, by default same as title, can be useful to rewrite when title has a newline for example
+\subtitle{Subtitle} % optional subtitle
+\date{\formatdate{22}{03}{2018}}
+\author{Prénom Nom}
+% \institute{LIP6 - Sorbonne Université} % Optional
+
+% Biblatex
+\usepackage[backend=bibtex, style=authoryear, citestyle=authoryear]{biblatex}
+\bibliography{library.bib}
+\renewcommand*{\bibfont}{\footnotesize}
+
+
+%%%%
+%% BEGIN OF SLIDES
+%%%%
+
+\begin{document}
+
+\begin{frame}[plain]
+	\titlepage
+	\setcounter{framenumber}{0}
+\end{frame}
+
+
+\section{Noise filtering in UPMC Food-101} \subsection{}
+
+\begin{frame}{Principle}
+	
+	\begin{alertblock}{The problem}
+		
+		\begin{itemize}
+			\item
+			UPMC Food-101 has been crawled from Google Images
+			\item
+			It contains a certain amount of noise
+		\end{itemize}
+		
+	\end{alertblock}
+	
+	\begin{block}{The idea}
+		
+		\begin{itemize}
+			\item
+			Creating bags from images of 1 class (e.g.~pizza)
+			\item
+			Creating bags for ``rest'' class
+			\item
+			Defining the expected level of noise in the pizza bags
+			\item
+			Using \emph{Learning with Label Proportions} models to detect noise
+		\end{itemize}
+		
+	\end{block}
+	
+\end{frame}
+
+\begin{frame}{Experimentations}
+	
+	\begin{block}{Protocol}
+		
+		\begin{itemize}
+			\item
+			\textbf{Dataset:}
+			\((x_i, y_i, y_i^*) \in \mathbb{R}^p \times \{-1,1\} \times \{-1,1\},\quad i=1..n\)
+			
+			\begin{itemize}
+				\item
+				\(x_i\) features, \(y_i\) noisy label, \(y_i^*\) true label (not
+				available for training)
+			\end{itemize}
+			\item
+			\textbf{Create bags:} Create bags \(b_j\) of 30 points having the same
+			\(y_i\) and give them a proportion of positive points \(p_j\)
+			\item
+			\textbf{Training:} Train the SyMIL model on bags and train an SVM on
+			\((b_j, p_j)\) / \((x_i, y_i)\)
+			\item
+			\textbf{Evaluation:} Use the decision frontiers of SyMIL / SVM models
+			to reclassify each \(x_i\)s by predicting \(\hat{y}_i^*\), and compare
+			with \(y_i^*\)
+		\end{itemize}
+		
+	\end{block}
+	
+\end{frame}
+
+\begin{frame}{Some papers for noisy images datasets}
+	
+	\begin{exampleblock}{\citetitle{Azadi2015} \cite{Azadi2015}}
+		
+		\begin{itemize}
+			\item
+			Define a regularized loss for training the CNN
+			\item
+			Can be seen as looking for the label of similar images for
+			regularization
+			\item
+			Results slightly better than Sukhbaatar model
+		\end{itemize}
+		
+	\end{exampleblock}
+	
+\end{frame}
+
+\section{References} \subsection{}
+
+\begin{frame}[allowframebreaks]{References}
+	
+	\printbibliography[heading=none]
+	
+\end{frame}
+
+
+
+
+\end{document}
+
