@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 
 router = APIRouter()
 
-PPT_TEMPLATES_DIR = Path(os.path.join(os.path.dirname(__file__), "templates", "ppt")).resolve()
+PPT_TEMPLATES_DIR = Path(os.path.join(os.path.dirname(__file__), "templates")).resolve()
 
 
 def slugify(text: str) -> str:
@@ -28,8 +28,8 @@ def slugify(text: str) -> str:
 
 def discover_ppt_templates() -> List[Dict[str, Any]]:
     """
-    Scans backend/templates/ppt directory for presentation templates.
-    A valid template is any folder containing at least one .tex file.
+    Scans backend/templates directory (including ppt, resume, and letters subdirectories)
+    for LaTeX templates. A valid template is any folder containing at least one .tex file.
     Reads optional metadata from metadata.json. If missing, auto-generates fields.
     """
     templates = []
@@ -37,10 +37,20 @@ def discover_ppt_templates() -> List[Dict[str, Any]]:
         logger.warning(f"Templates directory not found at {PPT_TEMPLATES_DIR}")
         return templates
 
+    dirs_to_check = []
     for item in sorted(PPT_TEMPLATES_DIR.iterdir()):
         if not item.is_dir():
             continue
+        # If folder directly has tex files, add it
+        if list(item.glob("*.tex")):
+            dirs_to_check.append(item)
+        else:
+            # Subfolders (e.g., templates/ppt/*, templates/resume/*, templates/letters/*)
+            for subitem in sorted(item.iterdir()):
+                if subitem.is_dir() and list(subitem.glob("*.tex")):
+                    dirs_to_check.append(subitem)
 
+    for item in dirs_to_check:
         tex_files = list(item.glob("*.tex")) + list(item.glob("**/*.tex"))
         if not tex_files:
             continue
@@ -58,17 +68,19 @@ def discover_ppt_templates() -> List[Dict[str, Any]]:
 
         tmpl_id = meta.get("id", auto_id)
         name = meta.get("name", folder_name)
+        
+        parent_name = item.parent.name.lower()
         folder_lower = folder_name.lower()
-        if "report" in folder_lower:
-            default_cat = "Report"
-        elif "letter" in folder_lower:
-            default_cat = "Letter"
-        elif "resume" in folder_lower or "cv" in folder_lower:
+        if "resume" in parent_name or "cv" in parent_name or "resume" in folder_lower or "cv" in folder_lower:
             default_cat = "Resume"
+        elif "letter" in parent_name or "letter" in folder_lower:
+            default_cat = "Letter"
+        elif "report" in folder_lower:
+            default_cat = "Report"
         else:
             default_cat = "PPT"
 
-        description = meta.get("description", "LaTeX presentation template")
+        description = meta.get("description", "LaTeX document template")
         category = meta.get("category", default_cat)
 
         has_thumbnail = any((item / f"thumbnail.{ext}").exists() for ext in ["png", "jpg", "jpeg", "webp"])
@@ -153,9 +165,10 @@ class UseTemplateRequest(BaseModel):
     name: Optional[str] = Field(None, description="Custom name for new project")
 
 
+@router.get("/api/templates")
 @router.get("/api/templates/ppt")
 def list_ppt_templates():
-    """Returns list of all LaTeX Beamer presentation templates discovered on disk."""
+    """Returns list of all LaTeX presentation, resume, and letter templates discovered on disk."""
     templates = discover_ppt_templates()
     return [
         {
@@ -170,6 +183,7 @@ def list_ppt_templates():
     ]
 
 
+@router.get("/api/templates/{template_id}/thumbnail")
 @router.get("/api/templates/ppt/{template_id}/thumbnail")
 def get_template_thumbnail(template_id: str):
     """Serves template thumbnail image or dynamically generated SVG preview."""
@@ -189,6 +203,7 @@ def get_template_thumbnail(template_id: str):
     return Response(content=svg_content, media_type="image/svg+xml")
 
 
+@router.post("/api/templates/{template_id}/use")
 @router.post("/api/templates/ppt/{template_id}/use")
 def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequest()):
     """
@@ -244,17 +259,19 @@ def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequ
         )
 
     # 2. Rename primary entry .tex file to main.tex
-    # Priority: template.tex -> pre.tex -> main.tex -> first top-level .tex -> first nested .tex
+    # Priority: main.tex -> cv.tex -> template.tex -> pre.tex -> formal_letter.tex -> first non-structure .tex
     main_tex_path = dest_dir / "main.tex"
     if not main_tex_path.exists():
-        if (dest_dir / "template.tex").exists():
-            (dest_dir / "template.tex").rename(main_tex_path)
-            logger.info(f"Renamed 'template.tex' to 'main.tex' in workspace {project_id}")
-        elif (dest_dir / "pre.tex").exists():
-            (dest_dir / "pre.tex").rename(main_tex_path)
-            logger.info(f"Renamed 'pre.tex' to 'main.tex' in workspace {project_id}")
-        else:
-            top_tex = list(dest_dir.glob("*.tex"))
+        renamed = False
+        for candidate_name in ["cv.tex", "template.tex", "pre.tex", "formal_letter.tex"]:
+            cand = dest_dir / candidate_name
+            if cand.exists():
+                cand.rename(main_tex_path)
+                logger.info(f"Renamed '{candidate_name}' to 'main.tex' in workspace {project_id}")
+                renamed = True
+                break
+        if not renamed:
+            top_tex = [f for f in dest_dir.glob("*.tex") if f.name != "structure.tex"]
             if top_tex:
                 top_tex[0].rename(main_tex_path)
                 logger.info(f"Renamed '{top_tex[0].name}' to 'main.tex' in workspace {project_id}")
