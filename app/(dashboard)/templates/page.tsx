@@ -165,7 +165,7 @@ export default function TemplatesPage() {
                     <img
                       src={tmpl.thumbnail}
                       alt={tmpl.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      className="w-full h-full object-contain object-top p-2 bg-zinc-950 group-hover:scale-105 transition-transform duration-500"
                     />
                     
                     {/* Category Badge overlay */}
