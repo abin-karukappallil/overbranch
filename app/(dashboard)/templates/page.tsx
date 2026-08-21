@@ -73,13 +73,13 @@ export default function TemplatesPage() {
         <div className="space-y-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#00CC68]/10 border border-[#00CC68]/20 text-[#00CC68] text-xs font-mono font-bold tracking-wider uppercase">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Presentation Gallery</span>
+            <span>Template Gallery</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-archivo font-black uppercase tracking-tight text-white flex items-center gap-3">
             Quick Start
           </h1>
           <p className="text-sm sm:text-base text-zinc-400 font-sans italic">
-            Start with a professional presentation template
+            Start with a professional LaTeX template for resumes, letters, or presentations
           </p>
         </div>
 
@@ -223,10 +223,10 @@ export default function TemplatesPage() {
           <DialogHeader className="space-y-2">
             <DialogTitle className="text-xl font-archivo font-bold text-white flex items-center gap-2">
               <FolderPlus className="w-5 h-5 text-[#00CC68]" />
-              Name Your Presentation
+              Name Your Project
             </DialogTitle>
             <DialogDescription className="text-xs text-zinc-400 font-sans leading-relaxed">
-              Give your new presentation workspace a name before initializing it from{" "}
+              Give your new workspace a name before initializing it from{" "}
               <span className="text-[#00CC68] font-mono font-semibold">{selectedTemplate?.name}</span>.
             </DialogDescription>
           </DialogHeader>
