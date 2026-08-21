@@ -10,6 +10,7 @@ import re
 import logging
 import base64
 import io
+import asyncio
 try:
     import pypdf
     HAS_PYPDF = True
@@ -424,7 +425,18 @@ async def agent_chat(request: Request):
         """Format a single SSE event."""
         return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
-    def pipeline_generator():
+    async def run_step_with_heartbeat(func, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, lambda: func(*args, **kwargs))
+        while not future.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
+            except asyncio.TimeoutError:
+                yield ": heartbeat\n\n"
+        res = await future
+        yield res
+
+    async def pipeline_generator():
         try:
             # Step 1: Categorize intent
             yield sse_event("progress", {"step": "analyze", "message": "Analyzing prompt...", "icon": "zap"})
@@ -461,13 +473,18 @@ async def agent_chat(request: Request):
                     ensure_qdrant_collection(qdrant)
 
                     yield sse_event("progress", {"step": "search", "message": "Searching document vectors...", "icon": "database"})
-                    retrieved_chunks = retriever.retrieve(
+                    async for item in run_step_with_heartbeat(
+                        retriever.retrieve,
                         qdrant_client=qdrant,
                         collection_name=COLLECTION_NAME,
                         query_embedding=prompt_embedding,
                         project_id=req.project_id,
                         file_path=req.file_path,
-                    )
+                    ):
+                        if isinstance(item, str) and item.startswith(":"):
+                            yield item
+                        else:
+                            retrieved_chunks = item
                     yield sse_event("progress", {"step": "retrieved", "message": f"Retrieved {len(retrieved_chunks)} chunks", "icon": "file-text"})
                 except Exception as qdrant_err:
                     yield sse_event("progress", {"step": "search_warn", "message": "Vector search unavailable, continuing...", "icon": "alert-triangle"})
@@ -597,12 +614,23 @@ async def agent_chat(request: Request):
             yield sse_event("progress", {"step": "llm_call", "message": f"Generating with {provider_name} ({primary_model})...", "icon": "sparkles"})
 
             try:
-                llm_result = provider.chat(
+                llm_result = None
+                async for item in run_step_with_heartbeat(
+                    provider.chat,
                     messages=messages_list,
                     model=primary_model,
                     temperature=0.1,
                     max_tokens=4096,
-                )
+                ):
+                    if isinstance(item, str) and item.startswith(":"):
+                        yield item
+                    else:
+                        llm_result = item
+
+                if not llm_result:
+                    yield sse_event("error", {"message": f"{provider_name} returned no result."})
+                    return
+
                 response_text = llm_result["content"]
                 model_used = llm_result["model_used"]
                 is_fallback = llm_result.get("is_fallback", False)
