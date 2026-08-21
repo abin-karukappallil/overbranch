@@ -69,31 +69,44 @@
 %	FONTS
 %----------------------------------------------------------------------------------------
 
-\usepackage{fontspec} % Required for specifying custom fonts under XeLaTeX
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+  \usepackage{ebgaramond}
+  \usepackage{libertine}
+  \newcommand{\cursivefont}{\itshape}
+  \newcommand{\FA}{}
+  \usepackage{fontawesome5}
+  \DeclareUnicodeCharacter{2009}{\,}
+  \DeclareUnicodeCharacter{200B}{}
+\else
+  \usepackage{fontspec} % Required for specifying custom fonts under XeLaTeX
 
-\defaultfontfeatures{Ligatures=TeX} % To support LaTeX ligatures (e.g. `` and --)
-\defaultfontfeatures{Path=Fonts/} % Specify the location of font files
+  \defaultfontfeatures{Ligatures=TeX} % To support LaTeX ligatures (e.g. `` and --)
+  \defaultfontfeatures{Path=Fonts/} % Specify the location of font files
 
-% The serif font used by default or explicitly with \textrm{}/\rmfamily
-\setmainfont{EBGaramond}[
+  % The serif font used by default or explicitly with \textrm{}/\rmfamily
+  \setmainfont{EBGaramond}[
 	UprightFont=*-Regular.ttf,
 	BoldFont=*-Bold.ttf,
 	BoldItalicFont=*-BoldItalic.ttf,
 	ItalicFont=*-Italic.ttf,
 	SmallCapsFont=*-SC.ttf
-]
+  ]
 
-% The sans serif font used explicitly with \textsf{}\sffamily
-\setsansfont{LibertinusSans}[
+  % The sans serif font used explicitly with \textsf{}\sffamily
+  \setsansfont{LibertinusSans}[
 	UprightFont=*-Regular.otf,
 	BoldFont=*-Bold.otf,
 	ItalicFont=*-Italic.otf
-]
+  ]
 
-\newfontfamily{\cursivefont}{freebooterscript} % New font family for the cursive font Freebooter Script
+  \newfontfamily{\cursivefont}{freebooterscript}[Path=Fonts/, Extension=.ttf] % New font family for the cursive font Freebooter Script
 
-\newfontfamily{\FA}{FontAwesome} % Create a new font family for FontAwesome icons
-\input{Fonts/fontawesomesymbols-xeluatex.tex} % Load a file to create shortcuts to the icons, see icon examples and their shortcuts in fontawesome.pdf in the Fonts folder
+  \newfontfamily{\FA}{FontAwesome}[Path=Fonts/, Extension=.otf] % Create a new font family for FontAwesome icons
+  \input{Fonts/fontawesomesymbols-xeluatex.tex} % Load a file to create shortcuts to the icons, see icon examples and their shortcuts in fontawesome.pdf in the Fonts folder
+\fi
 
 %----------------------------------------------------------------------------------------
 %	HEADERS & FOOTERS
