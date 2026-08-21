@@ -423,9 +423,9 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
         <div
           className={`${
             mobileMode === "code" ? "flex" : "hidden"
-          } md:flex ${showAiPanel ? "md:col-span-4" : "md:col-span-5"} border-r border-border/40 flex-col bg-background/50 relative overflow-hidden h-full`}
+          } md:flex ${showAiPanel ? "md:col-span-4" : "md:col-span-5"} border-r border-zinc-800 flex-col bg-zinc-950 relative overflow-hidden h-full`}
         >
-          <div className="h-8 px-3 border-b border-border/30 bg-muted/20 flex items-center justify-between text-xs font-mono text-muted-foreground shrink-0">
+          <div className="h-8 px-3 border-b border-zinc-800 bg-zinc-900/60 flex items-center justify-between text-xs font-mono text-zinc-400 shrink-0">
             <span className="text-foreground font-bold">{activeFileId}</span>
             <span className="px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 text-[10px] flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping" />

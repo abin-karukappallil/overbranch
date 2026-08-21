@@ -512,7 +512,7 @@ function PDFViewerFallbackShell({
     <div
       data-slot="pdf-viewer"
       className={cn(
-        "flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-background",
+        "flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-zinc-950 text-zinc-100",
         className
       )}
     >
@@ -546,7 +546,7 @@ function PDFViewerFallbackShell({
           onZoomChange={() => undefined}
         />
       ) : null}
-      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-muted/30">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden bg-zinc-950">
         {state === "loading" ? (
           <PDFViewerLoadingSkeleton sidebarInline sidebarOpen={sidebarOpen} />
         ) : null}
@@ -1030,7 +1030,7 @@ function PDFViewerToolbar({
   onZoomChange: (zoomLevel: number) => void
 }) {
   return (
-    <div className="flex min-h-12 w-full max-w-full items-center justify-between gap-1.5 border-b bg-background px-2.5 py-1.5 overflow-x-auto overflow-y-hidden shrink-0 select-none">
+    <div className="flex min-h-12 w-full max-w-full items-center justify-between gap-1.5 border-b border-zinc-800 bg-zinc-950 px-2.5 py-1.5 overflow-x-auto overflow-y-hidden shrink-0 select-none">
       <div className="flex min-w-0 items-center gap-1.5 shrink-0">
         <TooltipProvider>
           <ToolbarTooltip label="Toggle thumbnails">
@@ -2590,7 +2590,7 @@ function PDFViewerInner({
     <div
       data-slot="pdf-viewer"
       className={cn(
-        "flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-background",
+        "flex h-full max-h-full min-h-0 w-full flex-col overflow-hidden bg-zinc-950 text-zinc-100",
         className
       )}
     >
@@ -2623,7 +2623,7 @@ function PDFViewerInner({
       ) : null}
       <div
         ref={viewerShellRef}
-        className="relative flex min-h-0 flex-1 overflow-hidden bg-muted/30"
+        className="relative flex min-h-0 flex-1 overflow-hidden bg-zinc-950"
       >
         {isLoading ? (
           <PDFViewerLoadingSkeleton

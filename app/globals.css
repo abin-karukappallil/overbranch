@@ -57,46 +57,46 @@
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.985 0.006 85);
-  --foreground: oklch(0.14 0.02 85);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.14 0.02 85);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.14 0.02 85);
-  --primary: oklch(0.25 0.06 145);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.95 0.01 85);
-  --secondary-foreground: oklch(0.2 0.04 145);
-  --muted: oklch(0.95 0.01 85);
-  --muted-foreground: oklch(0.45 0.02 85);
-  --accent: oklch(0.94 0.02 145);
-  --accent-foreground: oklch(0.2 0.04 145);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.90 0.015 85);
-  --input: oklch(0.90 0.015 85);
-  --ring: oklch(0.48 0.18 145);
-  --chart-1: oklch(0.48 0.18 145);
-  --chart-2: oklch(0.55 0.16 50);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.98 0.006 85);
-  --sidebar-foreground: oklch(0.14 0.02 85);
-  --sidebar-primary: oklch(0.25 0.06 145);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.94 0.02 145);
-  --sidebar-accent-foreground: oklch(0.2 0.04 145);
-  --sidebar-border: oklch(0.90 0.015 85);
-  --sidebar-ring: oklch(0.48 0.18 145);
+  --background: oklch(0.11 0.018 135);
+  --foreground: oklch(0.96 0.005 85);
+  --card: oklch(0.14 0.02 135);
+  --card-foreground: oklch(0.96 0.005 85);
+  --popover: oklch(0.14 0.02 135);
+  --popover-foreground: oklch(0.96 0.005 85);
+  --primary: oklch(0.72 0.22 145);
+  --primary-foreground: oklch(0.11 0.018 135);
+  --secondary: oklch(0.17 0.02 135);
+  --secondary-foreground: oklch(0.96 0.005 85);
+  --muted: oklch(0.17 0.02 135);
+  --muted-foreground: oklch(0.64 0.02 135);
+  --accent: oklch(0.20 0.03 145);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.65 0.22 25);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.72 0.22 145);
+  --chart-1: oklch(0.72 0.22 145);
+  --chart-2: oklch(0.78 0.17 70);
+  --chart-3: oklch(0.75 0.18 70);
+  --chart-4: oklch(0.65 0.25 300);
+  --chart-5: oklch(0.65 0.24 16);
+  --sidebar: oklch(0.12 0.018 135);
+  --sidebar-foreground: oklch(0.96 0.005 85);
+  --sidebar-primary: oklch(0.72 0.22 145);
+  --sidebar-primary-foreground: oklch(0.11 0.018 135);
+  --sidebar-accent: oklch(0.18 0.02 135);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.22 145);
 
   /* Hallmark Garden theme tokens */
-  --color-paper: oklch(0.985 0.006 85);
-  --color-paper-2: oklch(0.95 0.01 85);
-  --color-paper-3: oklch(0.92 0.015 85);
-  --color-ink: oklch(0.14 0.02 85);
-  --color-ink-muted: oklch(0.45 0.02 85);
-  --color-accent-emerald: oklch(0.48 0.18 145);
-  --color-accent-copper: oklch(0.55 0.16 50);
+  --color-paper: oklch(0.11 0.018 135);
+  --color-paper-2: oklch(0.14 0.02 135);
+  --color-paper-3: oklch(0.18 0.02 135);
+  --color-ink: oklch(0.96 0.005 85);
+  --color-ink-muted: oklch(0.64 0.02 135);
+  --color-accent-emerald: oklch(0.72 0.22 145);
+  --color-accent-copper: oklch(0.78 0.17 70);
 }
 
 .dark {
