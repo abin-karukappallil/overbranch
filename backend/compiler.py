@@ -572,7 +572,7 @@ def compile_latex(
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
-                        timeout=12,
+                        timeout=35,
                         env=os.environ
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
