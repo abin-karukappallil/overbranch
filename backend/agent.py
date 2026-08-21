@@ -719,15 +719,36 @@ async def agent_chat(request: Request):
                         "explanation": "Extracted LaTeX document proposal."
                     }]
 
-            # If existing document code exists, align proposed frames to append before \end{document} if no verbatim match found
+            # If existing document code exists, align proposed frames
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
+                # Detect if user prompt or attached file requests replacing document content / converting PDF
+                is_replace_req = bool(req.attached_file) or any(kw in req.user_prompt.lower() for kw in [
+                    "replace", "overwrite", "convert", "use this", "from pdf", "from document", "change template", "with these", "with this", "new content", "slides content"
+                ])
+
                 for e in edits:
                     oc = e.get("original_chunk", "")
                     pc = e.get("proposed_chunk", "")
-                    # If proposed_chunk contains frame/content but no documentclass, and original_chunk doesn't match existing code
-                    # Fix any LLM aspectratio typos (e.g. aspectratio=160 -> aspectratio=169)
                     if pc and "aspectratio=160" in pc:
                         e["proposed_chunk"] = pc.replace("aspectratio=160", "aspectratio=169")
+
+                    # If replace/convert request and proposed code contains frames/title but not \documentclass
+                    if is_replace_req and pc and ("\\begin{frame}" in pc or "\\title" in pc) and "\\documentclass" not in pc:
+                        beg_doc_idx = req.current_code.find("\\begin{document}")
+                        title_idx = req.current_code.find("\\title")
+                        target_start = title_idx if (title_idx != -1 and (beg_doc_idx == -1 or title_idx < beg_doc_idx)) else (beg_doc_idx if beg_doc_idx != -1 else 0)
+                        end_doc_idx = req.current_code.rfind("\\end{document}")
+                        
+                        if target_start != -1 and end_doc_idx != -1 and end_doc_idx > target_start:
+                            target_orig = req.current_code[target_start:end_doc_idx + len("\\end{document}")]
+                            new_pc = pc.strip()
+                            if "\\end{document}" not in new_pc:
+                                new_pc = f"{new_pc}\n\n\\end{{document}}"
+                            e["original_chunk"] = target_orig
+                            e["proposed_chunk"] = new_pc
+                            continue
+
+                    # Otherwise, if original_chunk does not match verbatim, fallback to appending before \end{document}
                     if pc and "\\documentclass" not in pc and (not oc or oc not in req.current_code):
                         e["original_chunk"] = "\\end{document}"
                         e["proposed_chunk"] = f"{pc.strip()}\n\n\\end{{document}}"
