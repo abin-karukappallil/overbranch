@@ -394,6 +394,50 @@ def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
     return ("EDIT_DOCUMENT", True)
 
 
+def get_project_assets_info(project_id: str) -> str:
+    """
+    Scans the project directory for image assets (logos, photos, graphics) and style files,
+    formatting them as explicit context instructions for the AI prompt.
+    """
+    try:
+        from pathlib import Path
+        from project_storage import UPLOADS_BASE_DIR
+        safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
+        project_dir = UPLOADS_BASE_DIR / safe_project
+        if not project_dir.exists():
+            return ""
+
+        img_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".pdf"}
+        asset_files = []
+        style_files = []
+
+        for p in project_dir.rglob("*"):
+            if p.is_file():
+                rel_p = str(p.relative_to(project_dir))
+                ext = p.suffix.lower()
+                if ext in img_exts:
+                    asset_files.append(rel_p)
+                elif ext in {".sty", ".cls"}:
+                    style_files.append(rel_p)
+
+        parts = []
+        if asset_files:
+            asset_list = "\n".join([f"  - {f}" for f in sorted(asset_files)])
+            parts.append(
+                f"AVAILABLE PROJECT IMAGES & GRAPHIC ASSETS:\n"
+                f"{asset_list}\n\n"
+                f"IMAGE ATTACHMENT INSTRUCTION:\n"
+                f"When generating or editing presentation slides, PREFER incorporating relevant available image assets using \\includegraphics[height=...]{{filename}} or template logo commands where appropriate!"
+            )
+        if style_files:
+            parts.append(f"PROJECT TEMPLATE & STYLE FILES AVAILABLE: {', '.join(sorted(style_files))}")
+
+        return "\n\n".join(parts)
+    except Exception as e:
+        logger.warning(f"Error scanning project assets for {project_id}: {e}")
+        return ""
+
+
 @router.post("/api/agent/chat")
 async def agent_chat(request: Request):
     """
@@ -443,8 +487,11 @@ async def agent_chat(request: Request):
             mode, is_search_needed = categorize_user_intent(req.user_prompt)
             print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})")
 
-            # Fast-path: Bypass vector search for attached files & new presentation generation to save 2-3s
-            is_new_doc_request = any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
+            # Check if user document already exists
+            has_existing_code = bool(req.current_code and len(req.current_code.strip()) > 50 and "\\documentclass" in req.current_code)
+
+            # Fast-path: Bypass vector search for attached files & simple presentation requests to save 2-3s
+            is_new_doc_request = (not has_existing_code) and any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
             if req.attached_file or is_new_doc_request:
                 is_search_needed = False
 
@@ -495,9 +542,12 @@ async def agent_chat(request: Request):
             yield sse_event("progress", {"step": "context", "message": "Building document context...", "icon": "layers"})
             context_str = context_builder.build_context(retrieved_chunks)
 
-            # Step 4: Load memory
+            # Step 4: Load memory & project asset context
             conv_ctx = conversation_memory.get_conversation_context(req.project_id)
             proj_ctx = project_memory.get_project_context(req.project_id)
+            proj_assets = get_project_assets_info(req.project_id)
+
+            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
 
             if not project_memory.is_scanned(req.project_id):
                 try:
@@ -510,6 +560,7 @@ async def agent_chat(request: Request):
                         tex_content = tex_path.read_text(encoding="utf-8")
                         project_memory.scan_and_store(req.project_id, tex_content)
                         proj_ctx = project_memory.get_project_context(req.project_id)
+                        full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
                 except Exception:
                     pass
 
@@ -534,7 +585,7 @@ async def agent_chat(request: Request):
                 user_request=req.user_prompt,
                 retrieved_context=context_str,
                 conversation_context=conv_ctx,
-                project_context=proj_ctx,
+                project_context=full_proj_context,
                 attached_file_info=attached_info,
                 current_code=req.current_code,
             )
@@ -668,8 +719,21 @@ async def agent_chat(request: Request):
                         "explanation": "Extracted LaTeX document proposal."
                     }]
 
-            # Fallback for presentation requests if LLM output slide chip text without code
-            if not edits and is_new_doc_request:
+            # If existing document code exists, align proposed frames to append before \end{document} if no verbatim match found
+            if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
+                for e in edits:
+                    oc = e.get("original_chunk", "")
+                    pc = e.get("proposed_chunk", "")
+                    # If proposed_chunk contains frame/content but no documentclass, and original_chunk doesn't match existing code
+                    # Fix any LLM aspectratio typos (e.g. aspectratio=160 -> aspectratio=169)
+                    if pc and "aspectratio=160" in pc:
+                        e["proposed_chunk"] = pc.replace("aspectratio=160", "aspectratio=169")
+                    if pc and "\\documentclass" not in pc and (not oc or oc not in req.current_code):
+                        e["original_chunk"] = "\\end{document}"
+                        e["proposed_chunk"] = f"{pc.strip()}\n\n\\end{{document}}"
+
+            # Fallback for presentation requests on empty document if LLM output slide chip text without code
+            if not edits and is_new_doc_request and not has_existing_code:
                 clean_topic = re.sub(r'(?i)\b(?:create|make|turn|generate|a|an|the|ppt|presentation|slide|slides|deck|on|for|about)\b', '', req.user_prompt).strip()
                 topic_title = clean_topic.title() if clean_topic else "Presentation"
                 fallback_beamer = (
