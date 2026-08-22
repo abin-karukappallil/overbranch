@@ -101,8 +101,8 @@ export default function DashboardPage() {
     if (!newProjName.trim()) return;
     createMutation.mutate({
       name: newProjName.trim(),
-      description: "Seminar report & academic project workspace",
-      template: "Report",
+      description: "Custom LaTeX Workspace",
+      template: "None",
     });
   };
 
@@ -288,8 +288,8 @@ export default function DashboardPage() {
                       </div>
 
                       <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
-                        <span className="px-2 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 truncate min-w-0 flex-1 text-[11px]" title={project.template}>
-                          {project.template}
+                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                          {project.template || "None"}
                         </span>
 
                         <Link
@@ -337,8 +337,8 @@ export default function DashboardPage() {
                       </div>
 
                       <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
-                        <span className="px-2 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 truncate min-w-0 flex-1 text-[11px]" title={project.template}>
-                          {project.template}
+                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                          {project.template || "None"}
                         </span>
 
                         <Link

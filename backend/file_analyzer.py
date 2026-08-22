@@ -169,46 +169,59 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
 
     def _get_credential_candidates(self, model_override: Optional[str] = None) -> List[Dict[str, str]]:
         """
-        Collects all configured Groq and NVIDIA API keys for failover:
-        1. GROQ_API_KEY (Groq Primary)
-        2. GROQ_API_KEY_2 (Groq API 2 Fallback)
-        3. GROQ_API_KEY_3 (Groq API 3 Fallback)
-        4. NVIDIA_API_KEY (NVIDIA NIM API Fallback)
+        Collects all configured FreeLLM, Groq, and NVIDIA API credentials for failover:
+        1. FREELLM_API_KEY (FreeLLM Primary)
+        2. GROQ_API_KEY (Groq Primary Fallback)
+        3. GROQ_API_KEY_2 (Groq API 2 Fallback)
+        4. GROQ_API_KEY_3 (Groq API 3 Fallback)
+        5. NVIDIA_API_KEY (NVIDIA NIM API Fallback)
         """
-        default_model = model_override or os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b"
+        default_model = model_override or os.getenv("FREELLM_MODEL") or os.getenv("GROQ_LLM_MODEL") or "auto:smart"
         candidates = []
 
-        # Groq API Key 1
+        # FreeLLM Primary Endpoint (reads exclusively from env)
+        freellm_key = os.getenv("FREELLM_API_KEY")
+        freellm_base = (os.getenv("FREELLM_BASE_URL") or "").rstrip("/")
+        if freellm_key and freellm_key.strip() and freellm_base:
+            chat_url = f"{freellm_base}/chat/completions" if freellm_base.endswith("/v1") else f"{freellm_base}/v1/chat/completions"
+            candidates.append({
+                "name": "FreeLLM API Router",
+                "key": freellm_key.strip(),
+                "url": chat_url,
+                "model": default_model
+            })
+
+        # Groq API Key 1 Fallback
         key1 = os.getenv("GROQ_API_KEY")
         if key1 and key1.strip():
             candidates.append({
                 "name": "Groq Primary API",
                 "key": key1.strip(),
                 "url": "https://api.groq.com/openai/v1/chat/completions",
-                "model": default_model
+                "model": os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
             })
 
-        # Groq API Key 2
+        # Groq API Key 2 Fallback
         key2 = os.getenv("GROQ_API_KEY_2")
         if key2 and key2.strip():
             candidates.append({
                 "name": "Groq API 2",
                 "key": key2.strip(),
                 "url": "https://api.groq.com/openai/v1/chat/completions",
-                "model": default_model
+                "model": os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
             })
 
-        # Groq API Key 3
+        # Groq API Key 3 Fallback
         key3 = os.getenv("GROQ_API_KEY_3")
         if key3 and key3.strip():
             candidates.append({
                 "name": "Groq API 3",
                 "key": key3.strip(),
                 "url": "https://api.groq.com/openai/v1/chat/completions",
-                "model": default_model
+                "model": os.getenv("GROQ_LLM_MODEL", "openai/gpt-oss-120b")
             })
 
-        # NVIDIA NIM API Key
+        # NVIDIA NIM API Key Fallback
         nv_key = os.getenv("NVIDIA_API_KEY")
         if nv_key and nv_key.strip():
             candidates.append({
@@ -219,7 +232,7 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
             })
 
         if not candidates:
-            raise ValueError("No GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3, or NVIDIA_API_KEY configured in environment.")
+            raise ValueError("No FREELLM_API_KEY, GROQ_API_KEY, or NVIDIA_API_KEY configured in environment.")
 
         return candidates
 
@@ -249,7 +262,7 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
         if mime_type == "application/pdf" or ext == ".pdf":
             try:
                 import pypdf
-                reader = pypdf.PdfReader(file_path)
+                reader = pypdf.PdfReader(file_path, strict=False)
                 pages = []
                 for i in range(min(len(reader.pages), 40)):
                     txt = reader.pages[i].extract_text() or ""
@@ -261,7 +274,16 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
                         full_pdf_text = full_pdf_text[:16000] + f"\n...[TRUNCATED to 16k chars — total pages: {len(reader.pages)}]"
                     return clean_text(full_pdf_text)
             except Exception as e:
-                logger.warning(f"pypdf extraction failed for {filename}: {e}")
+                logger.warning(f"pypdf extraction notice for {filename}: {e}. Attempting raw stream recovery...")
+                try:
+                    with open(file_path, "rb") as pf:
+                        raw_bytes = pf.read()
+                        raw_text_parts = re.findall(r'[\x20-\x7E\s]{4,}', raw_bytes.decode('latin-1', errors='ignore'))
+                        clean_parts = [p.strip() for p in raw_text_parts if len(p.strip()) > 10 and not any(p.strip().startswith(k) for k in ('<<', '>>', 'obj', 'endobj', 'stream', 'endstream', '/Filter', '/Type', '/Font', 'xref', 'trailer'))]
+                        if clean_parts:
+                            return clean_text("\n".join(clean_parts[:200])[:16000])
+                except Exception:
+                    pass
 
         # Text, Code, CSV, JSON, LOG, TeX, HTML
         try:

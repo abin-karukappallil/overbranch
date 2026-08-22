@@ -39,6 +39,8 @@ import {
   Palette,
   Zap,
   ChevronDown,
+  PlusCircle,
+  Trash2,
 } from "lucide-react";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
@@ -131,7 +133,7 @@ const quickSymbols = [
   { label: "\\sum", insert: "\\sum_{i=1}^{N}" },
 ];
 
-export const DEFAULT_MODEL = "openai/gpt-oss-120b";
+export const DEFAULT_MODEL = "auto:smart";
 
 // ─── Model Selector Types & Config ───────────────────────────────────────────
 interface ModelOption {
@@ -216,7 +218,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const lastPositionRef = useRef<any>(null);
   const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("openai/gpt-oss-120b");
+  const [activeModelName, setActiveModelName] = useState<string>("auto:smart");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
   const monacoRef = useRef<any>(null);
@@ -234,12 +236,20 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         if (res.ok) {
           const data: ModelsResponse = await res.json();
           setAvailableModels(data.providers || []);
+          if (data.default_model) {
+            setActiveModelName(data.default_model);
+          }
         }
       } catch (err) {
         console.warn("Failed to fetch models:", err);
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
-          { name: "Groq", models: [{ id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: true }] },
+          { name: "FreeLLM API", models: [
+            { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
+            { id: "auto", label: "FreeLLM Auto Router" },
+            { id: "auto:fast", label: "FreeLLM Auto Fast" },
+            { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
+          ]},
           { name: "Gemini", models: [
             { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
             { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
@@ -360,6 +370,96 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   // No mock messages — only real conversation from API interactions
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  const projStorageKey = projectId || "proj-default";
+
+  // ─── Local Storage Chat & PDF Context Persistence ─────────────────────────
+  // Load chat messages from localStorage on mount / project change
+  useEffect(() => {
+    try {
+      const savedMessages = localStorage.getItem(`overbranch_${projStorageKey}_chat_messages`);
+      if (savedMessages) {
+        const parsed = JSON.parse(savedMessages);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load chat messages from localStorage:", e);
+    }
+  }, [projStorageKey]);
+
+  // Save chat messages to localStorage whenever they update
+  useEffect(() => {
+    try {
+      if (messages.length > 0) {
+        localStorage.setItem(`overbranch_${projStorageKey}_chat_messages`, JSON.stringify(messages));
+      } else {
+        localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
+      }
+    } catch (e) {
+      console.warn("Failed to save chat messages to localStorage:", e);
+    }
+  }, [messages, projStorageKey]);
+
+  // Load persistent attached PDF/file from localStorage on mount / project change
+  useEffect(() => {
+    try {
+      const savedFile = localStorage.getItem(`overbranch_${projStorageKey}_attached_file`);
+      if (savedFile) {
+        const parsed = JSON.parse(savedFile);
+        if (parsed && parsed.filename) {
+          setAttachedFile(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load attached file from localStorage:", e);
+    }
+  }, [projStorageKey]);
+
+  // Save/remove attached file in localStorage when attachedFile changes
+  useEffect(() => {
+    try {
+      if (attachedFile) {
+        localStorage.setItem(`overbranch_${projStorageKey}_attached_file`, JSON.stringify(attachedFile));
+      } else {
+        localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
+      }
+    } catch (e) {
+      console.warn("Failed to update attached file in localStorage:", e);
+    }
+  }, [attachedFile, projStorageKey]);
+
+  const handleNewChat = () => {
+    setMessages([]);
+    setAttachedFile(null);
+    setDiffData(null);
+    setDiffEditsList([]);
+    setFallbackModelNotice(null);
+    setAgentProgressSteps([]);
+    try {
+      localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
+      localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
+    } catch (_) {}
+    toast.success("Started a new chat session.");
+  };
+
+  const handleClearChat = () => {
+    if (messages.length === 0 && !attachedFile) return;
+    if (confirm("Are you sure you want to delete all chat history and document context for this project?")) {
+      setMessages([]);
+      setAttachedFile(null);
+      setDiffData(null);
+      setDiffEditsList([]);
+      setFallbackModelNotice(null);
+      setAgentProgressSteps([]);
+      try {
+        localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
+        localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
+      } catch (_) {}
+      toast.info("Chat history and document context deleted.");
+    }
+  };
 
   const editorRef = useRef<any>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -890,20 +990,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       // The backend has its own PDF text extraction as fallback.
       let filePayload: { filename: string; content: string; file_type: string } | null = null;
       if (currentFilePayload) {
-        let content = currentFilePayload.content;
-        const contentSizeMB = content.length / (1024 * 1024);
-
-        // If PDF content is very large (>5MB as base64 string), cap it to prevent 413
-        if (contentSizeMB > 5) {
-          // Keep only the first 5MB of base64 data — backend will use pypdf to extract text
-          const maxChars = 5 * 1024 * 1024;
-          content = content.substring(0, maxChars);
-          console.warn(`Large file truncated from ${contentSizeMB.toFixed(1)}MB to ~5MB to avoid 413`);
-        }
-
         filePayload = {
           filename: currentFilePayload.filename,
-          content: content,
+          content: currentFilePayload.content,
           file_type: currentFilePayload.file_type,
         };
       }
@@ -917,7 +1006,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,
           current_code: code,
-          model: activeModelName || "openai/gpt-oss-120b",
+          model: activeModelName || "auto:smart",
           attached_file: filePayload,
         }),
       });
@@ -925,7 +1014,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
       if (!response.ok) {
         if (response.status === 413) {
-          throw new Error("The uploaded file is too large for the server. Try a smaller PDF (under 30 pages) or ask about the document without attaching it.");
+          throw new Error("The uploaded file is too large for the server. Try a smaller PDF or ask about the document without attaching it.");
         }
         const errText = await response.text();
         throw new Error(errText || `AI Agent returned status ${response.status}`);
@@ -941,9 +1030,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       let sseError: Error | null = null;
 
       try {
-        // IMPORTANT: currentEventType must live OUTSIDE parseSSELines so it
-        // persists across calls. SSE event: and data: lines can arrive in
-        // different reader.read() chunks.
         let currentEventType = "";
 
         const parseSSELines = (lines: string[]) => {
@@ -970,7 +1056,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               }
               currentEventType = "";
             } else if (trimmed === "") {
-              // Empty line = end of SSE event block, reset event type
               currentEventType = "";
             }
           }
@@ -983,21 +1068,17 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           buffer += decoder.decode(value, { stream: true });
 
-          // Parse SSE events from buffer
           const lines = buffer.split("\n");
-          buffer = lines.pop() || ""; // keep incomplete line
+          buffer = lines.pop() || "";
           parseSSELines(lines);
         }
 
-        // Flush any remaining data in the buffer after stream ends
         if (buffer.trim() && !sseError) {
           const remainingLines = buffer.split("\n");
           parseSSELines(remainingLines);
           buffer = "";
         }
       } finally {
-        // CRITICAL: Always release the reader so the browser connection is freed
-        // for the next request. Without this, the next fetch() will hang.
         try { reader.cancel(); } catch (_) {}
         try { reader.releaseLock(); } catch (_) {}
       }
@@ -1008,9 +1089,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       const data = finalData;
       const assistantTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-      if (data.model_used) {
-        setActiveModelName(data.model_used);
-      }
+
 
       if (data.is_fallback && data.fallback_notice) {
         setFallbackModelNotice(data.fallback_notice);
@@ -1684,20 +1763,46 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
                 <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold">
+                    <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold text-xs">
                       <Bot className="w-4 h-4 text-[#00CC68]" />
                       <span>Agent</span>
                     </div>
-                    <div className="flex items-center gap-1 relative" ref={modelSelectorRef}>
+
+                    <div className="flex items-center gap-1.5">
+                      {/* New Chat Button */}
                       <button
-                        onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                        type="button"
+                        onClick={handleNewChat}
                         disabled={isAgentThinking}
-                        className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                        className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                        title="Start new chat session"
                       >
-                        <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                        <span className="truncate max-w-[140px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                        {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                        <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                        <span>New</span>
                       </button>
+
+                      {/* Clear / Delete Chat Button */}
+                      <button
+                        type="button"
+                        onClick={handleClearChat}
+                        disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                        className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30"
+                        title="Delete chat history and document context"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+
+                      {/* Model Selector */}
+                      <div className="flex items-center gap-1 relative" ref={modelSelectorRef}>
+                        <button
+                          onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                          disabled={isAgentThinking}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                          <span className="truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                          {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                        </button>
 
                       {modelSelectorOpen && (
                         <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden">
@@ -1726,6 +1831,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                           ))}
                         </div>
                       )}
+                      </div>
                     </div>
                   </div>
 
