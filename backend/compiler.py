@@ -594,38 +594,77 @@ def compile_latex(
                 for f in files:
                     write_file_safely(tmpdir, f.get("filename", ""), f.get("data", ""))
 
-            # 4. Copy missing or placeholder template fallback assets (like logo.jpg, structure.tex, .sty, .cls)
+            # 4. Smart template asset resolution — detect which template is being compiled
+            #    and copy ALL files from that template directory preserving subdirectory structure
             templates_base_dir = Path(os.path.join(os.path.dirname(__file__), "templates")).resolve()
             if templates_base_dir.exists():
-                for tmpl_file in templates_base_dir.rglob("*"):
-                    if tmpl_file.is_file():
-                        rel_name = tmpl_file.name
-                        dest_file = tmpdir / rel_name
+                # Discover all template root directories (directories containing .tex files)
+                template_roots = []
+                for category_dir in sorted(templates_base_dir.iterdir()):
+                    if not category_dir.is_dir():
+                        continue
+                    if list(category_dir.glob("*.tex")):
+                        template_roots.append(category_dir)
+                    else:
+                        for tmpl_dir in sorted(category_dir.iterdir()):
+                            if tmpl_dir.is_dir() and list(tmpl_dir.glob("*.tex")):
+                                template_roots.append(tmpl_dir)
 
-                        # Check if dest_file is missing or is an invalid text placeholder
-                        is_valid = True
-                        if dest_file.exists():
-                            try:
-                                if dest_file.stat().st_size < 200:
-                                    content = dest_file.read_bytes()
-                                    if content.startswith(b"[Binary Asset:"):
-                                        is_valid = False
-                            except Exception:
-                                pass
-                        else:
-                            is_valid = False
+                # Find the best matching template by checking if main.tex references
+                # files that exist in a specific template directory
+                matched_root = None
+                for tmpl_root in template_roots:
+                    tmpl_files = {f.name for f in tmpl_root.rglob("*") if f.is_file() and f.name not in ("main.tex", "metadata.json", "thumbnail.png")}
+                    # Check if any unique template file (.cls, .sty, structure.tex) is referenced
+                    for tf_name in tmpl_files:
+                        name_no_ext = Path(tf_name).stem
+                        if tf_name.endswith((".cls", ".sty")) and (f"\\documentclass{{{name_no_ext}}}" in latex_code or f"\\usepackage{{{name_no_ext}}}" in latex_code):
+                            matched_root = tmpl_root
+                            break
+                        if tf_name == "structure.tex" and r"\input{structure.tex}" in latex_code:
+                            matched_root = tmpl_root
+                            break
+                    if matched_root:
+                        break
 
-                        if not is_valid and rel_name != "main.tex":
-                            try:
-                                dest_file.parent.mkdir(parents=True, exist_ok=True)
-                                shutil.copy2(tmpl_file, dest_file)
-                            except Exception:
-                                pass
+                # Copy files from the matched template (or all templates as fallback)
+                roots_to_copy = [matched_root] if matched_root else template_roots
+                for tmpl_root in roots_to_copy:
+                    for tmpl_file in tmpl_root.rglob("*"):
+                        if tmpl_file.is_file():
+                            # Preserve subdirectory structure (e.g. images/background.png)
+                            rel_path = tmpl_file.relative_to(tmpl_root)
+                            if str(rel_path) == "main.tex" or rel_path.name in ("metadata.json", "thumbnail.png"):
+                                continue
+                            dest_file = tmpdir / rel_path
+
+                            # Check if dest_file is missing or is an invalid text placeholder
+                            should_copy = False
+                            if not dest_file.exists():
+                                should_copy = True
+                            else:
+                                try:
+                                    if dest_file.stat().st_size < 200:
+                                        content = dest_file.read_bytes()
+                                        if content.startswith(b"[Binary Asset:"):
+                                            should_copy = True
+                                except Exception:
+                                    pass
+
+                            if should_copy:
+                                try:
+                                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(tmpl_file, dest_file)
+                                except Exception:
+                                    pass
 
             # Build environment with augmented TEXINPUTS for nested inputs and assets
             comp_env = os.environ.copy()
             existing_texinputs = comp_env.get("TEXINPUTS", "")
             comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
+
+            # Compilation timeout — 120s to handle Docker/VM overhead with multi-pass latexmk
+            COMPILE_TIMEOUT = 120
 
             # Build command list
             cmd_list = []
@@ -654,7 +693,7 @@ def compile_latex(
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
-                        timeout=35,
+                        timeout=COMPILE_TIMEOUT,
                         env=comp_env
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
@@ -666,7 +705,7 @@ def compile_latex(
                             cwd=tmpdir,
                             capture_output=True,
                             text=True,
-                            timeout=35,
+                            timeout=COMPILE_TIMEOUT,
                             env=comp_env
                         )
                         last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
@@ -682,6 +721,9 @@ def compile_latex(
                             "compile_time_ms": elapsed_ms,
                             "log": last_output[-1000:] if last_output else f"Compiled via {cmd[0]}",
                         }
+                except subprocess.TimeoutExpired:
+                    last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
+                    continue
                 except Exception:
                     continue
 
