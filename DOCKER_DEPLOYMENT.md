@@ -146,3 +146,24 @@ That's it! OverBranch is now live on your VM:
 | **Stop OverBranch** | `docker compose down` |
 | **Rebuild Container** | `docker compose up --build -d` |
 | **Inspect Uploads Volume** | `docker volume ls` |
+
+---
+
+## ⚡ Automated CI/CD Deployment with GitHub Actions
+
+OverBranch includes an automated GitHub Actions CI/CD pipeline ([`.github/workflows/deploy.yml`](file:///.github/workflows/deploy.yml)).
+
+Whenever you push to the `main` branch, GitHub Actions will automatically connect to your Azure VM over SSH, write the production `.env` configuration from your secrets, and deploy the updated container using `docker compose up -d --build`.
+
+### Required GitHub Repository Secrets
+
+Go to your GitHub Repository -> **Settings** -> **Secrets and variables** -> **Actions** -> **New repository secret**:
+
+| Secret Name | Example Value / Description |
+|---|---|
+| `AZURE_VM_IP` | `20.xxx.xxx.xxx` (Your Azure VM Public IP) |
+| `AZURE_VM_USERNAME` | `azureuser` or `ubuntu` |
+| `AZURE_VM_SSH_KEY` | Contents of your private SSH key (`~/.ssh/id_rsa` or Azure SSH Key PEM) |
+| `AZURE_VM_PORT` | `22` (Default SSH port) |
+| `ENV_FILE` | Complete contents of your production `.env` file |
+

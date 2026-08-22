@@ -1,0 +1,60 @@
+name: Deploy to Azure Server (CI/CD)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Build & Deploy to Azure Server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Azure VM via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.AZURE_VM_IP }}
+          username: ${{ secrets.AZURE_VM_USERNAME }}
+          key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          port: ${{ secrets.AZURE_VM_PORT || 22 }}
+          script: |
+            set -e
+
+            # Target directory on Azure VM
+            TARGET_DIR="~/overbranch"
+            
+            # 1. Clone repository if not present, otherwise pull latest main branch
+            if [ ! -d "$TARGET_DIR" ]; then
+              echo "Cloning repository into $TARGET_DIR..."
+              git clone https://github.com/abin-karukappallil/overbranch.git "$TARGET_DIR"
+            fi
+
+            cd "$TARGET_DIR"
+            
+            echo "Fetching latest main branch..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # 2. Write production .env file from GitHub Secret
+            echo "Updating .env configuration from GitHub Secrets..."
+            cat << 'EOF' > .env
+            ${{ secrets.ENV_FILE }}
+            EOF
+            chmod 600 .env
+
+            # 3. Build & launch Docker containers
+            echo "Rebuilding and deploying OverBranch with Docker Compose..."
+            docker compose down --remove-orphans || true
+            docker compose up -d --build
+
+            # 4. Clean up unused Docker images to save disk space
+            docker image prune -f
+
+            # 5. Verify container status
+            echo "Deployment successful! Current container status:"
+            docker compose ps
