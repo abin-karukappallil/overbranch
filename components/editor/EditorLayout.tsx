@@ -48,6 +48,15 @@ import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
@@ -224,9 +233,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const monacoRef = useRef<any>(null);
 
   // ─── Model Selector State ────────────────────────────────────────────────
-  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
-  const modelSelectorRef = useRef<HTMLDivElement>(null);
 
   // Fetch available models from backend on mount
   useEffect(() => {
@@ -262,23 +269,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     };
     fetchModels();
   }, []);
-
-  // Close model selector on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: Event) => {
-      if (modelSelectorRef.current && !modelSelectorRef.current.contains(e.target as Node)) {
-        setModelSelectorOpen(false);
-      }
-    };
-    if (modelSelectorOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      document.addEventListener("touchstart", handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, [modelSelectorOpen]);
 
   // Helper: get display label for a model ID
   const getModelLabel = (modelId: string): string => {
@@ -1797,45 +1787,30 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       </button>
 
                       {/* Model Selector */}
-                      <div className="flex items-center gap-1 relative" ref={modelSelectorRef}>
-                        <button
-                          onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
-                          disabled={isAgentThinking}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                          <span className="truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                          {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
-                        </button>
-
-                      {modelSelectorOpen && (
-                        <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden">
+                      <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
+                        <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none">
+                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                          <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                        </SelectTrigger>
+                        <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
                           {availableModels.map((provider) => (
-                            <div key={provider.name}>
-                              <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800">
+                            <SelectGroup key={provider.name}>
+                              <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
                                 {provider.name}
-                              </div>
+                              </SelectLabel>
                               {provider.models.map((m) => (
-                                <button
+                                <SelectItem
                                   key={m.id}
-                                  onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
-                                  className={`w-full text-left px-3 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                    activeModelName === m.id
-                                      ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
-                                      : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                                  }`}
+                                  value={m.id}
+                                  className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
                                 >
-                                  <span className="truncate">
-                                    {m.label}{m.default ? " (Default)" : ""}
-                                  </span>
-                                  {activeModelName === m.id && <Check className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                                </button>
+                                  {m.label}{m.default ? " (Default)" : ""}
+                                </SelectItem>
                               ))}
-                            </div>
+                            </SelectGroup>
                           ))}
-                        </div>
-                      )}
-                      </div>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
@@ -2215,45 +2190,30 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <div className="relative shrink-0" ref={modelSelectorRef}>
-                    <button
-                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
-                      disabled={isAgentThinking}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
-                    </button>
-
-                    {modelSelectorOpen && (
-                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
-                        {availableModels.map((provider) => (
-                          <div key={provider.name}>
-                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
-                              {provider.name}
-                            </div>
-                            {provider.models.map((m) => (
-                              <button
-                                key={m.id}
-                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
-                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                  activeModelName === m.id
-                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
-                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                                }`}
-                              >
-                                <span className="truncate">
-                                  {m.label}{m.default ? " (Default)" : ""}
-                                </span>
-                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
-                              </button>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
+                    <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none shrink-0">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
+                      {availableModels.map((provider) => (
+                        <SelectGroup key={provider.name}>
+                          <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
+                            {provider.name}
+                          </SelectLabel>
+                          {provider.models.map((m) => (
+                            <SelectItem
+                              key={m.id}
+                              value={m.id}
+                              className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
+                            >
+                              {m.label}{m.default ? " (Default)" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -2530,45 +2490,30 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <div className="relative shrink-0">
-                    <button
-                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
-                      disabled={isAgentThinking}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
-                    </button>
-
-                    {modelSelectorOpen && (
-                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[60] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
-                        {availableModels.map((provider) => (
-                          <div key={provider.name}>
-                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
-                              {provider.name}
-                            </div>
-                            {provider.models.map((m) => (
-                              <button
-                                key={m.id}
-                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
-                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                  activeModelName === m.id
-                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
-                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                                }`}
-                              >
-                                <span className="truncate">
-                                  {m.label}{m.default ? " (Default)" : ""}
-                                </span>
-                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
-                              </button>
-                            ))}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
+                    <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none shrink-0">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
+                      {availableModels.map((provider) => (
+                        <SelectGroup key={provider.name}>
+                          <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
+                            {provider.name}
+                          </SelectLabel>
+                          {provider.models.map((m) => (
+                            <SelectItem
+                              key={m.id}
+                              value={m.id}
+                              className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
+                            >
+                              {m.label}{m.default ? " (Default)" : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
@@ -2726,65 +2671,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
-
-      {/* Dedicated Mobile Model Selector Action Sheet */}
-      {modelSelectorOpen && (
-        <div 
-          className="md:hidden fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex flex-col justify-end p-3 animate-in fade-in duration-200"
-          onClick={() => setModelSelectorOpen(false)}
-        >
-          <div 
-            className="bg-zinc-900 border border-zinc-700 rounded-3xl p-4 space-y-3 max-h-[75vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 duration-200"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-              <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-sm">
-                <Sparkles className="w-4 h-4 text-[#00CC68]" />
-                <span>Select AI Model</span>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setModelSelectorOpen(false)}
-                className="p-1 text-zinc-400 hover:text-white rounded-lg bg-zinc-800 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="overflow-y-auto space-y-3 pr-1">
-              {availableModels.map((provider) => (
-                <div key={provider.name} className="space-y-1.5">
-                  <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
-                    {provider.name}
-                  </div>
-                  <div className="space-y-1">
-                    {provider.models.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => {
-                          setActiveModelName(m.id);
-                          setModelSelectorOpen(false);
-                        }}
-                        className={`w-full text-left px-3.5 py-3 rounded-2xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                          activeModelName === m.id
-                            ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
-                            : "bg-zinc-950/60 text-zinc-200 hover:bg-zinc-800 border border-zinc-800/80"
-                        }`}
-                      >
-                        <span className="truncate">
-                          {m.label}{m.default ? " (Default)" : ""}
-                        </span>
-                        {activeModelName === m.id && <Check className="w-4 h-4 text-[#00CC68] shrink-0 stroke-[3]" />}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
