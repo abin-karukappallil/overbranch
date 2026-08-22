@@ -32,3 +32,4 @@ services:
       - .env
     volumes:
       - ./uploads:/app/uploads
+      - ./backend/templates:/app/backend/templates:ro
