@@ -1,6 +1,6 @@
 services:
   overbranch:
-    image: ${DOCKER_IMAGE:-overbranch:latest}
+    image: ${DOCKER_IMAGE:-abinthomasdotdev/overbranch:latest}
     build:
       context: .
       dockerfile: Dockerfile
