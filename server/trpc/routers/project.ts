@@ -77,7 +77,7 @@ export const projectRouter = router({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            tex_content: input.rawCode,
+            latex_code: input.rawCode,
             engine: 'pdfLaTeX',
           }),
         });

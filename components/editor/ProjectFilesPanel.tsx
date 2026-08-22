@@ -382,8 +382,8 @@ export function ProjectFilesPanel({
                     }
                   }}
                   className={`p-2 rounded-xl border flex items-center justify-between text-xs cursor-pointer transition-all gap-2 overflow-hidden ${isActive
-                      ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-200 font-semibold"
-                      : "bg-muted/30 hover:bg-accent border-border/30 text-foreground"
+                    ? "bg-indigo-500/15 border-indigo-500/40 text-indigo-200 font-semibold"
+                    : "bg-muted/30 hover:bg-accent border-border/30 text-foreground"
                     }`}
                 >
                   <div className="flex items-center gap-2 truncate min-w-0 flex-1">

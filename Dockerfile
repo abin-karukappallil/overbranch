@@ -11,9 +11,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-latex-base \
     texlive-latex-recommended \
     texlive-latex-extra \
+    texlive-pictures \
     texlive-fonts-recommended \
     texlive-fonts-extra \
+    texlive-science \
+    texlive-lang-greek \
+    cm-super \
+    fonts-dejavu \
+    fonts-lmodern \
+    fonts-urw-base35 \
     latexmk \
+    ghostscript \
     poppler-utils \
     perl \
     ca-certificates \

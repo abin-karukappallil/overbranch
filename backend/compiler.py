@@ -525,28 +525,62 @@ def write_file_safely(tmpdir: Path, filename: str, data_base64: str):
     resolved_path.write_bytes(raw_bytes)
 
 
+_TEMPLATE_ROOTS_CACHE: Optional[List[Path]] = None
+
+def get_template_roots() -> List[Path]:
+    global _TEMPLATE_ROOTS_CACHE
+    if _TEMPLATE_ROOTS_CACHE is not None:
+        return _TEMPLATE_ROOTS_CACHE
+    templates_base_dir = Path(os.path.join(os.path.dirname(__file__), "templates")).resolve()
+    template_roots = []
+    if templates_base_dir.exists():
+        for category_dir in sorted(templates_base_dir.iterdir()):
+            if not category_dir.is_dir():
+                continue
+            if list(category_dir.glob("*.tex")):
+                template_roots.append(category_dir)
+            else:
+                for tmpl_dir in sorted(category_dir.iterdir()):
+                    if tmpl_dir.is_dir() and list(tmpl_dir.glob("*.tex")):
+                        template_roots.append(tmpl_dir)
+    _TEMPLATE_ROOTS_CACHE = template_roots
+    return _TEMPLATE_ROOTS_CACHE
+
+
 def compile_latex(
     latex_code: str,
-    engine: str = "latexmk",
+    engine: str = "pdfLaTeX",
     images: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, str]]] = None,
     project_id: Optional[str] = None
 ) -> dict:
     """
-    Compiles LaTeX code into PDF using latexmk (with -f forced compilation & error suppression),
-    pdflatex, xelatex, lualatex, tectonic, or the instant ReportLab fallback engine.
-    Copies all uploaded assets/files belonging to project_id into temporary compilation directory.
+    High-performance TeX compiler pipeline with smart single/double pass dispatch,
+    direct binary invocation, template asset caching, and ReportLab fallback.
     """
     start_time = time.time()
     augment_path_for_latex()
 
-    has_perl = True
-    if sys.platform == "win32":
-        has_perl = shutil.which("perl") is not None
+    eng_clean = (engine or "pdfLaTeX").strip().lower()
+
+    # Fast ReportLab engine override check
+    if eng_clean in ["fast", "reportlab"]:
+        try:
+            pdf_base64 = generate_fallback_pdf(latex_code)
+            elapsed_ms = int((time.time() - start_time) * 1000)
+            return {
+                "success": True,
+                "pdf_base64": pdf_base64,
+                "compile_time_ms": elapsed_ms,
+                "log": "Rendered via Fast TeX Engine",
+            }
+        except Exception as fast_err:
+            pass
 
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
         try:
+            has_disk_files = False
             # 1. Copy project disk assets if project_id is provided
             if project_id and project_id.strip():
                 safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
@@ -561,12 +595,33 @@ def compile_latex(
                             dest = tmpdir / rel_path
                             dest.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(item, dest)
+                            has_disk_files = True
+
+                # Only query DB if no disk files were present
+                if not has_disk_files:
+                    try:
+                        from project_storage import get_supabase_client
+                        supabase = get_supabase_client()
+                        if supabase:
+                            docs_res = supabase.table("latex_documents").select("file_path, raw_code").eq("project_id", project_id.strip()).execute()
+                            if docs_res.data:
+                                for doc in docs_res.data:
+                                    f_path = doc.get("file_path")
+                                    r_code = doc.get("raw_code")
+                                    if not f_path or f_path == "main.tex":
+                                        continue
+                                    dest = tmpdir / f_path
+                                    dest.parent.mkdir(parents=True, exist_ok=True)
+                                    if r_code and not r_code.startswith("[Binary Asset:"):
+                                        dest.write_text(r_code, encoding="utf-8", errors="ignore")
+                    except Exception:
+                        pass
 
             # 2. Write current main.tex
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
 
-            # 3. Write extra asset files and images if provided directly in payload
+            # 3. Write extra payload asset files and images
             if images:
                 for img in images:
                     write_file_safely(tmpdir, img.get("filename", ""), img.get("data", ""))
@@ -575,39 +630,100 @@ def compile_latex(
                 for f in files:
                     write_file_safely(tmpdir, f.get("filename", ""), f.get("data", ""))
 
-            # Build command list
+            # 4. Smart template asset resolution — only copy matched template files
+            template_roots = get_template_roots()
+            matched_root = None
+            for tmpl_root in template_roots:
+                tmpl_files = {f.name for f in tmpl_root.rglob("*") if f.is_file() and f.name not in ("main.tex", "metadata.json", "thumbnail.png")}
+                for tf_name in tmpl_files:
+                    name_no_ext = Path(tf_name).stem
+                    if tf_name.endswith((".cls", ".sty")) and (f"\\documentclass{{{name_no_ext}}}" in latex_code or f"\\usepackage{{{name_no_ext}}}" in latex_code):
+                        matched_root = tmpl_root
+                        break
+                    if tf_name == "structure.tex" and r"\input{structure.tex}" in latex_code:
+                        matched_root = tmpl_root
+                        break
+                if matched_root:
+                    break
+
+            if matched_root:
+                for tmpl_file in matched_root.rglob("*"):
+                    if tmpl_file.is_file():
+                        rel_path = tmpl_file.relative_to(matched_root)
+                        if str(rel_path) == "main.tex" or rel_path.name in ("metadata.json", "thumbnail.png"):
+                            continue
+                        dest_file = tmpdir / rel_path
+                        if not dest_file.exists():
+                            try:
+                                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(tmpl_file, dest_file)
+                            except Exception:
+                                pass
+
+            # Environment configuration
+            comp_env = os.environ.copy()
+            existing_texinputs = comp_env.get("TEXINPUTS", "")
+            comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
+
+            COMPILE_TIMEOUT = 30
+
+            # Target engine selection
             cmd_list = []
-            if engine == "tectonic":
-                cmd_list.append(["tectonic", "main.tex"])
-            elif sys.platform == "win32" and not has_perl:
-                cmd_list.extend([
-                    ["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"],
-                    ["xelatex", "-interaction=nonstopmode", "main.tex"],
-                    ["lualatex", "-interaction=nonstopmode", "main.tex"]
-                ])
+            if eng_clean in ["pdflatex", "pdf", "latex"]:
+                cmd_list = [["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-c-style-errors", "main.tex"]]
+            elif eng_clean in ["xelatex", "xe"]:
+                cmd_list = [["xelatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"]]
+            elif eng_clean in ["lualatex", "lua"]:
+                cmd_list = [["lualatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"]]
+            elif eng_clean == "tectonic":
+                cmd_list = [["tectonic", "main.tex"]]
+            elif eng_clean == "latexmk":
+                cmd_list = [["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
             else:
-                cmd_list.extend([
-                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"],
-                    ["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"],
-                    ["xelatex", "-interaction=nonstopmode", "main.tex"],
-                    ["lualatex", "-interaction=nonstopmode", "main.tex"]
-                ])
+                cmd_list = [
+                    ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-c-style-errors", "main.tex"],
+                    ["xelatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
+                ]
 
             last_output = ""
             for cmd in cmd_list:
                 try:
+                    # Pass 1
                     result = subprocess.run(
                         cmd,
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
-                        timeout=35,
-                        env=os.environ
+                        timeout=COMPILE_TIMEOUT,
+                        env=comp_env
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
 
                     pdf_path = tmpdir / "main.pdf"
+
+                    # If PDF was created, check if Pass 2 is required for cross-references/TOC/citations
                     if pdf_path.exists():
+                        needs_pass2 = (
+                            r"\tableofcontents" in latex_code
+                            or r"\ref{" in latex_code
+                            or r"\cite{" in latex_code
+                            or r"\label{" in latex_code
+                            or "Rerun" in last_output
+                            or "undefined references" in last_output.lower()
+                        )
+
+                        if needs_pass2 and cmd[0] in ["pdflatex", "xelatex", "lualatex"]:
+                            result2 = subprocess.run(
+                                cmd,
+                                cwd=tmpdir,
+                                capture_output=True,
+                                text=True,
+                                timeout=15,
+                                env=comp_env
+                            )
+                            last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
+
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -617,10 +733,13 @@ def compile_latex(
                             "compile_time_ms": elapsed_ms,
                             "log": last_output[-1000:] if last_output else f"Compiled via {cmd[0]}",
                         }
+                except subprocess.TimeoutExpired:
+                    last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
+                    continue
                 except Exception:
                     continue
 
-            # Auto-recovery pass for font metric errors (e.g., ecrm1000 / T1 fontenc without cm-super/lmodern)
+            # Font metric error auto-recovery patch
             font_error_keywords = ["not loadable", "Metric (TFM) file not found", "ecrm1000", "cm-super"]
             if any(kw.lower() in last_output.lower() for kw in font_error_keywords):
                 patched_code = latex_code
@@ -632,27 +751,26 @@ def compile_latex(
                 
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
-                    for retry_cmd in [["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"]]:
-                        try:
-                            result = subprocess.run(retry_cmd, cwd=tmpdir, capture_output=True, text=True, timeout=30, env=os.environ)
-                            pdf_path = tmpdir / "main.pdf"
-                            if pdf_path.exists():
-                                pdf_bytes = pdf_path.read_bytes()
-                                pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                                elapsed_ms = int((time.time() - start_time) * 1000)
-                                return {
-                                    "success": True,
-                                    "pdf_base64": pdf_base64,
-                                    "compile_time_ms": elapsed_ms,
-                                    "log": "Compiled via font auto-recovery (lmodern patch)",
-                                }
-                        except Exception:
-                            pass
+                    try:
+                        result = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
+                        pdf_path = tmpdir / "main.pdf"
+                        if pdf_path.exists():
+                            pdf_bytes = pdf_path.read_bytes()
+                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                            elapsed_ms = int((time.time() - start_time) * 1000)
+                            return {
+                                "success": True,
+                                "pdf_base64": pdf_base64,
+                                "compile_time_ms": elapsed_ms,
+                                "log": "Compiled via font auto-recovery (lmodern patch)",
+                            }
+                    except Exception:
+                        pass
 
         except Exception:
             pass
 
-        # Fallback to instant clean ReportLab TeX renderer if binaries are unavailable, timeout, or fail
+        # Fallback to instant clean ReportLab TeX renderer if binaries fail
         try:
             pdf_base64 = generate_fallback_pdf(latex_code, tmpdir=tmpdir)
             elapsed_ms = int((time.time() - start_time) * 1000)
