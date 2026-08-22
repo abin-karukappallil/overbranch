@@ -126,11 +126,17 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             logger.warning(f"Failed to extract text from Word document '{filename}': {docx_err}")
             return f"[Uploaded Word document: '{filename}']"
 
-    # PDF Extraction
+    b64_data = content
+    if "," in b64_data:
+        b64_data = b64_data.split(",", 1)[1]
+
+    # PDF Extraction - robustly detect PDF via MIME, extension, Data URL, or base64 header (JVBERi0 = %PDF-)
     is_pdf = (
         "pdf" in ft or
         lower_fn.endswith(".pdf") or
-        content.startswith("data:application/pdf")
+        content.startswith("data:application/pdf") or
+        b64_data.startswith("JVBERi0") or
+        content.startswith("%PDF-")
     )
 
     if is_pdf:
@@ -138,15 +144,14 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             logger.warning(f"pypdf package not installed, skipping text extraction for '{filename}'")
             return f"[Uploaded PDF file: '{filename}']"
         try:
-            b64_data = content
-            if "," in b64_data:
-                b64_data = b64_data.split(",", 1)[1]
+            if content.startswith("%PDF-"):
+                raw_bytes = content.encode("latin-1")
+            else:
+                padding_needed = len(b64_data) % 4
+                if padding_needed:
+                    b64_data += "=" * (4 - padding_needed)
+                raw_bytes = base64.b64decode(b64_data)
 
-            padding_needed = len(b64_data) % 4
-            if padding_needed:
-                b64_data += "=" * (4 - padding_needed)
-
-            raw_bytes = base64.b64decode(b64_data)
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
 
             extracted_pages = []
@@ -546,9 +551,9 @@ async def agent_chat(request: Request):
             # Check if user document already exists
             has_existing_code = bool(req.current_code and len(req.current_code.strip()) > 50 and "\\documentclass" in req.current_code)
 
-            # Fast-path: Bypass vector search for attached files & simple presentation requests to save 2-3s
+            # Fast-path: Bypass vector search ONLY when creating a new presentation on an empty document
             is_new_doc_request = (not has_existing_code) and any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
-            if req.attached_file or is_new_doc_request:
+            if is_new_doc_request:
                 is_search_needed = False
 
             yield sse_event("progress", {"step": "intent", "message": f"Mode: {mode.replace('_', ' ').title()}", "icon": "brain"})
