@@ -152,7 +152,7 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
                     b64_data += "=" * (4 - padding_needed)
                 raw_bytes = base64.b64decode(b64_data)
 
-            reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
+            reader = pypdf.PdfReader(io.BytesIO(raw_bytes), strict=False)
 
             extracted_pages = []
             max_pages = min(len(reader.pages), 50)
@@ -171,9 +171,18 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
                 logger.info(f"Extracted {len(extracted_pages)} text pages from PDF '{filename}' ({len(reader.pages)} total pages)")
                 return sanitize_text_content(full_text)
             else:
-                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s), no extractable text found]"
+                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s)]"
         except Exception as pdf_err:
-            logger.warning(f"Failed to extract text from PDF '{filename}': {pdf_err}")
+            logger.warning(f"pypdf extraction notice for PDF '{filename}': {pdf_err}. Attempting raw stream recovery...")
+            try:
+                raw_text_parts = re.findall(r'[\x20-\x7E\s]{4,}', raw_bytes.decode('latin-1', errors='ignore'))
+                clean_parts = [p.strip() for p in raw_text_parts if len(p.strip()) > 10 and not any(p.strip().startswith(k) for k in ('<<', '>>', 'obj', 'endobj', 'stream', 'endstream', '/Filter', '/Type', '/Font', 'xref', 'trailer'))]
+                if clean_parts:
+                    recovered_text = "\n".join(clean_parts[:200])
+                    logger.info(f"Stream recovery extracted {len(clean_parts)} text segments from '{filename}'")
+                    return sanitize_text_content(recovered_text[:12000])
+            except Exception:
+                pass
             return f"[Uploaded PDF file: '{filename}']"
 
     # Image files
@@ -626,9 +635,10 @@ async def agent_chat(request: Request):
                     pass
 
             # Step 5: Build prompt
+            # Step 5: Build prompt & handle attached file context persistence
             yield sse_event("progress", {"step": "prompt", "message": "Assembling prompt...", "icon": "edit-3"})
             attached_info = None
-            if req.attached_file:
+            if req.attached_file and req.attached_file.content:
                 yield sse_event("progress", {"step": "file", "message": f"Extracting content from {req.attached_file.filename}...", "icon": "paperclip"})
                 processed_content = process_attached_file_content(
                     filename=req.attached_file.filename,
@@ -640,7 +650,15 @@ async def agent_chat(request: Request):
                     "file_type": req.attached_file.file_type or "text/plain",
                     "content": processed_content,
                 }
+                conversation_memory.set_attached_file(req.project_id, attached_info)
                 yield sse_event("progress", {"step": "file_done", "message": f"Attached: {req.attached_file.filename}", "icon": "check-square"})
+            else:
+                # Retrieve persistent attached document context from memory if user gives follow-up prompt without re-attaching file
+                cached_file_info = conversation_memory.get_attached_file(req.project_id)
+                if cached_file_info:
+                    attached_info = cached_file_info
+                    logger.info(f"Referencing persistent attached document context for project '{req.project_id}': '{cached_file_info.get('filename')}'")
+                    yield sse_event("progress", {"step": "file_cached", "message": f"Referencing document: {cached_file_info.get('filename')}", "icon": "paperclip"})
 
             messages = prompt_builder.build_prompt(
                 user_request=req.user_prompt,
@@ -703,6 +721,10 @@ async def agent_chat(request: Request):
             # Sanitize model name: frontend may send display names like
             # 'Groq Primary API (openai/gpt-oss-120b)' — extract raw model ID
             raw_model = req.model or ""
+            if " (via " in raw_model:
+                raw_model = raw_model.split(" (via ", 1)[0]
+            if raw_model.lower().startswith("via "):
+                raw_model = ""
             if "(" in raw_model and raw_model.endswith(")"):
                 raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
             primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
