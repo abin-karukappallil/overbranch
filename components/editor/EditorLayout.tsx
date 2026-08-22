@@ -1787,30 +1787,31 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       </button>
 
                       {/* Model Selector */}
-                      <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
-                        <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none">
+                      <div className="relative inline-flex items-center shrink-0">
+                        <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}>
                           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
                           <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                        </SelectTrigger>
-                        <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
-                          {availableModels.map((provider) => (
-                            <SelectGroup key={provider.name}>
-                              <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
-                                {provider.name}
-                              </SelectLabel>
-                              {provider.models.map((m) => (
-                                <SelectItem
-                                  key={m.id}
-                                  value={m.id}
-                                  className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
-                                >
-                                  {m.label}{m.default ? " (Default)" : ""}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                          {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
+                        </div>
+                        {!isAgentThinking && (
+                          <select
+                            value={activeModelName}
+                            onChange={(e) => setActiveModelName(e.target.value)}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 appearance-none bg-transparent"
+                            title="Select AI Model"
+                          >
+                            {availableModels.map((provider) => (
+                              <optgroup key={provider.name} label={provider.name} className="bg-zinc-900 text-zinc-100 font-mono">
+                                {provider.models.map((m) => (
+                                  <option key={m.id} value={m.id} className="bg-zinc-900 text-zinc-100 font-mono py-1.5">
+                                    {m.label}{m.default ? " (Default)" : ""}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            ))}
+                          </select>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2190,30 +2191,31 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
-                    <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none shrink-0">
+                  <div className="relative inline-flex items-center shrink-0">
+                    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}>
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
                       <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
-                      {availableModels.map((provider) => (
-                        <SelectGroup key={provider.name}>
-                          <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
-                            {provider.name}
-                          </SelectLabel>
-                          {provider.models.map((m) => (
-                            <SelectItem
-                              key={m.id}
-                              value={m.id}
-                              className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
-                            >
-                              {m.label}{m.default ? " (Default)" : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
+                    </div>
+                    {!isAgentThinking && (
+                      <select
+                        value={activeModelName}
+                        onChange={(e) => setActiveModelName(e.target.value)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 appearance-none bg-transparent"
+                        title="Select AI Model"
+                      >
+                        {availableModels.map((provider) => (
+                          <optgroup key={provider.name} label={provider.name} className="bg-zinc-900 text-zinc-100 font-mono">
+                            {provider.models.map((m) => (
+                              <option key={m.id} value={m.id} className="bg-zinc-900 text-zinc-100 font-mono py-1.5">
+                                {m.label}{m.default ? " (Default)" : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2457,7 +2459,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <Drawer.Root open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
         <Drawer.Portal>
           <Drawer.Overlay className="fixed inset-0 bg-black/60 z-50 backdrop-blur-sm" />
-          <Drawer.Content className="fixed bottom-0 left-0 right-0 max-h-[85vh] h-[80vh] z-50 bg-zinc-950 border-t border-zinc-800 rounded-t-3xl flex flex-col p-4 space-y-3 text-zinc-100 font-sans">
+          <Drawer.Content className="fixed inset-0 z-50 bg-zinc-950 flex flex-col p-4 space-y-3 text-zinc-100 font-sans h-[100dvh] max-h-[100dvh]">
             <div className="w-12 h-1.5 rounded-full bg-zinc-800 mx-auto shrink-0" />
             <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
               <div className="flex items-center justify-between">
@@ -2490,30 +2492,31 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <Select value={activeModelName} onValueChange={setActiveModelName} disabled={isAgentThinking}>
-                    <SelectTrigger size="sm" className="h-7 px-2 bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors w-fit gap-1.5 rounded-lg focus:ring-0 focus:outline-none shrink-0">
+                  <div className="relative inline-flex items-center shrink-0">
+                    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}>
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
                       <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    </SelectTrigger>
-                    <SelectContent className="bg-zinc-900 border-zinc-700 text-zinc-100 font-mono text-xs z-[9999] shadow-2xl max-h-[50vh] overflow-y-auto">
-                      {availableModels.map((provider) => (
-                        <SelectGroup key={provider.name}>
-                          <SelectLabel className="text-[9px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-2 py-1 border-b border-zinc-800/80 bg-zinc-900 sticky top-0">
-                            {provider.name}
-                          </SelectLabel>
-                          {provider.models.map((m) => (
-                            <SelectItem
-                              key={m.id}
-                              value={m.id}
-                              className="text-xs font-mono text-zinc-300 focus:bg-[#00CC68]/15 focus:text-[#00CC68] cursor-pointer py-1.5"
-                            >
-                              {m.label}{m.default ? " (Default)" : ""}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
+                    </div>
+                    {!isAgentThinking && (
+                      <select
+                        value={activeModelName}
+                        onChange={(e) => setActiveModelName(e.target.value)}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 appearance-none bg-transparent"
+                        title="Select AI Model"
+                      >
+                        {availableModels.map((provider) => (
+                          <optgroup key={provider.name} label={provider.name} className="bg-zinc-900 text-zinc-100 font-mono">
+                            {provider.models.map((m) => (
+                              <option key={m.id} value={m.id} className="bg-zinc-900 text-zinc-100 font-mono py-1.5">
+                                {m.label}{m.default ? " (Default)" : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
