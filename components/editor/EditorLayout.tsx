@@ -228,7 +228,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [activeModelName, setActiveModelName] = useState<string>("auto:smart");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
-  const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
+  const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const monacoRef = useRef<any>(null);
 
   // ─── Model Selector State ────────────────────────────────────────────────
@@ -251,19 +251,23 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         console.warn("Failed to fetch models:", err);
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
-          { name: "FreeLLM API", models: [
-            { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
-            { id: "auto", label: "FreeLLM Auto Router" },
-            { id: "auto:fast", label: "FreeLLM Auto Fast" },
-            { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
-          ]},
-          { name: "Gemini", models: [
-            { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
-            { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
-            { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-            { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
-            { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
-          ]},
+          {
+            name: "FreeLLM API", models: [
+              { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
+              { id: "auto", label: "FreeLLM Auto Router" },
+              { id: "auto:fast", label: "FreeLLM Auto Fast" },
+              { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
+            ]
+          },
+          {
+            name: "Gemini", models: [
+              { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+              { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+              { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+              { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
+              { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
+            ]
+          },
         ]);
       }
     };
@@ -283,12 +287,12 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const renderModelSelectorModal = () => {
     if (!modelSelectorOpen) return null;
     return (
-      <div 
+      <div
         className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
         onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
         onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
       >
-        <div 
+        <div
           className="w-80 max-w-[92vw] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden p-3 space-y-3 animate-in zoom-in-95 duration-150 font-sans"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => e.stopPropagation()}
@@ -297,7 +301,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs tracking-wide">
               <span>Select AI Model</span>
             </div>
-            <button 
+            <button
               type="button"
               onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
               onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
@@ -328,11 +332,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         setActiveModelName(m.id);
                         setModelSelectorOpen(false);
                       }}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                        activeModelName === m.id
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${activeModelName === m.id
                           ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
                           : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
-                      }`}
+                        }`}
                     >
                       <span className="truncate">
                         {m.label}{m.default ? " (Default)" : ""}
@@ -503,7 +506,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     try {
       localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
       localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
-    } catch (_) {}
+    } catch (_) { }
     toast.success("Started a new chat session.");
   };
 
@@ -519,7 +522,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       try {
         localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
         localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
-      } catch (_) {}
+      } catch (_) { }
       toast.info("Chat history and document context deleted.");
     }
   };
@@ -628,7 +631,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         await navigator.clipboard.writeText(code);
         toast.success("Copied code to clipboard!");
         return;
-      } catch (err) {}
+      } catch (err) { }
     }
     toast.error("Unable to access clipboard for copy.");
   };
@@ -949,7 +952,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
         handleCustomCopy();
       });
-    } catch (e) {}
+    } catch (e) { }
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -1142,8 +1145,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           buffer = "";
         }
       } finally {
-        try { reader.cancel(); } catch (_) {}
-        try { reader.releaseLock(); } catch (_) {}
+        try { reader.cancel(); } catch (_) { }
+        try { reader.releaseLock(); } catch (_) { }
       }
 
       if (sseError) throw sseError;
@@ -1607,8 +1610,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={() => setFilesOpen(!filesOpen)}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${filesOpen
-                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={filesOpen ? "Hide Project Files" : "Show Project Files"}
             >
@@ -1622,8 +1625,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={toggleAi}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${aiOpen
-                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
             >
@@ -1637,8 +1640,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={togglePdf}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
-                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
             >
@@ -1897,8 +1900,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div
                       key={m.id}
                       className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                          ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                          : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                        ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                        : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                         }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
@@ -1937,11 +1940,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                             return (
                               <div
                                 key={idx}
-                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${
-                                  isLatest
+                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${isLatest
                                     ? "text-[#00CC68] font-bold animate-pulse"
                                     : "text-zinc-400 font-normal"
-                                }`}
+                                  }`}
                               >
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                                 <span className="truncate">{s.message}</span>
@@ -2294,11 +2296,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-3 rounded-2xl border space-y-1.5 ${
-                    m.sender === "user"
+                  className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
                       ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
                       : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
                     <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
@@ -2337,11 +2338,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
-                              isLatest
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
                                 ? "text-[#00CC68] font-bold animate-pulse"
                                 : "text-zinc-400 font-normal"
-                            }`}
+                              }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
@@ -2470,9 +2470,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         <div className="flex items-center justify-around w-full h-14 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-            }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+              }`}
           >
             <FolderGit2 className="w-4 h-4" />
             <span>Files</span>
@@ -2480,9 +2479,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           <button
             onClick={() => setActiveMobileTab("code")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-            }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+              }`}
           >
             <FileCode2 className="w-4 h-4" />
             <span>Code</span>
@@ -2490,9 +2488,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           <button
             onClick={() => setActiveMobileTab("pdf")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
-            }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
+              }`}
           >
             <Eye className="w-4 h-4" />
             <span>PDF</span>
@@ -2503,9 +2500,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               setActiveMobileTab("ai");
               setMobileDrawerOpen(true);
             }}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
-              activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-            }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+              }`}
           >
             <Bot className="w-4 h-4" />
             <span>Agent</span>
@@ -2596,8 +2592,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div
                   key={m.id}
                   className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                      ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                      : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                    ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                    : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                     }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
@@ -2637,11 +2633,10 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
-                              isLatest
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
                                 ? "text-[#00CC68] font-bold animate-pulse"
                                 : "text-zinc-400 font-normal"
-                            }`}
+                              }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
