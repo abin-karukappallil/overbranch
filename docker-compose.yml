@@ -9,28 +9,16 @@ services:
     ports:
       - "3000:3000"
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       - PORT=3000
       - HOSTNAME=0.0.0.0
-      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
-      - BACKEND_URL=${BACKEND_URL:-http://localhost:8000}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - QDRANT_URL=${QDRANT_URL}
-      - QDRANT_API_KEY=${QDRANT_API_KEY}
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-overbranch-secret-key-replace-in-production-min-32-chars}
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:3000}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - NVIDIA_LLM_MODEL=${NVIDIA_LLM_MODEL:-openai/gpt-oss-120b}
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-pro}
-      - DATABASE_URL=${DATABASE_URL}
-    env_file:
-      - .env
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://overapi.abinthomas.dev}
+      - BACKEND_URL=${BACKEND_URL:-https://overapi.abinthomas.dev}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://overbranch.abinthomas.dev}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://overbranch.abinthomas.dev}
     volumes:
       - ./uploads:/app/uploads
       - ./backend/templates:/app/backend/templates:ro
