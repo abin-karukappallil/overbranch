@@ -1,10 +1,3 @@
-"""
-groq_provider.py — Groq LLM Provider with Multi-Key Fallback
-
-Wraps the Groq OpenAI-compatible API with automatic key rotation.
-Supports up to 3 API keys (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3)
-for rate-limit resilience.
-"""
 
 import os
 import time
