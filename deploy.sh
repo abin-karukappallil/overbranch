@@ -13,6 +13,18 @@ set -e
 IMAGE_NAME="overbranch"
 IMAGE_FILE="overbranch-image.tar.gz"
 
+# Detect docker compose CLI syntax (docker compose vs docker-compose)
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD="docker-compose"
+else
+  echo "Error: Neither 'docker compose' nor 'docker-compose' command was found."
+  exit 1
+fi
+
+echo "Using Compose command: $COMPOSE_CMD"
+
 # --- Config: Change these ---
 VM_USER="${AZURE_VM_USERNAME:-abin}"
 VM_IP="${AZURE_VM_IP:-your-vm-ip}"
@@ -23,7 +35,7 @@ echo ""
 echo "══════════════════════════════════════════"
 echo "  Step 1/4: Build Docker image locally"
 echo "══════════════════════════════════════════"
-docker compose build
+$COMPOSE_CMD build
 
 echo ""
 echo "══════════════════════════════════════════"
@@ -46,12 +58,19 @@ ssh "$VM_USER@$VM_IP" bash -s <<REMOTE
   set -e
   cd $VM_DIR
 
+  # Remote compose detection
+  if docker compose version >/dev/null 2>&1; then
+    R_COMPOSE="docker compose"
+  else
+    R_COMPOSE="docker-compose"
+  fi
+
   echo "Loading image..."
   docker load < $IMAGE_FILE
 
   echo "Restarting container..."
-  docker compose down
-  docker compose up -d --no-build
+  \$R_COMPOSE down
+  \$R_COMPOSE up -d --no-build
 
   echo "Cleaning up..."
   rm -f $IMAGE_FILE
@@ -59,7 +78,7 @@ ssh "$VM_USER@$VM_IP" bash -s <<REMOTE
 
   echo ""
   echo "✓ Running containers:"
-  docker compose ps
+  \$R_COMPOSE ps
 REMOTE
 
 # Clean local tar
