@@ -991,7 +991,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         body: JSON.stringify({
           latex_code: targetCode,
           project_id: projectId || "",
-          engine: "latexmk",
+          engine: "pdfLaTeX",
         }),
       });
       const data = await res.json();
