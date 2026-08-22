@@ -21,6 +21,7 @@ jobs:
           host: ${{ secrets.AZURE_VM_IP }}
           username: ${{ secrets.AZURE_VM_USERNAME }}
           key: ${{ secrets.AZURE_VM_SSH_KEY }}
+          password: ${{ secrets.AZURE_VM_PASSWORD }}
           port: ${{ secrets.AZURE_VM_PORT || 22 }}
           script: |
             set -e
