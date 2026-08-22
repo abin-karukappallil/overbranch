@@ -16,7 +16,6 @@ import {
   ZoomOut,
   X,
   GripVertical,
-  Sparkles,
   Save,
   Key,
   Settings2,
@@ -279,6 +278,75 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       }
     }
     return modelId;
+  };
+
+  const renderModelSelectorModal = () => {
+    if (!modelSelectorOpen) return null;
+    return (
+      <div 
+        className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+        onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
+        onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
+      >
+        <div 
+          className="w-80 max-w-[92vw] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden p-3 space-y-3 animate-in zoom-in-95 duration-150 font-sans"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 select-none">
+            <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs tracking-wide">
+              <span>Select AI Model</span>
+            </div>
+            <button 
+              type="button"
+              onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
+              onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
+              className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+            {availableModels.map((provider) => (
+              <div key={provider.name} className="space-y-1.5">
+                <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
+                  {provider.name}
+                </div>
+                <div className="space-y-1">
+                  {provider.models.map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setActiveModelName(m.id);
+                        setModelSelectorOpen(false);
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveModelName(m.id);
+                        setModelSelectorOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${
+                        activeModelName === m.id
+                          ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
+                          : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
+                      }`}
+                    >
+                      <span className="truncate">
+                        {m.label}{m.default ? " (Default)" : ""}
+                      </span>
+                      {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0 stroke-[3]" />}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -923,7 +991,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         body: JSON.stringify({
           latex_code: targetCode,
           project_id: projectId || "",
-          engine: "pdflatex",
+          engine: "latexmk",
         }),
       });
       const data = await res.json();
@@ -1384,7 +1452,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <div className="mt-2.5 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono space-y-2">
         <div className="flex items-center justify-between font-bold text-[#00CC68]">
           <div className="flex items-center gap-1.5 text-xs">
-            <Sparkles className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
             <span>Proposed TeX Edit ({m.edits.length})</span>
           </div>
           {m.isApplied ? (
@@ -1687,7 +1754,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
                   <div className="flex items-center justify-between font-bold text-slate-100">
                     <div className="flex items-center gap-1.5 text-indigo-400">
-                      <Sparkles className="w-4 h-4" />
                       <span>In-Editor Code Edit</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold font-mono">
@@ -1790,7 +1856,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       {/* Model Selector */}
                       <button
                         type="button"
-                        onClick={() => !isAgentThinking && setModelSelectorOpen(true)}
+                        onPointerDown={(e) => {
+                          if (!isAgentThinking) {
+                            e.stopPropagation();
+                            setModelSelectorOpen(true);
+                          }
+                        }}
+                        onClick={(e) => {
+                          if (!isAgentThinking) {
+                            e.stopPropagation();
+                            setModelSelectorOpen(true);
+                          }
+                        }}
                         disabled={isAgentThinking}
                         className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
                         title="Select AI Model"
@@ -1836,7 +1913,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-[11px] space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
                       <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
                         <div className="flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-[#00CC68] animate-spin shrink-0" />
                           <span>AI Agent Reasoning...</span>
                         </div>
                         <button
@@ -1884,7 +1960,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
                     <div className="flex items-center justify-between font-bold text-[#00CC68]">
                       <div className="flex items-center gap-1.5">
-                        <Sparkles className="w-3.5 h-3.5 text-[#00CC68]" />
                         <span>Proposed TeX Edit</span>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
@@ -2106,7 +2181,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
                   <div className="flex items-center justify-between font-bold text-slate-100">
                     <div className="flex items-center gap-1.5 text-indigo-400">
-                      <Sparkles className="w-3.5 h-3.5" />
                       <span>Pending Edit</span>
                     </div>
                   </div>
@@ -2180,7 +2254,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   {/* Model Selector */}
                   <button
                     type="button"
-                    onClick={() => !isAgentThinking && setModelSelectorOpen(true)}
+                    onPointerDown={(e) => {
+                      if (!isAgentThinking) {
+                        e.stopPropagation();
+                        setModelSelectorOpen(true);
+                      }
+                    }}
+                    onClick={(e) => {
+                      if (!isAgentThinking) {
+                        e.stopPropagation();
+                        setModelSelectorOpen(true);
+                      }
+                    }}
                     disabled={isAgentThinking}
                     className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
                     title="Select AI Model"
@@ -2467,7 +2552,18 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   {/* Model Selector */}
                   <button
                     type="button"
-                    onClick={() => !isAgentThinking && setModelSelectorOpen(true)}
+                    onPointerDown={(e) => {
+                      if (!isAgentThinking) {
+                        e.stopPropagation();
+                        setModelSelectorOpen(true);
+                      }
+                    }}
+                    onClick={(e) => {
+                      if (!isAgentThinking) {
+                        e.stopPropagation();
+                        setModelSelectorOpen(true);
+                      }
+                    }}
                     disabled={isAgentThinking}
                     className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
                     title="Select AI Model"
@@ -2630,68 +2726,13 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 </Button>
               )}
             </form>
+            {renderModelSelectorModal()}
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
 
-      {/* Custom AI Model Selection Modal (Restored Original Dark Theme Design) */}
-      {modelSelectorOpen && (
-        <div 
-          className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
-          onClick={() => setModelSelectorOpen(false)}
-        >
-          <div 
-            className="w-80 max-w-[92vw] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden p-3 space-y-3 animate-in zoom-in-95 duration-150 font-sans"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 select-none">
-              <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs tracking-wide">
-                <Sparkles className="w-4 h-4 text-[#00CC68]" />
-                <span>Select AI Model</span>
-              </div>
-              <button 
-                type="button"
-                onClick={() => setModelSelectorOpen(false)}
-                className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
-              {availableModels.map((provider) => (
-                <div key={provider.name} className="space-y-1.5">
-                  <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
-                    {provider.name}
-                  </div>
-                  <div className="space-y-1">
-                    {provider.models.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        onClick={() => {
-                          setActiveModelName(m.id);
-                          setModelSelectorOpen(false);
-                        }}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${
-                          activeModelName === m.id
-                            ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
-                            : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
-                        }`}
-                      >
-                        <span className="truncate">
-                          {m.label}{m.default ? " (Default)" : ""}
-                        </span>
-                        {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0 stroke-[3]" />}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Custom AI Model Selection Modal */}
+      {renderModelSelectorModal()}
     </div>
   );
 }
