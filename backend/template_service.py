@@ -290,7 +290,7 @@ def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequ
             "status": "active",
             "is_public": False,
             "is_favorite": False,
-            "template": target["name"],
+            "template": target.get("category") or target.get("name") or "Template",
             "stars_count": 0,
         }
         supabase.table("projects").insert(proj_record).execute()
