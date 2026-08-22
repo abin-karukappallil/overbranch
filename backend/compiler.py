@@ -627,13 +627,11 @@ def compile_latex(
                     if matched_root:
                         break
 
-                # Copy files from the matched template (or all templates as fallback)
-                roots_to_copy = [matched_root] if matched_root else template_roots
-                for tmpl_root in roots_to_copy:
-                    for tmpl_file in tmpl_root.rglob("*"):
+                # Copy files only from the matched template directory if a template is matched
+                if matched_root:
+                    for tmpl_file in matched_root.rglob("*"):
                         if tmpl_file.is_file():
-                            # Preserve subdirectory structure (e.g. images/background.png)
-                            rel_path = tmpl_file.relative_to(tmpl_root)
+                            rel_path = tmpl_file.relative_to(matched_root)
                             if str(rel_path) == "main.tex" or rel_path.name in ("metadata.json", "thumbnail.png"):
                                 continue
                             dest_file = tmpdir / rel_path
@@ -663,23 +661,27 @@ def compile_latex(
             existing_texinputs = comp_env.get("TEXINPUTS", "")
             comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
 
-            # Compilation timeout — 120s to handle Docker/VM overhead with multi-pass latexmk
-            COMPILE_TIMEOUT = 120
+            COMPILE_TIMEOUT = 30
 
-            # Build command list
+            # Command list: try fast pdflatex first (sub-second), fallback to latexmk / xelatex if needed
             cmd_list = []
             if engine == "tectonic":
                 cmd_list.append(["tectonic", "main.tex"])
-            elif sys.platform == "win32" and not has_perl:
+            elif engine == "xelatex":
                 cmd_list.extend([
-                    ["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"],
                     ["xelatex", "-interaction=nonstopmode", "main.tex"],
-                    ["lualatex", "-interaction=nonstopmode", "main.tex"]
+                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
+                ])
+            elif engine == "lualatex":
+                cmd_list.extend([
+                    ["lualatex", "-interaction=nonstopmode", "main.tex"],
+                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
                 ])
             else:
+                # Fast path: pdflatex (0.4s) -> latexmk -> xelatex -> lualatex
                 cmd_list.extend([
-                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"],
                     ["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"],
+                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"],
                     ["xelatex", "-interaction=nonstopmode", "main.tex"],
                     ["lualatex", "-interaction=nonstopmode", "main.tex"]
                 ])
@@ -687,7 +689,6 @@ def compile_latex(
             last_output = ""
             for cmd in cmd_list:
                 try:
-                    # Run primary pass
                     result = subprocess.run(
                         cmd,
                         cwd=tmpdir,
@@ -698,20 +699,23 @@ def compile_latex(
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
 
-                    # Run secondary pass for pdflatex/xelatex to resolve \input{}, \maketitle, TOC, and Beamer themes
-                    if cmd[0] in ["pdflatex", "xelatex", "lualatex"]:
-                        result2 = subprocess.run(
-                            cmd,
-                            cwd=tmpdir,
-                            capture_output=True,
-                            text=True,
-                            timeout=COMPILE_TIMEOUT,
-                            env=comp_env
-                        )
-                        last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
-
                     pdf_path = tmpdir / "main.pdf"
                     if pdf_path.exists():
+                        # If fast pdflatex pass succeeded cleanly, return immediately (sub-second!)
+                        if cmd[0] == "pdflatex":
+                            # Check if secondary pass is required for cross-references or citations
+                            needs_second_pass = any(kw in last_output for kw in ["Rerun to get cross-references right", "Rerun LaTeX", "undefined references"])
+                            if needs_second_pass:
+                                result2 = subprocess.run(
+                                    cmd,
+                                    cwd=tmpdir,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=COMPILE_TIMEOUT,
+                                    env=comp_env
+                                )
+                                last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
+
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
