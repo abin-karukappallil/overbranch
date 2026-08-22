@@ -265,15 +265,19 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   // Close model selector on outside click
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleClickOutside = (e: Event) => {
       if (modelSelectorRef.current && !modelSelectorRef.current.contains(e.target as Node)) {
         setModelSelectorOpen(false);
       }
     };
     if (modelSelectorOpen) {
       document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside);
     }
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, [modelSelectorOpen]);
 
   // Helper: get display label for a model ID
@@ -2722,6 +2726,65 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
+
+      {/* Dedicated Mobile Model Selector Action Sheet */}
+      {modelSelectorOpen && (
+        <div 
+          className="md:hidden fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex flex-col justify-end p-3 animate-in fade-in duration-200"
+          onClick={() => setModelSelectorOpen(false)}
+        >
+          <div 
+            className="bg-zinc-900 border border-zinc-700 rounded-3xl p-4 space-y-3 max-h-[75vh] flex flex-col shadow-2xl animate-in slide-in-from-bottom-4 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+              <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-sm">
+                <Sparkles className="w-4 h-4 text-[#00CC68]" />
+                <span>Select AI Model</span>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setModelSelectorOpen(false)}
+                className="p-1 text-zinc-400 hover:text-white rounded-lg bg-zinc-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto space-y-3 pr-1">
+              {availableModels.map((provider) => (
+                <div key={provider.name} className="space-y-1.5">
+                  <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
+                    {provider.name}
+                  </div>
+                  <div className="space-y-1">
+                    {provider.models.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          setActiveModelName(m.id);
+                          setModelSelectorOpen(false);
+                        }}
+                        className={`w-full text-left px-3.5 py-3 rounded-2xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${
+                          activeModelName === m.id
+                            ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
+                            : "bg-zinc-950/60 text-zinc-200 hover:bg-zinc-800 border border-zinc-800/80"
+                        }`}
+                      >
+                        <span className="truncate">
+                          {m.label}{m.default ? " (Default)" : ""}
+                        </span>
+                        {activeModelName === m.id && <Check className="w-4 h-4 text-[#00CC68] shrink-0 stroke-[3]" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
