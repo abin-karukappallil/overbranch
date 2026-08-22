@@ -4,21 +4,14 @@ set -e
 # ============================================
 # OverBranch — Build Local, Deploy to VM
 # ============================================
+# No GitHub Actions, no registry, no payments.
+# Builds locally → saves as file → copies to VM → runs.
+#
 # Usage: ./deploy.sh
-#
-# Prerequisites (one-time):
-#   1. Login to GitHub Container Registry:
-#      echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u abin-karukappallil --password-stdin
-#
-#   2. On your VM, also login:
-#      ssh user@vm-ip 'echo "YOUR_GITHUB_PAT" | docker login ghcr.io -u abin-karukappallil --password-stdin'
-#
-# To create a GitHub PAT:
-#   GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)
-#   Scopes needed: write:packages, read:packages
 # ============================================
 
-IMAGE="ghcr.io/abin-karukappallil/overbranch:latest"
+IMAGE_NAME="overbranch"
+IMAGE_FILE="overbranch-image.tar.gz"
 
 # --- Config: Change these ---
 VM_USER="${AZURE_VM_USERNAME:-abin}"
@@ -28,38 +21,52 @@ VM_DIR="~/overbranch"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Step 1: Build Docker image locally"
+echo "  Step 1/4: Build Docker image locally"
 echo "══════════════════════════════════════════"
 docker compose build
-docker tag overbranch "$IMAGE" 2>/dev/null || docker tag "$(docker compose images -q overbranch)" "$IMAGE"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Step 2: Push image to ghcr.io"
+echo "  Step 2/4: Save image to file"
 echo "══════════════════════════════════════════"
-docker push "$IMAGE"
+docker save "$IMAGE_NAME" | gzip > "$IMAGE_FILE"
+echo "  Saved: $IMAGE_FILE ($(du -h "$IMAGE_FILE" | cut -f1))"
 
 echo ""
 echo "══════════════════════════════════════════"
-echo "  Step 3: Deploy on Azure VM"
+echo "  Step 3/4: Copy to VM via scp"
+echo "══════════════════════════════════════════"
+scp "$IMAGE_FILE" "$VM_USER@$VM_IP:$VM_DIR/$IMAGE_FILE"
+
+echo ""
+echo "══════════════════════════════════════════"
+echo "  Step 4/4: Load & restart on VM"
 echo "══════════════════════════════════════════"
 ssh "$VM_USER@$VM_IP" bash -s <<REMOTE
   set -e
   cd $VM_DIR
 
-  # Pull the pre-built image
-  docker pull $IMAGE
+  echo "Loading image..."
+  docker load < $IMAGE_FILE
 
-  # Restart with the new image (no build on server)
+  echo "Restarting container..."
   docker compose down
   docker compose up -d --no-build
 
+  echo "Cleaning up..."
+  rm -f $IMAGE_FILE
+  docker image prune -f
+
   echo ""
-  echo "✓ Deployed! Checking status..."
+  echo "✓ Running containers:"
   docker compose ps
 REMOTE
 
+# Clean local tar
+rm -f "$IMAGE_FILE"
+
 echo ""
 echo "══════════════════════════════════════════"
-echo "  ✓ Done! Your exact local build is live."
+echo "  ✓ Done! Same image from your laptop"
+echo "    is now running on $VM_IP"
 echo "══════════════════════════════════════════"

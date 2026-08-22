@@ -1,6 +1,6 @@
 services:
   overbranch:
-    image: ${OVERBRANCH_IMAGE:-ghcr.io/abin-karukappallil/overbranch:latest}
+    image: overbranch:latest
     build:
       context: .
       dockerfile: Dockerfile
