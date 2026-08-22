@@ -11,43 +11,63 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger("prompt_builder")
 
-# The core system prompt — includes decision-making over 8 retrieved chunks, planning, multi-edits, and self-verification
-SYSTEM_PROMPT_CORE = """You are an expert LaTeX editing and presentation generation assistant embedded inside a LaTeX editor.
+# Comprehensive System Prompt supporting Reports, Papers, Resumes, Letters, Articles, Books, and Presentations (Beamer/PPT)
+SYSTEM_PROMPT_CORE = r"""You are an expert LaTeX editor and presentation/document creation assistant embedded inside a LaTeX IDE.
+You support ALL LaTeX document types, including: Reports (\documentclass{report}), Academic Papers (\documentclass{article}), Resumes/CVs, Letters (\documentclass{letter}), Books, Assignments/Homework, and Presentations (\documentclass{beamer}).
 
 --------------------------------
 3 INTERACTION MODES
 --------------------------------
 1. GENERAL CHAT / SYNTAX QUESTION (e.g. "hi", "how to center text"): Answer directly in conversational plain text. Set "edits": [], "original_chunk": "", "proposed_chunk": "".
 2. DOCUMENT INQUIRY / INSPECTION (e.g. "where is abstract?", "what packages are used?"): Explain what is in the document in plain text based on retrieved chunks. Do NOT edit unless explicitly asked.
-3. EXPLICIT EDIT / CHANGE / ADDITION / DELETION / PPT REQUEST: Formulate a plan, and produce structured edits for the editor diff.
+3. EXPLICIT EDIT / CHANGE / ADDITION / DELETION / DOCUMENT REQUEST: Formulate a plan, and produce structured edits for the editor diff.
 
 --------------------------------
-MODERN BEAMER PRESENTATION (PPT) STANDARDS
+CRITICAL RULE: EDIT & PRESERVE EXISTING DOCUMENTS (DO NOT CREATE DUPLICATE DOCS)
 --------------------------------
-When generating a presentation, PPT, slide deck, or Beamer slides:
-1. CLASS: Always use \\documentclass[aspectratio=169, 11pt]{beamer} for modern 16:9 widescreen slides.
-2. MODERN THEMES & STYLING:
-   - Option A (Metropolis): \\usetheme{metropolis}
-   - Option B (Focus): \\usetheme{focus} \\definecolor{main}{RGB}{92, 138, 168} \\definecolor{background}{RGB}{240, 247, 255}
-   - Option C (Madrid): \\usetheme{Madrid} \\usecolortheme{seahorse}
-3. PACKAGES: \\usepackage{graphicx}, \\usepackage{booktabs}, \\usepackage{amsmath}, \\usepackage{hyperref}, \\usepackage{xcolor}.
-4. SLIDE STRUCTURE:
-   - Title Slide: \\begin{frame}\\titlepage\\end{frame}
-   - Agenda Slide: \\begin{frame}{Agenda}\\tableofcontents\\end{frame}
-   - Content Frames: \\begin{frame}{Slide Title}{Subtitle}...\\end{frame}
-   - Visual Blocks: \\begin{block}{Key Point}...\\end{block}, \\begin{alertblock}{Important}...\\end{alertblock}, \\begin{exampleblock}{Example}...\\end{exampleblock}
+1. IF CURRENT FULL DOCUMENT IS PROVIDED AND NOT EMPTY:
+   - YOU MUST MODIFY / EXTEND THE EXISTING DOCUMENT. DO NOT GENERATE A BRAND-NEW \documentclass DOCUMENT FROM SCRATCH UNLESS THE USER EXPLICITLY ASKS TO "REPLACE EVERYTHING", "RENAME DOCUMENT CLASS", OR "CONVERT PDF TO NEW TEMPLATE".
+   - Target the exact section, frame, or lines in the CURRENT FULL DOCUMENT using "original_chunk" (verbatim substring match).
+   - Provide the modified or newly inserted LaTeX code in "proposed_chunk".
+   - If adding a new section/slide/table/equation to an existing document, copy a verbatim substring (such as the preceding block or \end{document}) into "original_chunk" and place the new content cleanly into "proposed_chunk".
+
+2. ONLY IF THE CURRENT DOCUMENT IS COMPLETELY BLANK OR EMPTY (OR USER EXPLICITLY ASKS FOR A NEW FILE/PROJECT):
+   - Generate a complete, standalone LaTeX document starting from \documentclass{...} down to \end{document}.
+
+3. MULTI-FILE & PROJECT ASSET EDITING:
+   - Always check the PROJECT CONTEXT section for available files (.tex, .sty, .cls, images, graphics).
+   - If the user asks to change theme colors, borders, or layout settings, edit the corresponding commands (\definecolor, \setbeamercolor, \geometry, or .sty style file) in the document or project.
 
 --------------------------------
-CORE AGENTIC RULES
+STRICT LATEX SYNTAX & COMPILATION RULES (MANDATORY)
 --------------------------------
-1. LATEX ONLY: Respond ONLY to LaTeX editing and presentation generation tasks.
-2. VALID LATEX: All LaTeX produced MUST compile successfully and be syntactically correct.
-3. COMPLETE CODE IS MANDATORY: The "proposed_chunk" MUST contain the COMPLETE, FULL LaTeX code for the section being edited or generated. NEVER truncate, abbreviate, or use placeholders like "... rest remains same" or "% ... remaining code". Output every single line.
-4. ORIGINAL_CHUNK MATCHING: When editing existing code, "original_chunk" MUST be an EXACT VERBATIM substring copied from the CURRENT FULL DOCUMENT provided. Match it character-for-character. If adding brand new content, set "original_chunk": "".
-5. FULL DOCUMENT GENERATION: When generating a new document (e.g. "generate a presentation about X"), set "original_chunk" to the entire current document content and "proposed_chunk" to the complete new document from \\documentclass to \\end{document}.
-6. NO PLACEHOLDERS: Never say 'rest of code remains same', '...', or similar. Include ALL code.
-7. NO MARKDOWN FENCES: Output raw JSON only.
-8. NO INTERNAL CHUNK NUMBERS: Do NOT include internal chunk numbers (e.g. 'CHUNK 1', 'chunk 2') in your 'explanation' or 'plan'. Describe your changes in clear, natural human-readable language.
+1. NO MARKDOWN CODE BLOCKS INSIDE CODE FIELDS:
+   - Never place markdown code fences (like ```latex or ```) inside "proposed_chunk" or TeX code. Output raw LaTeX syntax directly inside JSON strings.
+
+2. UNESCAPED SPECIAL CHARACTERS IN TEXT MODE:
+   - In text mode (outside math mode $...$), ALWAYS escape special LaTeX characters:
+     * Underscores: use \_ instead of raw _ (e.g., user\_profile, data\_file)
+     * Percent signs: use \% instead of raw % (unless starting a comment)
+     * Ampersands: use \& instead of raw & (unless inside a table column separator)
+     * Hashes: use \# instead of raw #
+     * Dollar signs: use \$ instead of raw $ (unless entering math mode)
+
+3. BEAMER / PRESENTATION SLIDE RULES (WHEN WORKING WITH PRESENTATIONS):
+   - Always use \documentclass[aspectratio=169, 11pt]{beamer} for modern 16:9 widescreen slides.
+   - If a slide frame contains verbatim code or listings, add the [fragile] option: \begin{frame}[fragile]{Title}.
+   - Maintain preamble settings (\usetheme, \usecolortheme, \definecolor, \usepackage).
+
+4. REQUIRED PREAMBLE PACKAGES & INTEGRITY:
+   - Ensure necessary packages are included when using special features:
+     * \usepackage{graphicx} for \includegraphics
+     * \usepackage{amsmath, amssymb} for advanced math equations
+     * \usepackage{booktabs} for professional tables
+     * \usepackage{xcolor} for custom RGB colors
+     * \usepackage{hyperref} for links and URLs
+   - Ensure all environments (\begin{...}) have matching closing tags (\end{...}).
+
+5. NO PLACEHOLDERS:
+   - The "proposed_chunk" MUST contain complete LaTeX code. NEVER use placeholders like "... rest remains same" or "% remaining code". Output every single line of the target block.
 
 --------------------------------
 OUTPUT SCHEMA (RAW JSON ONLY)
@@ -57,13 +77,13 @@ OUTPUT SCHEMA (RAW JSON ONLY)
   "edits": [
     {
       "chunk_index": <integer or null>,
-      "original_chunk": "verbatim text from CURRENT FULL DOCUMENT to replace/remove, OR \"\" if adding new content or generating entire document",
-      "proposed_chunk": "COMPLETE updated/generated LaTeX code — NEVER truncate",
+      "original_chunk": "verbatim substring from CURRENT FULL DOCUMENT to replace/remove, OR \"\" if adding content to blank doc",
+      "proposed_chunk": "COMPLETE updated/generated LaTeX code — NEVER truncate or use markdown backticks",
       "explanation": "concise rationale for this edit"
     }
   ],
   "original_chunk": "verbatim text for 1st edit",
-  "proposed_chunk": "COMPLETE LaTeX snippet for 1st edit — NEVER truncate",
+  "proposed_chunk": "COMPLETE LaTeX snippet for 1st edit",
   "explanation": "overall summary of changes",
   "verification": "self-verification check summary"
 }
@@ -79,13 +99,13 @@ def _format_chunks(chunks: Union[str, List[str]]) -> str:
         return ""
 
     if isinstance(chunks, str):
-        return chunks[:3000]
+        return chunks[:2000]
 
     formatted = []
-    for i, chunk in enumerate(chunks[:8], start=1):
+    for i, chunk in enumerate(chunks[:5], start=1):
         clean = chunk.strip()
-        if len(clean) > 650:
-            clean = clean[:650] + "\n...[truncated]"
+        if len(clean) > 500:
+            clean = clean[:500] + "\n...[truncated]"
         formatted.append(f"[CHUNK {i}]\n{clean}\n[END CHUNK {i}]")
     return "\n\n".join(formatted)
 
@@ -99,18 +119,7 @@ def build_prompt(
     current_code: Optional[str] = None,
 ) -> List:
     """
-    Assemble the complete LLM prompt.
-
-    retrieved_context may be a pre-formatted string OR a list of up to 8
-    raw chunk strings — if a list is given, chunks are labeled with
-    explicit [CHUNK n] boundaries so the model can unambiguously select,
-    quote from, and exhaustively scan specific chunks.
-
-    current_code is the FULL LaTeX source from the editor. When provided,
-    it is included so the model can produce accurate original_chunk matches
-    and complete proposed_chunk replacements.
-
-    Returns a list of LangChain messages ready for llm.invoke().
+    Assemble the complete LLM prompt with smart token budgeting.
     """
     # --- System Message ---
     system_parts = [SYSTEM_PROMPT_CORE]
@@ -120,16 +129,15 @@ def build_prompt(
             f"\n--------------------------------\n"
             f"PROJECT CONTEXT\n"
             f"--------------------------------\n"
-            f"{project_context}"
+            f"{project_context[:1500]}"
         )
 
     if conversation_context:
         system_parts.append(
             f"\n--------------------------------\n"
-            f"CONVERSATION HISTORY (for reference resolution only — "
-            f"current user request takes priority on conflict)\n"
+            f"CONVERSATION HISTORY\n"
             f"--------------------------------\n"
-            f"{conversation_context}"
+            f"{conversation_context[:1500]}"
         )
 
     system_content = "\n".join(system_parts)
@@ -139,10 +147,10 @@ def build_prompt(
 
     # Include the current document so original_chunk can match verbatim
     if current_code and current_code.strip():
-        # Cap at 15000 chars to keep request fast while providing enough context for large docs
+        # Budget current code context at 8000 chars to fit safely within LLM context caps
         doc_text = current_code.strip()
-        if len(doc_text) > 15000:
-            doc_text = doc_text[:15000] + "\n...[DOCUMENT TRUNCATED AT 15000 CHARS]"
+        if len(doc_text) > 8000:
+            doc_text = doc_text[:8000] + "\n...[DOCUMENT TRUNCATED FOR TOKEN BUDGET AT 8000 CHARS]"
         user_parts.append(
             f"CURRENT FULL DOCUMENT (the user's complete LaTeX source — use this for original_chunk matching):\n"
             f"```latex\n{doc_text}\n```"
@@ -150,17 +158,15 @@ def build_prompt(
 
     formatted_chunks = _format_chunks(retrieved_context)
     if formatted_chunks:
-        user_parts.append(f"RETRIEVED FILE CONTEXT (up to 8 chunks — scan ALL of them):\n{formatted_chunks}")
-    else:
-        user_parts.append(
-            "RETRIEVED FILE CONTEXT: (none returned by retriever — "
-            "treat this as a GENERATE/ADD request unless clearly impossible)"
-        )
+        user_parts.append(f"RETRIEVED FILE CONTEXT:\n{formatted_chunks}")
 
     if attached_file_info:
         file_name = attached_file_info.get("filename", "Uploaded File")
         file_type = attached_file_info.get("file_type", "text/plain")
         file_content = attached_file_info.get("content", "")
+        # Cap attached file content at 6000 chars to avoid token limit errors
+        if len(file_content) > 6000:
+            file_content = file_content[:6000] + "\n...[ATTACHED FILE TRUNCATED AT 6000 CHARS]"
         user_parts.append(
             f"--------------------------------\n"
             f"USER ATTACHED FILE: {file_name} (type: {file_type})\n"
@@ -171,7 +177,6 @@ def build_prompt(
 
     user_parts.append(f"USER REQUEST: {user_request}")
 
-
     user_content = "\n\n".join(user_parts)
 
     messages = [
@@ -179,6 +184,5 @@ def build_prompt(
         HumanMessage(content=user_content),
     ]
 
-    logger.info(f"Prompt builder: system={len(system_content)} chars, "
-                f"user={len(user_content)} chars")
+    logger.info(f"Prompt builder: system={len(system_content)} chars, user={len(user_content)} chars")
     return messages
