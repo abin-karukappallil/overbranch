@@ -10,12 +10,13 @@ import logging
 from typing import Dict, Any, List, Optional
 
 from .base_provider import LLMProvider, LLMProviderError
+from .freellm_provider import FreeLLMProvider
 from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
 
 logger = logging.getLogger("provider_router")
 
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = "auto:smart"
 
 
 class ProviderRouter:
@@ -25,9 +26,11 @@ class ProviderRouter:
     """
 
     def __init__(self):
+        self.freellm = FreeLLMProvider()
         self.groq = GroqProvider()
         self.gemini = GeminiProvider()
         self._providers: Dict[str, LLMProvider] = {
+            "freellm": self.freellm,
             "groq": self.groq,
             "gemini": self.gemini,
         }
@@ -38,10 +41,10 @@ class ProviderRouter:
 
         Routing rules:
           - 'gemini-*' → GeminiProvider
-          - Everything else (gpt-oss-*, openai/*, unknown) → GroqProvider
+          - Everything else ('auto', 'auto:smart', 'auto:fast', 'gpt-oss-*', unknown) → FreeLLMProvider
         """
         if not model:
-            return self.groq
+            return self.freellm
 
         clean_model = model.strip().lower()
 
@@ -49,8 +52,8 @@ class ProviderRouter:
         if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS:
             return self.gemini
 
-        # Default to Groq for everything else
-        return self.groq
+        # Default to FreeLLM Provider for all other models (has built-in Groq fallback)
+        return self.freellm
 
     def get_default_model(self) -> str:
         """Returns the default model ID for new chats."""
@@ -63,12 +66,12 @@ class ProviderRouter:
         """
         providers_list = []
 
-        # Groq first (has the default)
-        groq_models = self.groq.get_available_models()
-        if groq_models:
+        # FreeLLM API first (has the default 'auto' router)
+        freellm_models = self.freellm.get_available_models()
+        if freellm_models:
             providers_list.append({
-                "name": self.groq.get_provider_name(),
-                "models": groq_models,
+                "name": self.freellm.get_provider_name(),
+                "models": freellm_models,
             })
 
         # Gemini second
