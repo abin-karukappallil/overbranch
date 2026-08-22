@@ -2186,44 +2186,70 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <Bot className="w-4 h-4 text-[#00CC68]" />
                   <span>Agent</span>
                 </div>
-                <div className="relative">
+                <div className="flex items-center gap-1.5">
+                  {/* New Chat Button */}
                   <button
-                    onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                    type="button"
+                    onClick={handleNewChat}
                     disabled={isAgentThinking}
-                    className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                    className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                    title="Start new chat session"
                   >
-                    <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="font-semibold truncate max-w-[120px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                    <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                    <span>New</span>
                   </button>
 
-                  {modelSelectorOpen && (
-                    <div className="absolute top-full right-0 mt-1.5 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
-                      {availableModels.map((provider) => (
-                        <div key={provider.name}>
-                          <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
-                            {provider.name}
+                  {/* Clear / Delete Chat Button */}
+                  <button
+                    type="button"
+                    onClick={handleClearChat}
+                    disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30 shrink-0"
+                    title="Delete chat history and document context"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Model Selector */}
+                  <div className="relative shrink-0" ref={modelSelectorRef}>
+                    <button
+                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                      disabled={isAgentThinking}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                    </button>
+
+                    {modelSelectorOpen && (
+                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
+                        {availableModels.map((provider) => (
+                          <div key={provider.name}>
+                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
+                              {provider.name}
+                            </div>
+                            {provider.models.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                  activeModelName === m.id
+                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                }`}
+                              >
+                                <span className="truncate">
+                                  {m.label}{m.default ? " (Default)" : ""}
+                                </span>
+                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
+                              </button>
+                            ))}
                           </div>
-                          {provider.models.map((m) => (
-                            <button
-                              key={m.id}
-                              onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
-                              className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
-                                activeModelName === m.id
-                                  ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
-                                  : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
-                              }`}
-                            >
-                              <span className="truncate">
-                                {m.label}{m.default ? " (Default)" : ""}
-                              </span>
-                              {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2451,6 +2477,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           <button
             onClick={() => {
               setActiveMobileTab("ai");
+              setMobileDrawerOpen(true);
             }}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
               activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
@@ -2474,20 +2501,44 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <Bot className="w-5 h-5 text-[#00CC68]" />
                   <span className="font-bold text-sm text-white">OverBranch Agent</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="relative">
+                <div className="flex items-center gap-1.5">
+                  {/* New Chat Button */}
+                  <button
+                    type="button"
+                    onClick={handleNewChat}
+                    disabled={isAgentThinking}
+                    className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
+                    title="Start new chat session"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                    <span>New</span>
+                  </button>
+
+                  {/* Clear / Delete Chat Button */}
+                  <button
+                    type="button"
+                    onClick={handleClearChat}
+                    disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30 shrink-0"
+                    title="Delete chat history and document context"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+
+                  {/* Model Selector */}
+                  <div className="relative shrink-0">
                     <button
                       onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
                       disabled={isAgentThinking}
-                      className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#00CC68]/10 text-[#00CC68] font-mono text-xs border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
                     >
-                      <span className={`w-2 h-2 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                      <span className="font-semibold truncate max-w-[140px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                      {!isAgentThinking && <ChevronDown className={`w-3.5 h-3.5 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
                     </button>
 
                     {modelSelectorOpen && (
-                      <div className="absolute top-full right-0 mt-1.5 w-64 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[60] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[60vh] overflow-y-auto">
+                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[60] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
                         {availableModels.map((provider) => (
                           <div key={provider.name}>
                             <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
