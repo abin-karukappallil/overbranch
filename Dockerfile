@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-latex-extra \
     texlive-fonts-recommended \
     texlive-fonts-extra \
+    texlive-science \
+    cm-super \
     latexmk \
     poppler-utils \
     perl \
