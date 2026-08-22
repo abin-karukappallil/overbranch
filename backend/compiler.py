@@ -562,6 +562,25 @@ def compile_latex(
                             dest.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(item, dest)
 
+                # Sync text documents from database if present
+                try:
+                    from project_storage import get_supabase_client
+                    supabase = get_supabase_client()
+                    if supabase:
+                        docs_res = supabase.table("latex_documents").select("file_path, raw_code").eq("project_id", project_id.strip()).execute()
+                        if docs_res.data:
+                            for doc in docs_res.data:
+                                f_path = doc.get("file_path")
+                                r_code = doc.get("raw_code")
+                                if not f_path or f_path == "main.tex":
+                                    continue
+                                dest = tmpdir / f_path
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                if r_code and not r_code.startswith("[Binary Asset:"):
+                                    dest.write_text(r_code, encoding="utf-8", errors="ignore")
+                except Exception as db_err:
+                    pass
+
             # 2. Write current main.tex
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
@@ -574,6 +593,39 @@ def compile_latex(
             if files:
                 for f in files:
                     write_file_safely(tmpdir, f.get("filename", ""), f.get("data", ""))
+
+            # 4. Copy missing or placeholder template fallback assets (like logo.jpg, structure.tex, .sty, .cls)
+            templates_base_dir = Path(os.path.join(os.path.dirname(__file__), "templates")).resolve()
+            if templates_base_dir.exists():
+                for tmpl_file in templates_base_dir.rglob("*"):
+                    if tmpl_file.is_file():
+                        rel_name = tmpl_file.name
+                        dest_file = tmpdir / rel_name
+
+                        # Check if dest_file is missing or is an invalid text placeholder
+                        is_valid = True
+                        if dest_file.exists():
+                            try:
+                                if dest_file.stat().st_size < 200:
+                                    content = dest_file.read_bytes()
+                                    if content.startswith(b"[Binary Asset:"):
+                                        is_valid = False
+                            except Exception:
+                                pass
+                        else:
+                            is_valid = False
+
+                        if not is_valid and rel_name != "main.tex":
+                            try:
+                                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(tmpl_file, dest_file)
+                            except Exception:
+                                pass
+
+            # Build environment with augmented TEXINPUTS for nested inputs and assets
+            comp_env = os.environ.copy()
+            existing_texinputs = comp_env.get("TEXINPUTS", "")
+            comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
 
             # Build command list
             cmd_list = []
@@ -596,15 +648,28 @@ def compile_latex(
             last_output = ""
             for cmd in cmd_list:
                 try:
+                    # Run primary pass
                     result = subprocess.run(
                         cmd,
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
                         timeout=35,
-                        env=os.environ
+                        env=comp_env
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
+
+                    # Run secondary pass for pdflatex/xelatex to resolve \input{}, \maketitle, TOC, and Beamer themes
+                    if cmd[0] in ["pdflatex", "xelatex", "lualatex"]:
+                        result2 = subprocess.run(
+                            cmd,
+                            cwd=tmpdir,
+                            capture_output=True,
+                            text=True,
+                            timeout=35,
+                            env=comp_env
+                        )
+                        last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
 
                     pdf_path = tmpdir / "main.pdf"
                     if pdf_path.exists():
