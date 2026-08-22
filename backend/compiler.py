@@ -52,7 +52,11 @@ def clean_tex_syntax(text: str) -> str:
         return ""
     s = re.sub(r'%.*$', '', s)
 
-    # Ignore TeX preamble setup commands & macro definitions
+    # Ignore markdown code blocks or code fences if present in TeX source
+    if s.startswith('```') or s.endswith('```'):
+        return ""
+
+    # Ignore TeX setup commands, macro definitions, Beamer color settings, and TikZ
     preamble_patterns = [
         r'^\s*\\documentclass',
         r'^\s*\\usepackage',
@@ -63,6 +67,10 @@ def clean_tex_syntax(text: str) -> str:
         r'^\s*\\cft',
         r'^\s*\\usetikzlibrary',
         r'^\s*\\definecolor',
+        r'^\s*\\setbeamercolor',
+        r'^\s*\\setbeamertemplate',
+        r'^\s*\\setbeamerfont',
+        r'^\s*\\titlegraphic',
         r'^\s*\\lstdefinestyle',
         r'^\s*\\lstset',
         r'^\s*\\geometry',
@@ -86,15 +94,34 @@ def clean_tex_syntax(text: str) -> str:
         r'^\s*\\sloppy',
         r'^\s*\\headrulewidth',
         r'^\s*\\footrulewidth',
+        r'^\s*\\node',
+        r'^\s*\\draw',
+        r'^\s*\\path',
+        r'^\s*\\fill',
+        r'^\s*\\clip',
+        r'^\s*\\pgf',
+        r'^\s*\\tikz',
+        r'^\s*\\hrule',
+        r'^\s*\\vrule',
+        r'^\s*\\vspace',
+        r'^\s*\\hspace',
+        r'^\s*\\rule',
+        r'^\s*\\centering',
+        r'^\s*\\raggedright',
+        r'^\s*\\raggedleft',
+        r'^\s*\\vfill',
+        r'^\s*\\hfill',
+        r'^\s*\\pagebreak',
+        r'^\s*\\clearpage',
+        r'^\s*\\newpage',
     ]
     for pat in preamble_patterns:
-        if re.search(pat, s):
+        if re.search(pat, s, re.IGNORECASE):
             return ""
 
-    # Ignore key=value style settings (e.g. backgroundcolor=..., commentstyle=..., tabsize=2, a4paper,)
-    if re.match(r'^[a-zA-Z0-9_-]+\s*=\s*.*$', s) or re.match(r'^[a-zA-Z0-9_-]+,?\s*$', s):
-        if not s.startswith('•') and not s.startswith('\\item') and len(s.split()) < 3:
-            return ""
+    # Ignore key=value style settings (e.g. backgroundcolor=..., commentstyle=..., tabsize=2, fg=white, bg=primary)
+    if (re.match(r'^[a-zA-Z0-9_-]+\s*=\s*.*$', s) or re.match(r'^[a-zA-Z0-9_-]+,?\s*$', s)) and not s.startswith('•') and not s.startswith('\\item') and len(s.split()) < 4:
+        return ""
 
     # Ignore standalone option brackets or raw dimensions like "[display]", "0pt", "40pt", "1822"
     if re.match(r'^\s*\[[^\]]*\]\s*$', s) or re.match(r'^\s*(?:\d+(?:\.\d+)?(?:cm|mm|in|pt|em|ex)?|\d+)\s*$', s):
@@ -107,7 +134,7 @@ def clean_tex_syntax(text: str) -> str:
     s = re.sub(r'\\ref\{([^}]+)\}', r'(\1)', s)
     s = re.sub(r'\\item\s*', '• ', s)
 
-    # Remove font size / spacing commands like \fontsize{18}{22}\selectfont
+    # Remove font size / spacing / style commands
     s = re.sub(r'\\fontsize\{[^}]*\}\{[^}]*\}', '', s)
     s = re.sub(r'\\selectfont', '', s)
     s = re.sub(r'\\vspace\*?\{[^}]*\}', '', s)
@@ -118,6 +145,8 @@ def clean_tex_syntax(text: str) -> str:
     s = re.sub(r'\\addcontentsline\{[^}]*\}\{[^}]*\}\{[^}]*\}', '', s)
     s = re.sub(r'\\captionsetup\[[^\]]*\]\{[^}]*\}', '', s)
     s = re.sub(r'\\captionsetup\{[^}]*\}', '', s)
+    s = re.sub(r'\\color\{[^}]*\}', '', s)
+    s = re.sub(r'\\textcolor\{[^}]*\}\{([^}]*)\}', r'\1', s)
 
     # Remove structural & environment commands
     s = re.sub(r'\\begin\{[^}]*\}(?:\[[^\]]*\])?(?:\{[^}]*\})*', '', s)

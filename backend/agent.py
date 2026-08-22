@@ -66,17 +66,70 @@ class AgentChatRequest(BaseModel):
 
 
 
+try:
+    import docx
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+
+def sanitize_text_content(text: str) -> str:
+    """Removes NUL bytes and control characters that break JSON or API payloads."""
+    if not text:
+        return ""
+    # Strip null bytes and unprintable ASCII control characters (except newline, tab, carriage return)
+    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    return cleaned
+
+
 def process_attached_file_content(filename: str, content: str, file_type: str) -> str:
     """
-    Safely extracts text content from uploaded files (PDFs, text files, Data URLs).
+    Safely extracts text content from uploaded files (PDFs, Word DOCX, text files, Data URLs).
     Prevents corrupt binary streams from causing errors in prompt building or LLM.
     """
     if not content:
         return ""
 
+    lower_fn = filename.lower()
+    ft = (file_type or "text/plain").lower()
+
+    # Word DOCX Extraction
+    is_docx = (
+        "word" in ft or
+        "officedocument" in ft or
+        lower_fn.endswith(".docx") or
+        lower_fn.endswith(".doc") or
+        content.startswith("data:application/vnd.openxmlformats")
+    )
+
+    if is_docx:
+        if not HAS_DOCX:
+            logger.warning(f"python-docx package not installed, skipping text extraction for '{filename}'")
+            return f"[Uploaded Word Document: '{filename}']"
+        try:
+            b64_data = content
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            padding_needed = len(b64_data) % 4
+            if padding_needed:
+                b64_data += "=" * (4 - padding_needed)
+
+            raw_bytes = base64.b64decode(b64_data)
+            doc_file = docx.Document(io.BytesIO(raw_bytes))
+            paragraphs = [p.text.strip() for p in doc_file.paragraphs if p.text.strip()]
+            full_text = "\n".join(paragraphs)
+            if len(full_text) > 12000:
+                full_text = full_text[:12000] + f"\n...[Word document truncated to 12k chars]"
+            logger.info(f"Extracted {len(paragraphs)} paragraphs from Word document '{filename}'")
+            return sanitize_text_content(full_text)
+        except Exception as docx_err:
+            logger.warning(f"Failed to extract text from Word document '{filename}': {docx_err}")
+            return f"[Uploaded Word document: '{filename}']"
+
+    # PDF Extraction
     is_pdf = (
-        (file_type and "pdf" in file_type.lower()) or
-        filename.lower().endswith(".pdf") or
+        "pdf" in ft or
+        lower_fn.endswith(".pdf") or
         content.startswith("data:application/pdf")
     )
 
@@ -89,7 +142,6 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             if "," in b64_data:
                 b64_data = b64_data.split(",", 1)[1]
 
-            # Fix base64 padding if truncated (e.g. by frontend size cap)
             padding_needed = len(b64_data) % 4
             if padding_needed:
                 b64_data += "=" * (4 - padding_needed)
@@ -98,37 +150,41 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
 
             extracted_pages = []
-            max_pages = min(len(reader.pages), 50)  # Extract up to 50 pages for large documents
+            max_pages = min(len(reader.pages), 50)
             for i in range(max_pages):
                 try:
                     txt = reader.pages[i].extract_text() or ""
                     if txt.strip():
                         extracted_pages.append(f"[Page {i+1}]\n{txt.strip()}")
                 except Exception:
-                    continue  # Skip unreadable pages gracefully
+                    continue
 
             if extracted_pages:
                 full_text = "\n\n".join(extracted_pages)
-                # Allow larger text for comprehensive document understanding
-                if len(full_text) > 15000:
-                    full_text = full_text[:15000] + f"\n...[TRUNCATED — showing {len(extracted_pages)} of {len(reader.pages)} pages]"
+                if len(full_text) > 12000:
+                    full_text = full_text[:12000] + f"\n...[TRUNCATED — showing {len(extracted_pages)} pages]"
                 logger.info(f"Extracted {len(extracted_pages)} text pages from PDF '{filename}' ({len(reader.pages)} total pages)")
-                return full_text
+                return sanitize_text_content(full_text)
             else:
                 return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s), no extractable text found]"
         except Exception as pdf_err:
             logger.warning(f"Failed to extract text from PDF '{filename}': {pdf_err}")
             return f"[Uploaded PDF file: '{filename}']"
 
+    # Image files
+    if ft.startswith("image/") or lower_fn.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+        return f"[Attached Image File: '{filename}']"
+
+    # Plain text / code / CSV / JSON files
     if content.startswith("data:") and ";base64," in content:
         try:
             b64_data = content.split(";base64,", 1)[1]
             txt = base64.b64decode(b64_data).decode("utf-8", errors="replace")
-            return txt[:15000] if len(txt) > 15000 else txt
+            return sanitize_text_content(txt[:12000] if len(txt) > 12000 else txt)
         except Exception:
-            return content
+            return sanitize_text_content(content[:12000])
 
-    return content[:15000] if len(content) > 15000 else content
+    return sanitize_text_content(content[:12000] if len(content) > 12000 else content)
 
 
 def get_nvidia_embeddings() -> NVIDIAEmbeddings:
@@ -732,6 +788,16 @@ async def agent_chat(request: Request):
                     if pc and "aspectratio=160" in pc:
                         e["proposed_chunk"] = pc.replace("aspectratio=160", "aspectratio=169")
 
+                    # If model returned a standalone \documentclass document when user did NOT ask to replace everything,
+                    # strip the outer \documentclass preamble and \begin{document}/\end{document} to modify inner content!
+                    if not is_replace_req and pc and "\\documentclass" in pc and "\\begin{document}" in pc:
+                        inner_match = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', pc, re.DOTALL)
+                        if inner_match:
+                            inner_code = inner_match.group(1).strip()
+                            # If inner code has maketitle, tableofcontents or titlepage, keep clean content
+                            e["proposed_chunk"] = inner_code
+                            pc = inner_code
+
                     # If replace/convert request and proposed code contains frames/title but not \documentclass
                     if is_replace_req and pc and ("\\begin{frame}" in pc or "\\title" in pc) and "\\documentclass" not in pc:
                         beg_doc_idx = req.current_code.find("\\begin{document}")
@@ -748,7 +814,7 @@ async def agent_chat(request: Request):
                             e["proposed_chunk"] = new_pc
                             continue
 
-                    # Otherwise, if original_chunk does not match verbatim, fallback to appending before \end{document}
+                    # Otherwise, if original_chunk does not match verbatim, fallback to inserting before \end{document}
                     if pc and "\\documentclass" not in pc and (not oc or oc not in req.current_code):
                         e["original_chunk"] = "\\end{document}"
                         e["proposed_chunk"] = f"{pc.strip()}\n\n\\end{{document}}"

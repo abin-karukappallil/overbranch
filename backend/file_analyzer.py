@@ -227,34 +227,52 @@ class GPT120BFileAnalysisProvider(BaseFileAnalysisProvider):
         """Inbuilt text and document content extractor for GPT-120B OSS file analysis."""
         ext = os.path.splitext(filename)[1].lower()
 
+        def clean_text(t: str) -> str:
+            if not t:
+                return ""
+            return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', t)
+
+        # Word Document DOCX Extraction
+        if ext in (".docx", ".doc") or "word" in mime_type.lower() or "officedocument" in mime_type.lower():
+            try:
+                import docx
+                doc_file = docx.Document(file_path)
+                paragraphs = [p.text.strip() for p in doc_file.paragraphs if p.text.strip()]
+                full_docx_text = "\n".join(paragraphs)
+                if len(full_docx_text) > 16000:
+                    full_docx_text = full_docx_text[:16000] + f"\n...[TRUNCATED to 16k chars]"
+                return clean_text(full_docx_text)
+            except Exception as e:
+                logger.warning(f"Word docx extraction failed for {filename}: {e}")
+
         # PDF Extraction
         if mime_type == "application/pdf" or ext == ".pdf":
             try:
                 import pypdf
                 reader = pypdf.PdfReader(file_path)
                 pages = []
-                for i in range(min(len(reader.pages), 30)):
+                for i in range(min(len(reader.pages), 40)):
                     txt = reader.pages[i].extract_text() or ""
                     if txt.strip():
                         pages.append(f"[Page {i+1}]\n{txt.strip()}")
                 if pages:
                     full_pdf_text = "\n\n".join(pages)
-                    if len(full_pdf_text) > 24000:
-                        full_pdf_text = full_pdf_text[:24000] + f"\n...[TRUNCATED to 24k chars — total pages: {len(reader.pages)}]"
-                    return full_pdf_text
+                    if len(full_pdf_text) > 16000:
+                        full_pdf_text = full_pdf_text[:16000] + f"\n...[TRUNCATED to 16k chars — total pages: {len(reader.pages)}]"
+                    return clean_text(full_pdf_text)
             except Exception as e:
                 logger.warning(f"pypdf extraction failed for {filename}: {e}")
 
         # Text, Code, CSV, JSON, LOG, TeX, HTML
         try:
             with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read(24000)
-                if len(content) >= 24000:
-                    content += f"\n...[TRUNCATED to 24k chars]"
-                return content
+                content = f.read(16000)
+                if len(content) >= 16000:
+                    content += f"\n...[TRUNCATED to 16k chars]"
+                return clean_text(content)
         except Exception as e:
             logger.warning(f"Text reading failed for {filename}: {e}")
-            return f"[Binary file content '{filename}' ({mime_type})]"
+            return f"[File '{filename}' ({mime_type}) uploaded]"
 
     def analyze_file(
         self,
