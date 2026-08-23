@@ -10,7 +10,6 @@ import re
 import logging
 import base64
 import io
-import asyncio
 try:
     import pypdf
     HAS_PYPDF = True
@@ -30,7 +29,6 @@ import context_builder
 import prompt_builder
 from memory import conversation_memory, project_memory
 from tools import AI_TOOLS, process_tool_calls
-from providers import provider_router, LLMProviderError
 
 load_dotenv(override=True)
 
@@ -66,77 +64,18 @@ class AgentChatRequest(BaseModel):
 
 
 
-try:
-    import docx
-    HAS_DOCX = True
-except ImportError:
-    HAS_DOCX = False
-
-
-def sanitize_text_content(text: str) -> str:
-    """Removes NUL bytes and control characters that break JSON or API payloads."""
-    if not text:
-        return ""
-    # Strip null bytes and unprintable ASCII control characters (except newline, tab, carriage return)
-    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    return cleaned
-
-
 def process_attached_file_content(filename: str, content: str, file_type: str) -> str:
     """
-    Safely extracts text content from uploaded files (PDFs, Word DOCX, text files, Data URLs).
+    Safely extracts text content from uploaded files (PDFs, text files, Data URLs).
     Prevents corrupt binary streams from causing errors in prompt building or LLM.
     """
     if not content:
         return ""
 
-    lower_fn = filename.lower()
-    ft = (file_type or "text/plain").lower()
-
-    # Word DOCX Extraction
-    is_docx = (
-        "word" in ft or
-        "officedocument" in ft or
-        lower_fn.endswith(".docx") or
-        lower_fn.endswith(".doc") or
-        content.startswith("data:application/vnd.openxmlformats")
-    )
-
-    if is_docx:
-        if not HAS_DOCX:
-            logger.warning(f"python-docx package not installed, skipping text extraction for '{filename}'")
-            return f"[Uploaded Word Document: '{filename}']"
-        try:
-            b64_data = content
-            if "," in b64_data:
-                b64_data = b64_data.split(",", 1)[1]
-            padding_needed = len(b64_data) % 4
-            if padding_needed:
-                b64_data += "=" * (4 - padding_needed)
-
-            raw_bytes = base64.b64decode(b64_data)
-            doc_file = docx.Document(io.BytesIO(raw_bytes))
-            paragraphs = [p.text.strip() for p in doc_file.paragraphs if p.text.strip()]
-            full_text = "\n".join(paragraphs)
-            if len(full_text) > 12000:
-                full_text = full_text[:12000] + f"\n...[Word document truncated to 12k chars]"
-            logger.info(f"Extracted {len(paragraphs)} paragraphs from Word document '{filename}'")
-            return sanitize_text_content(full_text)
-        except Exception as docx_err:
-            logger.warning(f"Failed to extract text from Word document '{filename}': {docx_err}")
-            return f"[Uploaded Word document: '{filename}']"
-
-    b64_data = content
-    if "," in b64_data:
-        b64_data = b64_data.split(",", 1)[1]
-
-    # PDF Extraction - robustly detect PDF via MIME, extension, Data URL, or base64 header (JVBERi0 = %PDF-)
     is_pdf = (
-        "pdf" in ft or
-        lower_fn.endswith(".pdf") or
-        content.startswith("data:application/pdf") or
-        b64_data.startswith("JVBERi0") or
-        content.startswith("%PDF-")
+        (file_type and "pdf" in file_type.lower()) or
+        filename.lower().endswith(".pdf") or
+        content.startswith("data:application/pdf")
     )
 
     if is_pdf:
@@ -144,61 +83,50 @@ def process_attached_file_content(filename: str, content: str, file_type: str) -
             logger.warning(f"pypdf package not installed, skipping text extraction for '{filename}'")
             return f"[Uploaded PDF file: '{filename}']"
         try:
-            if content.startswith("%PDF-"):
-                raw_bytes = content.encode("latin-1")
-            else:
-                padding_needed = len(b64_data) % 4
-                if padding_needed:
-                    b64_data += "=" * (4 - padding_needed)
-                raw_bytes = base64.b64decode(b64_data)
+            b64_data = content
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
 
-            reader = pypdf.PdfReader(io.BytesIO(raw_bytes), strict=False)
+            # Fix base64 padding if truncated (e.g. by frontend size cap)
+            padding_needed = len(b64_data) % 4
+            if padding_needed:
+                b64_data += "=" * (4 - padding_needed)
+
+            raw_bytes = base64.b64decode(b64_data)
+            reader = pypdf.PdfReader(io.BytesIO(raw_bytes))
 
             extracted_pages = []
-            max_pages = min(len(reader.pages), 50)
+            max_pages = min(len(reader.pages), 50)  # Extract up to 50 pages for large documents
             for i in range(max_pages):
                 try:
                     txt = reader.pages[i].extract_text() or ""
                     if txt.strip():
                         extracted_pages.append(f"[Page {i+1}]\n{txt.strip()}")
                 except Exception:
-                    continue
+                    continue  # Skip unreadable pages gracefully
 
             if extracted_pages:
                 full_text = "\n\n".join(extracted_pages)
-                if len(full_text) > 12000:
-                    full_text = full_text[:12000] + f"\n...[TRUNCATED — showing {len(extracted_pages)} pages]"
+                # Allow larger text for comprehensive document understanding
+                if len(full_text) > 15000:
+                    full_text = full_text[:15000] + f"\n...[TRUNCATED — showing {len(extracted_pages)} of {len(reader.pages)} pages]"
                 logger.info(f"Extracted {len(extracted_pages)} text pages from PDF '{filename}' ({len(reader.pages)} total pages)")
-                return sanitize_text_content(full_text)
+                return full_text
             else:
-                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s)]"
+                return f"[PDF Document '{filename}' uploaded — contains {len(reader.pages)} page(s), no extractable text found]"
         except Exception as pdf_err:
-            logger.warning(f"pypdf extraction notice for PDF '{filename}': {pdf_err}. Attempting raw stream recovery...")
-            try:
-                raw_text_parts = re.findall(r'[\x20-\x7E\s]{4,}', raw_bytes.decode('latin-1', errors='ignore'))
-                clean_parts = [p.strip() for p in raw_text_parts if len(p.strip()) > 10 and not any(p.strip().startswith(k) for k in ('<<', '>>', 'obj', 'endobj', 'stream', 'endstream', '/Filter', '/Type', '/Font', 'xref', 'trailer'))]
-                if clean_parts:
-                    recovered_text = "\n".join(clean_parts[:200])
-                    logger.info(f"Stream recovery extracted {len(clean_parts)} text segments from '{filename}'")
-                    return sanitize_text_content(recovered_text[:12000])
-            except Exception:
-                pass
+            logger.warning(f"Failed to extract text from PDF '{filename}': {pdf_err}")
             return f"[Uploaded PDF file: '{filename}']"
 
-    # Image files
-    if ft.startswith("image/") or lower_fn.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
-        return f"[Attached Image File: '{filename}']"
-
-    # Plain text / code / CSV / JSON files
     if content.startswith("data:") and ";base64," in content:
         try:
             b64_data = content.split(";base64,", 1)[1]
             txt = base64.b64decode(b64_data).decode("utf-8", errors="replace")
-            return sanitize_text_content(txt[:12000] if len(txt) > 12000 else txt)
+            return txt[:15000] if len(txt) > 15000 else txt
         except Exception:
-            return sanitize_text_content(content[:12000])
+            return content
 
-    return sanitize_text_content(content[:12000] if len(content) > 12000 else content)
+    return content[:15000] if len(content) > 15000 else content
 
 
 def get_nvidia_embeddings() -> NVIDIAEmbeddings:
@@ -231,18 +159,14 @@ def get_genai_client():
 # ─── Response Parsing Utilities ───────────────────────────────────────────────
 
 def sanitize_explanation_text(text: str) -> str:
-    """Removes internal chunk references and web2api chip URLs from user-facing text."""
+    """Removes internal chunk references (e.g. CHUNK 1, in CHUNK 2, from CHUNK 3) from user-facing text."""
     if not text or not isinstance(text, str):
         return text or ""
     # Strip phrases like "in CHUNK 1", "from CHUNK 2", "CHUNK 3:", "[CHUNK 4]", "CHUNK 5"
     cleaned = re.sub(r'(?i)\b(?:in|from|for|of)?\s*\[?CHUNK\s*\d+\]?:?\s*', '', text)
-    # Strip web2api chip URLs (e.g. http://googleusercontent.com/immersive_entry_chip/0)
-    cleaned = re.sub(r'https?://[^\s]*googleusercontent[^\s]*', '', cleaned)
-    cleaned = re.sub(r'Generating slides\.\.\.\s*', '', cleaned)
     # Remove leading colons, hyphens, or extra whitespace left over
     cleaned = re.sub(r'^\s*[:\-]\s*', '', cleaned)
-    # Clean up multiple newlines or spaces
-    cleaned = re.sub(r'\n\s*\n+', '\n', cleaned)
+    # Clean up spaces before punctuation
     cleaned = re.sub(r'\s+([.,!?;])', r'\1', cleaned)
     if cleaned and cleaned[0].islower():
         cleaned = cleaned[0].upper() + cleaned[1:]
@@ -464,50 +388,6 @@ def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
     return ("EDIT_DOCUMENT", True)
 
 
-def get_project_assets_info(project_id: str) -> str:
-    """
-    Scans the project directory for image assets (logos, photos, graphics) and style files,
-    formatting them as explicit context instructions for the AI prompt.
-    """
-    try:
-        from pathlib import Path
-        from project_storage import UPLOADS_BASE_DIR
-        safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
-        project_dir = UPLOADS_BASE_DIR / safe_project
-        if not project_dir.exists():
-            return ""
-
-        img_exts = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".pdf"}
-        asset_files = []
-        style_files = []
-
-        for p in project_dir.rglob("*"):
-            if p.is_file():
-                rel_p = str(p.relative_to(project_dir))
-                ext = p.suffix.lower()
-                if ext in img_exts:
-                    asset_files.append(rel_p)
-                elif ext in {".sty", ".cls"}:
-                    style_files.append(rel_p)
-
-        parts = []
-        if asset_files:
-            asset_list = "\n".join([f"  - {f}" for f in sorted(asset_files)])
-            parts.append(
-                f"AVAILABLE PROJECT IMAGES & GRAPHIC ASSETS:\n"
-                f"{asset_list}\n\n"
-                f"IMAGE ATTACHMENT INSTRUCTION:\n"
-                f"When generating or editing presentation slides, PREFER incorporating relevant available image assets using \\includegraphics[height=...]{{filename}} or template logo commands where appropriate!"
-            )
-        if style_files:
-            parts.append(f"PROJECT TEMPLATE & STYLE FILES AVAILABLE: {', '.join(sorted(style_files))}")
-
-        return "\n\n".join(parts)
-    except Exception as e:
-        logger.warning(f"Error scanning project assets for {project_id}: {e}")
-        return ""
-
-
 @router.post("/api/agent/chat")
 async def agent_chat(request: Request):
     """
@@ -539,30 +419,16 @@ async def agent_chat(request: Request):
         """Format a single SSE event."""
         return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
-    async def run_step_with_heartbeat(func, *args, **kwargs):
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(None, lambda: func(*args, **kwargs))
-        while not future.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(future), timeout=2.0)
-            except asyncio.TimeoutError:
-                yield ": heartbeat\n\n"
-        res = await future
-        yield res
-
-    async def pipeline_generator():
+    def pipeline_generator():
         try:
             # Step 1: Categorize intent
             yield sse_event("progress", {"step": "analyze", "message": "Analyzing prompt...", "icon": "zap"})
             mode, is_search_needed = categorize_user_intent(req.user_prompt)
             print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})")
 
-            # Check if user document already exists
-            has_existing_code = bool(req.current_code and len(req.current_code.strip()) > 50 and "\\documentclass" in req.current_code)
-
-            # Fast-path: Bypass vector search ONLY when creating a new presentation on an empty document
-            is_new_doc_request = (not has_existing_code) and any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
-            if is_new_doc_request:
+            # Fast-path: Bypass vector search for attached files & new presentation generation to save 2-3s
+            is_new_doc_request = any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
+            if req.attached_file or is_new_doc_request:
                 is_search_needed = False
 
             yield sse_event("progress", {"step": "intent", "message": f"Mode: {mode.replace('_', ' ').title()}", "icon": "brain"})
@@ -590,18 +456,13 @@ async def agent_chat(request: Request):
                     ensure_qdrant_collection(qdrant)
 
                     yield sse_event("progress", {"step": "search", "message": "Searching document vectors...", "icon": "database"})
-                    async for item in run_step_with_heartbeat(
-                        retriever.retrieve,
+                    retrieved_chunks = retriever.retrieve(
                         qdrant_client=qdrant,
                         collection_name=COLLECTION_NAME,
                         query_embedding=prompt_embedding,
                         project_id=req.project_id,
                         file_path=req.file_path,
-                    ):
-                        if isinstance(item, str) and item.startswith(":"):
-                            yield item
-                        else:
-                            retrieved_chunks = item
+                    )
                     yield sse_event("progress", {"step": "retrieved", "message": f"Retrieved {len(retrieved_chunks)} chunks", "icon": "file-text"})
                 except Exception as qdrant_err:
                     yield sse_event("progress", {"step": "search_warn", "message": "Vector search unavailable, continuing...", "icon": "alert-triangle"})
@@ -612,12 +473,9 @@ async def agent_chat(request: Request):
             yield sse_event("progress", {"step": "context", "message": "Building document context...", "icon": "layers"})
             context_str = context_builder.build_context(retrieved_chunks)
 
-            # Step 4: Load memory & project asset context
+            # Step 4: Load memory
             conv_ctx = conversation_memory.get_conversation_context(req.project_id)
             proj_ctx = project_memory.get_project_context(req.project_id)
-            proj_assets = get_project_assets_info(req.project_id)
-
-            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
 
             if not project_memory.is_scanned(req.project_id):
                 try:
@@ -630,15 +488,13 @@ async def agent_chat(request: Request):
                         tex_content = tex_path.read_text(encoding="utf-8")
                         project_memory.scan_and_store(req.project_id, tex_content)
                         proj_ctx = project_memory.get_project_context(req.project_id)
-                        full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
                 except Exception:
                     pass
 
             # Step 5: Build prompt
-            # Step 5: Build prompt & handle attached file context persistence
             yield sse_event("progress", {"step": "prompt", "message": "Assembling prompt...", "icon": "edit-3"})
             attached_info = None
-            if req.attached_file and req.attached_file.content:
+            if req.attached_file:
                 yield sse_event("progress", {"step": "file", "message": f"Extracting content from {req.attached_file.filename}...", "icon": "paperclip"})
                 processed_content = process_attached_file_content(
                     filename=req.attached_file.filename,
@@ -650,21 +506,13 @@ async def agent_chat(request: Request):
                     "file_type": req.attached_file.file_type or "text/plain",
                     "content": processed_content,
                 }
-                conversation_memory.set_attached_file(req.project_id, attached_info)
                 yield sse_event("progress", {"step": "file_done", "message": f"Attached: {req.attached_file.filename}", "icon": "check-square"})
-            else:
-                # Retrieve persistent attached document context from memory if user gives follow-up prompt without re-attaching file
-                cached_file_info = conversation_memory.get_attached_file(req.project_id)
-                if cached_file_info:
-                    attached_info = cached_file_info
-                    logger.info(f"Referencing persistent attached document context for project '{req.project_id}': '{cached_file_info.get('filename')}'")
-                    yield sse_event("progress", {"step": "file_cached", "message": f"Referencing document: {cached_file_info.get('filename')}", "icon": "paperclip"})
 
             messages = prompt_builder.build_prompt(
                 user_request=req.user_prompt,
                 retrieved_context=context_str,
                 conversation_context=conv_ctx,
-                project_context=full_proj_context,
+                project_context=proj_ctx,
                 attached_file_info=attached_info,
                 current_code=req.current_code,
             )
@@ -721,17 +569,28 @@ async def agent_chat(request: Request):
             # Sanitize model name: frontend may send display names like
             # 'Groq Primary API (openai/gpt-oss-120b)' — extract raw model ID
             raw_model = req.model or ""
-            if " (via " in raw_model:
-                raw_model = raw_model.split(" (via ", 1)[0]
-            if raw_model.lower().startswith("via "):
-                raw_model = ""
             if "(" in raw_model and raw_model.endswith(")"):
                 raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
-            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+            primary_model = raw_model.strip() if raw_model.strip() else (os.getenv("GROQ_LLM_MODEL") or os.getenv("NVIDIA_LLM_MODEL") or "openai/gpt-oss-120b")
+            groq_key_1 = os.getenv("GROQ_API_KEY")
+            groq_key_2 = os.getenv("GROQ_API_KEY_2")
+            groq_key_3 = os.getenv("GROQ_API_KEY_3")
+            nvidia_key = os.getenv("NVIDIA_API_KEY")
+
+            candidates = []
+            if groq_key_1 and groq_key_1.strip():
+                candidates.append({"name": "Groq Primary API", "key": groq_key_1.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if groq_key_2 and groq_key_2.strip():
+                candidates.append({"name": "Groq API 2", "key": groq_key_2.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if groq_key_3 and groq_key_3.strip():
+                candidates.append({"name": "Groq API 3", "key": groq_key_3.strip(), "url": "https://api.groq.com/openai/v1/chat/completions", "model": primary_model})
+            if nvidia_key and nvidia_key.strip():
+                candidates.append({"name": "NVIDIA NIM API", "key": nvidia_key.strip(), "url": "https://integrate.api.nvidia.com/v1/chat/completions", "model": os.getenv("NVIDIA_LLM_MODEL", "openai/gpt-oss-120b")})
 
             response_text = None
             model_used = None
             is_fallback = False
+            last_error = None
 
             safe_user_content = user_content
             if len(safe_user_content) > 25000:
@@ -742,39 +601,40 @@ async def agent_chat(request: Request):
                 messages_list.append({"role": "system", "content": system_content})
             messages_list.append({"role": "user", "content": safe_user_content})
 
-            # Route to the correct provider via the provider router
-            provider = provider_router.route(primary_model)
-            provider_name = provider.get_provider_name()
-            yield sse_event("progress", {"step": "llm_call", "message": f"Generating with {provider_name} ({primary_model})...", "icon": "sparkles"})
+            import requests
+            for idx, creds in enumerate(candidates):
+                step_name = f"llm_try_{idx+1}"
+                yield sse_event("progress", {"step": step_name, "message": f"Generating with {creds['name']} ({creds['model']})...", "icon": "sparkles"})
+                try:
+                    headers = {
+                        "Authorization": f"Bearer {creds['key']}",
+                        "Content-Type": "application/json"
+                    }
+                    payload = {
+                        "model": creds["model"],
+                        "messages": messages_list,
+                        "temperature": 0.1,
+                        "max_tokens": 4096
+                    }
 
-            try:
-                llm_result = None
-                async for item in run_step_with_heartbeat(
-                    provider.chat,
-                    messages=messages_list,
-                    model=primary_model,
-                    temperature=0.1,
-                    max_tokens=4096,
-                ):
-                    if isinstance(item, str) and item.startswith(":"):
-                        yield item
+                    resp = requests.post(creds["url"], headers=headers, json=payload, timeout=90)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        choices = data.get("choices", [])
+                        if choices:
+                            response_text = choices[0]["message"]["content"]
+                            model_used = creds["model"]
+                            is_fallback = (idx > 0)
+                            break
                     else:
-                        llm_result = item
-
-                if not llm_result:
-                    yield sse_event("error", {"message": f"{provider_name} returned no result."})
-                    return
-
-                response_text = llm_result["content"]
-                model_used = llm_result["model_used"]
-                is_fallback = llm_result.get("is_fallback", False)
-            except LLMProviderError as provider_err:
-                logger.error(f"Provider {provider_name} failed: {provider_err}")
-                yield sse_event("error", {"message": f"{provider_name} failed: {str(provider_err)}"})
-                return
+                        print(f"  {creds['name']} returned HTTP {resp.status_code}: {resp.text[:200]}. Trying next Groq fallback key...")
+                        last_error = f"{creds['name']} HTTP {resp.status_code}"
+                except Exception as err:
+                    print(f"  {creds['name']} call failed: {err}. Trying next Groq fallback key...")
+                    last_error = f"{creds['name']} error: {err}"
 
             if response_text is None:
-                yield sse_event("error", {"message": "No response received from AI provider."})
+                yield sse_event("error", {"message": f"All primary and fallback models failed. Last error: {str(last_error)}"})
                 return
 
             # Step 7: Parse response
@@ -801,86 +661,6 @@ async def agent_chat(request: Request):
                         "proposed_chunk": extracted_latex,
                         "explanation": "Extracted LaTeX document proposal."
                     }]
-
-            # If existing document code exists, align proposed frames
-            if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
-                # Detect if user prompt or attached file requests replacing document content / converting PDF
-                is_replace_req = bool(req.attached_file) or any(kw in req.user_prompt.lower() for kw in [
-                    "replace", "overwrite", "convert", "use this", "from pdf", "from document", "change template", "with these", "with this", "new content", "slides content"
-                ])
-
-                for e in edits:
-                    oc = e.get("original_chunk", "")
-                    pc = e.get("proposed_chunk", "")
-                    if pc and "aspectratio=160" in pc:
-                        e["proposed_chunk"] = pc.replace("aspectratio=160", "aspectratio=169")
-
-                    # If model returned a standalone \documentclass document when user did NOT ask to replace everything,
-                    # strip the outer \documentclass preamble and \begin{document}/\end{document} to modify inner content!
-                    if not is_replace_req and pc and "\\documentclass" in pc and "\\begin{document}" in pc:
-                        inner_match = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', pc, re.DOTALL)
-                        if inner_match:
-                            inner_code = inner_match.group(1).strip()
-                            # If inner code has maketitle, tableofcontents or titlepage, keep clean content
-                            e["proposed_chunk"] = inner_code
-                            pc = inner_code
-
-                    # If replace/convert request and proposed code contains frames/title but not \documentclass
-                    if is_replace_req and pc and ("\\begin{frame}" in pc or "\\title" in pc) and "\\documentclass" not in pc:
-                        beg_doc_idx = req.current_code.find("\\begin{document}")
-                        title_idx = req.current_code.find("\\title")
-                        target_start = title_idx if (title_idx != -1 and (beg_doc_idx == -1 or title_idx < beg_doc_idx)) else (beg_doc_idx if beg_doc_idx != -1 else 0)
-                        end_doc_idx = req.current_code.rfind("\\end{document}")
-                        
-                        if target_start != -1 and end_doc_idx != -1 and end_doc_idx > target_start:
-                            target_orig = req.current_code[target_start:end_doc_idx + len("\\end{document}")]
-                            new_pc = pc.strip()
-                            if "\\end{document}" not in new_pc:
-                                new_pc = f"{new_pc}\n\n\\end{{document}}"
-                            e["original_chunk"] = target_orig
-                            e["proposed_chunk"] = new_pc
-                            continue
-
-                    # Otherwise, if original_chunk does not match verbatim, fallback to inserting before \end{document}
-                    if pc and "\\documentclass" not in pc and (not oc or oc not in req.current_code):
-                        e["original_chunk"] = "\\end{document}"
-                        e["proposed_chunk"] = f"{pc.strip()}\n\n\\end{{document}}"
-
-            # Fallback for presentation requests on empty document if LLM output slide chip text without code
-            if not edits and is_new_doc_request and not has_existing_code:
-                clean_topic = re.sub(r'(?i)\b(?:create|make|turn|generate|a|an|the|ppt|presentation|slide|slides|deck|on|for|about)\b', '', req.user_prompt).strip()
-                topic_title = clean_topic.title() if clean_topic else "Presentation"
-                fallback_beamer = (
-                    "\\documentclass[aspectratio=169, 11pt]{beamer}\n"
-                    "\\usetheme{Madrid}\n"
-                    "\\usepackage{graphicx}\n\\usepackage{booktabs}\n\\usepackage{amsmath}\n\\usepackage{hyperref}\n\\usepackage{xcolor}\n\n"
-                    "\\definecolor{primary}{RGB}{15, 23, 42}\n"
-                    "\\definecolor{accent}{RGB}{0, 204, 104}\n"
-                    "\\definecolor{cardbg}{RGB}{240, 247, 255}\n\n"
-                    "\\setbeamercolor{structure}{fg=accent}\n"
-                    "\\setbeamercolor{frametitle}{fg=white, bg=primary}\n"
-                    "\\setbeamercolor{block title}{fg=white, bg=primary}\n"
-                    "\\setbeamercolor{block body}{bg=cardbg, fg=black}\n\n"
-                    f"\\title{{{topic_title}}}\n"
-                    f"\\subtitle{{Overview \\& Strategic Highlights}}\n"
-                    "\\author{Presentation}\n"
-                    "\\date{\\today}\n\n"
-                    "\\begin{document}\n\n"
-                    "\\begin{frame}\n  \\titlepage\n\\end{frame}\n\n"
-                    "\\begin{frame}{Agenda}\n  \\tableofcontents\n\\end{frame}\n\n"
-                    "\\section{Overview}\n"
-                    f"\\begin{{frame}}{{Overview of {topic_title}}}\n"
-                    "  \\begin{block}{Key Focus}\n"
-                    f"    Presentation overview and key points regarding {topic_title}.\n"
-                    "  \\end{block}\n"
-                    "\\end{frame}\n\n"
-                    "\\end{document}"
-                )
-                edits = [{
-                    "original_chunk": req.current_code or "",
-                    "proposed_chunk": fallback_beamer,
-                    "explanation": f"Generated 16:9 Beamer presentation for '{topic_title}'."
-                }]
 
             # Step 8: Compute edit line ranges for progress display
             if mode != "EDIT_DOCUMENT":
@@ -960,12 +740,3 @@ async def agent_chat(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@router.get("/api/models")
-def get_available_models():
-    """
-    Returns the list of available LLM models grouped by provider.
-    Used by the frontend model selector dropdown.
-    """
-    return provider_router.get_available_models()

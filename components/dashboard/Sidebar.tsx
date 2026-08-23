@@ -6,7 +6,6 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   FolderGit2,
-  Presentation,
   User,
   Search,
   LogOut,
@@ -43,7 +42,6 @@ export function DashboardSidebar({
   const navItems = [
     { name: "Overview", href: "/dashboard", icon: LayoutDashboard },
     { name: "Projects", href: "/projects", icon: FolderGit2 },
-    { name: "Templates", href: "/templates", icon: Presentation },
     { name: "Profile", href: "/profile", icon: User },
   ];
 
