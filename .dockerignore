@@ -9,6 +9,3 @@ uploads
 dist
 out
 *.log
-.env
-.env.*
-*.env

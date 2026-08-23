@@ -2,10 +2,8 @@ import { router, publicProcedure, protectedProcedure, projectProcedure, ownerPro
 import { z } from 'zod';
 import { db } from '@/db';
 import { projects, projectMembers, user, notifications } from '@/db/schema';
-import { eq, and, or, ilike, desc, sql } from 'drizzle-orm';
+import { eq, and, or, ilike, desc } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
-import fs from 'fs';
-import path from 'path';
 
 export const projectsRouter = router({
   listProjects: protectedProcedure
@@ -131,57 +129,6 @@ export const projectsRouter = router({
         userId: userId,
         role: "Owner",
       });
-
-      // Initialize default starter main.tex for new project
-      const defaultTex = `\\documentclass[12pt]{article}
-\\usepackage[utf8]{utf8}
-\\usepackage[T1]{fontenc}
-\\usepackage{lmodern}
-\\usepackage{amsmath,amssymb}
-\\usepackage{graphicx}
-\\usepackage{hyperref}
-
-\\title{${input.name.replace(/[{}]/g, '')}}
-\\author{OverBranch Author}
-\\date{\\today}
-
-\\begin{document}
-
-\\maketitle
-
-\\section{Introduction}
-Welcome to your new OverBranch LaTeX document! You can start typing LaTeX equations, text, figures, and tables here.
-
-\\subsection{Getting Started}
-- Edit text in the Monaco Editor on the left.
-- PDF automatically recompiles instantly on keystroke or click.
-- Ask AI Assistant for intelligent inline LaTeX edits.
-
-\\section{Mathematics Example}
-Here is a sample equation:
-\\begin{equation}
-E = mc^2
-\\end{equation}
-
-\\end{document}`;
-
-      try {
-        const safeProj = projId.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const projDir = path.join(process.cwd(), 'uploads', 'projects', safeProj);
-        fs.mkdirSync(projDir, { recursive: true });
-        fs.writeFileSync(path.join(projDir, 'main.tex'), defaultTex, 'utf-8');
-      } catch (fsErr) {
-        console.warn("Could not write main.tex to local disk:", fsErr);
-      }
-
-      try {
-        await db.execute(sql`
-          INSERT INTO latex_documents (project_id, file_path, raw_code, updated_at)
-          VALUES (${projId}::uuid, 'main.tex', ${defaultTex}, NOW())
-        `);
-      } catch (dbErr) {
-        console.warn("Could not insert main.tex into latex_documents:", dbErr);
-      }
 
       return {
         id: newP.id,
