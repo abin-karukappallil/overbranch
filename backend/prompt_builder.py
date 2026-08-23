@@ -57,16 +57,13 @@ STRICT LATEX SYNTAX & COMPILATION RULES (MANDATORY)
    - If a slide frame contains verbatim code or listings, add the [fragile] option: \begin{frame}[fragile]{Title}.
    - Maintain preamble settings (\usetheme, \usecolortheme, \definecolor, \usepackage).
 
-4. REQUIRED PREAMBLE PACKAGES & PRODUCTION FONT PORTABILITY:
+4. REQUIRED PREAMBLE PACKAGES & INTEGRITY:
    - Ensure necessary packages are included when using special features:
      * \usepackage{graphicx} for \includegraphics
      * \usepackage{amsmath, amssymb} for advanced math equations
      * \usepackage{booktabs} for professional tables
      * \usepackage{xcolor} for custom RGB colors
      * \usepackage{hyperref} for links and URLs
-   - PRODUCTION FONT PORTABILITY:
-     * When using \usepackage[T1]{fontenc}, ALWAYS include \usepackage{lmodern} right after it so Latin Modern font metrics (ecrm1000) compile cleanly across all server/cloud environments without font errors.
-     * Avoid requiring external OS system fonts via fontspec unless using XeLaTeX/LuaLaTeX. Use standard, portable TeX font packages (\usepackage{lmodern}, \usepackage{helvet}, \usepackage{mathptmx}, \usepackage{times}, \usepackage{fourier}).
    - Ensure all environments (\begin{...}) have matching closing tags (\end{...}).
 
 5. NO PLACEHOLDERS:

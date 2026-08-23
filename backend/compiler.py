@@ -620,35 +620,6 @@ def compile_latex(
                 except Exception:
                     continue
 
-            # Auto-recovery pass for font metric errors (e.g., ecrm1000 / T1 fontenc without cm-super/lmodern)
-            font_error_keywords = ["not loadable", "Metric (TFM) file not found", "ecrm1000", "cm-super"]
-            if any(kw.lower() in last_output.lower() for kw in font_error_keywords):
-                patched_code = latex_code
-                if "lmodern" not in patched_code:
-                    if r"\usepackage[T1]{fontenc}" in patched_code:
-                        patched_code = patched_code.replace(r"\usepackage[T1]{fontenc}", r"\usepackage[T1]{fontenc}" + "\n" + r"\usepackage{lmodern}")
-                    elif r"\documentclass" in patched_code:
-                        patched_code = re.sub(r'(\\documentclass(?:\[.*?\])?\{.*?\})', r'\1' + "\n" + r"\usepackage{lmodern}", patched_code, count=1)
-                
-                if patched_code != latex_code:
-                    tex_path.write_text(patched_code, encoding="utf-8")
-                    for retry_cmd in [["pdflatex", "-interaction=nonstopmode", "-c-style-errors", "main.tex"]]:
-                        try:
-                            result = subprocess.run(retry_cmd, cwd=tmpdir, capture_output=True, text=True, timeout=30, env=os.environ)
-                            pdf_path = tmpdir / "main.pdf"
-                            if pdf_path.exists():
-                                pdf_bytes = pdf_path.read_bytes()
-                                pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                                elapsed_ms = int((time.time() - start_time) * 1000)
-                                return {
-                                    "success": True,
-                                    "pdf_base64": pdf_base64,
-                                    "compile_time_ms": elapsed_ms,
-                                    "log": "Compiled via font auto-recovery (lmodern patch)",
-                                }
-                        except Exception:
-                            pass
-
         except Exception:
             pass
 
