@@ -32,7 +32,7 @@ export const projectsRouter = router({
         description: p.description || "",
         repository: p.repository || "",
         branch: p.defaultBranch || "main.tex",
-        template: p.template || "None",
+        template: p.template || "IEEEtran",
         status: p.status || "active",
         isFavorite: p.isFavorite || false,
         role: "Owner" as "Owner" | "Editor" | "Viewer",
@@ -50,7 +50,7 @@ export const projectsRouter = router({
         description: p.description || "",
         repository: p.repository || "",
         branch: p.defaultBranch || "main.tex",
-        template: p.template || "None",
+        template: p.template || "IEEEtran",
         status: p.status || "active",
         isFavorite: p.isFavorite || false,
         role: role as "Owner" | "Editor" | "Viewer",
@@ -102,7 +102,7 @@ export const projectsRouter = router({
     .input(
       z.object({
         name: z.string().min(2),
-        template: z.string().default("None"),
+        template: z.string().default("IEEEtran"),
         description: z.string().optional(),
       })
     )
@@ -115,7 +115,7 @@ export const projectsRouter = router({
         id: projId,
         ownerId: userId,
         name: input.name,
-        description: input.description || "Custom LaTeX Workspace",
+        description: input.description || "Scientific LaTeX Document",
         template: input.template,
         repository: `prostack/${input.name.toLowerCase().replace(/\s+/g, '-')}`,
         defaultBranch: "main.tex",

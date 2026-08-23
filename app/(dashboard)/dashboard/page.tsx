@@ -101,8 +101,8 @@ export default function DashboardPage() {
     if (!newProjName.trim()) return;
     createMutation.mutate({
       name: newProjName.trim(),
-      description: "Custom LaTeX Workspace",
-      template: "None",
+      description: "Seminar report & academic project workspace",
+      template: "Report",
     });
   };
 
@@ -257,11 +257,11 @@ export default function DashboardPage() {
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                     <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2 min-w-0">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
-                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
                               <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
-                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
+                              <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -287,14 +287,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
-                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
-                          {project.template || "None"}
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
+                          {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
                         >
                           <span>Open Editor →</span>
                         </Link>
@@ -319,14 +319,14 @@ export default function DashboardPage() {
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                     <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2 min-w-0">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
-                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
                               <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
-                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
+                              <span className="truncate">{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase shrink-0">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
                             {project.role}
                           </span>
                         </div>
@@ -336,14 +336,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
-                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
-                          {project.template || "None"}
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
+                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
+                          {project.template}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
+                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
                         >
                           <span>Open Editor →</span>
                         </Link>

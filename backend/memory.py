@@ -29,7 +29,6 @@ class ConversationMemory:
                 "turns": [],
                 "recent_files": [],
                 "recent_chunk_summaries": [],
-                "attached_file": None,
             }
         # LRU: move to end
         self._store.move_to_end(project_id)
@@ -37,22 +36,6 @@ class ConversationMemory:
         while len(self._store) > MAX_PROJECTS:
             self._store.popitem(last=False)
         return self._store[project_id]
-
-    def set_attached_file(self, project_id: str, attached_info: Optional[Dict[str, Any]]):
-        """Set persistent attached document context for a project."""
-        entry = self._ensure_project(project_id)
-        entry["attached_file"] = attached_info
-
-    def get_attached_file(self, project_id: str) -> Optional[Dict[str, Any]]:
-        """Retrieve persistent attached document context for a project."""
-        if project_id not in self._store:
-            return None
-        return self._store[project_id].get("attached_file")
-
-    def clear_attached_file(self, project_id: str):
-        """Clear attached document context for a project."""
-        if project_id in self._store:
-            self._store[project_id]["attached_file"] = None
 
     def add_turn(
         self,
