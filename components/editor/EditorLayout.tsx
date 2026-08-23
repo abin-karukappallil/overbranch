@@ -16,6 +16,7 @@ import {
   ZoomOut,
   X,
   GripVertical,
+  Sparkles,
   Save,
   Key,
   Settings2,
@@ -47,15 +48,6 @@ import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
@@ -228,12 +220,13 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [activeModelName, setActiveModelName] = useState<string>("auto:smart");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
-  const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
+  const [agentProgressSteps, setAgentProgressSteps] = useState<{step: string; message: string; icon: string}[]>([]);
   const monacoRef = useRef<any>(null);
 
   // ─── Model Selector State ────────────────────────────────────────────────
-  const [modelSelectorOpen, setModelSelectorOpen] = useState<boolean>(false);
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
+  const modelSelectorRef = useRef<HTMLDivElement>(null);
 
   // Fetch available models from backend on mount
   useEffect(() => {
@@ -251,28 +244,37 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         console.warn("Failed to fetch models:", err);
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
-          {
-            name: "FreeLLM API", models: [
-              { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
-              { id: "auto", label: "FreeLLM Auto Router" },
-              { id: "auto:fast", label: "FreeLLM Auto Fast" },
-              { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
-            ]
-          },
-          {
-            name: "Gemini", models: [
-              { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
-              { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
-              { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-              { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
-              { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
-            ]
-          },
+          { name: "FreeLLM API", models: [
+            { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
+            { id: "auto", label: "FreeLLM Auto Router" },
+            { id: "auto:fast", label: "FreeLLM Auto Fast" },
+            { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
+          ]},
+          { name: "Gemini", models: [
+            { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+            { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+            { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+            { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
+            { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
+          ]},
         ]);
       }
     };
     fetchModels();
   }, []);
+
+  // Close model selector on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modelSelectorRef.current && !modelSelectorRef.current.contains(e.target as Node)) {
+        setModelSelectorOpen(false);
+      }
+    };
+    if (modelSelectorOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelSelectorOpen]);
 
   // Helper: get display label for a model ID
   const getModelLabel = (modelId: string): string => {
@@ -282,74 +284,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       }
     }
     return modelId;
-  };
-
-  const renderModelSelectorModal = () => {
-    if (!modelSelectorOpen) return null;
-    return (
-      <div
-        className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
-        onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-        onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-      >
-        <div
-          className="w-80 max-w-[92vw] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden p-3 space-y-3 animate-in zoom-in-95 duration-150 font-sans"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 select-none">
-            <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs tracking-wide">
-              <span>Select AI Model</span>
-            </div>
-            <button
-              type="button"
-              onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-              onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-              className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
-            {availableModels.map((provider) => (
-              <div key={provider.name} className="space-y-1.5">
-                <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
-                  {provider.name}
-                </div>
-                <div className="space-y-1">
-                  {provider.models.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setActiveModelName(m.id);
-                        setModelSelectorOpen(false);
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveModelName(m.id);
-                        setModelSelectorOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${activeModelName === m.id
-                          ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
-                          : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
-                        }`}
-                    >
-                      <span className="truncate">
-                        {m.label}{m.default ? " (Default)" : ""}
-                      </span>
-                      {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0 stroke-[3]" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -506,7 +440,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     try {
       localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
       localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
-    } catch (_) { }
+    } catch (_) {}
     toast.success("Started a new chat session.");
   };
 
@@ -522,7 +456,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       try {
         localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
         localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
-      } catch (_) { }
+      } catch (_) {}
       toast.info("Chat history and document context deleted.");
     }
   };
@@ -631,7 +565,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         await navigator.clipboard.writeText(code);
         toast.success("Copied code to clipboard!");
         return;
-      } catch (err) { }
+      } catch (err) {}
     }
     toast.error("Unable to access clipboard for copy.");
   };
@@ -952,7 +886,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
         handleCustomCopy();
       });
-    } catch (e) { }
+    } catch (e) {}
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -994,7 +928,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         body: JSON.stringify({
           latex_code: targetCode,
           project_id: projectId || "",
-          engine: "pdfLaTeX",
+          engine: "pdflatex",
         }),
       });
       const data = await res.json();
@@ -1145,8 +1079,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           buffer = "";
         }
       } finally {
-        try { reader.cancel(); } catch (_) { }
-        try { reader.releaseLock(); } catch (_) { }
+        try { reader.cancel(); } catch (_) {}
+        try { reader.releaseLock(); } catch (_) {}
       }
 
       if (sseError) throw sseError;
@@ -1455,6 +1389,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <div className="mt-2.5 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono space-y-2">
         <div className="flex items-center justify-between font-bold text-[#00CC68]">
           <div className="flex items-center gap-1.5 text-xs">
+            <Sparkles className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
             <span>Proposed TeX Edit ({m.edits.length})</span>
           </div>
           {m.isApplied ? (
@@ -1610,8 +1545,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={() => setFilesOpen(!filesOpen)}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${filesOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={filesOpen ? "Hide Project Files" : "Show Project Files"}
             >
@@ -1625,8 +1560,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={toggleAi}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${aiOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
             >
@@ -1640,8 +1575,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               size="sm"
               onClick={togglePdf}
               className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
+                  ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
+                  : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
                 }`}
               title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
             >
@@ -1757,6 +1692,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
                   <div className="flex items-center justify-between font-bold text-slate-100">
                     <div className="flex items-center gap-1.5 text-indigo-400">
+                      <Sparkles className="w-4 h-4" />
                       <span>In-Editor Code Edit</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold font-mono">
@@ -1857,28 +1793,45 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                       </button>
 
                       {/* Model Selector */}
-                      <button
-                        type="button"
-                        onPointerDown={(e) => {
-                          if (!isAgentThinking) {
-                            e.stopPropagation();
-                            setModelSelectorOpen(true);
-                          }
-                        }}
-                        onClick={(e) => {
-                          if (!isAgentThinking) {
-                            e.stopPropagation();
-                            setModelSelectorOpen(true);
-                          }
-                        }}
-                        disabled={isAgentThinking}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                        title="Select AI Model"
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                        <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                        {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                      </button>
+                      <div className="flex items-center gap-1 relative" ref={modelSelectorRef}>
+                        <button
+                          onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                          disabled={isAgentThinking}
+                          className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                          <span className="truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                          {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                        </button>
+
+                      {modelSelectorOpen && (
+                        <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden">
+                          {availableModels.map((provider) => (
+                            <div key={provider.name}>
+                              <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800">
+                                {provider.name}
+                              </div>
+                              {provider.models.map((m) => (
+                                <button
+                                  key={m.id}
+                                  onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                  className={`w-full text-left px-3 py-1.5 text-[11px] font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                    activeModelName === m.id
+                                      ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                      : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                  }`}
+                                >
+                                  <span className="truncate">
+                                    {m.label}{m.default ? " (Default)" : ""}
+                                  </span>
+                                  {activeModelName === m.id && <Check className="w-3 h-3 text-[#00CC68] shrink-0" />}
+                                </button>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      </div>
                     </div>
                   </div>
 
@@ -1900,8 +1853,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div
                       key={m.id}
                       className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                        ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                        : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                          ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                          : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                         }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
@@ -1916,6 +1869,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                     <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-[11px] space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
                       <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
                         <div className="flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-[#00CC68] animate-spin shrink-0" />
                           <span>AI Agent Reasoning...</span>
                         </div>
                         <button
@@ -1940,10 +1894,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                             return (
                               <div
                                 key={idx}
-                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${isLatest
+                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${
+                                  isLatest
                                     ? "text-[#00CC68] font-bold animate-pulse"
                                     : "text-zinc-400 font-normal"
-                                  }`}
+                                }`}
                               >
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                                 <span className="truncate">{s.message}</span>
@@ -1962,6 +1917,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
                     <div className="flex items-center justify-between font-bold text-[#00CC68]">
                       <div className="flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-[#00CC68]" />
                         <span>Proposed TeX Edit</span>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
@@ -2183,6 +2139,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
                   <div className="flex items-center justify-between font-bold text-slate-100">
                     <div className="flex items-center gap-1.5 text-indigo-400">
+                      <Sparkles className="w-3.5 h-3.5" />
                       <span>Pending Edit</span>
                     </div>
                   </div>
@@ -2254,28 +2211,45 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    onClick={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    disabled={isAgentThinking}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    title="Select AI Model"
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                  </button>
+                  <div className="relative shrink-0" ref={modelSelectorRef}>
+                    <button
+                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                      disabled={isAgentThinking}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                    </button>
+
+                    {modelSelectorOpen && (
+                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
+                        {availableModels.map((provider) => (
+                          <div key={provider.name}>
+                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
+                              {provider.name}
+                            </div>
+                            {provider.models.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                  activeModelName === m.id
+                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                }`}
+                              >
+                                <span className="truncate">
+                                  {m.label}{m.default ? " (Default)" : ""}
+                                </span>
+                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -2296,10 +2270,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               {messages.map((m) => (
                 <div
                   key={m.id}
-                  className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
+                  className={`p-3 rounded-2xl border space-y-1.5 ${
+                    m.sender === "user"
                       ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
                       : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
-                    }`}
+                  }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
                     <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
@@ -2338,10 +2313,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
+                              isLatest
                                 ? "text-[#00CC68] font-bold animate-pulse"
                                 : "text-zinc-400 font-normal"
-                              }`}
+                            }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
@@ -2470,8 +2446,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         <div className="flex items-center justify-around w-full h-14 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            }`}
           >
             <FolderGit2 className="w-4 h-4" />
             <span>Files</span>
@@ -2479,8 +2456,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           <button
             onClick={() => setActiveMobileTab("code")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            }`}
           >
             <FileCode2 className="w-4 h-4" />
             <span>Code</span>
@@ -2488,8 +2466,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
           <button
             onClick={() => setActiveMobileTab("pdf")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
+            }`}
           >
             <Eye className="w-4 h-4" />
             <span>PDF</span>
@@ -2500,8 +2479,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
               setActiveMobileTab("ai");
               setMobileDrawerOpen(true);
             }}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${
+              activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            }`}
           >
             <Bot className="w-4 h-4" />
             <span>Agent</span>
@@ -2513,7 +2493,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       <Drawer.Root open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
         <Drawer.Portal>
           <Drawer.Overlay className="fixed inset-0 bg-black/60 z-50 backdrop-blur-sm" />
-          <Drawer.Content className="fixed inset-0 z-50 bg-zinc-950 flex flex-col p-4 space-y-3 text-zinc-100 font-sans h-[100dvh] max-h-[100dvh]">
+          <Drawer.Content className="fixed bottom-0 left-0 right-0 max-h-[85vh] h-[80vh] z-50 bg-zinc-950 border-t border-zinc-800 rounded-t-3xl flex flex-col p-4 space-y-3 text-zinc-100 font-sans">
             <div className="w-12 h-1.5 rounded-full bg-zinc-800 mx-auto shrink-0" />
             <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
               <div className="flex items-center justify-between">
@@ -2546,28 +2526,45 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                   </button>
 
                   {/* Model Selector */}
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    onClick={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    disabled={isAgentThinking}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    title="Select AI Model"
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                  </button>
+                  <div className="relative shrink-0">
+                    <button
+                      onClick={() => !isAgentThinking && setModelSelectorOpen(!modelSelectorOpen)}
+                      disabled={isAgentThinking}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold cursor-pointer hover:bg-[#00CC68]/20 transition-colors ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
+                      <span className="font-semibold truncate max-w-[90px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                      {!isAgentThinking && <ChevronDown className={`w-3 h-3 transition-transform ${modelSelectorOpen ? "rotate-180" : ""}`} />}
+                    </button>
+
+                    {modelSelectorOpen && (
+                      <div className="absolute top-full right-0 mt-1.5 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[60] py-1.5 animate-in fade-in slide-in-from-top-1 duration-150 overflow-hidden max-h-[50vh] overflow-y-auto">
+                        {availableModels.map((provider) => (
+                          <div key={provider.name}>
+                            <div className="px-3 py-1.5 text-[9px] font-archivo uppercase tracking-widest text-zinc-500 font-bold border-b border-zinc-800 sticky top-0 bg-zinc-900">
+                              {provider.name}
+                            </div>
+                            {provider.models.map((m) => (
+                              <button
+                                key={m.id}
+                                onClick={() => { setActiveModelName(m.id); setModelSelectorOpen(false); }}
+                                className={`w-full text-left px-3 py-2 text-xs font-mono flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                  activeModelName === m.id
+                                    ? "bg-[#00CC68]/15 text-[#00CC68] font-bold"
+                                    : "text-zinc-300 hover:bg-zinc-800 hover:text-white"
+                                }`}
+                              >
+                                <span className="truncate">
+                                  {m.label}{m.default ? " (Default)" : ""}
+                                </span>
+                                {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />}
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
@@ -2592,8 +2589,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div
                   key={m.id}
                   className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                    ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                    : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                      ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                      : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                     }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
@@ -2633,10 +2630,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         return (
                           <div
                             key={idx}
-                            className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
+                            className={`flex items-center gap-2 transition-all font-mono text-xs ${
+                              isLatest
                                 ? "text-[#00CC68] font-bold animate-pulse"
                                 : "text-zinc-400 font-normal"
-                              }`}
+                            }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
                             <span className="truncate">{s.message}</span>
@@ -2721,13 +2719,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 </Button>
               )}
             </form>
-            {renderModelSelectorModal()}
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
-
-      {/* Custom AI Model Selection Modal */}
-      {renderModelSelectorModal()}
     </div>
   );
 }

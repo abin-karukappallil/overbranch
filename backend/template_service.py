@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from project_storage import UPLOADS_BASE_DIR, get_supabase_client, upsert_latex_document
+from project_storage import UPLOADS_BASE_DIR, get_supabase_client
 
 logger = logging.getLogger("template_service")
 logging.basicConfig(level=logging.INFO)
@@ -317,7 +317,12 @@ def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequ
                 else:
                     content = f"[Binary Asset: {fpath.name}, Size: {fpath.stat().st_size} bytes]"
 
-                upsert_latex_document(supabase, project_id, rel_path, content)
+                doc_record = {
+                    "project_id": project_id,
+                    "file_path": rel_path,
+                    "raw_code": content
+                }
+                supabase.table("latex_documents").upsert(doc_record, on_conflict="project_id, file_path").execute()
 
     except Exception as db_err:
         logger.error(f"Error creating project database records: {db_err}", exc_info=True)

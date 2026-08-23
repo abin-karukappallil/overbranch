@@ -78,31 +78,6 @@ def get_supabase_client() -> Client:
     return create_client(supabase_url, supabase_key)
 
 
-def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw_code: str):
-    """Safely updates or inserts a latex_documents record without relying on DB unique constraints."""
-    try:
-        existing = (
-            supabase.table("latex_documents")
-            .select("id")
-            .eq("project_id", project_id)
-            .eq("file_path", file_path)
-            .execute()
-        )
-        if existing.data and len(existing.data) > 0:
-            rec_id = existing.data[0]["id"]
-            supabase.table("latex_documents").update({
-                "raw_code": raw_code
-            }).eq("id", rec_id).execute()
-        else:
-            supabase.table("latex_documents").insert({
-                "project_id": project_id,
-                "file_path": file_path,
-                "raw_code": raw_code
-            }).execute()
-    except Exception as e:
-        logger.warning(f"Failed to upsert latex_document ({file_path}): {e}")
-
-
 @router.post("/api/projects/save-file")
 def save_project_file(req: SaveDocumentRequest):
     """
@@ -122,12 +97,21 @@ def save_project_file(req: SaveDocumentRequest):
         target_path.write_text(req.raw_code, encoding="utf-8")
         logger.info(f"Saved file to local disk: '{target_path}'")
 
-        # 2. Save / Upsert in Supabase Postgres latex_documents table safely
-        try:
-            upsert_latex_document(supabase, req.project_id, req.file_path, req.raw_code)
-            logger.info(f"Upserted document in Supabase latex_documents for project '{req.project_id}'.")
-        except Exception as db_err:
-            logger.warning(f"Supabase DB save fallback warning: {db_err}")
+        # 2. Save / Upsert in Supabase Postgres latex_documents table
+        supabase = get_supabase_client()
+        record = {
+            "project_id": req.project_id,
+            "file_path": req.file_path,
+            "raw_code": req.raw_code
+        }
+        
+        # Upsert in Supabase latex_documents
+        upsert_resp = (
+            supabase.table("latex_documents")
+            .upsert(record, on_conflict="project_id, file_path")
+            .execute()
+        )
+        logger.info(f"Upserted document in Supabase latex_documents for project '{req.project_id}'.")
 
         # 3. Trigger background Qdrant vector sync if .tex file
         if req.file_path.endswith(".tex"):
@@ -171,13 +155,14 @@ async def upload_project_asset(
         target_path.write_bytes(content)
         logger.info(f"Uploaded binary asset to local disk: '{target_path}'")
 
-        # Save metadata in Supabase latex_documents table safely
-        try:
-            supabase = get_supabase_client()
-            asset_meta = f"[Binary Asset: {file.filename}, Size: {len(content)} bytes]"
-            upsert_latex_document(supabase, project_id, file_path, asset_meta)
-        except Exception as db_err:
-            logger.warning(f"Asset metadata DB insert warning: {db_err}")
+        # Save metadata in Supabase latex_documents table
+        supabase = get_supabase_client()
+        record = {
+            "project_id": project_id,
+            "file_path": file_path,
+            "raw_code": f"[Binary Asset: {file.filename}, Size: {len(content)} bytes]"
+        }
+        supabase.table("latex_documents").upsert(record, on_conflict="project_id, file_path").execute()
 
         return {
             "success": True,
@@ -198,7 +183,6 @@ async def upload_project_asset(
 def get_project_file(project_id: str, file_path: str = "main.tex"):
     """
     Retrieves project file content from local disk or Supabase latex_documents table.
-    Includes auto-creation fallback for main.tex when missing.
     """
     target_path = get_project_disk_path(project_id, file_path)
 
@@ -238,50 +222,6 @@ def get_project_file(project_id: str, file_path: str = "main.tex"):
             }
     except Exception as e:
         logger.warning(f"Error querying Supabase for file: {e}")
-
-    # 3. Auto-creation fallback for main.tex if missing from disk & DB
-    if file_path == "main.tex":
-        starter_code = r"""\documentclass[12pt]{article}
-\usepackage[utf8]{utf8}
-\usepackage[T1]{fontenc}
-\usepackage{lmodern}
-\usepackage{amsmath,amssymb}
-\usepackage{graphicx}
-\usepackage{hyperref}
-
-\title{LaTeX Workspace}
-\author{OverBranch Author}
-\date{\today}
-
-\begin{document}
-
-\maketitle
-
-\section{Introduction}
-Welcome to your OverBranch LaTeX document! You can start typing LaTeX equations, text, figures, and tables here.
-
-\section{Mathematics Example}
-Here is a sample equation:
-\begin{equation}
-E = mc^2
-\end{equation}
-
-\end{document}
-"""
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(starter_code, encoding="utf-8")
-        try:
-            supabase = get_supabase_client()
-            upsert_latex_document(supabase, project_id, file_path, starter_code)
-        except Exception:
-            pass
-
-        return {
-            "project_id": project_id,
-            "file_path": file_path,
-            "raw_code": starter_code,
-            "source": "auto_generated"
-        }
 
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
