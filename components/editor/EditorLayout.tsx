@@ -252,20 +252,20 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
           {
-            name: "FreeLLM API", models: [
-              { id: "auto:smart", label: "FreeLLM Auto Smart", default: true },
-              { id: "auto", label: "FreeLLM Auto Router" },
-              { id: "auto:fast", label: "FreeLLM Auto Fast" },
-              { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
-            ]
-          },
-          {
-            name: "Gemini", models: [
-              { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+            name: "Gemini Web2API", models: [
+              { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash (Web2API)", default: true },
               { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
               { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
               { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
               { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
+            ]
+          },
+          {
+            name: "FreeLLM API", models: [
+              { id: "auto:smart", label: "FreeLLM Auto Smart" },
+              { id: "auto", label: "FreeLLM Auto Router" },
+              { id: "auto:fast", label: "FreeLLM Auto Fast" },
+              { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
             ]
           },
         ]);
@@ -1288,43 +1288,52 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     if (model) {
       const currentText = model.getValue();
 
-      const escapedSearch = originalChunk
-        ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-        : '';
-      const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
-
-      if (originalChunk && regex && regex.test(currentText)) {
-        updatedCode = replaceAllCaseInsensitive(currentText, originalChunk, proposedChunk);
+      if (proposedChunk.includes("\\documentclass") && proposedChunk.includes("\\begin{document}")) {
+        updatedCode = proposedChunk;
       } else {
-        const selection = editorRef.current?.getSelection?.();
-        if (selection && !selection.isEmpty()) {
-          editorRef.current.executeEdits("ai-agent", [
-            { range: selection, text: proposedChunk, forceMoveMarkers: true },
-          ]);
-          updatedCode = model.getValue();
+        const escapedSearch = originalChunk
+          ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+          : '';
+        const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
+
+        if (originalChunk && regex && regex.test(currentText)) {
+          updatedCode = replaceAllCaseInsensitive(currentText, originalChunk, proposedChunk);
         } else {
-          updatedCode = insertSnippetSafely(currentText, proposedChunk);
+          const selection = editorRef.current?.getSelection?.();
+          if (selection && !selection.isEmpty()) {
+            editorRef.current.executeEdits("ai-agent", [
+              { range: selection, text: proposedChunk, forceMoveMarkers: true },
+            ]);
+            updatedCode = model.getValue();
+          } else {
+            updatedCode = insertSnippetSafely(currentText, proposedChunk);
+          }
         }
       }
       model.setValue(updatedCode);
     } else {
-      const escapedSearch = originalChunk
-        ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-        : '';
-      const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
-
-      if (originalChunk && regex && regex.test(code)) {
-        updatedCode = replaceAllCaseInsensitive(code, originalChunk, proposedChunk);
+      if (proposedChunk.includes("\\documentclass") && proposedChunk.includes("\\begin{document}")) {
+        updatedCode = proposedChunk;
       } else {
-        updatedCode = insertSnippetSafely(code, proposedChunk);
+        const escapedSearch = originalChunk
+          ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
+          : '';
+        const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
+
+        if (originalChunk && regex && regex.test(code)) {
+          updatedCode = replaceAllCaseInsensitive(code, originalChunk, proposedChunk);
+        } else {
+          updatedCode = insertSnippetSafely(code, proposedChunk);
+        }
       }
     }
 
     setCode(updatedCode);
     setDiffData(null);
-    toast.success("Accepted AI changes into LaTeX editor!");
+    setDiffEditsList([]);
+    toast.success("Applied changes into the LaTeX editor!");
 
-    // Save & Sync
+    // Auto-save to Supabase & Qdrant
     saveDocument(updatedCode, true);
 
     // Recompile PDF
@@ -1339,7 +1348,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       const orig = item.original_chunk;
       const prop = item.proposed_chunk;
 
-      if (orig && updatedCode.includes(orig)) {
+      if (prop && prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
+        updatedCode = prop;
+      } else if (orig && updatedCode.includes(orig)) {
         updatedCode = replaceAllCaseInsensitive(updatedCode, orig, prop);
       } else if (prop) {
         updatedCode = insertSnippetSafely(updatedCode, prop);
@@ -1382,7 +1393,9 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
     const orig = item.original_chunk;
     const prop = item.proposed_chunk;
 
-    if (orig && updatedCode.includes(orig)) {
+    if (prop && prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
+      updatedCode = prop;
+    } else if (orig && updatedCode.includes(orig)) {
       updatedCode = replaceAllCaseInsensitive(updatedCode, orig, prop);
     } else if (prop) {
       updatedCode = insertSnippetSafely(updatedCode, prop);
