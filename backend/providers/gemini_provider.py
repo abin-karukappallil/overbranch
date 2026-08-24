@@ -17,7 +17,7 @@ logger = logging.getLogger("gemini_provider")
 
 # Only these models are exposed to users
 ALLOWED_GEMINI_MODELS = [
-    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": False},
+    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": True},
     {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "default": False},
     {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash", "default": False},
     {"id": "gemini-3.5-flash-thinking", "label": "Gemini 3.5 Flash Thinking", "default": False},
