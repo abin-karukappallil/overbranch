@@ -1,0 +1,156 @@
+\documentclass[aspectratio=169]{beamer}
+
+% =====================================================================
+%  DESIGN D  --  "REGALIA"  (navy & gold, formal, academic-elegant)
+%  Fully custom beamer skin -- sidebar accent + small-caps headers.
+% =====================================================================
+\usetheme{default}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usetikzlibrary{calc}
+
+% ---------- Palette ----------
+\definecolor{navy}{HTML}{0B2545}
+\definecolor{navylight}{HTML}{13315C}
+\definecolor{gold}{HTML}{C9A24B}
+\definecolor{cream}{HTML}{F7F4EC}
+\definecolor{ink}{HTML}{1D1D1D}
+\definecolor{muted}{HTML}{5C6270}
+
+\setbeamercolor{background canvas}{bg=cream}
+\setbeamercolor{normal text}{fg=ink,bg=cream}
+\setbeamercolor{frametitle}{fg=navy}
+\setbeamercolor{title}{fg=navy}
+\setbeamercolor{itemize item}{fg=gold}
+\setbeamercolor{itemize subitem}{fg=navylight}
+\setbeamercolor{block title}{fg=cream,bg=navy}
+\setbeamercolor{block body}{fg=ink,bg=white}
+\setbeamercolor{page number in head/foot}{fg=muted}
+
+\setbeamerfont{frametitle}{series=\bfseries,size=\Large}
+\setbeamerfont{title}{series=\bfseries,size=\huge}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}{\textcolor{gold}{\ensuremath{\blacksquare}}}
+\setbeamertemplate{itemize subitem}{\textcolor{navylight}{\textendash}}
+
+% ---------- Custom frame title with left sidebar ----------
+\setbeamertemplate{frametitle}{
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[navy] (current page.north west) rectangle ($(current page.north west)+(0.55,-\paperheight)$);
+    \fill[gold] ($(current page.north west)+(0.55,0)$) rectangle ($(current page.north west)+(0.62,-\paperheight)$);
+    \node[anchor=north west,navy,font=\usebeamerfont{frametitle}\scshape] at ($(current page.north west)+(1.05,-0.55)$) {\insertframetitle};
+    \draw[gold,line width=1pt] ($(current page.north west)+(1.05,-1.25)$) -- ($(current page.north west)+(3.4,-1.25)$);
+  \end{tikzpicture}
+  \vspace{9mm}
+}
+
+% ---------- Footline ----------
+\setbeamertemplate{footline}{
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[navy] (current page.south west) rectangle ($(current page.south west)+(0.55,\paperheight)$);
+    \fill[gold] ($(current page.south west)+(0.55,0)$) rectangle ($(current page.south west)+(0.62,\paperheight)$);
+    \node[anchor=south east,muted,font=\scriptsize] at ($(current page.south east)+(-0.4,0.22)$) {\insertframenumber\ / \inserttotalframenumber};
+  \end{tikzpicture}
+}
+
+\title{Sample Academic Presentation}
+\author{Abin}
+\institute{Dept. of Computer Science \& Engineering \\ APJ Abdul Kalam Technological University}
+\date{\today}
+
+\begin{document}
+
+% ---------------- TITLE PAGE ----------------
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[navy] (current page.north west) rectangle ($(current page.north west)+(\paperwidth,-3.5)$);
+  \fill[gold] ($(current page.north west)+(0,-3.5)$) rectangle ($(current page.north west)+(\paperwidth,-3.58)$);
+  \node[anchor=north west,gold,font=\scshape\small] at ($(current page.north west)+(0.7,-0.7)$) {Demonstration Deck};
+  \node[anchor=north west,cream,font=\bfseries\LARGE,align=left,text width=10.8cm] at ($(current page.north west)+(0.65,-1.3)$) {Sample Academic Presentation};
+  \node[anchor=north west,navy,font=\scshape\normalsize] at ($(current page.north west)+(0.7,-4.15)$) {A Formal, Navy \& Gold Visual Style};
+  \node[anchor=north west,ink,font=\normalsize] at ($(current page.north west)+(0.7,-4.9)$) {Abin};
+  \node[anchor=north west,muted,font=\small] at ($(current page.north west)+(0.7,-5.35)$) {Dept. of Computer Science \& Engineering};
+  \node[anchor=north west,muted,font=\small] at ($(current page.north west)+(0.7,-5.7)$) {APJ Abdul Kalam Technological University};
+  \node[anchor=south east,muted,font=\small] at ($(current page.south east)+(-0.6,0.4)$) {\today};
+\end{tikzpicture}
+\end{frame}
+
+% ---------------- OUTLINE ----------------
+\begin{frame}{Outline}
+\begin{itemize}
+  \item Introduction
+  \item Problem Statement
+  \item Methodology
+  \item Results
+  \item Conclusion
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Introduction}
+\begin{itemize}
+  \item A formal navy-and-gold design suited for thesis defenses and formal seminars.
+  \item Small-caps headers with a gold sidebar accent throughout.
+  \item Restrained, elegant palette that photographs and prints well.
+  \item Compiles with plain \texttt{pdflatex} on any system.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Problem Statement}
+\begin{block}{Motivation}
+Formal academic settings benefit from a restrained, dignified visual style.
+\end{block}
+\begin{block}{Objective}
+Combine a traditional palette with modern, clean layout for maximum readability.
+\end{block}
+\end{frame}
+
+\begin{frame}{Methodology}
+\begin{enumerate}
+  \item Select a formal navy and gold color scheme.
+  \item Apply small-caps typography for headers.
+  \item Add a consistent gold sidebar accent across all slides.
+  \item Compile and verify with a standard \LaTeX{} distribution.
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{Sample Equation}
+\[
+\frac{d}{dx}\left[\int_{a}^{x} f(t)\,dt\right] = f(x)
+\]
+\end{frame}
+
+\begin{frame}{Results}
+\begin{table}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textcolor{navy}{\textbf{Metric}} & \textcolor{navy}{\textbf{Before}} & \textcolor{navy}{\textbf{After}} \\
+\midrule
+Panel Approval Score & 6.5 & 9.2 \\
+Presentation Clarity & 70\% & 93\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{frame}
+
+\begin{frame}{Conclusion}
+\begin{itemize}
+  \item A dignified, formal alternative for high-stakes academic presentations.
+  \item Sidebar and small-caps motifs create a cohesive identity.
+  \item Portable and dependency-free -- compiles anywhere.
+\end{itemize}
+\end{frame}
+
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[navy] (current page.north west) rectangle (current page.south east);
+  \fill[gold] ($(current page.center)+(-3.4,-0.9)$) rectangle ($(current page.center)+(3.4,-0.98)$);
+  \node[cream,font=\Huge\bfseries] at ($(current page.center)+(0,0.2)$) {Thank You};
+  \node[gold,font=\scshape\normalsize] at ($(current page.center)+(0,-1.35)$) {Questions \& Discussion};
+\end{tikzpicture}
+\end{frame}
+
+\end{document}

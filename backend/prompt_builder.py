@@ -751,6 +751,8 @@ Before returning LaTeX, silently verify:
 ✓ Exactly one \end{document}
 
 If any validation fails, regenerate the affected frame before responding.
+
+IMPORTANT IF A USER ASKS TO CHANGE TO REPLACE OR MAKE THE EXISTING TEMPLATE CONTENTS TO OTHER JUST EDIT THE EXISTING CONTENTS TO USER PREFERRED ONE..AND DONT TRY TO TWIN THE COPY AND USE IT FOR USER CONTENTS..
 ====================================================================
 OUTPUT SCHEMA — RAW JSON ONLY, NO SURROUNDING TEXT OR MARKDOWN FENCES
 ====================================================================

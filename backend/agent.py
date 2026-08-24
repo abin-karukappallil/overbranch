@@ -131,12 +131,109 @@ def auto_repair_truncated_latex(code: str) -> str:
     return s
 
 
+def restore_swallowed_latex_escapes(text: str) -> str:
+    r"""
+    Restores LaTeX macro commands where JSON escape processing swallowed the leading backslash
+    or converted it into control characters (\x08, \x0c, \r, \t, \n).
+    """
+    if not text or not isinstance(text, str):
+        return text or ""
+    s = text
+
+    # Handle control characters from JSON string decoding:
+    # \x08 (backspace from \b):
+    s = re.sub(r"[\x08](egin|fseries|ooktabs|lacksquare|lacktriangleright|lacktriangle|ottomrule|igskip|ibliography|ibliographystyle|ullet|reak|uildrel)\b", r"\\b\1", s)
+    # \x0c (formfeed from \f):
+    s = re.sub(r"[\x0c](rac|ootnotesize|rame|ill|ancyhead|ancyfoot|ancypagestyle|ancyhf|igure|ontsize|lushleft|lushright|ootnote)\b", r"\\f\1", s)
+    # \r (carriage return from \r when followed by LaTeX command):
+    s = re.sub(r"[\r](enewcommand|enewenvironment|ule|ef|ight|aggedright|aggedleft|equire|aisebox|estoregeometry|mfamily|efstepcounter)\b", r"\\r\1", s)
+    # \t (tab from \t when followed by LaTeX command):
+    s = re.sub(r"[\t](extbf|extit|exttt|extsc|extsf|ext|itle|ableofcontents|able|ikz|ikzset|oday|hepage|hesection|thesubsection|hechapter|extwidth|extheight|oprule|colorbox|cbuselibrary|itlespacing|itleformat|extsuperscript|extsubscript)\b", r"\\t\1", s)
+
+    # 1. Swallowed \n:
+    s = re.sub(r"(?<![a-zA-Z\\])ewcommand(?=\{|\s*\[|\s*\\)", r"\\newcommand", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewenvironment(?=\{|\s*\[|\s*\\)", r"\\newenvironment", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewgeometry(?=\{|\s*\[|\s*\\)", r"\\newgeometry", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewtheorem(?=\{|\s*\[|\s*\\)", r"\\newtheorem", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewcounter(?=\{|\s*\[|\s*\\)", r"\\newcounter", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewtcolorbox(?=\{|\s*\[|\s*\\)", r"\\newtcolorbox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewsavebox(?=\{|\s*\[|\s*\\)", r"\\newsavebox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewfont(?=\{|\s*\[|\s*\\)", r"\\newfont", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewlength(?=\{|\s*\[|\s*\\)", r"\\newlength", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewpage\b", r"\\newpage", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewline\b", r"\\newline", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ormalsize\b", r"\\normalsize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])oindent\b", r"\\noindent", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ode(?=\s*[\(\[\{]|\s+at\b)", r"\\node", s)
+    s = re.sub(r"(?<![a-zA-Z\\])umber\b", r"\\number", s)
+    s = re.sub(r"(?<![a-zA-Z\\])abla\b", r"\\nabla", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ocite(?=\{)", r"\\nocite", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ull\b", r"\\null", s)
+    s = re.sub(r"(?<![a-zA-Z\\])opagecolor\b", r"\\nopagecolor", s)
+
+    # 2. Swallowed \t:
+    s = re.sub(r"(?<![a-zA-Z\\])extbf(?=\{)", r"\\textbf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extit(?=\{)", r"\\textit", s)
+    s = re.sub(r"(?<![a-zA-Z\\])exttt(?=\{)", r"\\texttt", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extsc(?=\{)", r"\\textsc", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extsf(?=\{)", r"\\textsf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itle(?=\{)", r"\\title", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ableofcontents\b", r"\\tableofcontents", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ikzset(?=\{)", r"\\tikzset", s)
+    s = re.sub(r"(?<![a-zA-Z\\])oprule\b", r"\\toprule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itlespacing(?=\*?\{)", r"\\titlespacing", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itleformat(?=\{)", r"\\titleformat", s)
+    s = re.sub(r"(?<![a-zA-Z\\])cbuselibrary(?=\{)", r"\\tcbuselibrary", s)
+
+    # 3. Swallowed \b:
+    s = re.sub(r"(?<![a-zA-Z\\])egin(?=\{)", r"\\begin", s)
+    s = re.sub(r"(?<![a-zA-Z\\])fseries\b", r"\\bfseries", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ooktabs\b", r"\\booktabs", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ottomrule\b", r"\\bottomrule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lacksquare\b", r"\\blacksquare", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lacktriangleright\b", r"\\blacktriangleright", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ibliography(?=\{)", r"\\bibliography", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ibliographystyle(?=\{)", r"\\bibliographystyle", s)
+
+    # 4. Swallowed \f:
+    s = re.sub(r"(?<![a-zA-Z\\])rac(?=\{)", r"\\frac", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ootnotesize\b", r"\\footnotesize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyhead(?=\{|\s*\[)", r"\\fancyhead", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyfoot(?=\{|\s*\[)", r"\\fancyfoot", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancypagestyle(?=\{|\s*\[)", r"\\fancypagestyle", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyhf(?=\{|\s*\[)", r"\\fancyhf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ontsize(?=\{)", r"\\fontsize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lushleft\b", r"\\flushleft", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lushright\b", r"\\flushright", s)
+
+    # 5. Swallowed \r:
+    s = re.sub(r"(?<![a-zA-Z\\])enewcommand(?=\{|\s*\[|\s*\\)", r"\\renewcommand", s)
+    s = re.sub(r"(?<![a-zA-Z\\])enewenvironment(?=\{|\s*\[|\s*\\)", r"\\renewenvironment", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ef(?=\{)", r"\\ref", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ule(?=\{|\s*\[)", r"\\rule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])aisebox(?=\{|\s*\[)", r"\\raisebox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])estoregeometry\b", r"\\restoregeometry", s)
+    s = re.sub(r"(?<![a-zA-Z\\])efstepcounter(?=\{)", r"\\refstepcounter", s)
+
+    # 6. Swallowed \u:
+    s = re.sub(r"(?<![a-zA-Z\\])sepackage(?=\{|\s*\[)", r"\\usepackage", s)
+    s = re.sub(r"(?<![a-zA-Z\\])setheme(?=\{|\s*\[)", r"\\usetheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])sefonttheme(?=\{|\s*\[)", r"\\usefonttheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])secolortheme(?=\{|\s*\[)", r"\\usecolortheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])seinnertheme(?=\{|\s*\[)", r"\\useinnertheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])seoutertheme(?=\{|\s*\[)", r"\\useoutertheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])nderline(?=\{)", r"\\underline", s)
+
+    return s
+
+
 def sanitize_latex_code(code: str) -> str:
     r"""
     Cleans and repairs LaTeX code generated by LLM to guarantee it compiles cleanly:
-    1. Removes or comments out stray prose words in the preamble before \begin{document}.
+    1. Restores swallowed LaTeX macro commands (\newcommand, \node, \begin, \textbf, etc.).
     2. Strips Markdown code fences.
-    3. Auto-repairs unclosed environments and missing \end{document}.
+    3. Removes or comments out stray prose words in the preamble before \begin{document}.
+    4. Auto-repairs unclosed environments and missing \end{document}.
     """
     if not code or not isinstance(code, str):
         return code or ""
@@ -148,12 +245,13 @@ def sanitize_latex_code(code: str) -> str:
         s = re.sub(r"^```(?:latex|tex)?\s*", "", s, flags=re.MULTILINE)
         s = re.sub(r"\s*```$", "", s, flags=re.MULTILINE)
 
-    # Restore swallowed LaTeX commands where JSON newline escape \n consumed the leading slash
-    s = re.sub(r"(?<![a-zA-Z\\])ewcommand(?=\{|\s*\[|\s*\\)", r"\\newcommand", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ormalsize\b", r"\\normalsize", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ewline\b", r"\\newline", s)
-    s = re.sub(r"(?<![a-zA-Z\\])oindent\b", r"\\noindent", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ode(?=\s*[\(\[])", r"\\node", s)
+    # If the text has literal "\\n" strings instead of linebreaks, unescape them safely
+    # (only where \n is NOT part of a LaTeX command name like \newcommand, \node, etc.)
+    if "\\n" in s and s.count("\n") < 5:
+        s = re.sub(r"(?<!\\)\\n(?=[^a-zA-Z]|$)", "\n", s)
+
+    # Restore swallowed LaTeX commands where JSON escape \n, \t, \b, \f, \r swallowed the leading slash
+    s = restore_swallowed_latex_escapes(s)
 
     # If full document with preamble, sanitize lines before \begin{document}
     if r"\begin{document}" in s:
@@ -173,10 +271,6 @@ def sanitize_latex_code(code: str) -> str:
                 # Stray un-commented word (e.g. wrapped comments like 'Navy', 'Emerald')
                 cleaned_preamble_lines.append(f"% {line}")
         s = "\n".join(cleaned_preamble_lines) + "\n\\begin{document}" + body
-
-    # If the text has literal "\\n" strings instead of linebreaks, unescape them
-    if "\\n" in s and s.count("\n") < 10:
-        s = s.replace("\\n", "\n")
 
     # Clean malformed formatting macro brackets (e.g. \textbf[4pt] or \textit[4pt])
     s = re.sub(r"\\textbf\[([^\]]+)\]\{([^}]*)\}", r"\\textbf{\2}\\\\[\1]", s)
@@ -382,6 +476,41 @@ def auto_repair_truncated_json(text: str) -> str:
     return s
 
 
+def decode_json_string_value(s: str) -> str:
+    r"""Safely decodes JSON string literal values without corrupting LaTeX commands (\newcommand, \node, etc.)."""
+    if not s:
+        return ""
+    try:
+        test_s = s
+        if test_s.endswith("\\") and not test_s.endswith("\\\\"):
+            test_s = test_s[:-1]
+        return json.loads(f'"{test_s}"', strict=False)
+    except Exception:
+        pass
+
+    def repl(match):
+        esc = match.group(0)
+        if esc == r"\\":
+            return "\\"
+        elif esc == r"\"":
+            return "\""
+        elif esc == r"\/":
+            return "/"
+        elif esc == r"\n":
+            return "\n"
+        elif esc == r"\t":
+            return "\t"
+        elif esc == r"\r":
+            return "\r"
+        elif esc == r"\b":
+            return "\b"
+        elif esc == r"\f":
+            return "\f"
+        return esc
+
+    return re.sub(r'\\(?:[\\"/bfnrt]|u[0-9a-fA-F]{4}|.)', repl, s)
+
+
 def extract_fallback_chunks(text: str) -> Dict[str, Any]:
     """Fallback regex extractor for proposed_chunk when JSON parsing fails."""
     prop_match = re.search(r'"proposed_chunk"\s*:\s*"((?:[^"\\]|\\.)*)', text, re.DOTALL)
@@ -389,9 +518,9 @@ def extract_fallback_chunks(text: str) -> Dict[str, Any]:
     exp_match = re.search(r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)', text, re.DOTALL)
 
     if prop_match:
-        prop = prop_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n')
-        orig = orig_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n') if orig_match else ""
-        exp = exp_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n') if exp_match else "Extracted LaTeX content."
+        prop = decode_json_string_value(prop_match.group(1))
+        orig = decode_json_string_value(orig_match.group(1)) if orig_match else ""
+        exp = decode_json_string_value(exp_match.group(1)) if exp_match else "Extracted LaTeX content."
         return {
             "original_chunk": orig,
             "proposed_chunk": prop,
@@ -490,7 +619,7 @@ def clean_json_response(text: Any) -> Dict[str, Any]:
 
     # Attempt 3: Escape invalid LaTeX backslashes if standard JSON decoding failed on slashes
     try:
-        fixed_slashes = re.sub(r'(?<!\\)\\([cdeg-hijklmopqsu-vwxyzCDEG-HIJKLMOPQSU-VWXYZ%&$#_{}\[\]])', r'\\\\\1', stripped_json_block)
+        fixed_slashes = re.sub(r'(?<!\\)\\([a-zA-Z%&$#_{}\[\]])', r'\\\\\1', stripped_json_block)
         repaired_slashes = auto_repair_truncated_json(fixed_slashes)
         return json.loads(repaired_slashes, strict=False)
     except Exception:

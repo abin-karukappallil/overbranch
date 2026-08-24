@@ -1,0 +1,337 @@
+% =========================================================
+%  MODERN ASSIGNMENT / LAB REPORT TEMPLATE
+%  Author: Template for academic submissions
+%  Features: Title page, submitter details, TOC, styled
+%            sections, code-listing environment for lab
+%            experiments, modern colour palette.
+% =========================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---------- PAGE & FONTS ----------
+\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[expansion=false]{microtype}
+
+% ---------- COLOR PALETTE ----------
+\usepackage[dvipsnames,table]{xcolor}
+\definecolor{primary}{HTML}{2C3E92}     % deep indigo
+\definecolor{accent}{HTML}{00A896}      % teal accent
+\definecolor{darktext}{HTML}{1B1B2F}
+\definecolor{lightgray}{HTML}{F4F6F8}
+\definecolor{codebg}{HTML}{F7F9FC}
+\definecolor{coderule}{HTML}{D8DEE9}
+
+% ---------- HEADINGS ----------
+\usepackage{titlesec}
+\titleformat{\section}
+  {\normalfont\Large\bfseries\color{primary}}
+  {\thesection}{0.6em}{}[{\color{accent}\titlerule[1pt]}]
+\titleformat{\subsection}
+  {\normalfont\large\bfseries\color{primary}}
+  {\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}
+  {\normalfont\normalsize\bfseries\color{accent}}
+  {\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.4em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.1em}{0.6em}
+
+% ---------- HEADER / FOOTER ----------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.6pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyhead[L]{\small\color{primary}\bfseries \assignmentTitle}
+\fancyhead[R]{\small\color{darktext}\courseCode}
+\fancyfoot[C]{\small\color{darktext}\thepage}
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \renewcommand{\headrulewidth}{0pt}
+  \fancyfoot[C]{\small\color{darktext}\thepage}
+}
+
+% ---------- MISC USEFUL PACKAGES ----------
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{skins,breakable}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=primary,
+  citecolor=accent,
+  urlcolor=accent,
+  pdftitle={Assignment},
+  pdfborder={0 0 0}
+}
+\usepackage{caption}
+\captionsetup{font=small,labelfont={bf,color=primary}}
+
+% ---------- CODE LISTING STYLE (for lab experiments) ----------
+\usepackage{listings}
+\lstdefinestyle{modernstyle}{
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{coderule},
+  frame=single,
+  framesep=6pt,
+  rulesep=0pt,
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{primary}\bfseries,
+  commentstyle=\color{gray}\itshape,
+  stringstyle=\color{accent},
+  numberstyle=\tiny\color{gray},
+  numbers=left,
+  numbersep=8pt,
+  breaklines=true,
+  breakatwhitespace=false,
+  showstringspaces=false,
+  tabsize=2,
+  captionpos=b,
+  xleftmargin=1em,
+  xrightmargin=1em
+}
+\lstset{style=modernstyle}
+
+% A convenient environment specifically for lab experiment code
+% Usage:
+% \begin{experiment}{Experiment Title}{Aim of the experiment}
+%   \begin{lstlisting}[language=Python]
+%   ... code ...
+%   \end{lstlisting}
+%   Output / Observations text here...
+% \end{experiment}
+\newtcolorbox{experimentbox}[1]{
+  breakable,
+  colback=lightgray,
+  colframe=primary,
+  coltitle=white,
+  fonttitle=\bfseries,
+  title=#1,
+  boxrule=0.8pt,
+  arc=2mm,
+  left=6pt,right=6pt,top=6pt,bottom=6pt
+}
+
+\newcounter{expcounter}
+\newenvironment{experiment}[2]{%
+  \refstepcounter{expcounter}%
+  \begin{experimentbox}{Experiment \theexpcounter: #1}
+  \textbf{\color{primary}Aim:} #2 \par\vspace{4pt}
+}{%
+  \end{experimentbox}
+}
+
+% ---------- SUBMITTER DETAIL FIELDS ----------
+% Fill these in for the title page and running header
+\newcommand{\assignmentTitle}{Assignment Title Goes Here}
+\newcommand{\courseCode}{Course Code}
+\newcommand{\courseName}{Full Course Name}
+\newcommand{\studentName}{Student Name}
+\newcommand{\studentID}{Roll / Registration Number}
+\newcommand{\deptName}{Department Name}
+\newcommand{\instituteName}{Institute / University Name}
+\newcommand{\instructorName}{Instructor Name}
+\newcommand{\submissionDate}{\today}
+
+\begin{document}
+
+% =========================================================
+%  TITLE PAGE
+% =========================================================
+\begin{titlepage}
+\newgeometry{margin=1in}
+\pagecolor{white}
+
+\begin{center}
+
+% Top accent bar
+\rule{\linewidth}{2pt}\\[0.3cm]
+{\color{primary}\Large \instituteName}\\[0.1cm]
+{\color{darktext}\large \deptName}
+
+\vspace{2.2cm}
+
+% Optional logo placeholder -- uncomment and set your path
+% \includegraphics[width=3.2cm]{logo.png}\\[1.2cm]
+
+{\color{accent}\large\bfseries \courseCode \; -- \; \courseName}\\[1.6cm]
+
+\begin{tcolorbox}[
+  colback=lightgray, colframe=primary, boxrule=1pt,
+  arc=3mm, width=0.85\linewidth, halign=center,
+  top=14pt, bottom=14pt
+]
+  {\color{primary}\huge\bfseries \assignmentTitle}
+\end{tcolorbox}
+
+\vspace{1.8cm}
+{\large\itshape Submitted in partial fulfillment of the requirements of \courseCode}
+
+\vfill
+
+% Submitter details block
+\begin{tcolorbox}[
+  colback=white, colframe=accent, boxrule=1pt,
+  arc=2mm, width=0.7\linewidth, halign=left,
+  left=18pt, right=18pt, top=12pt, bottom=12pt
+]
+  \renewcommand{\arraystretch}{1.4}
+  \begin{tabular}{@{}ll@{}}
+    \textbf{Submitted by:} & \studentName \\
+    \textbf{Student ID:}   & \studentID \\
+    \textbf{Submitted to:} & \instructorName \\
+    \textbf{Date:}         & \submissionDate \\
+  \end{tabular}
+\end{tcolorbox}
+
+\vspace{1.5cm}
+\rule{\linewidth}{2pt}
+
+\end{center}
+\end{titlepage}
+\restoregeometry
+\pagecolor{white}
+
+% =========================================================
+%  TABLE OF CONTENTS
+% =========================================================
+\tableofcontents
+\newpage
+
+% =========================================================
+%  1. INTRODUCTION
+% =========================================================
+\section{Introduction}
+Write a brief introduction to the assignment or lab manual here: objective, background,
+and scope of the work. Explain what the reader should expect in the following sections.
+
+\subsection{Objective}
+State the objective(s) of this assignment / lab session clearly, using a list if there
+are multiple goals.
+
+\begin{itemize}[leftmargin=1.4em]
+  \item Objective one.
+  \item Objective two.
+  \item Objective three.
+\end{itemize}
+
+% =========================================================
+%  2. THEORY / BACKGROUND
+% =========================================================
+\section{Theory / Background}
+Provide the theoretical background, formulas, or concepts relevant to the assignment.
+Equations can be added as shown below.
+
+\begin{equation}
+  E = mc^2
+\end{equation}
+
+% =========================================================
+%  3. LAB EXPERIMENT SECTION (with code)
+% =========================================================
+\section{Lab Experiments}
+
+Below is a ready-made \texttt{experiment} environment that neatly boxes the aim,
+source code, and observations for each lab experiment. Duplicate the block for every
+experiment in your lab file; the numbering increments automatically.
+
+\begin{experiment}{Linear Search Implementation}{To implement and analyze the linear search algorithm.}
+
+\textbf{Procedure:}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Take an array and a target element as input.
+  \item Traverse the array sequentially comparing each element to the target.
+  \item Return the index if found, else return $-1$.
+\end{enumerate}
+
+\vspace{4pt}
+\textbf{\color{primary}Source Code:}
+\begin{lstlisting}[language=Python, caption={Linear Search in Python}]
+def linear_search(arr, target):
+    for i, value in enumerate(arr):
+        if value == target:
+            return i
+    return -1
+
+if __name__ == "__main__":
+    data = [4, 2, 9, 7, 5]
+    result = linear_search(data, 7)
+    print(f"Element found at index: {result}")
+\end{lstlisting}
+
+\vspace{4pt}
+\textbf{\color{primary}Output / Observation:}\\
+\texttt{Element found at index: 3}
+
+\vspace{2pt}
+\textbf{\color{primary}Conclusion:}\\
+The linear search algorithm successfully locates the target element in
+$O(n)$ time complexity in the worst case.
+
+\end{experiment}
+
+\vspace{0.6cm}
+
+\begin{experiment}{Sum of Two Numbers (C Program)}{To write a C program that reads two integers and prints their sum.}
+
+\textbf{\color{primary}Source Code:}
+\begin{lstlisting}[language=C, caption={Sum of Two Numbers in C}]
+#include <stdio.h>
+
+int main(void) {
+    int a, b, sum;
+    printf("Enter two integers: ");
+    scanf("%d %d", &a, &b);
+    sum = a + b;
+    printf("Sum = %d\n", sum);
+    return 0;
+}
+\end{lstlisting}
+
+\textbf{\color{primary}Output / Observation:}\\
+\texttt{Enter two integers: 5 7}\\
+\texttt{Sum = 12}
+
+\end{experiment}
+
+% =========================================================
+%  4. RESULTS AND ANALYSIS
+% =========================================================
+\section{Results and Analysis}
+Summarize your findings, tabulate results if needed, and discuss any deviations
+from expected outcomes.
+
+\begin{table}[h]
+\centering
+\caption{Sample Result Table}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Test Case} & \textbf{Input} & \textbf{Output} \\
+\midrule
+1 & [4,2,9,7,5], target=7 & Index 3 \\
+2 & [1,2,3], target=5     & Not Found \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =========================================================
+%  5. CONCLUSION
+% =========================================================
+\section{Conclusion}
+Summarize what was learned or achieved through this assignment / lab exercise.
+
+% =========================================================
+%  6. REFERENCES
+% =========================================================
+\section*{References}
+\addcontentsline{toc}{section}{References}
+\begin{enumerate}[leftmargin=1.4em]
+  \item Author, \textit{Title of Book/Resource}, Publisher, Year.
+  \item Online resource, \url{https://example.com}, accessed \today.
+\end{enumerate}
+
+\end{document}

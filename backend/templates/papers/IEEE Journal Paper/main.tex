@@ -1,0 +1,107 @@
+\documentclass[journal]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{textcomp}
+
+% ---------------------------------------------------------
+%  PAPER TEMPLATE 2 -- IEEE Transactions (Journal) Paper
+%  Standard IEEEtran journal format.
+%  Fill in the placeholders marked with << >>
+% ---------------------------------------------------------
+
+\begin{document}
+
+\title{<<Journal Paper Title Goes Here>>}
+
+\author{<<Author One>>,~\IEEEmembership{Member,~IEEE,}
+        <<Author Two>>,~\IEEEmembership{Senior Member,~IEEE}
+\thanks{<<Author One>> and <<Author Two>> are with the Department of Computer Science and Engineering, <<Institution Name>>, <<City>>, <<Country>> e-mail: <<email@example.com>>.}
+\thanks{Manuscript received <<Month Day, Year>>; revised <<Month Day, Year>>.}}
+
+\markboth{<<Journal Name>>, Vol.~<<XX>>, No.~<<Y>>, <<Month Year>>}%
+{<<Author One>> \MakeLowercase{\textit{et al.}}: <<Short Paper Title>>}
+
+\maketitle
+
+\begin{abstract}
+<<Write a concise abstract (150--250 words) summarizing the problem, methodology, and key contributions/results.>>
+\end{abstract}
+
+\begin{IEEEkeywords}
+<<keyword1>>, <<keyword2>>, <<keyword3>>, <<keyword4>>
+\end{IEEEkeywords}
+
+\IEEEpeerreviewmaketitle
+
+\section{Introduction}
+\IEEEPARstart{T}{his} section introduces the problem statement, motivation, and the contribution of this work. Cite related literature as needed \cite{ref1, ref2}.
+
+\section{Related Work}
+<<Discuss existing approaches and clearly state the research gap addressed by this paper.>>
+
+\section{Proposed Method}
+<<Describe the proposed methodology, system model, or theoretical framework in detail.>>
+
+\subsection{Problem Formulation}
+<<Formal problem definition.>>
+
+\begin{equation}
+\min_{\theta} \; \mathcal{L}(\theta) = \frac{1}{N}\sum_{i=1}^{N} \ell(y_i, \hat{y}_i(\theta))
+\label{eq:objective}
+\end{equation}
+
+\subsection{Algorithm Description}
+<<Describe the algorithm, possibly with pseudocode or a flow diagram.>>
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{example-image}
+\caption{<<Figure caption describing the proposed method.>>}
+\label{fig:method}
+\end{figure}
+
+\section{Experimental Evaluation}
+\subsection{Dataset and Setup}
+<<Describe dataset, experimental setup, and evaluation metrics.>>
+
+\subsection{Results and Discussion}
+<<Present and discuss quantitative/qualitative results.>>
+
+\begin{table}[!t]
+\caption{<<Comparison of Results>>}
+\label{tab:comparison}
+\centering
+\begin{tabular}{lccc}
+\hline
+\textbf{Method} & \textbf{Metric A} & \textbf{Metric B} & \textbf{Metric C} \\
+\hline
+Baseline 1 & <<val>> & <<val>> & <<val>> \\
+Baseline 2 & <<val>> & <<val>> & <<val>> \\
+Proposed   & <<val>> & <<val>> & <<val>> \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Conclusion}
+<<Summarize the key findings, contributions, and directions for future work.>>
+
+\section*{Acknowledgment}
+<<Optional acknowledgment section.>>
+
+\begin{thebibliography}{1}
+\bibitem{ref1} A. Author, ``Title of referenced paper,'' \textit{IEEE Trans. Example}, vol. X, no. Y, pp. 1--10, Year.
+\bibitem{ref2} B. Author and C. Author, ``Another referenced work,'' in \textit{Proc. IEEE Conf. Example}, Year, pp. 1--6.
+\end{thebibliography}
+
+\begin{IEEEbiography}{<<Author One>>}
+<<Short biography of the author, including education and research interests.>>
+\end{IEEEbiography}
+
+\begin{IEEEbiography}{<<Author Two>>}
+<<Short biography of the author, including education and research interests.>>
+\end{IEEEbiography}
+
+\end{document}
