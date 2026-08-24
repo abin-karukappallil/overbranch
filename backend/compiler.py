@@ -739,7 +739,54 @@ def compile_latex(
                 except Exception:
                     continue
 
-            # Font metric error auto-recovery patch
+            # 1. Missing LaTeX package iterative auto-recovery patch
+            patched_code = latex_code
+            all_disabled_pkgs = []
+            cur_output = last_output
+            for pass_num in range(4):
+                missing_pkgs = re.findall(r"! LaTeX Error: File [`\x27]([^\x27`]+)\.sty[`\x27] not found", cur_output)
+                if not missing_pkgs:
+                    break
+                for pkg in set(missing_pkgs):
+                    if pkg not in all_disabled_pkgs:
+                        patched_code = re.sub(
+                            r'\\usepackage(?:\[[^\]]*\])?\{' + re.escape(pkg) + r'\}',
+                            f'% [AUTO-DISABLED: {pkg}.sty not installed on server]',
+                            patched_code
+                        )
+                        all_disabled_pkgs.append(pkg)
+
+                tex_path.write_text(patched_code, encoding="utf-8")
+                try:
+                    result = subprocess.run(
+                        ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                        cwd=tmpdir,
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                        env=comp_env
+                    )
+                    cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
+                    pdf_path = tmpdir / "main.pdf"
+                    if pdf_path.exists():
+                        pdf_bytes = pdf_path.read_bytes()
+                        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                        elapsed_ms = int((time.time() - start_time) * 1000)
+                        pkg_notice = (
+                            f"Missing LaTeX package(s) on server: {', '.join(all_disabled_pkgs)}. "
+                            f"Install on server: 'pacman -S texlive-latexextra' (Arch) / 'apt-get install texlive-latex-extra' (Ubuntu) / 'tlmgr install <pkg>'."
+                        )
+                        print(f"✅ [COMPILER RECOVERY] Auto-recovered by disabling missing package(s): {', '.join(all_disabled_pkgs)}")
+                        return {
+                            "success": True,
+                            "pdf_base64": pdf_base64,
+                            "compile_time_ms": elapsed_ms,
+                            "log": f"Compiled via package auto-recovery ({', '.join(all_disabled_pkgs)} disabled)\n\n[PACKAGE NOTICE]\n{pkg_notice}",
+                        }
+                except Exception:
+                    break
+
+            # 2. Font metric error auto-recovery patch
             font_error_keywords = ["not loadable", "Metric (TFM) file not found", "ecrm1000", "cm-super"]
             if any(kw.lower() in last_output.lower() for kw in font_error_keywords):
                 patched_code = latex_code

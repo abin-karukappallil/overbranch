@@ -713,16 +713,11 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "l") {
         e.preventDefault();
         if (window.innerWidth < 768) {
-          setMobileDrawerOpen((prev) => {
-            const next = !prev;
-            if (next) {
-              setTimeout(() => {
-                const inputEl = document.getElementById("mobile-ai-chat-input");
-                if (inputEl) inputEl.focus();
-              }, 150);
-            }
-            return next;
-          });
+          setActiveMobileTab("ai");
+          setTimeout(() => {
+            const inputEl = document.getElementById("ai-chat-input-2");
+            if (inputEl) inputEl.focus();
+          }, 150);
         } else {
           setAiOpen((prev) => {
             const next = !prev;
@@ -2498,7 +2493,6 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
           <button
             onClick={() => {
               setActiveMobileTab("ai");
-              setMobileDrawerOpen(true);
             }}
             className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
               }`}

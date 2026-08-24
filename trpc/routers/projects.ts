@@ -132,38 +132,7 @@ export const projectsRouter = router({
         role: "Owner",
       });
 
-      // Initialize default starter main.tex for new project
-      const defaultTex = `\\documentclass[12pt]{article}
-\\usepackage[utf8]{utf8}
-\\usepackage[T1]{fontenc}
-\\usepackage{lmodern}
-\\usepackage{amsmath,amssymb}
-\\usepackage{graphicx}
-\\usepackage{hyperref}
-
-\\title{${input.name.replace(/[{}]/g, '')}}
-\\author{OverBranch Author}
-\\date{\\today}
-
-\\begin{document}
-
-\\maketitle
-
-\\section{Introduction}
-Welcome to your new OverBranch LaTeX document! You can start typing LaTeX equations, text, figures, and tables here.
-
-\\subsection{Getting Started}
-- Edit text in the Monaco Editor on the left.
-- PDF automatically recompiles instantly on keystroke or click.
-- Ask AI Assistant for intelligent inline LaTeX edits.
-
-\\section{Mathematics Example}
-Here is a sample equation:
-\\begin{equation}
-E = mc^2
-\\end{equation}
-
-\\end{document}`;
+      const defaultTex = ``;
 
       try {
         const safeProj = projId.replace(/[^a-zA-Z0-9_-]/g, '_');
