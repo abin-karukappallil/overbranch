@@ -16,7 +16,7 @@ from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_I
 
 logger = logging.getLogger("provider_router")
 
-DEFAULT_MODEL = "auto:smart"
+DEFAULT_MODEL = "gemini-3.7-flash"
 
 
 class ProviderRouter:
@@ -40,19 +40,24 @@ class ProviderRouter:
         Determines which provider handles a given model name.
 
         Routing rules:
-          - 'gemini-*' → GeminiProvider
-          - Everything else ('auto', 'auto:smart', 'auto:fast', 'gpt-oss-*', unknown) → FreeLLMProvider
+          - Default or 'gemini-*' → GeminiProvider (Pure Gemini Web2API at overapi.abinthomas.dev)
+          - 'groq:*' or 'groq/*' → GroqProvider
+          - Everything else ('auto', 'auto:smart', 'auto:fast', 'gpt-oss-*') → FreeLLMProvider
         """
         if not model:
-            return self.freellm
+            return self.gemini
 
         clean_model = model.strip().lower()
 
-        # Gemini models
-        if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS:
+        # Pure Gemini Web2API provider
+        if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS or "gemini" in clean_model:
             return self.gemini
 
-        # Default to FreeLLM Provider for all other models (has built-in Groq fallback)
+        # Groq specific
+        if clean_model.startswith("groq/") or clean_model.startswith("groq:"):
+            return self.groq
+
+        # FreeLLM Provider for all other models (has built-in Groq fallback)
         return self.freellm
 
     def get_default_model(self) -> str:
@@ -62,24 +67,24 @@ class ProviderRouter:
     def get_available_models(self) -> Dict[str, Any]:
         """
         Returns the full model catalog grouped by provider,
-        suitable for the /api/models endpoint response.
+        putting Gemini Web2API first as the default provider.
         """
         providers_list = []
 
-        # FreeLLM API first (has the default 'auto' router)
+        # 1. Gemini Web2API FIRST (Default provider)
+        gemini_models = self.gemini.get_available_models()
+        if gemini_models:
+            providers_list.append({
+                "name": "Gemini Web2API",
+                "models": gemini_models,
+            })
+
+        # 2. FreeLLM API second
         freellm_models = self.freellm.get_available_models()
         if freellm_models:
             providers_list.append({
                 "name": self.freellm.get_provider_name(),
                 "models": freellm_models,
-            })
-
-        # Gemini second
-        gemini_models = self.gemini.get_available_models()
-        if gemini_models:
-            providers_list.append({
-                "name": self.gemini.get_provider_name(),
-                "models": gemini_models,
             })
 
         return {
