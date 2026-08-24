@@ -667,22 +667,22 @@ def compile_latex(
 
             COMPILE_TIMEOUT = 30
 
-            # Target engine selection
+            # Target engine selection (Matching Overleaf nonstopmode behavior without -halt-on-error)
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-c-style-errors", "main.tex"]]
+                cmd_list = [["pdflatex", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"]]
             elif eng_clean in ["xelatex", "xe"]:
-                cmd_list = [["xelatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"]]
+                cmd_list = [["xelatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["lualatex", "lua"]:
-                cmd_list = [["lualatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"]]
+                cmd_list = [["lualatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean == "tectonic":
                 cmd_list = [["tectonic", "main.tex"]]
             elif eng_clean == "latexmk":
                 cmd_list = [["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
             else:
                 cmd_list = [
-                    ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "-c-style-errors", "main.tex"],
-                    ["xelatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                    ["pdflatex", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"],
+                    ["xelatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                     ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
                 ]
 
@@ -759,7 +759,7 @@ def compile_latex(
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
                     result = subprocess.run(
-                        ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"],
+                        ["pdflatex", "-interaction=nonstopmode", "main.tex"],
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
@@ -795,11 +795,11 @@ def compile_latex(
                         patched_code = patched_code.replace(r"\usepackage[T1]{fontenc}", r"\usepackage[T1]{fontenc}" + "\n" + r"\usepackage{lmodern}")
                     elif r"\documentclass" in patched_code:
                         patched_code = re.sub(r'(\\documentclass(?:\[.*?\])?\{.*?\})', r'\1' + "\n" + r"\usepackage{lmodern}", patched_code, count=1)
-                
+
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
+                        result = subprocess.run(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
                             pdf_bytes = pdf_path.read_bytes()
@@ -810,6 +810,38 @@ def compile_latex(
                                 "pdf_base64": pdf_base64,
                                 "compile_time_ms": elapsed_ms,
                                 "log": "Compiled via font auto-recovery (lmodern patch)",
+                            }
+                    except Exception:
+                        pass
+
+            # 3. Invalid beamercolorbox bg key auto-recovery patch
+            if "Package keyval Error: bg undefined" in last_output or "bg undefined" in last_output:
+                patched_code = re.sub(
+                    r"\[([^\]]*?),?\s*bg=[^,\]]+([^\]]*)\]",
+                    lambda m: f"[{m.group(1)}{m.group(2)}]".replace("[,", "[").replace(",,", ",").replace("[,]", "[]"),
+                    latex_code
+                )
+                if patched_code != latex_code:
+                    tex_path.write_text(patched_code, encoding="utf-8")
+                    try:
+                        result = subprocess.run(
+                            ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                            cwd=tmpdir,
+                            capture_output=True,
+                            text=True,
+                            timeout=15,
+                            env=comp_env
+                        )
+                        pdf_path = tmpdir / "main.pdf"
+                        if pdf_path.exists():
+                            pdf_bytes = pdf_path.read_bytes()
+                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                            elapsed_ms = int((time.time() - start_time) * 1000)
+                            return {
+                                "success": True,
+                                "pdf_base64": pdf_base64,
+                                "compile_time_ms": elapsed_ms,
+                                "log": "Compiled via beamercolorbox bg auto-recovery",
                             }
                     except Exception:
                         pass

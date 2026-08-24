@@ -92,15 +92,8 @@ class FreeLLMProvider(LLMProvider):
 
         last_error = None
 
-        # Calculate approximate token count for dynamic token budgeting
-        total_prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
-        approx_tokens = total_prompt_chars // 4
-        
+        # Use full max_tokens (default 4096) to ensure complete presentations without truncation
         adjusted_max_tokens = max_tokens
-        if approx_tokens > 4500:
-            adjusted_max_tokens = min(max_tokens, 2048)
-        if approx_tokens > 6500:
-            adjusted_max_tokens = min(max_tokens, 1500)
 
         for idx, creds in enumerate(self.candidates):
             start_time = time.time()
