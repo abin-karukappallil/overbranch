@@ -148,6 +148,13 @@ def sanitize_latex_code(code: str) -> str:
         s = re.sub(r"^```(?:latex|tex)?\s*", "", s, flags=re.MULTILINE)
         s = re.sub(r"\s*```$", "", s, flags=re.MULTILINE)
 
+    # Restore swallowed LaTeX commands where JSON newline escape \n consumed the leading slash
+    s = re.sub(r"(?<![a-zA-Z\\])ewcommand(?=\{|\s*\[|\s*\\)", r"\\newcommand", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ormalsize\b", r"\\normalsize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewline\b", r"\\newline", s)
+    s = re.sub(r"(?<![a-zA-Z\\])oindent\b", r"\\noindent", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ode(?=\s*[\(\[])", r"\\node", s)
+
     # If full document with preamble, sanitize lines before \begin{document}
     if r"\begin{document}" in s:
         preamble, body = s.split(r"\begin{document}", 1)
@@ -170,6 +177,20 @@ def sanitize_latex_code(code: str) -> str:
     # If the text has literal "\\n" strings instead of linebreaks, unescape them
     if "\\n" in s and s.count("\n") < 10:
         s = s.replace("\\n", "\n")
+
+    # Clean malformed formatting macro brackets (e.g. \textbf[4pt] or \textit[4pt])
+    s = re.sub(r"\\textbf\[([^\]]+)\]\{([^}]*)\}", r"\\textbf{\2}\\\\[\1]", s)
+    s = re.sub(r"\\textbf\[([^\]]+)\]", r"\\\\[\1]", s)
+    s = re.sub(r"\\textit\[([^\]]+)\]\{([^}]*)\}", r"\\textit{\2}\\\\[\1]", s)
+    s = re.sub(r"\\textit\[([^\]]+)\]", r"\\\\[\1]", s)
+
+    # Auto-repair footline sidebar overlap if leftskip < 1.8cm on wd=\paperwidth
+    if r"\setbeamertemplate{footline}" in s and "wd=\\paperwidth" in s:
+        s = re.sub(
+            r"(\\setbeamertemplate\{footline\}[\s\S]*?leftskip=)(?:0(?:\.\d+)?|1(?:\.[0-7]\d*)?)cm",
+            r"\g<1>1.8cm",
+            s
+        )
 
     # Auto-repair unclosed environments and trailing truncation
     s = auto_repair_truncated_latex(s)
