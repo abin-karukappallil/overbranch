@@ -64,7 +64,7 @@ class FreeLLMProvider(LLMProvider):
 
     def get_available_models(self) -> List[Dict[str, Any]]:
         return [
-            {"id": "auto:smart", "label": "FreeLLM Auto Smart", "default": True},
+            {"id": "auto:smart", "label": "FreeLLM Auto Smart", "default": False},
             {"id": "auto", "label": "FreeLLM Auto Router", "default": False},
             {"id": "auto:fast", "label": "FreeLLM Auto Fast", "default": False},
             {"id": "openai/gpt-oss-120b", "label": "GPT-OSS-120B", "default": False},
@@ -89,6 +89,10 @@ class FreeLLMProvider(LLMProvider):
         if raw_target.lower().startswith("via "):
             raw_target = self.default_model
         target_model = raw_target if raw_target else self.default_model
+
+        # Map Gemini 3.7 Flash alias to web2api upstream catalog model
+        if target_model.lower() in ("gemini-3.7-flash", "gemini-3.7", "gemini-3-flash", "gemini-3.7-flash-web2api"):
+            target_model = "gemini-3-flash-preview"
 
         last_error = None
 
