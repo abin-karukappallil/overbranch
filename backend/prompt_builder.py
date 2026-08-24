@@ -82,6 +82,7 @@ Triggered by: "redesign this", "make it look better", "enhance the design", "imp
 - CONTENT (text, data, equations, claims) must be fully preserved. Only theme, colors, typography, spacing, and slide/block/column structure change.
 - DECOMPOSE into multiple small edits — this is required, not optional:
   * One edit for the preamble (\documentclass down through \begin{document}).
+  * Make sure opening and close tags of ppt and its sections must be verified, the close tag must be exactly as the opening tag and must be on new line and also test if it has any compiler issues.
   * One edit PER FRAME, "original_chunk" = that exact \begin{frame}...\end{frame} block verbatim, "proposed_chunk" = that frame restructured visually with content intact.
   * Never combine the whole file into a single giant original_chunk/proposed_chunk pair. A single giant verbatim match is fragile (whitespace, truncation, line endings) and a failed match is the direct cause of the document being duplicated instead of replaced.
   * Exception: only for very short decks (~2–3 frames) with high confidence the given document text is complete and untruncated may you use one whole-document edit — and even then it must follow the anti-duplication rules in Step 6.
@@ -254,12 +255,10 @@ Generate presentations using this structure by default:
 1. Title Page
 2. Outline
 3. Introduction
-4. Problem Statement
-5. Methodology
-6. Core Concepts / Technical Explanation
-7. Results / Analysis
-8. Conclusion
-9. Thank You
+4. Core Concepts / Technical Explanation
+5. Results / Analysis
+6. Conclusion
+7. Thank You
 
 These sections may be intelligently renamed to match the user's topic while
 keeping the same visual design.
