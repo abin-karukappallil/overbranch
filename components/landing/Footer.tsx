@@ -17,9 +17,17 @@ export function LandingFooter() {
 
         {/* Center Column */}
         <div className="space-y-2 text-center">
-          <div className="text-black">100% FREE</div>
-          <div className="text-black">SELF-HOSTABLE</div>
-          <div className="text-black">OPEN SOURCE</div>
+          <div>
+            <a href="#pdf-to-latex" className="text-black hover:bg-black hover:text-white px-2 py-1 transition-colors">
+              PDF TO LATEX
+            </a>
+          </div>
+          <div>
+            <a href="#templates" className="text-black hover:bg-black hover:text-white px-2 py-1 transition-colors">
+              TEMPLATES
+            </a>
+          </div>
+          <div className="text-black/80">100% FREE & SELF-HOSTABLE</div>
         </div>
 
         {/* Right Column */}

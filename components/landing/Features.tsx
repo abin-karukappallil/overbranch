@@ -17,21 +17,31 @@ const features: FeatureRow[] = [
   },
   {
     index: "02",
+    title: "AI PDF TO LATEX CONVERTER",
+    tags: ["STATIC PDF TO CODE", "EQUATION OCR", "EMBEDDED FIGURES", "AUTO-STRUCTURE"],
+  },
+  {
+    index: "03",
+    title: "CURATED TEMPLATE VAULT",
+    tags: ["BEAMER DECKS", "IEEE & ACM PAPERS", "DEVELOPER CVS", "PHD THESES"],
+  },
+  {
+    index: "04",
     title: "BLAZING FAST COMPILATION",
     tags: ["UNLIMITED COMPILES", "FASTER THAN OVERLEAF", "INSTANT PDF", "ZERO TIMEOUTS"],
   },
   {
-    index: "03",
+    index: "05",
     title: "UNLIMITED COLLABORATION",
     tags: ["UNLIMITED CO-AUTHORS", "REALTIME CO-AUTHORING", "NO TEAM LIMITS", "PROJECT SHARING"],
   },
   {
-    index: "04",
+    index: "06",
     title: "100% FREE & OPEN SOURCE",
     tags: ["NO SUBSCRIPTIONS", "SELF-HOSTABLE", "TRANSPARENT CODE", "NO PAYWALLS"],
   },
   {
-    index: "05",
+    index: "07",
     title: "RESEARCHER & STUDENT FIRST",
     tags: ["PRIVATE DATA", "LOCAL MODELS", "GIT COLLABORATION", "YOUR SERVER"],
   },
