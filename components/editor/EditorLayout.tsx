@@ -66,6 +66,8 @@ const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_
 
 interface EditorLayoutProps {
   projectId?: string;
+  isGuest?: boolean;
+  expiresAt?: string | null;
 }
 
 interface ChatMessage {
@@ -205,7 +207,11 @@ export function extractChangesSummary(response: string): string | null {
   return response.slice(marker + "CHANGES_SUMMARY:".length).trim();
 }
 
-export function EditorLayout({ projectId }: EditorLayoutProps) {
+export function EditorLayout({
+  projectId,
+  isGuest: propIsGuest,
+  expiresAt: propExpiresAt,
+}: EditorLayoutProps) {
   const [code, setCode] = useState(initialLatexCode);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [activeMobileTab, setActiveMobileTab] = useState<"code" | "files" | "pdf" | "ai">("code");
@@ -435,6 +441,29 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   );
 
   const isViewer = projectDetail?.role === "Viewer";
+  const isGuestMode = propIsGuest || !!(projectDetail as any)?.isGuest;
+  const guestExpiresAt = propExpiresAt || (projectDetail as any)?.expiresAt;
+  const [guestTimeLeft, setGuestTimeLeft] = useState<string>("");
+
+  useEffect(() => {
+    if (!isGuestMode || !guestExpiresAt) return;
+    const calculate = () => {
+      const diff = new Date(guestExpiresAt).getTime() - Date.now();
+      if (diff <= 0) {
+        setGuestTimeLeft("Expired");
+        return;
+      }
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setGuestTimeLeft(
+        `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+      );
+    };
+    calculate();
+    const interval = setInterval(calculate, 1000);
+    return () => clearInterval(interval);
+  }, [isGuestMode, guestExpiresAt]);
 
   // No mock messages — only real conversation from API interactions
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -1586,6 +1615,43 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
 
   return (
     <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-zinc-950 text-zinc-100 overflow-hidden selection:bg-[#00CC68]/30 selection:text-[#00CC68] flex flex-col relative z-0">
+      {/* Guest Session Notification Banner */}
+      {isGuestMode && (
+        <div className="bg-gradient-to-r from-amber-950/80 via-zinc-900 to-amber-950/80 border-b border-amber-500/40 px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs z-30 shrink-0 select-none shadow-md">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+            </span>
+            <span className="font-mono font-bold text-amber-400 uppercase tracking-wider text-[10px] sm:text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+              Guest Session
+            </span>
+            <span className="text-zinc-200 text-xs font-mono">
+              Expires in: <strong className="text-amber-300 font-bold">{guestTimeLeft || "24:00:00"}</strong>
+            </span>
+            <span className="text-zinc-400 text-xs hidden md:inline">
+              · Read-only preview. Sign up to save this project permanently and unlock full editing.
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/register?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
+              className="px-3 py-1 rounded-lg bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold text-xs shadow-[2px_2px_0px_0px_#000000] border border-black transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <span>Save Permanently</span>
+              <span>→</span>
+            </Link>
+            <Link
+              href={`/login?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
+              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-xs border border-zinc-700 transition-colors"
+            >
+              Sign In
+            </Link>
+          </div>
+        </div>
+      )}
+
       <header className="h-14 border-b border-zinc-800 bg-zinc-950 px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10 select-none">
         <div className="flex items-center gap-2 overflow-hidden">
           <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity">

@@ -47,6 +47,8 @@ export const metadata: Metadata = {
   },
 };
 
+import { GuestMigrationListener } from "@/components/GuestMigrationListener";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -64,6 +66,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TRPCProvider>
+            <GuestMigrationListener />
             {children}
             <Toaster position="top-right" theme="dark" richColors />
           </TRPCProvider>

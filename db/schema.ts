@@ -140,9 +140,32 @@ export const editorPreferences = pgTable("editor_preferences", {
   lineNumbers: boolean("line_numbers").notNull().default(true)
 });
 
+export const guestSessions = pgTable("guest_sessions", {
+  id: text("id").primaryKey(),
+  fingerprintHash: text("fingerprint_hash").notNull().unique(),
+  tokenHash: text("token_hash").notNull().unique(),
+  conversionsUsed: integer("conversions_used").notNull().default(0),
+  lastConversionAt: timestamp("last_conversion_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  expiresAt: timestamp("expires_at").notNull(),
+});
+
+export const guestProjects = pgTable("guest_projects", {
+  id: text("id").primaryKey(),
+  guestSessionId: text("guest_session_id").notNull().references(() => guestSessions.id, { onDelete: "cascade" }),
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  migratedToUserId: text("migrated_to_user_id").references(() => user.id, { onDelete: "set null" }),
+  migratedAt: timestamp("migrated_at"),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type User = typeof user.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type ProjectMember = typeof projectMembers.$inferSelect;
 export type ProjectInvitation = typeof projectInvitations.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
+export type GuestSession = typeof guestSessions.$inferSelect;
+export type GuestProject = typeof guestProjects.$inferSelect;
+

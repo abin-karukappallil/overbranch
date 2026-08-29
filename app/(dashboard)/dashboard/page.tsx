@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus,
   FileCode2,
@@ -33,14 +33,21 @@ import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { PDFToLatexModal } from "@/components/dashboard/PDFToLatexModal";
 
-export default function DashboardPage() {
+function DashboardContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTemplate, setFilterTemplate] = useState("all");
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [newProjName, setNewProjName] = useState("");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("openPdfModal") === "true") {
+      setPdfModalOpen(true);
+    }
+  }, [searchParams]);
 
   const utils = trpc.useUtils();
 
@@ -543,5 +550,13 @@ export default function DashboardPage() {
         onClose={() => setPdfModalOpen(false)}
       />
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense fallback={null}>
+      <DashboardContent />
+    </Suspense>
   );
 }

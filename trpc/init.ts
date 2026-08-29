@@ -1,19 +1,27 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { auth } from '@/lib/auth';
 import superjson from 'superjson';
-import { headers } from 'next/headers';
+import { headers, cookies } from 'next/headers';
 import { db } from '@/db';
 import { projects, projectMembers } from '@/db/schema';
 import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
+import { verifyGuestToken } from '@/lib/guest-token';
 
 export const createContext = async () => {
+  const reqHeaders = await headers();
   const session = await auth.api.getSession({
-    headers: await headers(),
+    headers: reqHeaders,
   });
+
+  const cookieStore = await cookies();
+  const guestToken = cookieStore.get('ob_guest_token')?.value;
+  const verifiedGuest = verifyGuestToken(guestToken);
 
   return {
     session,
+    guestToken,
+    guestSessionId: verifiedGuest?.sessionId || null,
   };
 };
 

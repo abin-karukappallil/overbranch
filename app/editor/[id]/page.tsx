@@ -39,8 +39,9 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
   const currentUserId = sessionData?.user?.id;
   const isOwner = projectData?.isOwner;
   const isCoAuthor = projectData?.role === "Editor" || projectData?.role === "Viewer" || projectData?.role === "Owner";
+  const isGuest = (projectData as any)?.isGuest;
 
-  if (isError || !projectData || (!isOwner && !isCoAuthor)) {
+  if (isError || !projectData || (!isOwner && !isCoAuthor && !isGuest)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-6 text-center space-y-6 animate-fade-in">
         <div className="p-4 rounded-3xl bg-rose-500/10 border border-rose-500/30 text-rose-400 shadow-xl">
@@ -48,6 +49,9 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
         </div>
         <div className="space-y-2 max-w-md">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Access Denied</h1>
+          <p className="text-sm text-muted-foreground">
+            You do not have permission to view this project or the guest session has expired.
+          </p>
         </div>
         <Button asChild size="lg" className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium px-6 shadow-lg shadow-indigo-500/20">
           <Link href="/dashboard">Return to Dashboard</Link>
@@ -56,5 +60,12 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     );
   }
 
-  return <EditorLayout projectId={projectId} />;
+  return (
+    <EditorLayout
+      projectId={projectId}
+      isGuest={isGuest}
+      expiresAt={(projectData as any)?.expiresAt}
+    />
+  );
 }
+

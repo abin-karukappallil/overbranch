@@ -30,6 +30,12 @@ export function LandingHeader() {
         >
           FEATURES
         </a>
+        <Link
+          href={isAuthenticated ? "/dashboard?openPdfModal=true" : "/convert"}
+          className="px-2.5 py-1 rounded-full text-[#00CC68] hover:bg-[#00CC68] hover:text-black transition-all duration-150 font-bold"
+        >
+          PDF TO LATEX
+        </Link>
         <a
           href="#self-host"
           className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
@@ -105,6 +111,13 @@ export function LandingHeader() {
             >
               FEATURES
             </a>
+            <Link
+              href={isAuthenticated ? "/dashboard?openPdfModal=true" : "/convert"}
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg bg-[#00CC68]/15 text-[#00CC68] hover:bg-[#00CC68]/25 font-bold"
+            >
+              {isAuthenticated ? "PDF TO LATEX" : "PDF TO LATEX (FREE GUEST)"}
+            </Link>
             <a
               href="#self-host"
               onClick={() => setMobileMenuOpen(false)}

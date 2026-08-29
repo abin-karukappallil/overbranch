@@ -6,6 +6,7 @@ import { LandingHero } from "@/components/landing/Hero";
 import { BrandMarquee } from "@/components/landing/BrandMarquee";
 import { LandingIntroduction } from "@/components/landing/Introduction";
 import { LandingFeatures } from "@/components/landing/Features";
+import { LandingPdfToLatex } from "@/components/landing/PdfToLatexSection";
 import { LandingSelfHosting } from "@/components/landing/SelfHosting";
 import { LandingOpenSource } from "@/components/landing/OpenSourceSection";
 import { LandingFreeSection } from "@/components/landing/FreeSection";
@@ -23,6 +24,7 @@ export default function HomePage() {
         <BrandMarquee />
         <LandingIntroduction />
         <LandingFeatures />
+        <LandingPdfToLatex />
         <LandingSelfHosting />
         <LandingOpenSource />
         <LandingFreeSection />

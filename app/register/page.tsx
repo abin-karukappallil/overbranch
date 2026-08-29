@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,11 @@ import {
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-export default function RegisterPage() {
+function RegisterContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get("redirect") || "/dashboard";
+
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -38,7 +41,7 @@ export default function RegisterPage() {
   const { data: session } = authClient.useSession();
 
   if (session?.user) {
-    router.replace("/dashboard");
+    router.replace(redirectUrl);
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -68,7 +71,7 @@ export default function RegisterPage() {
         setError(result.error.message || "Registration failed");
       } else {
         toast.success("Account created! Welcome to OverBranch.");
-        router.push("/dashboard");
+        router.push(redirectUrl);
         router.refresh();
       }
     } catch (err: any) {
@@ -83,7 +86,7 @@ export default function RegisterPage() {
     try {
       const res = await authClient.signIn.social({
         provider: "google",
-        callbackURL: "/dashboard",
+        callbackURL: redirectUrl,
       });
 
       if (res?.data?.url) {
@@ -352,7 +355,10 @@ export default function RegisterPage() {
 
           <p className="text-center font-sans text-xs text-zinc-600 pt-1">
             Already have an account?{" "}
-            <Link href="/login" className="font-bold text-zinc-950 hover:underline">
+            <Link
+              href={redirectUrl !== "/dashboard" ? `/login?redirect=${encodeURIComponent(redirectUrl)}` : "/login"}
+              className="font-bold text-zinc-950 hover:underline"
+            >
               Sign in
             </Link>
           </p>
@@ -363,5 +369,13 @@ export default function RegisterPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterContent />
+    </Suspense>
   );
 }

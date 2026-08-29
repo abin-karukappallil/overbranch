@@ -21,7 +21,10 @@ export function middleware(request: NextRequest) {
     request.cookies.get("__Secure-better-auth.session-token")?.value ||
     request.cookies.get("better_auth_session")?.value;
 
-  if (isProtectedPath && !sessionToken) {
+  const guestToken = request.cookies.get("ob_guest_token")?.value;
+  const isGuestEditorAccess = path.startsWith("/editor") && !!guestToken;
+
+  if (isProtectedPath && !sessionToken && !isGuestEditorAccess) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", path);
     return NextResponse.redirect(loginUrl);
