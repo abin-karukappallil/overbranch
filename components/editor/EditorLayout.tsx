@@ -40,6 +40,7 @@ import {
   ChevronDown,
   PlusCircle,
   Trash2,
+  Sparkles,
 } from "lucide-react";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer } from "@/components/editor/PDFViewer";
@@ -229,6 +230,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
   const [activeModelName, setActiveModelName] = useState<string>("auto:smart");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
+  const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
   const monacoRef = useRef<any>(null);
 
   // ─── Model Selector State ────────────────────────────────────────────────
@@ -333,8 +335,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                         setModelSelectorOpen(false);
                       }}
                       className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${activeModelName === m.id
-                          ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
-                          : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
+                        ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
+                        : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
                         }`}
                     >
                       <span className="truncate">
@@ -1218,6 +1220,15 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
         setDiffEditsList([]);
         setDiffData(null);
       }
+
+      if (data.is_pdf_conversion || (data.files_written && data.files_written.length > 0)) {
+        setFilesRefreshTrigger((prev) => prev + 1);
+        setFilesOpen(true);
+        toast.success(
+          `Project updated from PDF! ${data.files_written?.length || 0} file(s) and ${data.assets_written?.length || 0} asset(s) saved in assets/.`,
+          { icon: "📄" }
+        );
+      }
     } catch (err: any) {
       clearTimeout(timeoutId);
       if (err.name === "AbortError") {
@@ -1684,6 +1695,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             onClose={() => setFilesOpen(false)}
             onSelectFile={(filePath) => setActiveFilePath(filePath)}
             onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
+            refreshTrigger={filesRefreshTrigger}
           />
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
@@ -1949,8 +1961,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                               <div
                                 key={idx}
                                 className={`flex items-center gap-2 transition-all font-mono text-[10px] ${isLatest
-                                    ? "text-[#00CC68] font-bold animate-pulse"
-                                    : "text-zinc-400 font-normal"
+                                  ? "text-[#00CC68] font-bold animate-pulse"
+                                  : "text-zinc-400 font-normal"
                                   }`}
                               >
                                 <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
@@ -2022,22 +2034,35 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 />
 
                 {attachedFile && (
-                  <div className="flex items-center justify-between px-3 py-2 mb-1.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-[11px] font-mono animate-in fade-in font-bold">
-                    <div className="flex items-center gap-2 truncate">
-                      <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
-                      <span className="truncate">{attachedFile.filename}</span>
-                      <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
-                        {attachedFile.file_type || "file"}
-                      </span>
+                  <div className="space-y-1.5 mb-2">
+                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-[11px] font-mono animate-in fade-in font-bold">
+                      <div className="flex items-center gap-2 truncate">
+                        <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                        <span className="truncate">{attachedFile.filename}</span>
+                        <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
+                          {attachedFile.file_type || "file"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setAttachedFile(null)}
+                        className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
+                        title="Remove attachment"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setAttachedFile(null)}
-                      className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
-                      title="Remove attachment"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
+
+                    {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
+                      <button
+                        type="button"
+                        onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+                      >
+                        <FileText className="w-3 h-3 text-[#00CC68]" />
+                        <span> Recreate this PDF as Editable LaTeX</span>
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -2118,6 +2143,7 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 setActiveMobileTab("code");
               }}
               onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
+              refreshTrigger={filesRefreshTrigger}
             />
           </div>
         )}
@@ -2305,8 +2331,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                 <div
                   key={m.id}
                   className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                      ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                      : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                    ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
+                    : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
                     }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
@@ -2347,8 +2373,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                           <div
                             key={idx}
                             className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
-                                ? "text-[#00CC68] font-bold animate-pulse"
-                                : "text-zinc-400 font-normal"
+                              ? "text-[#00CC68] font-bold animate-pulse"
+                              : "text-zinc-400 font-normal"
                               }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
@@ -2396,21 +2422,34 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             )}
 
             {attachedFile && (
-              <div className="flex items-center justify-between px-3 py-2 mb-1.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
-                <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
-                  <span className="truncate">{attachedFile.filename}</span>
-                  <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
-                    {attachedFile.file_type || "file"}
-                  </span>
+              <div className="space-y-1.5 mb-2">
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
+                  <div className="flex items-center gap-2 truncate">
+                    <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                    <span className="truncate">{attachedFile.filename}</span>
+                    <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
+                      {attachedFile.file_type || "file"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAttachedFile(null)}
+                    className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAttachedFile(null)}
-                  className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+
+                {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
+                  <button
+                    type="button"
+                    onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+                  >
+                    <FileText className="w-3 h-3 text-[#00CC68]" />
+                    <span>✨ Recreate this PDF as Editable LaTeX</span>
+                  </button>
+                )}
               </div>
             )}
 
@@ -2641,8 +2680,8 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
                           <div
                             key={idx}
                             className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
-                                ? "text-[#00CC68] font-bold animate-pulse"
-                                : "text-zinc-400 font-normal"
+                              ? "text-[#00CC68] font-bold animate-pulse"
+                              : "text-zinc-400 font-normal"
                               }`}
                           >
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
@@ -2658,18 +2697,31 @@ export function EditorLayout({ projectId }: EditorLayoutProps) {
             </div>
 
             {attachedFile && (
-              <div className="flex items-center justify-between px-3 py-2 mb-1 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
-                <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-4 h-4 text-[#00CC68] shrink-0" />
-                  <span className="truncate">{attachedFile.filename}</span>
+              <div className="space-y-1.5 mb-2">
+                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
+                  <div className="flex items-center gap-2 truncate">
+                    <Paperclip className="w-4 h-4 text-[#00CC68] shrink-0" />
+                    <span className="truncate">{attachedFile.filename}</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAttachedFile(null)}
+                    className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setAttachedFile(null)}
-                  className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+
+                {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
+                  <button
+                    type="button"
+                    onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
+                  >
+                    <FileText className="w-3 h-3 text-[#00CC68]" />
+                    <span>✨ Recreate this PDF as Editable LaTeX</span>
+                  </button>
+                )}
               </div>
             )}
 

@@ -12,7 +12,7 @@ export function middleware(request: NextRequest) {
   ];
 
   const isProtectedPath = protectedRoutes.some((route) => path.startsWith(route));
-  const isAuthPath = path === "/login" || path === "/register" || path === "/forgot-password";
+  const isAuthPath = path === "/login" || path === "/register";
   
   const sessionToken =
     request.cookies.get("better-auth.session_token")?.value ||
@@ -50,7 +50,6 @@ export const config = {
     "/editor/:path*",
     "/login",
     "/register",
-    "/forgot-password",
   ],
 };
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,8 +31,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [forgotModalOpen, setForgotModalOpen] = useState(false);
-  const [forgotEmail, setForgotEmail] = useState("");
+
 
   const { data: session } = authClient.useSession();
 
@@ -88,11 +87,7 @@ export default function LoginPage() {
     }
   };
 
-  const handleForgotSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    toast.success(`Password reset instructions sent to ${forgotEmail}`);
-    setForgotModalOpen(false);
-  };
+
 
   return (
     <div className="min-h-screen bg-[#00CC68] text-black relative flex flex-col lg:flex-row select-none overflow-x-clip font-sans">
@@ -241,7 +236,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="author@university.edu"
+                  placeholder="Enter your email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -253,23 +248,14 @@ export default function LoginPage() {
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="font-mono text-xs font-semibold text-zinc-800">
-                  Password
-                </Label>
-                <button
-                  type="button"
-                  onClick={() => setForgotModalOpen(true)}
-                  className="font-mono text-xs font-semibold text-[#00CC68] hover:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
+              <Label htmlFor="password" className="font-mono text-xs font-semibold text-zinc-800">
+                Password
+              </Label>
               <div className="relative">
                 <Input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="••••••••"
+                  placeholder="Enter password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -319,51 +305,7 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <AnimatePresence>
-        {forgotModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="max-w-md w-full p-8 bg-white text-zinc-900 rounded-3xl border border-zinc-200 shadow-2xl space-y-4 font-sans"
-            >
-              <h3 className="font-archivo text-xl font-bold uppercase text-zinc-950">
-                Reset Password
-              </h3>
-              <p className="text-xs text-zinc-600">
-                Enter your registered account email to receive reset instructions.
-              </p>
-              <form onSubmit={handleForgotSubmit} className="space-y-4 pt-2">
-                <Input
-                  type="email"
-                  placeholder="author@university.edu"
-                  value={forgotEmail}
-                  onChange={(e) => setForgotEmail(e.target.value)}
-                  required
-                  className="h-11 font-sans text-xs border border-zinc-200 bg-zinc-50 rounded-xl"
-                />
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <Button
-                    variant="ghost"
-                    type="button"
-                    onClick={() => setForgotModalOpen(false)}
-                    className="font-sans text-xs font-semibold text-zinc-600"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    className="bg-black text-white font-mono text-xs font-bold uppercase tracking-wider px-5 py-2.5 rounded-full shadow-md"
-                  >
-                    Send Reset Link
-                  </Button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+
     </div>
   );
 }

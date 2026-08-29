@@ -172,9 +172,7 @@ export function InlineDiffEditor({
     <div className="w-full h-full flex flex-col bg-[#0d1117] border border-border/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-2xl font-mono text-xs">
       <div className="px-4 py-3 border-b border-border/60 bg-[#161b22] flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2.5">
-          <div className="p-1.5 rounded-lg bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-            <Sparkles className="w-4 h-4" />
-          </div>
+          
           <div>
             <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
               <span>Inline Editor Diff</span>
