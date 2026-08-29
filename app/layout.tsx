@@ -31,9 +31,9 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OverBranch — 100% Free & Open-Source AI Development Platform",
-  description: "Your AI. Your Code. Your Infrastructure. OverBranch is a free, open-source, self-hostable AI development platform.",
-  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure"],
+  title: "OverBranch — 100% Free & Open-Source Agentic Latex code editor",
+  description: "Your AI. Your Code. Your Infrastructure. OverBranch is a free, open-source, self-hostable Agentic Latex code editor.",
+  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure", "pdf to latex", "Ai latex code editor","pdf to latex code generator","overleaf alternative","best pdf to latex","ai pdf to latex","free pdf to latex"],
   authors: [{ name: "OverBranch Team" }],
   icons: {
     icon: [
@@ -46,6 +46,8 @@ export const metadata: Metadata = {
     ],
   },
 };
+
+import { GuestMigrationListener } from "@/components/GuestMigrationListener";
 
 export default function RootLayout({
   children,
@@ -64,6 +66,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TRPCProvider>
+            <GuestMigrationListener />
             {children}
             <Toaster position="top-right" theme="dark" richColors />
           </TRPCProvider>

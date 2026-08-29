@@ -113,11 +113,11 @@ export function LandingTemplates() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-3 max-w-3xl">
             <div className="inline-flex items-center gap-2 font-mono text-xs sm:text-sm font-bold text-[#00CC68] tracking-widest uppercase">
-              <Sparkles className="w-4 h-4 text-[#00CC68]" />
-              <span>03 // PRE-CONFIGURED LATEX VAULT</span>
+           
+              <span>03 // PRE-CONFIGURED LATEX TEMPLATES</span>
             </div>
             <h2 className="font-archivo font-black uppercase text-3xl sm:text-5xl lg:text-7xl text-white tracking-[-0.04em] leading-[0.92]">
-              CURATED TEMPLATES.
+              QUICKSTART TEMPLATES.
             </h2>
             <p className="font-sans text-base sm:text-xl text-zinc-300 leading-relaxed pt-2">
               Skip hours of arcane package debugging. Clone production-tested templates for research papers, seminar slides, thesis dissertations, and resumes.

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,11 @@ import {
 import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectUrl = searchParams.get("redirect") || "/dashboard";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -32,11 +35,10 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
 
-
   const { data: session } = authClient.useSession();
 
   if (session?.user) {
-    router.replace("/dashboard");
+    router.replace(redirectUrl);
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,7 +56,7 @@ export default function LoginPage() {
         setError(result.error.message || "Invalid credentials");
       } else {
         toast.success("Welcome back to OverBranch!");
-        router.push("/dashboard");
+        router.push(redirectUrl);
         router.refresh();
       }
     } catch (err: any) {
@@ -69,7 +71,7 @@ export default function LoginPage() {
     try {
       const res = await authClient.signIn.social({
         provider: "google",
-        callbackURL: "/dashboard",
+        callbackURL: redirectUrl,
       });
 
       if (res?.data?.url) {
@@ -294,7 +296,10 @@ export default function LoginPage() {
 
           <p className="text-center font-sans text-xs text-zinc-600 pt-2">
             New to OverBranch?{" "}
-            <Link href="/register" className="font-bold text-zinc-950 hover:underline">
+            <Link
+              href={redirectUrl !== "/dashboard" ? `/register?redirect=${encodeURIComponent(redirectUrl)}` : "/register"}
+              className="font-bold text-zinc-950 hover:underline"
+            >
               Create a free account
             </Link>
           </p>
@@ -304,8 +309,14 @@ export default function LoginPage() {
           100% FREE AND OPEN SOURCE
         </div>
       </div>
-
-
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }

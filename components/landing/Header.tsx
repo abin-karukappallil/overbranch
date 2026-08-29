@@ -125,6 +125,13 @@ export function LandingHeader() {
             >
               FEATURES
             </a>
+            <Link
+              href={isAuthenticated ? "/dashboard?openPdfModal=true" : "/convert"}
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg bg-[#00CC68]/15 text-[#00CC68] hover:bg-[#00CC68]/25 font-bold"
+            >
+              {isAuthenticated ? "PDF TO LATEX" : "PDF TO LATEX (FREE GUEST)"}
+            </Link>
             <a
               href="#self-host"
               onClick={() => setMobileMenuOpen(false)}

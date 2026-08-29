@@ -1,7 +1,7 @@
 import { router, publicProcedure, protectedProcedure, projectProcedure, ownerProcedure } from '../init';
 import { z } from 'zod';
 import { db } from '@/db';
-import { projects, projectMembers, user, notifications } from '@/db/schema';
+import { projects, projectMembers, user, notifications, guestProjects } from '@/db/schema';
 import { eq, and, or, ilike, desc, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import fs from 'fs';
@@ -92,13 +92,69 @@ export const projectsRouter = router({
       return allProjects;
     }),
 
-  getById: projectProcedure.query(async ({ ctx }) => {
-    return {
-      ...ctx.project,
-      role: ctx.memberRole as "Owner" | "Editor" | "Viewer",
-      isOwner: ctx.memberRole === "Owner",
-    };
-  }),
+  getById: publicProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .query(async ({ ctx, input }) => {
+      const projectId = input.projectId;
+      const [project] = await db.select().from(projects).where(eq(projects.id, projectId));
+      if (!project) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Project not found' });
+      }
+
+      // 1. Authenticated user check
+      if (ctx.session?.user) {
+        const userId = ctx.session.user.id;
+        if (project.ownerId === userId) {
+          return {
+            ...project,
+            role: "Owner" as const,
+            isOwner: true,
+            isGuest: false,
+            expiresAt: null,
+          };
+        }
+
+        const [member] = await db.select().from(projectMembers).where(
+          and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId))
+        );
+
+        if (member) {
+          return {
+            ...project,
+            role: member.role as "Owner" | "Editor" | "Viewer",
+            isOwner: member.role === "Owner",
+            isGuest: false,
+            expiresAt: null,
+          };
+        }
+      }
+
+      // 2. Guest session check
+      if (ctx.guestSessionId) {
+        const [gp] = await db.select().from(guestProjects).where(
+          and(
+            eq(guestProjects.projectId, projectId),
+            eq(guestProjects.guestSessionId, ctx.guestSessionId)
+          )
+        );
+
+        if (gp) {
+          const now = new Date();
+          const expiresAt = new Date(gp.expiresAt);
+          if (expiresAt > now) {
+            return {
+              ...project,
+              role: "Viewer" as const,
+              isOwner: false,
+              isGuest: true,
+              expiresAt: gp.expiresAt,
+            };
+          }
+        }
+      }
+
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this project' });
+    }),
 
   createProject: protectedProcedure
     .input(

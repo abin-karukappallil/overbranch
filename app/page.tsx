@@ -24,9 +24,9 @@ export default function HomePage() {
         <LandingHero />
         <BrandMarquee />
         <LandingIntroduction />
+        <LandingFeatures />
         <LandingPdfToLatex />
         <LandingTemplates />
-        <LandingFeatures />
         <LandingSelfHosting />
         <LandingOpenSource />
         <LandingFreeSection />

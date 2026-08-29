@@ -36,6 +36,9 @@ app.add_middleware(
 )
 
 from routes.pdf_conversion import router as pdf_conversion_router
+from routes.guest_pdf import router as guest_pdf_router
+from services.guest_cleanup import start_cleanup_scheduler
+import asyncio
 
 app.include_router(vector_sync.router)
 app.include_router(agent.router)
@@ -43,6 +46,13 @@ app.include_router(project_storage.router)
 app.include_router(template_service.router)
 app.include_router(file_analyzer.router, prefix="/api")
 app.include_router(pdf_conversion_router)
+app.include_router(guest_pdf_router)
+
+@app.on_event("startup")
+async def startup_event():
+    # Start guest project cleanup scheduler (runs every 15 mins)
+    asyncio.create_task(start_cleanup_scheduler(900))
+
 
 class FileAsset(BaseModel):
     filename: str
