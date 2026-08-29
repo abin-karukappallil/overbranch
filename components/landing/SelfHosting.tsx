@@ -22,7 +22,7 @@ export function LandingSelfHosting() {
         {/* Header */}
         <div className="space-y-4 max-w-4xl">
           <span className="font-mono text-xs sm:text-sm font-bold tracking-widest text-black uppercase block">
-            02 // YOUR INFRASTRUCTURE
+            04 // YOUR INFRASTRUCTURE
           </span>
           <h2 className="font-archivo font-black uppercase text-5xl sm:text-7xl lg:text-9xl tracking-[-0.04em] leading-[0.88] text-black">
             RUN IT YOUR WAY.

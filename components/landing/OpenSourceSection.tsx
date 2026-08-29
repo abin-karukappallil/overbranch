@@ -8,7 +8,7 @@ export function LandingOpenSource() {
     <section className="bg-black text-white py-24 px-4 sm:px-8 lg:px-16 border-b-2 border-white/20 select-none">
       <div className="max-w-7xl mx-auto space-y-8">
         <div className="font-mono text-xs sm:text-sm font-bold text-[#00CC68] tracking-widest uppercase">
-          03 // FULL TRANSPARENCY
+          05 // FULL TRANSPARENCY
         </div>
 
         <h2 className="font-archivo font-black uppercase text-5xl sm:text-7xl lg:text-9xl tracking-[-0.04em] leading-[0.88] text-[#00CC68] max-w-5xl">
