@@ -30,8 +30,8 @@ export function LandingPdfToLatex() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-3 max-w-3xl">
             <div className="inline-flex items-center gap-2 font-mono text-xs sm:text-sm font-bold text-[#00CC68] tracking-widest uppercase">
-              <Terminal className="w-4 h-4 text-[#00CC68]" />
-              <span>02 // PDF DECOMPILER</span>
+            
+              <span>02 // PDF TO LATEX CODE</span>
             </div>
             <h2 className="font-archivo font-black uppercase text-3xl sm:text-5xl lg:text-7xl text-white tracking-[-0.04em] leading-[0.92]">
               DECOMPILE PDFS INTO REAL LATEX.
@@ -56,20 +56,14 @@ export function LandingPdfToLatex() {
           <div className="lg:col-span-5 bg-zinc-950 border-2 border-white/20 p-6 rounded-2xl flex flex-col justify-between space-y-6 shadow-xl">
             <div className="space-y-4">
               <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-[#00CC68] uppercase">
-                  <Cpu className="w-4 h-4" />
-                  <span>PARSER PIPELINE</span>
-                </div>
-                <span className="text-[11px] text-zinc-500 font-bold">
-                  PyMuPDF v1.24
-                </span>
+                
               </div>
 
               {/* Source Document File Information */}
               <div className="bg-black border border-white/15 p-4 rounded-xl space-y-2">
                 <div className="text-xs text-zinc-400 uppercase tracking-wider">Source Artifact</div>
                 <div className="text-sm font-bold text-white truncate">
-                  arxiv_2403.08912_distributed_consensus.pdf
+                  ReportTemplate.pdf
                 </div>
                 <div className="flex flex-wrap gap-2 pt-1 text-[11px] text-zinc-400">
                   <span className="bg-white/5 px-2 py-0.5 rounded border border-white/10">14 pages</span>
@@ -93,13 +87,7 @@ export function LandingPdfToLatex() {
             </div>
 
             {/* Generated Workspace Directory Spec */}
-            <div className="border-t border-white/10 pt-4 flex items-center justify-between text-xs text-zinc-400">
-              <div className="flex items-center gap-2">
-                <FolderTree className="w-4 h-4 text-[#00CC68]" />
-                <span>Output: Multi-file project</span>
-              </div>
-              <span className="text-[#00CC68] font-bold">READY TO COMPILE</span>
-            </div>
+          
           </div>
 
           {/* Right Column: Code & File Tree Inspector */}
@@ -139,16 +127,14 @@ export function LandingPdfToLatex() {
                 </button>
               </div>
 
-              <div className="text-[11px] text-zinc-400 hidden sm:block">
-                target: pdflatex
-              </div>
+            
             </div>
 
             {/* Code / Content Area */}
             <div className="p-6 flex-1 text-xs leading-relaxed overflow-x-auto bg-[#0a0a0c]">
               {activeTab === "code" && (
                 <div className="space-y-1 text-zinc-300 font-mono">
-                  <div className="text-zinc-500">{"% Decompiled from arxiv_2403.08912.pdf"}</div>
+                  <div className="text-zinc-500">{"% Decompiled from ReportTemplate.pdf"}</div>
                   <div className="text-[#00CC68] font-bold">{"\\documentclass[10pt,journal,compsoc]{IEEEtran}"}</div>
                   <div>{"\\usepackage[utf8]{inputenc}"}</div>
                   <div>{"\\usepackage{amsmath,amssymb,amsfonts}"}</div>
