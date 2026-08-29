@@ -846,6 +846,51 @@ def compile_latex(
                     except Exception:
                         pass
 
+            # 4. Modern LaTeX3 titlesec \MakeUppercase / Bad math delimiter auto-recovery patch
+            titlesec_error_keywords = [
+                "__text_expand_loop:w",
+                "Bad math environment delimiter",
+                "titlesec Error",
+                "has an extra }"
+            ]
+            if any(kw in last_output for kw in titlesec_error_keywords) or (r"\titleformat" in latex_code and r"\MakeUppercase" in latex_code):
+                patched_code = latex_code
+                patched_lines = []
+                for line in patched_code.split("\n"):
+                    if "titleformat" in line and "\\MakeUppercase" in line:
+                        line = line.replace("\\MakeUppercase", "")
+                    elif "\\MakeUppercase" in line and any(k in line for k in ["centering", "normalfont", "bfseries"]):
+                        line = line.replace("\\MakeUppercase", "")
+                    if "\\\\" in line and any(unit in line for unit in ["cm]", "in]", "mm]", "pt]", "em]"]):
+                        line = re.sub(r'\\\\\s*\[(\d+(?:\.\d+)?(?:cm|in|mm|pt|em|ex))\]', r'\\par\\vspace{\1}', line)
+                    patched_lines.append(line)
+                patched_code = "\n".join(patched_lines)
+
+                if patched_code != latex_code:
+                    tex_path.write_text(patched_code, encoding="utf-8")
+                    try:
+                        result = subprocess.run(
+                            ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                            cwd=tmpdir,
+                            capture_output=True,
+                            text=True,
+                            timeout=15,
+                            env=comp_env,
+                        )
+                        pdf_path = tmpdir / "main.pdf"
+                        if pdf_path.exists():
+                            pdf_bytes = pdf_path.read_bytes()
+                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+                            elapsed_ms = int((time.time() - start_time) * 1000)
+                            return {
+                                "success": True,
+                                "pdf_base64": pdf_base64,
+                                "compile_time_ms": elapsed_ms,
+                                "log": "Compiled via titlesec/spacing auto-recovery",
+                            }
+                    except Exception:
+                        pass
+
         except Exception:
             pass
 

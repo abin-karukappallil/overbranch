@@ -36,6 +36,10 @@ STEP 1 — CLASSIFY INTENT & DOCUMENT CLASS
 STEP 2 — EDIT EXISTING vs. GENERATE NEW
 ====================================================================
 - CURRENT FULL DOCUMENT provided and non-empty → you MUST extend/modify it. Never emit a brand-new \documentclass unless the user explicitly says "replace everything" / "start over" / "convert to a new template / document type."
+- TEMPLATE EDITING / CUSTOMIZATION ("make this letter for X", "fill this resume for X", "edit this template for X", "duty leave for X", "customize for X"):
+  * When customizing an existing template (Letter, Resume, Presentation, Paper), you MUST REPLACE the placeholder template contents in-place.
+  * NEVER append the new letter or document after the existing one! There must be exactly ONE letter or ONE document.
+  * Target the exact placeholder block in "original_chunk" (e.g. from \date or \begin{letter} through \end{letter}, or the entire CURRENT FULL DOCUMENT) and provide the customized replacement in "proposed_chunk".
 - CURRENT FULL DOCUMENT empty/absent, or user explicitly wants a new file → generate a complete document, \documentclass through \end{document}.
 - For ordinary edits (add a section, fix a typo, change one number): target the smallest verbatim "original_chunk".
 
@@ -135,7 +139,8 @@ STEP 7 — ANTI-DUPLICATION & OUTPUT-INTEGRITY RULES (CRITICAL)
 3. Every non-empty "original_chunk" must be an exact verbatim substring of CURRENT FULL DOCUMENT — same whitespace, same line breaks, same comments. If a region falls near or past a "[DOCUMENT TRUNCATED]" marker, don't target it; scope the edit elsewhere or say so in "plan".
 4. Never emit the literal two-character sequence backslash-n as filler text for a line break, and never double-escape a backslash. Every backslash is exactly one JSON-escaping level deep.
 5. Prefer several small, high-confidence edits over one large, low-confidence edit. A partial but correct result beats a duplicated or broken document.
-
+6. TEMPLATE INTEGRITY: When customizing or editing an existing template (e.g. letters, resumes, presentations), ALWAYS target the existing placeholder content in "original_chunk" to replace it. NEVER set "original_chunk": "\\end{document}" to append a second duplicate copy.
+7. The alignment of the template must be preserved. Do not change the alignment of the template.
 ====================================================================
 STEP 8 — SELF-VERIFY BEFORE RESPONDING (silent checklist)
 ====================================================================
@@ -751,6 +756,8 @@ Before returning LaTeX, silently verify:
 ✓ Exactly one \end{document}
 
 If any validation fails, regenerate the affected frame before responding.
+
+IMPORTANT IF A USER ASKS TO CHANGE TO REPLACE OR MAKE THE EXISTING TEMPLATE CONTENTS TO OTHER JUST EDIT THE EXISTING CONTENTS TO USER PREFERRED ONE..AND DONT TRY TO TWIN THE COPY AND USE IT FOR USER CONTENTS..
 ====================================================================
 OUTPUT SCHEMA — RAW JSON ONLY, NO SURROUNDING TEXT OR MARKDOWN FENCES
 ====================================================================
@@ -845,15 +852,18 @@ def build_prompt(
         file_name = attached_file_info.get("filename", "Uploaded File")
         file_type = attached_file_info.get("file_type", "text/plain")
         file_content = attached_file_info.get("content", "")
-        # Cap attached file content at 6000 chars to avoid token limit errors
-        if len(file_content) > 6000:
-            file_content = file_content[:6000] + "\n...[ATTACHED FILE TRUNCATED AT 6000 CHARS]"
+        # Cap attached file content at 20000 chars to provide rich reference context
+        if len(file_content) > 20000:
+            file_content = file_content[:20000] + "\n...[ATTACHED REFERENCE FILE TRUNCATED AT 20000 CHARS]"
         user_parts.append(
             f"--------------------------------\n"
-            f"USER ATTACHED FILE: {file_name} (type: {file_type})\n"
+            f"REFERENCE ATTACHED FILE: {file_name} (type: {file_type})\n"
             f"--------------------------------\n"
             f"CONTENT:\n{file_content}\n"
-            f"[END ATTACHED FILE]"
+            f"[END REFERENCE FILE]\n"
+            f"INSTRUCTION FOR REFERENCE FILE: Use this attached file as reference content to satisfy the USER REQUEST. "
+            f"Modify the CURRENT DOCUMENT to incorporate the requested topic, author names, roll numbers, abstracts, or sections "
+            f"while strictly preserving the existing document structure and styling."
         )
 
     user_parts.append(f"USER REQUEST: {user_request}")

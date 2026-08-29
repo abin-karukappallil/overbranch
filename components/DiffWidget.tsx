@@ -63,9 +63,6 @@ export function DiffWidget({
       {/* Widget Header */}
       <div className="px-4 py-3 border-b border-border/50 bg-muted/30 flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2 truncate">
-          <div className="p-1.5 rounded-lg bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shrink-0">
-            <Sparkles className="w-4 h-4" />
-          </div>
           <div>
             <h3 className="font-bold text-sm text-foreground tracking-tight flex items-center gap-2">
               <span>Proposed AI LaTeX Edit</span>

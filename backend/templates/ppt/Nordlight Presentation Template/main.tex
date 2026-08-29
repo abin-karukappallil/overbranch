@@ -1,0 +1,162 @@
+\documentclass[aspectratio=169]{beamer}
+
+% =====================================================================
+%  DESIGN A  --  "NORDLIGHT"  (dark, modern, high-contrast)
+%  Fully custom beamer skin -- not a stock theme.
+% =====================================================================
+\usetheme{default}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{fontawesome5}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usetikzlibrary{calc}
+
+% ---------- Palette ----------
+\definecolor{bgdark}{HTML}{0F1B2D}
+\definecolor{panel}{HTML}{16273F}
+\definecolor{accent}{HTML}{4FD1C5}
+\definecolor{accent2}{HTML}{F4A259}
+\definecolor{txtmain}{HTML}{ECF0F3}
+\definecolor{txtdim}{HTML}{9FB0C3}
+
+\setbeamercolor{background canvas}{bg=bgdark}
+\setbeamercolor{normal text}{fg=txtmain,bg=bgdark}
+\setbeamercolor{frametitle}{fg=txtmain}
+\setbeamercolor{title}{fg=txtmain}
+\setbeamercolor{itemize item}{fg=accent}
+\setbeamercolor{itemize subitem}{fg=accent2}
+\setbeamercolor{block title}{fg=bgdark,bg=accent}
+\setbeamercolor{block body}{fg=txtmain,bg=panel}
+\setbeamercolor{alerted text}{fg=accent2}
+\setbeamercolor{page number in head/foot}{fg=txtdim}
+
+\setbeamerfont{frametitle}{series=\bfseries,size=\Large}
+\setbeamerfont{title}{series=\bfseries,size=\huge}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}{\faCircle}
+\setbeamertemplate{itemize subitem}{\faAngleRight}
+
+% ---------- Custom frame title with accent underline ----------
+\setbeamertemplate{frametitle}{
+  \vspace{4mm}
+  \hspace{6mm}\usebeamerfont{frametitle}\usebeamercolor[fg]{frametitle}\insertframetitle\\[1mm]
+  \hspace{6mm}\begin{tikzpicture}
+    \draw[accent,line width=1.4pt] (0,0) -- (2.1,0);
+  \end{tikzpicture}
+}
+
+% ---------- Footline: slide number + thin accent line ----------
+\setbeamertemplate{footline}{
+  \begin{tikzpicture}[remember picture,overlay]
+    \draw[panel,line width=0.6pt] ($(current page.south west)+(0,0.62)$) -- ($(current page.south east)+(0,0.62)$);
+    \node[anchor=south east,txtdim,font=\scriptsize] at ($(current page.south east)+(-0.35,0.25)$) {\insertframenumber\,/\,\inserttotalframenumber};
+    \node[anchor=south west,accent,font=\scriptsize\bfseries] at ($(current page.south west)+(0.35,0.25)$) {NORDLIGHT};
+  \end{tikzpicture}
+}
+
+\title{Sample Academic Presentation}
+\author{Abin}
+\institute{Dept. of Computer Science \& Engineering \\ APJ Abdul Kalam Technological University}
+\date{\today}
+
+\begin{document}
+
+% ---------------- TITLE PAGE ----------------
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[panel] (current page.north west) rectangle ($(current page.north west)+(4.6,-\paperheight)$);
+  \draw[accent,line width=2pt] ($(current page.north west)+(4.6,0)$) -- ($(current page.south west)+(4.6,0)$);
+  \foreach \y in {1,...,6}{
+    \draw[accent2,opacity=0.25,line width=1pt] ($(current page.north west)+(0.4,-\y*0.55-0.4)$) -- ($(current page.north west)+(4.0,-\y*0.55-1.4)$);
+  }
+  \node[anchor=south west,txtdim,font=\scriptsize\bfseries] at ($(current page.north west)+(0.5,-1.0)$) {DEMO};
+  \node[anchor=west,accent,font=\Huge\faLaptopCode] at ($(current page.north west)+(0.55,-1.9)$) {};
+  \node[anchor=north west,align=left,text width=7.6cm,inner sep=0pt] at ($(current page.north east)+(-8.4,-1.7)$) {%
+    \color{txtmain}\bfseries\LARGE Sample Academic Presentation\\[4mm]
+    \color{accent}\bfseries\normalsize A Distinct, Modern Visual Style\\[5mm]
+    \color{txtdim}\normalsize Abin\\[1.5mm]
+    \color{txtdim}\small Dept. of Computer Science \& Engineering\\[0.5mm]
+    \color{txtdim}\small APJ Abdul Kalam Technological University
+  };
+  \node[anchor=south east,txtdim,font=\small] at ($(current page.south east)+(-0.5,0.4)$) {\today};
+\end{tikzpicture}
+\end{frame}
+
+% ---------------- OUTLINE ----------------
+\begin{frame}{Outline}
+\begin{itemize}
+  \item Introduction
+  \item Problem Statement
+  \item Methodology
+  \item Results
+  \item Conclusion
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Introduction}
+\begin{itemize}
+  \item A fully custom-designed slide skin -- not a stock Beamer theme.
+  \item Dark canvas with teal/orange accent palette for strong contrast.
+  \item Custom title page, frame titles, and footline built with \textbf{TikZ}.
+  \item Compiles with any standard \LaTeX{} engine (pdflatex, xelatex, lualatex).
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Problem Statement}
+\begin{block}{Motivation}
+Default templates often look generic; a distinctive visual identity improves audience engagement.
+\end{block}
+\begin{block}{Objective}
+Design a clean, high-contrast deck that still compiles anywhere, with no external fonts required.
+\end{block}
+\end{frame}
+
+\begin{frame}{Methodology}
+\begin{enumerate}
+  \item Define a small, purposeful color palette.
+  \item Rebuild title page, headers, and footer with TikZ.
+  \item Keep body content simple: itemize, blocks, tables, equations.
+  \item Compile and verify with plain \texttt{pdflatex}.
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{Sample Equation}
+\[
+E = mc^2 \qquad \nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0}
+\]
+\end{frame}
+
+\begin{frame}{Results}
+\begin{table}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textcolor{accent}{\textbf{Metric}} & \textcolor{accent}{\textbf{Before}} & \textcolor{accent}{\textbf{After}} \\
+\midrule
+Accuracy & 74\% & 92\% \\
+Latency (ms) & 120 & 48 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{frame}
+
+\begin{frame}{Conclusion}
+\begin{itemize}
+  \item A unique dark theme built entirely from primitive Beamer/TikZ commands.
+  \item No special fonts or external assets needed -- fully portable.
+  \item Reusable as a base for any subject area.
+\end{itemize}
+\end{frame}
+
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[bgdark] (current page.north west) rectangle (current page.south east);
+  \node[accent,font=\Huge\bfseries] at (current page.center) {Thank You};
+  \node[txtdim,font=\normalsize] at ($(current page.center)+(0,-0.9)$) {Questions \& Discussion};
+\end{tikzpicture}
+\end{frame}
+
+\end{document}

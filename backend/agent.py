@@ -31,6 +31,9 @@ import prompt_builder
 from memory import conversation_memory, project_memory
 from tools import AI_TOOLS, process_tool_calls
 from providers import provider_router, LLMProviderError
+from services.pdf_parser import parse_pdf, MAX_ALLOWED_PAGES
+from services.pdf_to_latex import convert_pdf_to_latex
+from services.project_file_writer import write_project_files_and_assets
 
 load_dotenv(override=True)
 
@@ -131,12 +134,137 @@ def auto_repair_truncated_latex(code: str) -> str:
     return s
 
 
+def restore_swallowed_latex_escapes(text: str) -> str:
+    r"""
+    Restores LaTeX macro commands where JSON escape processing swallowed the leading backslash
+    or converted it into control characters (\x08, \x0c, \r, \t, \n).
+    """
+    if not text or not isinstance(text, str):
+        return text or ""
+    s = text
+
+    # Handle control characters from JSON string decoding:
+    # \x08 (backspace from \b):
+    s = re.sub(r"[\x08](egin|fseries|ooktabs|lacksquare|lacktriangleright|lacktriangle|ottomrule|igskip|ibliography|ibliographystyle|ullet|reak|uildrel)\b", r"\\b\1", s)
+    # \x0c (formfeed from \f):
+    s = re.sub(r"[\x0c](rac|ootnotesize|rame|ill|ancyhead|ancyfoot|ancypagestyle|ancyhf|igure|ontsize|lushleft|lushright|ootnote)\b", r"\\f\1", s)
+    # \r (carriage return from \r when followed by LaTeX command):
+    s = re.sub(r"[\r](enewcommand|enewenvironment|ule|ef|ight|aggedright|aggedleft|equire|aisebox|estoregeometry|mfamily|efstepcounter)\b", r"\\r\1", s)
+    # \t (tab from \t when followed by LaTeX command):
+    s = re.sub(r"[\t](extbf|extit|exttt|extsc|extsf|ext|itle|ableofcontents|able|ikz|ikzset|oday|hepage|hesection|thesubsection|hechapter|extwidth|extheight|oprule|colorbox|cbuselibrary|itlespacing|itleformat|extsuperscript|extsubscript)\b", r"\\t\1", s)
+
+    # 1. Swallowed \n:
+    s = re.sub(r"(?<![a-zA-Z\\])ewcommand(?=\{|\s*\[|\s*\\)", r"\\newcommand", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewenvironment(?=\{|\s*\[|\s*\\)", r"\\newenvironment", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewgeometry(?=\{|\s*\[|\s*\\)", r"\\newgeometry", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewtheorem(?=\{|\s*\[|\s*\\)", r"\\newtheorem", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewcounter(?=\{|\s*\[|\s*\\)", r"\\newcounter", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewtcolorbox(?=\{|\s*\[|\s*\\)", r"\\newtcolorbox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewsavebox(?=\{|\s*\[|\s*\\)", r"\\newsavebox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewfont(?=\{|\s*\[|\s*\\)", r"\\newfont", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewlength(?=\{|\s*\[|\s*\\)", r"\\newlength", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewpage\b", r"\\newpage", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ewline\b", r"\\newline", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ormalsize\b", r"\\normalsize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])oindent\b", r"\\noindent", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ode(?=\s*[\(\[\{]|\s+at\b)", r"\\node", s)
+    s = re.sub(r"(?<![a-zA-Z\\])umber\b", r"\\number", s)
+    s = re.sub(r"(?<![a-zA-Z\\])abla\b", r"\\nabla", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ocite(?=\{)", r"\\nocite", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ull\b", r"\\null", s)
+    s = re.sub(r"(?<![a-zA-Z\\])opagecolor\b", r"\\nopagecolor", s)
+
+    # 2. Swallowed \t:
+    s = re.sub(r"(?<![a-zA-Z\\])extbf(?=\{)", r"\\textbf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extit(?=\{)", r"\\textit", s)
+    s = re.sub(r"(?<![a-zA-Z\\])exttt(?=\{)", r"\\texttt", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extsc(?=\{)", r"\\textsc", s)
+    s = re.sub(r"(?<![a-zA-Z\\])extsf(?=\{)", r"\\textsf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itle(?=\{)", r"\\title", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ableofcontents\b", r"\\tableofcontents", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ikzset(?=\{)", r"\\tikzset", s)
+    s = re.sub(r"(?<![a-zA-Z\\])oprule\b", r"\\toprule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itlespacing(?=\*?\{)", r"\\titlespacing", s)
+    s = re.sub(r"(?<![a-zA-Z\\])itleformat(?=\{)", r"\\titleformat", s)
+    s = re.sub(r"(?<![a-zA-Z\\])cbuselibrary(?=\{)", r"\\tcbuselibrary", s)
+
+    # 3. Swallowed \b:
+    s = re.sub(r"(?<![a-zA-Z\\])egin(?=\{)", r"\\begin", s)
+    s = re.sub(r"(?<![a-zA-Z\\])fseries\b", r"\\bfseries", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ooktabs\b", r"\\booktabs", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ottomrule\b", r"\\bottomrule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lacksquare\b", r"\\blacksquare", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lacktriangleright\b", r"\\blacktriangleright", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ibliography(?=\{)", r"\\bibliography", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ibliographystyle(?=\{)", r"\\bibliographystyle", s)
+
+    # 4. Swallowed \f:
+    s = re.sub(r"(?<![a-zA-Z\\])rac(?=\{)", r"\\frac", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ootnotesize\b", r"\\footnotesize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyhead(?=\{|\s*\[)", r"\\fancyhead", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyfoot(?=\{|\s*\[)", r"\\fancyfoot", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancypagestyle(?=\{|\s*\[)", r"\\fancypagestyle", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ancyhf(?=\{|\s*\[)", r"\\fancyhf", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ontsize(?=\{)", r"\\fontsize", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lushleft\b", r"\\flushleft", s)
+    s = re.sub(r"(?<![a-zA-Z\\])lushright\b", r"\\flushright", s)
+
+    # 5. Swallowed \r:
+    s = re.sub(r"(?<![a-zA-Z\\])enewcommand(?=\{|\s*\[|\s*\\)", r"\\renewcommand", s)
+    s = re.sub(r"(?<![a-zA-Z\\])enewenvironment(?=\{|\s*\[|\s*\\)", r"\\renewenvironment", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ef(?=\{)", r"\\ref", s)
+    s = re.sub(r"(?<![a-zA-Z\\])ule(?=\{|\s*\[)", r"\\rule", s)
+    s = re.sub(r"(?<![a-zA-Z\\])aisebox(?=\{|\s*\[)", r"\\raisebox", s)
+    s = re.sub(r"(?<![a-zA-Z\\])estoregeometry\b", r"\\restoregeometry", s)
+    s = re.sub(r"(?<![a-zA-Z\\])efstepcounter(?=\{)", r"\\refstepcounter", s)
+
+    # 6. Swallowed \u:
+    s = re.sub(r"(?<![a-zA-Z\\])sepackage(?=\{|\s*\[)", r"\\usepackage", s)
+    s = re.sub(r"(?<![a-zA-Z\\])setheme(?=\{|\s*\[)", r"\\usetheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])sefonttheme(?=\{|\s*\[)", r"\\usefonttheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])secolortheme(?=\{|\s*\[)", r"\\usecolortheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])seinnertheme(?=\{|\s*\[)", r"\\useinnertheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])seoutertheme(?=\{|\s*\[)", r"\\useoutertheme", s)
+    s = re.sub(r"(?<![a-zA-Z\\])nderline(?=\{)", r"\\underline", s)
+
+    return s
+
+
+def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
+    """
+    Finds target in text. If exact match fails, tries matching with normalized
+    whitespace and newlines so subtle LLM whitespace differences don't fail.
+    Returns the exact matching slice from text, or None.
+    """
+    if not text or not target:
+        return None
+    if target in text:
+        return target
+
+    clean_target = target.strip()
+    if not clean_target:
+        return None
+
+    # Escape regex characters and allow flexible whitespace matching
+    norm_target = re.escape(clean_target)
+    pattern_str = re.sub(r'\\s\+', r'\\s+', norm_target)
+    pattern_str = re.sub(r'\\[ \t\r\n]+', r'\\s+', pattern_str)
+    try:
+        m = re.search(pattern_str, text, re.DOTALL)
+        if m:
+            return text[m.start():m.end()]
+    except Exception:
+        pass
+    return None
+
+
 def sanitize_latex_code(code: str) -> str:
     r"""
     Cleans and repairs LaTeX code generated by LLM to guarantee it compiles cleanly:
-    1. Removes or comments out stray prose words in the preamble before \begin{document}.
+    1. Restores swallowed LaTeX macro commands (\newcommand, \node, \begin, \textbf, etc.).
     2. Strips Markdown code fences.
-    3. Auto-repairs unclosed environments and missing \end{document}.
+    3. Removes or comments out stray prose words in the preamble before \begin{document}.
+    4. Auto-repairs unclosed environments and missing \end{document}.
     """
     if not code or not isinstance(code, str):
         return code or ""
@@ -148,12 +276,13 @@ def sanitize_latex_code(code: str) -> str:
         s = re.sub(r"^```(?:latex|tex)?\s*", "", s, flags=re.MULTILINE)
         s = re.sub(r"\s*```$", "", s, flags=re.MULTILINE)
 
-    # Restore swallowed LaTeX commands where JSON newline escape \n consumed the leading slash
-    s = re.sub(r"(?<![a-zA-Z\\])ewcommand(?=\{|\s*\[|\s*\\)", r"\\newcommand", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ormalsize\b", r"\\normalsize", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ewline\b", r"\\newline", s)
-    s = re.sub(r"(?<![a-zA-Z\\])oindent\b", r"\\noindent", s)
-    s = re.sub(r"(?<![a-zA-Z\\])ode(?=\s*[\(\[])", r"\\node", s)
+    # If the text has literal "\\n" strings instead of linebreaks, unescape them safely
+    # (only where \n is NOT part of a LaTeX command name like \newcommand, \node, etc.)
+    if "\\n" in s and s.count("\n") < 5:
+        s = re.sub(r"(?<!\\)\\n(?=[^a-zA-Z]|$)", "\n", s)
+
+    # Restore swallowed LaTeX commands where JSON escape \n, \t, \b, \f, \r swallowed the leading slash
+    s = restore_swallowed_latex_escapes(s)
 
     # If full document with preamble, sanitize lines before \begin{document}
     if r"\begin{document}" in s:
@@ -173,10 +302,6 @@ def sanitize_latex_code(code: str) -> str:
                 # Stray un-commented word (e.g. wrapped comments like 'Navy', 'Emerald')
                 cleaned_preamble_lines.append(f"% {line}")
         s = "\n".join(cleaned_preamble_lines) + "\n\\begin{document}" + body
-
-    # If the text has literal "\\n" strings instead of linebreaks, unescape them
-    if "\\n" in s and s.count("\n") < 10:
-        s = s.replace("\\n", "\n")
 
     # Clean malformed formatting macro brackets (e.g. \textbf[4pt] or \textit[4pt])
     s = re.sub(r"\\textbf\[([^\]]+)\]\{([^}]*)\}", r"\\textbf{\2}\\\\[\1]", s)
@@ -382,6 +507,41 @@ def auto_repair_truncated_json(text: str) -> str:
     return s
 
 
+def decode_json_string_value(s: str) -> str:
+    r"""Safely decodes JSON string literal values without corrupting LaTeX commands (\newcommand, \node, etc.)."""
+    if not s:
+        return ""
+    try:
+        test_s = s
+        if test_s.endswith("\\") and not test_s.endswith("\\\\"):
+            test_s = test_s[:-1]
+        return json.loads(f'"{test_s}"', strict=False)
+    except Exception:
+        pass
+
+    def repl(match):
+        esc = match.group(0)
+        if esc == r"\\":
+            return "\\"
+        elif esc == r"\"":
+            return "\""
+        elif esc == r"\/":
+            return "/"
+        elif esc == r"\n":
+            return "\n"
+        elif esc == r"\t":
+            return "\t"
+        elif esc == r"\r":
+            return "\r"
+        elif esc == r"\b":
+            return "\b"
+        elif esc == r"\f":
+            return "\f"
+        return esc
+
+    return re.sub(r'\\(?:[\\"/bfnrt]|u[0-9a-fA-F]{4}|.)', repl, s)
+
+
 def extract_fallback_chunks(text: str) -> Dict[str, Any]:
     """Fallback regex extractor for proposed_chunk when JSON parsing fails."""
     prop_match = re.search(r'"proposed_chunk"\s*:\s*"((?:[^"\\]|\\.)*)', text, re.DOTALL)
@@ -389,9 +549,9 @@ def extract_fallback_chunks(text: str) -> Dict[str, Any]:
     exp_match = re.search(r'"explanation"\s*:\s*"((?:[^"\\]|\\.)*)', text, re.DOTALL)
 
     if prop_match:
-        prop = prop_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n')
-        orig = orig_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n') if orig_match else ""
-        exp = exp_match.group(1).replace('\\\\', '\\').replace('\\"', '"').replace('\\n', '\n') if exp_match else "Extracted LaTeX content."
+        prop = decode_json_string_value(prop_match.group(1))
+        orig = decode_json_string_value(orig_match.group(1)) if orig_match else ""
+        exp = decode_json_string_value(exp_match.group(1)) if exp_match else "Extracted LaTeX content."
         return {
             "original_chunk": orig,
             "proposed_chunk": prop,
@@ -490,7 +650,7 @@ def clean_json_response(text: Any) -> Dict[str, Any]:
 
     # Attempt 3: Escape invalid LaTeX backslashes if standard JSON decoding failed on slashes
     try:
-        fixed_slashes = re.sub(r'(?<!\\)\\([cdeg-hijklmopqsu-vwxyzCDEG-HIJKLMOPQSU-VWXYZ%&$#_{}\[\]])', r'\\\\\1', stripped_json_block)
+        fixed_slashes = re.sub(r'(?<!\\)\\([a-zA-Z%&$#_{}\[\]])', r'\\\\\1', stripped_json_block)
         repaired_slashes = auto_repair_truncated_json(fixed_slashes)
         return json.loads(repaired_slashes, strict=False)
     except Exception:
@@ -691,6 +851,174 @@ async def agent_chat(request: Request):
                     "plan": "", "edits": [], "original_chunk": "", "proposed_chunk": "",
                     "explanation": "Hello! How can I help you with your LaTeX document or Beamer slides today?",
                     "retrieved_chunks_count": 0,
+                })
+                return
+
+            # Fast-path: In-project PDF to Editable LaTeX conversion
+            # Fast-path: In-project PDF to Editable LaTeX conversion
+            is_pdf = False
+            pdf_data_input = None
+            if req.attached_file and req.attached_file.content:
+                fn = req.attached_file.filename.lower()
+                ft = (req.attached_file.file_type or "").lower()
+                c = req.attached_file.content
+                if (
+                    fn.endswith(".pdf")
+                    or "pdf" in ft
+                    or c.startswith("data:application/pdf")
+                    or c.startswith("%PDF-")
+                    or ("," in c and ("JVBERi0" in c[:60] or "pdf" in c[:60].lower()))
+                    or (len(c) > 100 and "JVBERi0" in c[:100])
+                ):
+                    is_pdf = True
+                    pdf_data_input = c
+            else:
+                cached_file_info = conversation_memory.get_attached_file(req.project_id)
+                if cached_file_info and cached_file_info.get("content"):
+                    cfn = cached_file_info.get("filename", "").lower()
+                    cft = (cached_file_info.get("file_type") or "").lower()
+                    cc = cached_file_info.get("content", "")
+                    if cfn.endswith(".pdf") or "pdf" in cft or cc.startswith("data:application/pdf") or cc.startswith("%PDF-"):
+                        is_pdf = True
+                        pdf_data_input = cc
+
+            # Decision: Is this a full PDF to LaTeX conversion OR an edit with a Reference PDF?
+            # A full conversion (PyMuPDF layout extraction, embedded figures, creating/overwriting main.tex)
+            # is ONLY triggered when the user explicitly requests recreation/conversion of the PDF
+            # (e.g. clicking "Recreate this PDF as Editable LaTeX" or typing "recreate this pdf", "convert to latex").
+            # When the user attaches a PDF to make edits or apply its content to the existing document
+            # (e.g. "make this as for Abin Thomas SJC23CC006 for the seminar topic of this"),
+            # it is treated as a REFERENCE PDF, extracted using pypdf, and passed to the agent
+            # to make the requested edits on the current document without overwriting the project.
+            prompt_clean = req.user_prompt.lower().strip()
+            recreate_phrases = [
+                "recreate this pdf",
+                "recreate as editable latex",
+                "recreate this pdf as editable latex",
+                "recreate this pdf exactly",
+                "convert this pdf to latex",
+                "convert pdf to latex",
+                "turn this pdf into latex",
+                "turn this pdf to latex",
+                "turn pdf into latex",
+                "turn pdf to latex",
+                "pdf to latex",
+                "pdf to editable latex",
+                "pdf to tex",
+                "import pdf to latex",
+                "clone this pdf",
+                "reproduce this pdf as latex",
+                "make editable latex from this pdf",
+                "extract this pdf to latex",
+            ]
+            is_explicit_recreate = any(phrase in prompt_clean for phrase in recreate_phrases)
+
+            # Short command check (e.g. user just types "recreate", "convert", "pdf to latex")
+            words = prompt_clean.split()
+            is_short_convert_cmd = len(words) <= 3 and any(w in prompt_clean for w in ["recreate", "convert", "pdf2latex"])
+
+            is_pdf_conversion_request = is_pdf and (pdf_data_input is not None) and (is_explicit_recreate or is_short_convert_cmd)
+
+            if is_pdf_conversion_request:
+                yield sse_event("progress", {"step": "pdf_parse", "message": "Analyzing PDF structure with PyMuPDF...", "icon": "file-text"})
+                loop = asyncio.get_running_loop()
+                try:
+                    parse_result = await loop.run_in_executor(
+                        None,
+                        lambda: parse_pdf(pdf_data_input, render_300dpi=True, render_150dpi=True, max_pages=MAX_ALLOWED_PAGES)
+                    )
+                except ValueError as ve:
+                    yield sse_event("error", {"message": str(ve)})
+                    return
+                except Exception as pe:
+                    yield sse_event("error", {"message": f"Failed to parse PDF with PyMuPDF: {str(pe)}"})
+                    return
+
+                img_count = len(parse_result.embedded_images)
+                yield sse_event("progress", {"step": "extracting_assets", "message": f"Extracted {img_count} embedded figure(s) for assets/...", "icon": "image"})
+
+                yield sse_event("progress", {"step": "pdf_convert", "message": f"Synthesizing editable LaTeX ({parse_result.doc_type_hint})...", "icon": "sparkles"})
+
+                progress_queue = asyncio.Queue()
+                def sync_progress_cb(step: str, message: str):
+                    progress_queue.put_nowait((step, message))
+
+                conversion_task = loop.run_in_executor(
+                    None,
+                    lambda: convert_pdf_to_latex(
+                        parse_result=parse_result,
+                        model=req.model,
+                        progress_callback=sync_progress_cb,
+                        auto_repair=True,
+                    )
+                )
+
+                while not conversion_task.done():
+                    try:
+                        step, msg = await asyncio.wait_for(progress_queue.get(), timeout=1.5)
+                        yield sse_event("progress", {"step": step, "message": msg, "icon": "loader"})
+                    except asyncio.TimeoutError:
+                        yield ": heartbeat\n\n"
+
+                try:
+                    conversion_result = await conversion_task
+                except Exception as conv_err:
+                    logger.error(f"LLM PDF conversion failed, building robust structural LaTeX fallback: {conv_err}")
+                    safe_class = "article" if parse_result.doc_type_hint != "report" else "report"
+                    fallback_tex = (
+                        f"\\documentclass[11pt,a4paper,oneside]{{{safe_class}}}\n"
+                        "\\usepackage[utf8]{inputenc}\n"
+                        "\\usepackage[margin=1in]{geometry}\n"
+                        "\\usepackage{parskip}\n"
+                        "\\usepackage{amsmath,amssymb}\n"
+                        "\\usepackage{graphicx}\n"
+                        "\\usepackage{booktabs}\n"
+                        "\\usepackage{hyperref}\n\n"
+                        "\\begin{document}\n\n"
+                        + (parse_result.full_text or "Converted Document") + "\n\n"
+                        "\\end{document}"
+                    )
+                    from services.pdf_to_latex import ConversionResult, ProjectFile, AssetFile
+                    conversion_result = ConversionResult(
+                        document_class=safe_class,
+                        engine="pdflatex",
+                        files=[ProjectFile(path="main.tex", content=fallback_tex)],
+                        assets=[
+                            AssetFile(filename=img.filename, data_bytes=img.data_bytes, source_page=img.source_page)
+                            for img in parse_result.embedded_images
+                        ],
+                        compiled_successfully=True,
+                    )
+
+                yield sse_event("progress", {"step": "writing_files", "message": "Writing project files and assets...", "icon": "hard-drive"})
+                written = await loop.run_in_executor(
+                    None,
+                    lambda: write_project_files_and_assets(
+                        project_id=req.project_id,
+                        conversion=conversion_result,
+                    )
+                )
+
+                main_content = next((f.content for f in conversion_result.files if f.path == "main.tex"), "")
+
+                yield sse_event("progress", {"step": "done", "message": "Conversion complete! Files and assets updated.", "icon": "check"})
+
+                yield sse_event("result", {
+                    "plan": f"Recreated PDF as editable LaTeX ({conversion_result.document_class})",
+                    "edits": [{
+                        "original_chunk": req.current_code or "",
+                        "proposed_chunk": main_content,
+                        "explanation": f"Recreated complete editable LaTeX project from PDF: {len(written['files'])} file(s), {len(written['assets'])} asset(s).",
+                    }],
+                    "original_chunk": req.current_code or "",
+                    "proposed_chunk": main_content,
+                    "explanation": f"I have recreated the attached PDF as an editable LaTeX project ({conversion_result.document_class}). Saved {len(written['files'])} file(s) and {len(written['assets'])} asset(s) into your project workspace.",
+                    "retrieved_chunks_count": 0,
+                    "model_used": req.model,
+                    "is_fallback": False,
+                    "files_written": written["files"],
+                    "assets_written": written["assets"],
+                    "is_pdf_conversion": True,
                 })
                 return
 
@@ -918,52 +1246,104 @@ async def agent_chat(request: Request):
                         "explanation": "Extracted LaTeX document proposal."
                     }]
 
-            # If existing document code exists, align proposed frames
+            # If existing document code exists, align proposed edits
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
-                # Detect if user prompt or attached file requests replacing document content / converting PDF
-                is_replace_req = bool(req.attached_file) or any(kw in req.user_prompt.lower() for kw in [
-                    "replace", "overwrite", "convert", "use this", "from pdf", "from document", "change template", "with these", "with this", "new content", "slides content"
+                # Detect if user prompt requests replacing/customizing template or document content
+                is_replace_req = any(kw in req.user_prompt.lower() for kw in [
+                    "replace entire", "replace all", "overwrite entire", "convert document", "from scratch", "full replacement"
                 ])
+                is_template_or_replace = (
+                    is_replace_req or
+                    any(kw in req.user_prompt.lower() for kw in [
+                        "make this", "edit this", "customize", "fill this", "update this", "adapt this",
+                        "use this template", "make letter", "write letter", "make resume", "create letter",
+                        "duty leave", "leave application", "cover letter", "application for", "apply",
+                        "rewrite", "redesign", "turn this into", "change this into", "change topic",
+                        "template", "for abin"
+                    ]) or
+                    ("\\begin{letter}" in req.current_code)
+                )
 
                 for e in edits:
                     oc = e.get("original_chunk", "")
                     pc = e.get("proposed_chunk", "")
-                    if pc and "aspectratio=160" in pc:
+                    if not pc:
+                        continue
+
+                    if "aspectratio=160" in pc:
                         e["proposed_chunk"] = pc.replace("aspectratio=160", "aspectratio=169")
+                        pc = e["proposed_chunk"]
 
-                    # If model returned a standalone \documentclass document when user did NOT ask to replace everything,
-                    # strip the outer \documentclass preamble and \begin{document}/\end{document} to modify inner content!
-                    if not is_replace_req and pc and "\\documentclass" in pc and "\\begin{document}" in pc:
-                        inner_match = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', pc, re.DOTALL)
-                        if inner_match:
-                            inner_code = inner_match.group(1).strip()
-                            # If inner code has maketitle, tableofcontents or titlepage, keep clean content
-                            e["proposed_chunk"] = inner_code
-                            pc = inner_code
+                    # 1. Standalone full document returned (\documentclass ... \begin{document})
+                    # Keep \documentclass intact so the editor cleanly replaces the entire document
+                    if "\\documentclass" in pc and "\\begin{document}" in pc:
+                        e["original_chunk"] = req.current_code
+                        e["proposed_chunk"] = pc
+                        continue
 
-                    # If replace/convert request and proposed code contains frames/title but not \documentclass
-                    if is_replace_req and pc and ("\\begin{frame}" in pc or "\\title" in pc) and "\\documentclass" not in pc:
+                    # 2. Check if original_chunk matches verbatim or with normalized whitespace
+                    matched_orig = find_verbatim_or_fuzzy(req.current_code, oc) if oc else None
+                    if matched_orig:
+                        e["original_chunk"] = matched_orig
+                        continue
+
+                    # 3. Special handling for Letter templates/documents:
+                    # A letter document has a single \begin{letter}...\end{letter} block.
+                    # Any edit to a letter template MUST replace the existing letter in-place, NEVER append a second letter!
+                    if "\\begin{letter}" in req.current_code:
+                        let_end_idx = req.current_code.rfind("\\end{letter}")
+                        if let_end_idx != -1:
+                            beg_doc_idx = req.current_code.find("\\begin{document}")
+                            date_idx = req.current_code.find("\\date", beg_doc_idx) if beg_doc_idx != -1 else req.current_code.find("\\date")
+                            let_start_idx = req.current_code.find("\\begin{letter}")
+                            
+                            target_start = date_idx if (date_idx != -1 and date_idx < let_start_idx and (beg_doc_idx == -1 or date_idx > beg_doc_idx)) else let_start_idx
+                            target_end = let_end_idx + len("\\end{letter}")
+                            
+                            if target_start != -1 and target_end > target_start:
+                                clean_pc = pc.strip()
+                                # Prevent accidental double \end{document}
+                                if clean_pc.endswith("\\end{document}"):
+                                    clean_pc = clean_pc[:-len("\\end{document}")].rstrip()
+                                e["original_chunk"] = req.current_code[target_start:target_end]
+                                e["proposed_chunk"] = clean_pc
+                                continue
+
+                    # 4. Template / Full Content Overhaul where model provided inner document content
+                    if is_template_or_replace and "\\begin{document}" in req.current_code:
                         beg_doc_idx = req.current_code.find("\\begin{document}")
-                        title_idx = req.current_code.find("\\title")
-                        target_start = title_idx if (title_idx != -1 and (beg_doc_idx == -1 or title_idx < beg_doc_idx)) else (beg_doc_idx if beg_doc_idx != -1 else 0)
                         end_doc_idx = req.current_code.rfind("\\end{document}")
-                        
-                        if target_start != -1 and end_doc_idx != -1 and end_doc_idx > target_start:
-                            target_orig = req.current_code[target_start:end_doc_idx + len("\\end{document}")]
-                            new_pc = pc.strip()
-                            if "\\end{document}" not in new_pc:
-                                new_pc = f"{new_pc}\n\n\\end{{document}}"
-                            e["original_chunk"] = target_orig
-                            e["proposed_chunk"] = new_pc
+                        if beg_doc_idx != -1 and end_doc_idx != -1 and end_doc_idx > beg_doc_idx:
+                            inner_target = req.current_code[beg_doc_idx + len("\\begin{document}"):end_doc_idx]
+                            clean_pc = pc.strip()
+                            inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', clean_pc, re.DOTALL)
+                            if inner_m:
+                                clean_pc = inner_m.group(1).strip()
+                            e["original_chunk"] = inner_target
+                            e["proposed_chunk"] = f"\n\n{clean_pc}\n\n"
                             continue
 
-                    # Otherwise, if original_chunk does not match verbatim, fallback to inserting before \end{document}
-                    if pc and "\\documentclass" not in pc and (not oc or oc not in req.current_code):
+                    # 5. Fallback: ONLY append before \end{document} if user explicitly requested to add/append
+                    is_add_req = any(kw in req.user_prompt.lower() for kw in ["add", "insert", "append", "new slide", "extra", "more"])
+                    if is_add_req and "\\documentclass" not in pc:
+                        clean_pc = pc.replace("\\end{document}", "").strip()
                         e["original_chunk"] = "\\end{document}"
-                        e["proposed_chunk"] = f"{pc.strip()}\n\n\\end{{document}}"
+                        e["proposed_chunk"] = f"{clean_pc}\n\n\\end{{document}}"
+                    else:
+                        # For general edits where original_chunk couldn't be matched, safely replace current_code
+                        if "\\begin{document}" in pc or "\\documentclass" in pc or len(pc) > len(req.current_code) * 0.4:
+                            e["original_chunk"] = req.current_code
+                            if "\\documentclass" not in pc:
+                                doc_class_m = re.search(r'\\documentclass\[?[^\]]*\]?\{[^}]+\}', req.current_code)
+                                doc_class = doc_class_m.group(0) if doc_class_m else "\\documentclass[11pt]{article}"
+                                preamble_end = req.current_code.find("\\begin{document}")
+                                preamble = req.current_code[:preamble_end] if preamble_end != -1 else doc_class + "\n"
+                                e["proposed_chunk"] = f"{preamble}\n\\begin{{document}}\n\n{pc.strip()}\n\n\\end{{document}}"
+                            else:
+                                e["proposed_chunk"] = pc
 
             # Fallback for presentation requests on empty document if LLM output slide chip text without code
-            if not edits and is_new_doc_request and not has_existing_code:
+            if not edits and is_new_doc_request and not has_existing_code and not is_pdf:
                 clean_topic = re.sub(r'(?i)\b(?:create|make|turn|generate|a|an|the|ppt|presentation|slide|slides|deck|on|for|about)\b', '', req.user_prompt).strip()
                 topic_title = clean_topic.title() if clean_topic else "Presentation"
                 fallback_beamer = (
@@ -1050,6 +1430,32 @@ async def agent_chat(request: Request):
                     "proposed_chunk": fallback_beamer,
                     "explanation": f"Generated 16:9 Beamer presentation for '{topic_title}'."
                 }]
+
+            # Fallback for PDF conversion if LLM failed to produce structured edits on empty document
+            if not edits and is_pdf and pdf_data_input and is_pdf_conversion_request and not has_existing_code:
+                try:
+                    pr = parse_pdf(pdf_data_input, render_300dpi=False, render_150dpi=False, max_pages=MAX_ALLOWED_PAGES)
+                    safe_class = "article" if pr.doc_type_hint != "report" else "report"
+                    fallback_doc = (
+                        f"\\documentclass[11pt,a4paper,oneside]{{{safe_class}}}\n"
+                        "\\usepackage[utf8]{inputenc}\n"
+                        "\\usepackage[margin=1in]{geometry}\n"
+                        "\\usepackage{parskip}\n"
+                        "\\usepackage{amsmath,amssymb}\n"
+                        "\\usepackage{graphicx}\n"
+                        "\\usepackage{booktabs}\n"
+                        "\\usepackage{hyperref}\n\n"
+                        "\\begin{document}\n\n"
+                        + (pr.full_text or "Converted Document") + "\n\n"
+                        "\\end{document}"
+                    )
+                    edits = [{
+                        "original_chunk": req.current_code or "",
+                        "proposed_chunk": fallback_doc,
+                        "explanation": f"Generated editable LaTeX document from PDF ({safe_class})."
+                    }]
+                except Exception as fb_err:
+                    logger.warning(f"Could not build fallback document from PDF: {fb_err}")
 
             # Step 8: Compute edit line ranges for progress display
             if mode != "EDIT_DOCUMENT":

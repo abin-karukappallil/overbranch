@@ -1,0 +1,158 @@
+\documentclass[12pt,a4paper]{report}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{left=1.5in,right=1in,top=1in,bottom=1in}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{setspace}
+\usepackage{booktabs}
+\usepackage{fancyhdr}
+\usepackage[numbers]{natbib}
+
+% ---------------------------------------------------------
+%  PAPER TEMPLATE 3 -- Thesis Chapter Template
+%  Standard report-class thesis structure with front matter
+%  and one fully worked example chapter.
+%  Fill in the placeholders marked with << >>
+% ---------------------------------------------------------
+
+\doublespacing
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[R]{\thepage}
+\fancyhead[L]{\slshape \leftmark}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\begin{document}
+
+% ================= TITLE PAGE =================
+\begin{titlepage}
+\centering
+\vspace*{1cm}
+{\Large \textbf{<<Thesis / Dissertation Title>>}}\\[2cm]
+
+{\large A thesis submitted in partial fulfillment of the requirements}\\
+{\large for the degree of}\\[0.3cm]
+{\large \textbf{<<Bachelor of Technology in Computer Science and Engineering>>}}\\[2cm]
+
+{\large by}\\[0.3cm]
+{\large \textbf{<<Your Full Name>>}}\\
+{\large <<Roll Number>>}\\[2cm]
+
+\includegraphics[width=3cm]{example-image}\\[1cm]
+
+{\large \textbf{Department of Computer Science and Engineering}}\\
+{\large <<Institution Name>>}\\
+{\large <<City, State>>}\\
+{\large <<Month, Year>>}
+
+\end{titlepage}
+
+% ================= FRONT MATTER =================
+\pagenumbering{roman}
+
+\chapter*{Declaration}
+<<I hereby declare that this thesis represents my own work and has not been submitted elsewhere for any degree or qualification.>>
+
+\chapter*{Certificate}
+<<This is to certify that the thesis titled "<<Title>>" is a bona fide record of work carried out by <<Your Name>> under my supervision.>>
+
+\vspace{2cm}
+\noindent <<Supervisor Name>> \hfill <<Head of Department>>
+
+\chapter*{Acknowledgment}
+<<Express gratitude to your supervisor, department, family, and anyone else who supported this work.>>
+
+\chapter*{Abstract}
+<<Write a concise abstract (250--350 words) summarizing the problem, methodology, and key findings of the thesis.>>
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\clearpage
+\pagenumbering{arabic}
+
+% ================= CHAPTER 1 =================
+\chapter{Introduction}
+\label{ch:intro}
+
+\section{Background}
+<<Provide background and context for the research problem.>>
+
+\section{Motivation}
+<<Explain why this problem matters and what gap it addresses.>>
+
+\section{Problem Statement}
+<<Clearly state the research problem being solved.>>
+
+\section{Objectives}
+\begin{enumerate}
+    \item <<Objective 1>>
+    \item <<Objective 2>>
+    \item <<Objective 3>>
+\end{enumerate}
+
+\section{Organization of the Thesis}
+<<Briefly describe what each subsequent chapter covers.>>
+
+% ================= CHAPTER 2 =================
+\chapter{Literature Review}
+\label{ch:litreview}
+<<Summarize and critically discuss prior work relevant to the thesis topic \citep{example2000}.>>
+
+% ================= CHAPTER 3 =================
+\chapter{Methodology}
+\label{ch:methodology}
+
+\section{System Design}
+<<Describe the proposed system or approach.>>
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{example-image}
+\caption{<<System architecture diagram.>>}
+\label{fig:architecture}
+\end{figure}
+
+\section{Implementation Details}
+<<Describe tools, technologies, and implementation steps.>>
+
+% ================= CHAPTER 4 =================
+\chapter{Results and Discussion}
+\label{ch:results}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Metric} & \textbf{Baseline} & \textbf{Proposed} \\
+\midrule
+<<Metric 1>> & <<value>> & <<value>> \\
+<<Metric 2>> & <<value>> & <<value>> \\
+\bottomrule
+\end{tabular}
+\caption{<<Results comparison table.>>}
+\label{tab:results}
+\end{table}
+
+<<Discuss the results, comparing them against expectations and prior work.>>
+
+% ================= CHAPTER 5 =================
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Conclusion}
+<<Summarize the key contributions and findings of the thesis.>>
+
+\section{Future Work}
+<<Suggest directions for extending this work.>>
+
+% ================= REFERENCES =================
+\bibliographystyle{plainnat}
+\begin{thebibliography}{9}
+\bibitem{example2000} A. Author, ``Title of a referenced work,'' \textit{Journal Name}, vol. X, pp. 1--10, 2000.
+\end{thebibliography}
+
+\end{document}

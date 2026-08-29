@@ -1,0 +1,117 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage[numbers]{natbib}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+
+% ---------------------------------------------------------
+%  PAPER TEMPLATE 4 -- General Research Paper / Thesis
+%  Proposal Template (single-column, formal academic style)
+%  Fill in the placeholders marked with << >>
+% ---------------------------------------------------------
+
+\onehalfspacing
+\titleformat{\section}{\normalfont\Large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries}{\thesubsection}{1em}{}
+
+\title{\textbf{<<Research Paper / Thesis Proposal Title>>}}
+\author{
+<<Your Full Name>>\\
+\small Department of Computer Science and Engineering\\
+\small <<Institution Name>>\\
+\small <<email@example.com>>
+}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent <<Write a concise abstract (200--300 words) covering the problem statement, proposed approach, and expected/obtained outcomes.>>
+
+\vspace{0.3cm}
+\noindent \textbf{Keywords:} <<keyword1>>, <<keyword2>>, <<keyword3>>, <<keyword4>>
+\end{abstract}
+
+\section{Introduction}
+<<Introduce the research problem, its significance, and the paper's contribution. Cite relevant work \citep{example2020}.>>
+
+\section{Literature Review}
+<<Survey existing work and highlight the research gap this paper/thesis addresses.>>
+
+\section{Problem Statement and Objectives}
+\subsection{Problem Statement}
+<<Clearly define the problem being addressed.>>
+
+\subsection{Objectives}
+\begin{enumerate}
+    \item <<Objective 1>>
+    \item <<Objective 2>>
+    \item <<Objective 3>>
+\end{enumerate}
+
+\section{Proposed Methodology}
+<<Describe the research design, methods, tools, and techniques to be used.>>
+
+\begin{equation}
+\hat{y} = \sigma\left(\sum_{i=1}^{n} w_i x_i + b\right)
+\label{eq:model}
+\end{equation}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.7\textwidth]{example-image}
+\caption{<<Diagram illustrating the proposed methodology or system architecture.>>}
+\label{fig:method}
+\end{figure}
+
+\section{Expected / Experimental Results}
+<<Present expected outcomes (for a proposal) or actual experimental results (for a completed paper).>>
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{Accuracy} & \textbf{Time (s)} \\
+\midrule
+Baseline & <<value>> & <<value>> \\
+Proposed & <<value>> & <<value>> \\
+\bottomrule
+\end{tabular}
+\caption{<<Comparison of results.>>}
+\label{tab:results}
+\end{table}
+
+\section{Timeline}
+\begin{table}[h]
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Phase} & \textbf{Duration} \\
+\midrule
+Literature Review & <<X weeks>> \\
+Design \& Implementation & <<X weeks>> \\
+Testing \& Evaluation & <<X weeks>> \\
+Documentation & <<X weeks>> \\
+\bottomrule
+\end{tabular}
+\caption{<<Proposed project timeline.>>}
+\end{table}
+
+\section{Conclusion}
+<<Summarize the key points and significance of the proposed/completed work.>>
+
+\bibliographystyle{plainnat}
+\begin{thebibliography}{9}
+\bibitem{example2020} A. Author, ``Title of a referenced work,'' \textit{Journal or Conference Name}, vol. X, pp. 1--10, 2020.
+\end{thebibliography}
+
+\end{document}

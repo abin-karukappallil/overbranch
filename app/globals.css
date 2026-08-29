@@ -159,12 +159,6 @@ html, body {
   /* Typography purity: headings are strictly roman (Hallmark Gate 38a) */
   h1, h2, h3, h4, h5, h6 {
     font-style: normal !important;
-    overflow-wrap: anywhere;
-    min-width: 0;
-  }
-  /* No two-line clickable buttons or nav links (Hallmark Gate 49) */
-  button, a {
-    white-space: nowrap;
   }
 }
 
@@ -204,11 +198,6 @@ html, body {
   background: var(--card);
   border: 1px solid var(--border);
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04);
-}
-
-/* Image grid tracks safety (Hallmark Gate 50) */
-.grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
 }
 
 /* Glassmorphism utilities */

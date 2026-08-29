@@ -280,7 +280,7 @@ export default function ProjectsPage() {
                 <label className="text-xs text-zinc-400 font-bold uppercase">Project Name</label>
                 <Input
                   autoFocus
-                  placeholder="e.g. Quantum_State_Paper_2026"
+                  placeholder="Enter a project name"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
                   required
@@ -328,7 +328,7 @@ export default function ProjectsPage() {
                 <label className="text-zinc-400 font-bold uppercase text-[11px]">Registered User Email</label>
                 <Input
                   type="email"
-                  placeholder="coauthor@university.edu"
+                  placeholder="Enter your email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
                   required

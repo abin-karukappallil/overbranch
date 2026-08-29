@@ -239,7 +239,7 @@ export default function TemplatesPage() {
               <Input
                 value={projectNameInput}
                 onChange={(e) => setProjectNameInput(e.target.value)}
-                placeholder="e.g. Q3 Research Seminar Slides"
+                placeholder="Enter a project name"
                 className="h-11 bg-zinc-950 border-zinc-800 text-white rounded-xl focus-visible:ring-2 focus-visible:ring-[#00CC68] text-sm font-sans"
                 autoFocus
               />

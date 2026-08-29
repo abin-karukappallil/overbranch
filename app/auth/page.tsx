@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
@@ -159,7 +158,7 @@ export default function MobileAuthPage() {
           <div className="relative">
             <Input
               type="email"
-              placeholder="you@university.edu"
+              placeholder="Enter your name"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -172,7 +171,7 @@ export default function MobileAuthPage() {
           <div className="relative">
             <Input
               type={showPassword ? "text" : "password"}
-              placeholder="••••••••"
+              placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -189,13 +188,7 @@ export default function MobileAuthPage() {
             </button>
           </div>
 
-          {mode === "login" && (
-            <div className="text-right">
-              <Link href="/forgot-password" className="text-xs text-indigo-400 hover:underline">
-                Forgot password?
-              </Link>
-            </div>
-          )}
+
 
           <Button
             type="submit"

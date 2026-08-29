@@ -43,6 +43,7 @@ interface ProjectFilesPanelProps {
   onClose: () => void;
   onSelectFile: (filePath: string, fileType: "document" | "image") => void;
   onInsertLatexSnippet?: (snippet: string) => void;
+  refreshTrigger?: any;
 }
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -54,6 +55,7 @@ export function ProjectFilesPanel({
   onClose,
   onSelectFile,
   onInsertLatexSnippet,
+  refreshTrigger,
 }: ProjectFilesPanelProps) {
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -88,7 +90,7 @@ export function ProjectFilesPanel({
 
   useEffect(() => {
     fetchFiles();
-  }, [projectId]);
+  }, [projectId, refreshTrigger]);
 
   const handleFileUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0 || !projectId) return;
