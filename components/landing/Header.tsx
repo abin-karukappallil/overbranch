@@ -25,17 +25,23 @@ export function LandingHeader() {
       {/* Center Navigation Pill */}
       <nav className="pointer-events-auto hidden lg:flex items-center gap-1 bg-black text-white px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider shadow-2xl shrink-0">
         <a
+          href="#pdf-to-latex"
+          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-[#00CC68] hover:text-black transition-all duration-150"
+        >
+          PDF TO LATEX
+        </a>
+        <a
+          href="#templates"
+          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-[#00CC68] hover:text-black transition-all duration-150"
+        >
+          TEMPLATES
+        </a>
+        <a
           href="#features"
           className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
         >
           FEATURES
         </a>
-        <Link
-          href={isAuthenticated ? "/dashboard?openPdfModal=true" : "/convert"}
-          className="px-2.5 py-1 rounded-full text-[#00CC68] hover:bg-[#00CC68] hover:text-black transition-all duration-150 font-bold"
-        >
-          PDF TO LATEX
-        </Link>
         <a
           href="#self-host"
           className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
@@ -50,12 +56,6 @@ export function LandingHeader() {
         >
           <Star className="w-3 h-3 fill-[#00CC68]" />
           <span>GITHUB</span>
-        </a>
-        <a
-          href="#self-host"
-          className="px-2.5 py-1 rounded-full text-white/90 hover:bg-white hover:text-black transition-all duration-150"
-        >
-          DOCS
         </a>
       </nav>
 
@@ -103,6 +103,20 @@ export function LandingHeader() {
               className="px-3 py-2 rounded-lg hover:bg-white/10 text-white"
             >
               PRODUCT
+            </a>
+            <a
+              href="#pdf-to-latex"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-[#00CC68]/20 text-[#00CC68]"
+            >
+              PDF TO LATEX
+            </a>
+            <a
+              href="#templates"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-[#00CC68]/20 text-[#00CC68]"
+            >
+              TEMPLATES
             </a>
             <a
               href="#features"
