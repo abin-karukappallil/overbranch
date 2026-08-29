@@ -1,0 +1,102 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{cite}
+\usepackage{textcomp}
+
+% ---------------------------------------------------------
+%  PAPER TEMPLATE 1 -- IEEE Conference Paper (Two-column)
+%  Standard IEEEtran conference format.
+%  Fill in the placeholders marked with << >>
+% ---------------------------------------------------------
+
+\begin{document}
+
+\title{<<Paper Title Goes Here>>\\
+{\footnotesize \textsuperscript{}}
+}
+
+\author{
+\IEEEauthorblockN{<<Author One>>}
+\IEEEauthorblockA{\textit{<<Department>>} \\
+\textit{<<Institution Name>>}\\
+<<City, Country>> \\
+<<email@example.com>>}
+\and
+\IEEEauthorblockN{<<Author Two>>}
+\IEEEauthorblockA{\textit{<<Department>>} \\
+\textit{<<Institution Name>>}\\
+<<City, Country>> \\
+<<email@example.com>>}
+}
+
+\maketitle
+
+\begin{abstract}
+<<Write a concise abstract (150--250 words) summarizing the problem, approach, and key results of the paper.>>
+\end{abstract}
+
+\begin{IEEEkeywords}
+<<keyword1>>, <<keyword2>>, <<keyword3>>, <<keyword4>>
+\end{IEEEkeywords}
+
+\section{Introduction}
+<<Introduce the problem, motivation, and contribution of the paper. Cite related work as needed \cite{ref1}.>>
+
+\section{Related Work}
+<<Summarize prior research relevant to this work and identify the gap this paper addresses.>>
+
+\section{Proposed Methodology}
+<<Describe the proposed system, algorithm, or approach in detail.>>
+
+\subsection{System Architecture}
+<<Explain the architecture, possibly with a figure.>>
+
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=0.9\linewidth]{example-image}}
+\caption{<<Figure caption describing the system architecture.>>}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Algorithm}
+<<Describe the algorithm or mathematical formulation.>>
+
+\begin{equation}
+y = f(x) = \sum_{i=1}^{n} w_i x_i + b
+\label{eq:model}
+\end{equation}
+
+\section{Experimental Results}
+<<Present experimental setup, dataset, and results.>>
+
+\begin{table}[htbp]
+\caption{<<Table Caption>>}
+\begin{center}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Method} & \textbf{Metric 1} & \textbf{Metric 2} \\
+\hline
+Baseline & <<value>> & <<value>> \\
+\hline
+Proposed & <<value>> & <<value>> \\
+\hline
+\end{tabular}
+\label{tab:results}
+\end{center}
+\end{table}
+
+\section{Conclusion}
+<<Summarize findings and suggest future work.>>
+
+\section*{Acknowledgment}
+<<Optional acknowledgment of funding, guidance, or support.>>
+
+\begin{thebibliography}{00}
+\bibitem{ref1} A. Author, ``Title of the referenced paper,'' \textit{Journal Name}, vol. X, no. Y, pp. 1--10, Year.
+\bibitem{ref2} B. Author and C. Author, ``Another referenced paper title,'' in \textit{Proc. Conference Name}, Year, pp. 1--5.
+\end{thebibliography}
+
+\end{document}

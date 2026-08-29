@@ -1,0 +1,158 @@
+\documentclass[aspectratio=169]{beamer}
+
+% =====================================================================
+%  DESIGN C  --  "PRISM"  (vibrant, geometric, tech/startup feel)
+%  Fully custom beamer skin -- gradient shapes + bold color blocks.
+% =====================================================================
+\usetheme{default}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{tikz}
+\usepackage{fontawesome5}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usetikzlibrary{calc}
+
+% ---------- Palette ----------
+\definecolor{ink}{HTML}{1A1A2E}
+\definecolor{purple}{HTML}{7B61FF}
+\definecolor{pink}{HTML}{FF5D8F}
+\definecolor{yellow}{HTML}{FFC145}
+\definecolor{lightbg}{HTML}{FFFFFF}
+\definecolor{gray}{HTML}{6B7280}
+
+\setbeamercolor{background canvas}{bg=lightbg}
+\setbeamercolor{normal text}{fg=ink,bg=lightbg}
+\setbeamercolor{frametitle}{fg=ink}
+\setbeamercolor{title}{fg=ink}
+\setbeamercolor{itemize item}{fg=purple}
+\setbeamercolor{itemize subitem}{fg=pink}
+\setbeamercolor{block title}{fg=lightbg,bg=purple}
+\setbeamercolor{block body}{fg=ink,bg=lightbg!95!purple}
+\setbeamercolor{page number in head/foot}{fg=gray}
+
+\setbeamerfont{frametitle}{series=\bfseries,size=\Large}
+\setbeamerfont{title}{series=\bfseries,size=\huge}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}{\faGem}
+\setbeamertemplate{itemize subitem}{\faStar}
+
+% ---------- Custom frame title with colored corner tab ----------
+\setbeamertemplate{frametitle}{
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[purple] ($(current page.north west)+(0,0)$) rectangle ($(current page.north west)+(0.28,-\paperheight)$);
+    \fill[pink] ($(current page.north west)+(0.28,0)$) rectangle ($(current page.north west)+(0.42,-\paperheight)$);
+    \node[anchor=north west,ink,font=\usebeamerfont{frametitle}\bfseries] at ($(current page.north west)+(0.85,-0.55)$) {\insertframetitle};
+    \fill[yellow] ($(current page.north west)+(0.85,-1.3)$) rectangle ($(current page.north west)+(1.95,-1.4)$);
+  \end{tikzpicture}
+  \vspace{9mm}
+}
+
+% ---------- Footline ----------
+\setbeamertemplate{footline}{
+  \begin{tikzpicture}[remember picture,overlay]
+    \fill[purple] ($(current page.south west)+(0,0)$) rectangle ($(current page.south west)+(0.28,\paperheight)$);
+    \fill[pink] ($(current page.south west)+(0.28,0)$) rectangle ($(current page.south west)+(0.42,\paperheight)$);
+    \node[anchor=south east,gray,font=\scriptsize\bfseries] at ($(current page.south east)+(-0.35,0.2)$) {\insertframenumber\ / \inserttotalframenumber};
+  \end{tikzpicture}
+}
+
+\title{Sample Academic Presentation}
+\author{Abin}
+\institute{Dept. of Computer Science \& Engineering \\ APJ Abdul Kalam Technological University}
+\date{\today}
+
+\begin{document}
+
+% ---------------- TITLE PAGE ----------------
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[purple] (current page.south west) rectangle ($(current page.south west)+(\paperwidth,2.4)$);
+  \fill[pink,opacity=0.85] ($(current page.south west)+(0,0)$) rectangle ($(current page.south west)+(\paperwidth,1.1)$);
+  \foreach \x/\c in {1.5/yellow,3.8/pink,6.1/purple,8.4/yellow}{
+    \fill[\c] ($(current page.north west)+(\x,-0.9)$) circle (0.35);
+  }
+  \node[anchor=north west,gray,font=\scriptsize\bfseries] at ($(current page.north west)+(0.6,-2.0)$) {\textsc{Demo Deck}};
+  \node[anchor=north west,ink,font=\bfseries\huge,align=left,text width=10.5cm] at ($(current page.north west)+(0.55,-2.6)$) {Sample Academic Presentation};
+  \node[anchor=north west,purple,font=\bfseries\normalsize] at ($(current page.north west)+(0.6,-4.35)$) {A Vibrant, Geometric Visual Style};
+  \node[anchor=north west,gray,font=\normalsize] at ($(current page.north west)+(0.6,-5.0)$) {Abin \quad\textbullet\quad Dept. of Computer Science \& Engineering};
+  \node[anchor=north west,gray,font=\small] at ($(current page.north west)+(0.6,-5.4)$) {APJ Abdul Kalam Technological University \quad\textbullet\quad \today};
+\end{tikzpicture}
+\end{frame}
+
+% ---------------- OUTLINE ----------------
+\begin{frame}{Outline}
+\begin{itemize}
+  \item Introduction
+  \item Problem Statement
+  \item Methodology
+  \item Results
+  \item Conclusion
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Introduction}
+\begin{itemize}
+  \item A vibrant, geometric design inspired by modern startup decks.
+  \item Bold purple / pink / yellow accents on a clean white canvas.
+  \item Custom side-bar and title-tab elements built with \textbf{TikZ}.
+  \item Compiles with plain \texttt{pdflatex} -- fully portable.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Problem Statement}
+\begin{block}{Motivation}
+Energetic color and shape can make technical talks feel more approachable.
+\end{block}
+\begin{block}{Objective}
+Deliver a bold, memorable look while keeping the content structure simple and academic.
+\end{block}
+\end{frame}
+
+\begin{frame}{Methodology}
+\begin{enumerate}
+  \item Pick 3 vivid accent colors plus a neutral ink tone.
+  \item Build a distinctive side-bar and corner-tab title style.
+  \item Keep body layout simple: bullets, blocks, tables.
+  \item Verify the deck compiles cleanly with pdflatex.
+\end{enumerate}
+\end{frame}
+
+\begin{frame}{Sample Equation}
+\[
+f(x) = \sum_{n=0}^{\infty} \frac{f^{(n)}(a)}{n!}(x-a)^n
+\]
+\end{frame}
+
+\begin{frame}{Results}
+\begin{table}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textcolor{purple}{\textbf{Metric}} & \textcolor{purple}{\textbf{Before}} & \textcolor{purple}{\textbf{After}} \\
+\midrule
+Engagement Score & 5.8 & 9.1 \\
+Completion Rate & 68\% & 95\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+\end{frame}
+
+\begin{frame}{Conclusion}
+\begin{itemize}
+  \item A bold, colorful alternative to conventional academic slides.
+  \item Fully custom TikZ-based skin, no external assets.
+  \item Adaptable to any topic or subject area.
+\end{itemize}
+\end{frame}
+
+\begin{frame}[plain]
+\begin{tikzpicture}[remember picture,overlay]
+  \fill[purple] (current page.north west) rectangle (current page.south east);
+  \fill[pink,opacity=0.85] (current page.south west) rectangle ($(current page.south west)+(\paperwidth,1.6)$);
+  \node[lightbg,font=\Huge\bfseries] at ($(current page.center)+(0,0.4)$) {Thank You};
+  \node[yellow,font=\normalsize\bfseries] at ($(current page.center)+(0,-0.3)$) {Questions \& Discussion};
+\end{tikzpicture}
+\end{frame}
+
+\end{document}

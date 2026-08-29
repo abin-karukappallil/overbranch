@@ -1,0 +1,212 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Wenneker Resume/CV
+% LaTeX Template
+% Version 1.1 (19/6/2016)
+%
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% Original author:
+% Frits Wenneker (http://www.howtotex.com) with extensive modifications by 
+% Vel (vel@LaTeXTemplates.com)
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass[a4paper,12pt]{memoir} % Font and paper size
+
+\input{structure.tex} % Include the file specifying document layout and packages
+
+%----------------------------------------------------------------------------------------
+%	NAME AND CONTACT INFORMATION 
+%----------------------------------------------------------------------------------------
+
+\userinformation{ % Set the content that goes into the sidebar of each page
+\begin{flushright}
+% Comment out this figure block if you don't want a photo
+\includegraphics[width=0.6\columnwidth]{photo.jpg}\\[\baselineskip] % Your photo
+\small % Smaller font size
+John Smith \\ % Your name
+\url{john@smith.com} \\ % Your email address
+\url{www.johnsmith.com} \\ % Your URL
+(000) 111-1111 \\ % Your phone number
+\Sep % Some whitespace
+\textbf{Address} \\
+123 Broadway \\ % Address 1
+City, State 12345 \\ % Address 2
+Country \\ % Address 3
+\vfill % Whitespace under this block to push it up under the photo
+\end{flushright}
+}
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+\userinformation % Print your information in the left column
+
+\framebreak % End of the first column
+
+%----------------------------------------------------------------------------------------
+%	HEADING
+%----------------------------------------------------------------------------------------
+
+\cvheading{John Smith} % Large heading - your name
+
+\cvsubheading{Software Engineer} % Subheading - your occupation/specialization
+
+%----------------------------------------------------------------------------------------
+%	ABOUT ME
+%----------------------------------------------------------------------------------------
+
+\aboutme{About Me}{Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus vel bibendum metus. Proin rutrum pharetra molestie. Cras sollicitudin nulla nec leo lobortis in tristique purus pretium. Ut eu felis nulla. Pellentesque condimentum justo ut ligula feugiat nec facilisis tellus ultricies. Nullam sit amet dictum ipsum. Sed lacus neque, hendrerit eu rhoncus nec, pellentesque vitae sem.}
+
+%----------------------------------------------------------------------------------------
+%	EDUCATION
+%----------------------------------------------------------------------------------------
+
+\CVSection{Education}
+
+%------------------------------------------------
+
+\CVItem{2010 - 2011, Cornell University}{MEng in Computer Science}
+
+%------------------------------------------------
+
+\CVItem{2007 - 2010, Cornell University}{BS in Computer Science}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+%	EXPERIENCE
+%----------------------------------------------------------------------------------------
+
+\CVSection{Experience}
+
+%------------------------------------------------
+
+\CVItem{May 2013 - present, \textit{Software Engineer}, Google}{
+Detailed achievements:
+\begin{itemize}
+	\item Learned how to make amazing coffee
+	\item Finally determined the reason for \textsc{PC LOAD LETTER}:
+	\begin{itemize}
+		\item Paper jam
+		\item Software issues:
+		\begin{itemize}
+			\item Word not sending the correct data to printer
+			\item Windows trying to print in letter format
+		\end{itemize}
+		\item Coffee spilled inside printer
+	\end{itemize}
+	\item Broke the office record for number of kitten pictures in cubicle
+	\item Learned how to make more amazing coffee on a new machine
+	\item Mastered the art of filing accurate TPS reports
+\end{itemize}
+}
+
+%------------------------------------------------
+
+\CVItem{Jan 2008 - Oct 2012, \textit{Computer Repair Specialist}, Buy More}{Worked in the Nerd Herd and helped to solve computer problems by asking customers to turn their computers off and on again.}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+%	COMMUNICATION SKILLS
+%----------------------------------------------------------------------------------------
+
+\CVSection{Communication Skills}
+
+%------------------------------------------------
+
+\CVItem{2015, \textit{Oral Presentation}, California Business Conference}{Presented research I conducted for my Masters of Engineering degree.}
+
+%------------------------------------------------
+
+\CVItem{2014, \textit{Poster}, Annual Business Conference (Oregon)}{As part of the course work for BUS320, I created a poster analyzing several local businesses and presented this at a conference.}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+%	SKILLS
+%----------------------------------------------------------------------------------------
+
+\CVSection{Software Development Skills}
+
+%------------------------------------------------
+
+\CVItem{Programming}
+{\begin{tabular}{p{0.2\textwidth} p{0.2\textwidth} p{0.2\textwidth}}
+\bluebullet Java &  \bluebullet Shell & \bluebullet Python\\
+\bluebullet C++ &  \bluebullet PHP & \bluebullet Matlab\\
+\end{tabular}}
+
+%------------------------------------------------
+
+\CVItem{Computer Software}
+{\begin{tabular}{p{0.2\textwidth} p{0.2\textwidth} p{0.2\textwidth}}
+ \bluebullet MySQL &  \bluebullet iOS & \bluebullet Android\\
+\end{tabular}}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+%	NEW PAGE DELIMITER
+%	Place this block wherever you would like the content of your CV to go onto the next page
+%----------------------------------------------------------------------------------------
+
+\clearpage % Start a new page
+
+\userinformation % Print your information in the left column
+
+\framebreak % End of the first column
+
+%----------------------------------------------------------------------------------------
+%	AWARDS
+%----------------------------------------------------------------------------------------
+
+\CVSection{Awards}
+
+%------------------------------------------------
+
+\CVItem{2010, \textit{Postgraduate Scholarship}, Cornell University}{Awarded to the top student in their final year of a Bachelors degree.}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+%	INTERESTS
+%----------------------------------------------------------------------------------------
+
+\CVSection{Interests}
+
+%------------------------------------------------
+
+\CVItem{Professional}{Data analysis, company profiling, risk analysis, economics, web design, web app creation, software design, marketing}
+
+%------------------------------------------------
+
+\CVItem{Personal}{Piano, chess, cooking, dancing, running}
+
+%------------------------------------------------
+
+\Sep % Extra whitespace after the end of a major section
+
+%----------------------------------------------------------------------------------------
+
+\end{document}

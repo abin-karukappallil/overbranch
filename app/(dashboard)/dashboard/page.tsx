@@ -9,7 +9,7 @@ import {
   FileCode2,
   Search,
   Star,
-  Sparkles,
+  FileText,
   Users,
   CheckCircle2,
   FolderPlus,
@@ -31,12 +31,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
+import { PDFToLatexModal } from "@/components/dashboard/PDFToLatexModal";
 
 export default function DashboardPage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTemplate, setFilterTemplate] = useState("all");
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const [pdfModalOpen, setPdfModalOpen] = useState(false);
   const [newProjName, setNewProjName] = useState("");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
@@ -101,8 +103,8 @@ export default function DashboardPage() {
     if (!newProjName.trim()) return;
     createMutation.mutate({
       name: newProjName.trim(),
-      description: "Seminar report & academic project workspace",
-      template: "Report",
+      description: "Custom LaTeX Workspace",
+      template: "None",
     });
   };
 
@@ -128,16 +130,117 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <Button
-              onClick={() => setNewModalOpen(true)}
-              size="lg"
-              className="h-10 sm:h-11 w-full sm:w-auto px-6 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider shadow-[4px_4px_0px_0px_#000000] border border-black rounded-xl shrink-0 text-xs justify-center cursor-pointer transition-all"
-            >
-              <Plus className="w-4 h-4 mr-1.5 text-black stroke-[3]" />
-              New Project
-            </Button>
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto shrink-0">
+              <Button
+                onClick={() => setPdfModalOpen(true)}
+                size="lg"
+                className="h-10 sm:h-11 w-full sm:w-auto px-5 bg-zinc-800 hover:bg-zinc-700 text-white font-mono font-bold uppercase tracking-wider border border-zinc-700 hover:border-[#00CC68] rounded-xl shrink-0 text-xs justify-center cursor-pointer transition-all shadow-md flex items-center gap-2"
+              >
+                
+                <span>PDF to LaTeX</span>
+              </Button>
+
+              <Button
+                onClick={() => setNewModalOpen(true)}
+                size="lg"
+                className="h-10 sm:h-11 w-full sm:w-auto px-6 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider shadow-[4px_4px_0px_0px_#000000] border border-black rounded-xl shrink-0 text-xs justify-center cursor-pointer transition-all"
+              >
+                <Plus className="w-4 h-4 mr-1.5 text-black stroke-[3]" />
+                New Project
+              </Button>
+            </div>
           </div>
         </div>
+      </div>
+
+      {/* Quick Action Creation Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* PDF to LaTeX Card */}
+        <div
+          onClick={() => setPdfModalOpen(true)}
+          className="group relative p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68] transition-all cursor-pointer shadow-lg flex flex-col justify-between overflow-hidden hover:shadow-[0_0_24px_rgba(0,204,104,0.15)]"
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/30 text-[#00CC68] group-hover:bg-[#00CC68] group-hover:text-black transition-all">
+                <FileText className="w-5 h-5 stroke-[2.5]" />
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 uppercase">
+                AI Powered
+              </span>
+            </div>
+            <div>
+              <h3 className="text-base font-archivo font-bold text-white group-hover:text-[#00CC68] transition-colors">
+                PDF to LaTeX
+              </h3>
+              <p className="text-xs text-zinc-400 font-sans leading-relaxed mt-1">
+                Upload any PDF document to automatically extract text, layout, and images into an editable LaTeX project.
+              </p>
+            </div>
+          </div>
+          <div className="pt-4 mt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono font-bold text-[#00CC68]">
+            <span>Import PDF & Convert</span>
+            <span className="group-hover:translate-x-1 transition-transform">→</span>
+          </div>
+        </div>
+
+        {/* Blank Project Card */}
+        <div
+          onClick={() => setNewModalOpen(true)}
+          className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-zinc-700 transition-all cursor-pointer shadow-lg flex flex-col justify-between"
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-zinc-300 group-hover:bg-zinc-700 transition-all">
+                <Plus className="w-5 h-5" />
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700 uppercase">
+                Quick Start
+              </span>
+            </div>
+            <div>
+              <h3 className="text-base font-archivo font-bold text-white group-hover:text-white transition-colors">
+                Blank Project
+              </h3>
+              <p className="text-xs text-zinc-400 font-sans leading-relaxed mt-1">
+                Start from a clean LaTeX canvas with full SyncTeX forward/inverse sync and real-time compilation.
+              </p>
+            </div>
+          </div>
+          <div className="pt-4 mt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono font-bold text-zinc-400 group-hover:text-white transition-colors">
+            <span>Create Blank</span>
+            <span className="group-hover:translate-x-1 transition-transform">→</span>
+          </div>
+        </div>
+
+        {/* Templates Card */}
+        <Link
+          href="/templates"
+          className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-zinc-700 transition-all cursor-pointer shadow-lg flex flex-col justify-between whitespace-normal min-w-0"
+        >
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-zinc-800 border border-zinc-700 text-zinc-300 group-hover:bg-zinc-700 transition-all">
+                <FolderPlus className="w-5 h-5" />
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-zinc-800 text-zinc-400 border border-zinc-700 uppercase">
+                Catalog
+              </span>
+            </div>
+            <div>
+              <h3 className="text-base font-archivo font-bold text-white group-hover:text-white transition-colors">
+                Templates Library
+              </h3>
+              <p className="text-xs text-zinc-400 font-sans leading-relaxed mt-1">
+                Explore pre-styled templates for research papers, seminar slides, thesis chapters, and resumes.
+              </p>
+            </div>
+          </div>
+          <div className="pt-4 mt-3 border-t border-zinc-800/80 flex items-center justify-between text-xs font-mono font-bold text-zinc-400 group-hover:text-white transition-colors">
+            <span>Browse Templates</span>
+            <span className="group-hover:translate-x-1 transition-transform">→</span>
+          </div>
+        </Link>
       </div>
 
       {/* Pending Invitations Section */}
@@ -257,11 +360,11 @@ export default function DashboardPage() {
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                     <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 min-w-0">
                               <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
-                              <span className="truncate">{project.name}</span>
+                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
                             </h3>
                           </Link>
                           <div className="flex items-center gap-1.5 shrink-0">
@@ -287,14 +390,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
-                          {project.template}
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
+                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                          {project.template || "None"}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
+                          className="px-3 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
                         >
                           <span>Open Editor →</span>
                         </Link>
@@ -319,14 +422,14 @@ export default function DashboardPage() {
                   <motion.div key={project.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                     <Card className="group p-5 rounded-2xl border border-zinc-800 bg-zinc-900 hover:border-[#00CC68]/60 transition-all space-y-4 flex flex-col justify-between h-full shadow-lg">
                       <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1">
-                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 truncate">
+                        <div className="flex items-start justify-between gap-2 min-w-0">
+                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
+                            <h3 className="font-archivo font-bold text-base text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2 min-w-0">
                               <FileCode2 className="w-4 h-4 text-[#00CC68] shrink-0" />
-                              <span className="truncate">{project.name}</span>
+                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase shrink-0">
                             {project.role}
                           </span>
                         </div>
@@ -336,14 +439,14 @@ export default function DashboardPage() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono">
-                        <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800">
-                          {project.template}
+                      <div className="pt-3 border-t border-zinc-800 flex items-center justify-between gap-2 text-xs text-zinc-400 font-mono min-w-0">
+                        <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                          {project.template || "None"}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-xs transition-all flex items-center gap-1.5"
+                          className="px-3 py-1.5 rounded-xl bg-[#00CC68]/10 hover:bg-[#00CC68] text-[#00CC68] hover:text-black border border-[#00CC68]/30 font-mono font-bold text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap"
                         >
                           <span>Open Editor →</span>
                         </Link>
@@ -405,7 +508,7 @@ export default function DashboardPage() {
                 <label className="text-xs text-zinc-400 font-bold uppercase">Project Name</label>
                 <Input
                   autoFocus
-                  placeholder="e.g. Quantum_State_Paper_2026"
+                  placeholder="Enter a project name"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
                   className="h-10 text-xs font-mono border-zinc-800 bg-zinc-950 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
@@ -433,6 +536,12 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      {/* PDF to LaTeX Conversion Modal */}
+      <PDFToLatexModal
+        isOpen={pdfModalOpen}
+        onClose={() => setPdfModalOpen(false)}
+      />
     </div>
   );
 }

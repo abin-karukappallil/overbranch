@@ -2,8 +2,10 @@ import { router, publicProcedure, protectedProcedure, projectProcedure, ownerPro
 import { z } from 'zod';
 import { db } from '@/db';
 import { projects, projectMembers, user, notifications } from '@/db/schema';
-import { eq, and, or, ilike, desc } from 'drizzle-orm';
+import { eq, and, or, ilike, desc, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
+import fs from 'fs';
+import path from 'path';
 
 export const projectsRouter = router({
   listProjects: protectedProcedure
@@ -32,7 +34,7 @@ export const projectsRouter = router({
         description: p.description || "",
         repository: p.repository || "",
         branch: p.defaultBranch || "main.tex",
-        template: p.template || "IEEEtran",
+        template: p.template || "None",
         status: p.status || "active",
         isFavorite: p.isFavorite || false,
         role: "Owner" as "Owner" | "Editor" | "Viewer",
@@ -50,7 +52,7 @@ export const projectsRouter = router({
         description: p.description || "",
         repository: p.repository || "",
         branch: p.defaultBranch || "main.tex",
-        template: p.template || "IEEEtran",
+        template: p.template || "None",
         status: p.status || "active",
         isFavorite: p.isFavorite || false,
         role: role as "Owner" | "Editor" | "Viewer",
@@ -102,7 +104,7 @@ export const projectsRouter = router({
     .input(
       z.object({
         name: z.string().min(2),
-        template: z.string().default("IEEEtran"),
+        template: z.string().default("None"),
         description: z.string().optional(),
       })
     )
@@ -115,7 +117,7 @@ export const projectsRouter = router({
         id: projId,
         ownerId: userId,
         name: input.name,
-        description: input.description || "Scientific LaTeX Document",
+        description: input.description || "Custom LaTeX Workspace",
         template: input.template,
         repository: `prostack/${input.name.toLowerCase().replace(/\s+/g, '-')}`,
         defaultBranch: "main.tex",
@@ -129,6 +131,26 @@ export const projectsRouter = router({
         userId: userId,
         role: "Owner",
       });
+
+      const defaultTex = ``;
+
+      try {
+        const safeProj = projId.replace(/[^a-zA-Z0-9_-]/g, '_');
+        const projDir = path.join(process.cwd(), 'uploads', 'projects', safeProj);
+        fs.mkdirSync(projDir, { recursive: true });
+        fs.writeFileSync(path.join(projDir, 'main.tex'), defaultTex, 'utf-8');
+      } catch (fsErr) {
+        console.warn("Could not write main.tex to local disk:", fsErr);
+      }
+
+      try {
+        await db.execute(sql`
+          INSERT INTO latex_documents (project_id, file_path, raw_code, updated_at)
+          VALUES (${projId}::uuid, 'main.tex', ${defaultTex}, NOW())
+        `);
+      } catch (dbErr) {
+        console.warn("Could not insert main.tex into latex_documents:", dbErr);
+      }
 
       return {
         id: newP.id,

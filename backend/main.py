@@ -9,6 +9,7 @@ import vector_sync
 import agent
 import project_storage
 import file_analyzer
+import template_service
 from typing import List, Optional, Dict, Any
 
 # Allow up to 100MB request bodies (large PDFs base64-encoded can be 10-50MB)
@@ -34,10 +35,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from routes.pdf_conversion import router as pdf_conversion_router
+
 app.include_router(vector_sync.router)
 app.include_router(agent.router)
 app.include_router(project_storage.router)
+app.include_router(template_service.router)
 app.include_router(file_analyzer.router, prefix="/api")
+app.include_router(pdf_conversion_router)
 
 class FileAsset(BaseModel):
     filename: str

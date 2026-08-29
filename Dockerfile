@@ -8,11 +8,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    texlive-base \
     texlive-latex-base \
     texlive-latex-recommended \
     texlive-latex-extra \
+    texlive-bibtex-extra \
+    texlive-extra-utils \
+    texlive-pictures \
     texlive-fonts-recommended \
+    texlive-fonts-extra \
+    texlive-science \
+    texlive-publishers \
+    texlive-xetex \
+    texlive-luatex \
+    texlive-lang-greek \
+    cm-super \
+    fonts-dejavu \
+    fonts-lmodern \
+    fonts-urw-base35 \
     latexmk \
+    ghostscript \
     poppler-utils \
     perl \
     ca-certificates \

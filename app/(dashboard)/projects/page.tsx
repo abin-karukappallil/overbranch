@@ -96,8 +96,8 @@ export default function ProjectsPage() {
     if (!newProjName.trim()) return;
     createMutation.mutate({
       name: newProjName.trim(),
-      description: "LaTeX document & academic project workspace",
-      template: "Report",
+      description: "Custom LaTeX Workspace",
+      template: "None",
     });
   };
 
@@ -215,8 +215,8 @@ export default function ProjectsPage() {
               </div>
 
               <div className="pt-3 border-t border-zinc-800 flex items-center justify-between text-xs text-zinc-400 font-mono gap-2">
-                <span className="px-2.5 py-0.5 rounded-md bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 truncate">
-                  {proj.template}
+                <span className="px-2.5 py-1 rounded-lg bg-zinc-950 text-zinc-300 font-medium border border-zinc-800 w-fit shrink-0 text-[11px]" title={proj.template || "None"}>
+                  {proj.template || "None"}
                 </span>
 
                 <button
@@ -280,7 +280,7 @@ export default function ProjectsPage() {
                 <label className="text-xs text-zinc-400 font-bold uppercase">Project Name</label>
                 <Input
                   autoFocus
-                  placeholder="e.g. Quantum_State_Paper_2026"
+                  placeholder="Enter a project name"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
                   required
@@ -328,7 +328,7 @@ export default function ProjectsPage() {
                 <label className="text-zinc-400 font-bold uppercase text-[11px]">Registered User Email</label>
                 <Input
                   type="email"
-                  placeholder="coauthor@university.edu"
+                  placeholder="Enter your email"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
                   required

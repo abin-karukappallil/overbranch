@@ -6,12 +6,13 @@ export function middleware(request: NextRequest) {
   const protectedRoutes = [
     "/dashboard",
     "/projects",
+    "/templates",
     "/profile",
     "/editor",
   ];
 
   const isProtectedPath = protectedRoutes.some((route) => path.startsWith(route));
-  const isAuthPath = path === "/login" || path === "/register" || path === "/forgot-password";
+  const isAuthPath = path === "/login" || path === "/register";
   
   const sessionToken =
     request.cookies.get("better-auth.session_token")?.value ||
@@ -41,13 +42,14 @@ export const config = {
     "/dashboard/:path*",
     "/projects",
     "/projects/:path*",
+    "/templates",
+    "/templates/:path*",
     "/profile",
     "/profile/:path*",
     "/editor",
     "/editor/:path*",
     "/login",
     "/register",
-    "/forgot-password",
   ],
 };
 

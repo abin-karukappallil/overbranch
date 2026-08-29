@@ -8,6 +8,7 @@ import { preferencesRouter } from './preferences';
 import { notificationsRouter } from './notifications';
 import { invitationsRouter } from './invitations';
 import { commentsRouter } from './comments';
+import { templatesRouter } from './templates';
 
 export const appRouter = router({
   hello: publicProcedure
@@ -27,6 +28,7 @@ export const appRouter = router({
   user: userRouter,
   dashboard: dashboardRouter,
   projects: projectsRouter,
+  templates: templatesRouter,
   preferences: preferencesRouter,
   notifications: notificationsRouter,
   invitations: invitationsRouter,
