@@ -10,7 +10,7 @@ logger = logging.getLogger("retriever")
 # Retrieval configuration
 BROAD_SEARCH_LIMIT = 15       # Stage 1: fetch this many from Qdrant
 DIVERSITY_SELECT_COUNT = 10   # Stage 3: MMR selects this many
-FINAL_RESULT_COUNT = 8       # Stage 5: return top 8 embedding chunks
+FINAL_RESULT_COUNT = 5       # Stage 5: return top 5 embedding chunks (reduced for token budget)
 OVERLAP_THRESHOLD = 0.70      # Stage 4: dedup if >70% content overlap
 MMR_LAMBDA = 0.6              # MMR trade-off: relevance vs diversity
 
@@ -102,8 +102,15 @@ def stage1_broad_search(
         FieldCondition(key="project_id", match=MatchValue(value=project_id)),
     ]
 
-    # Search all files in project for broader context
-    filter_cond = Filter(must=must_conditions)
+    # Prefer chunks from the active file when provided (use 'should' so
+    # cross-file results are still returned but scored lower by Qdrant)
+    should_conditions = []
+    if file_path:
+        should_conditions.append(
+            FieldCondition(key="file_path", match=MatchValue(value=file_path))
+        )
+
+    filter_cond = Filter(must=must_conditions, should=should_conditions if should_conditions else None)
 
     hits = []
     try:

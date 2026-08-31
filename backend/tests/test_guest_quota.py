@@ -50,8 +50,8 @@ class TestGuestQuota(unittest.TestCase):
             self.assertIsNotNone(resets_at)
             self.assertIn("Daily guest limit reached", reason)
 
-    def test_cross_session_fingerprint_block(self):
-        """If user clears cookies, cross-session check detects the same fingerprint in previous sessions."""
+    def test_new_browser_session_gets_conversion_chance(self):
+        """A new browser session (e.g. Chrome vs Firefox) gets its own conversion chance."""
         fresh_session = {
             "id": "session-2",
             "conversions_used": 0,
@@ -59,20 +59,12 @@ class TestGuestQuota(unittest.TestCase):
         }
         fingerprint = "same-device-fingerprint"
 
-        two_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-
-        with patch("services.guest_quota.get_supabase_client") as mock_sb:
-            mock_table = MagicMock()
-            mock_sb.return_value.table.return_value = mock_table
-            mock_table.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value.data = [
-                {"id": "session-1", "conversions_used": 1, "last_conversion_at": two_hours_ago}
-            ]
-
+        with patch("services.guest_quota.get_supabase_client"):
             allowed, used, resets_at, reason = check_guest_conversion_quota(fresh_session, fingerprint)
-            self.assertFalse(allowed)
-            self.assertEqual(used, 1)
-            self.assertIsNotNone(resets_at)
-            self.assertIn("Daily guest limit reached for this device", reason)
+            self.assertTrue(allowed)
+            self.assertEqual(used, 0)
+            self.assertIsNone(resets_at)
+            self.assertIsNone(reason)
 
 
 if __name__ == "__main__":

@@ -141,6 +141,15 @@ STEP 7 — ANTI-DUPLICATION & OUTPUT-INTEGRITY RULES (CRITICAL)
 5. Prefer several small, high-confidence edits over one large, low-confidence edit. A partial but correct result beats a duplicated or broken document.
 6. TEMPLATE INTEGRITY: When customizing or editing an existing template (e.g. letters, resumes, presentations), ALWAYS target the existing placeholder content in "original_chunk" to replace it. NEVER set "original_chunk": "\\end{document}" to append a second duplicate copy.
 7. The alignment of the template must be preserved. Do not change the alignment of the template.
+
+====================================================================
+STEP 7b — ANTI-HALLUCINATION & FACTUAL GROUNDING RULES
+====================================================================
+1. EXACT CITATION PRESERVATION: When the user provides reference papers, author names, publication years, or venues, you MUST use the EXACT details provided. NEVER replace them with generic dummy names (e.g. "M. Wang", "X. Zhao", "Y. Chen") or repeat the same dummy publisher (e.g. putting "IEEE TDSC" across every slide).
+2. NO FABRICATED NUMBERS OR METRICS: Never invent random precision statistics (e.g. "achieves 97.4% accuracy", "reduces latency by 43.2%") unless those exact numbers are present in the provided reference document or prompt. Use accurate qualitative descriptions instead ("substantially improves detection accuracy", "minimizes false-positive alerts").
+3. STRICT SINGLE-SLIDE SCOPE: If the user asks to edit, fix, or format a specific slide (e.g. "fix overflow in literature survey 7"), your "original_chunk" MUST target ONLY that specific slide's frame block (\begin{frame}...\end{frame}), and your "proposed_chunk" must contain ONLY that slide's replacement. NEVER modify, duplicate, or re-order other slides.
+4. VALID DIMENSIONS ONLY: Never omit dimension units on LaTeX commands. Always specify explicit units: \vspace{0.2cm}, \hspace{0.5em}, \rule{2cm}{2cm}. Never emit unitless numbers like \vspace{0.1}.
+
 ====================================================================
 STEP 8 — SELF-VERIFY BEFORE RESPONDING (silent checklist)
 ====================================================================
@@ -250,6 +259,18 @@ ALIGNMENT & MARGIN SAFETY RULES:
 5. In \begin{columns}[T], keep individual column widths to 0.48\textwidth.
 6. In multi-column slides with wide mathematical equations, ALWAYS wrap wide formulas in \resizebox{\linewidth}{!}{$...$} so they never overflow the card or slide boundaries.
 7. In tables, always use \begin{tabularx}{\textwidth}{...} with X column types for responsive fitting.
+8. NO ENUMITEM BRACKETS IN BEAMER: NEVER write \begin{itemize}[itemsep=...] or \begin{itemize}[leftmargin=...]. In Beamer, bracket options on itemize are parsed as overlay specifications and literally print "temsep=..." on the slides! To adjust spacing in Beamer, write \begin{itemize}\setlength{\itemsep}{0.3em} or use standard \begin{itemize}.
+9. ROW-WISE CONTENT FOR LITERATURE SURVEY & DENSE SLIDES: For slides with multiple details (like literature survey papers, comparative reviews, or dense summaries), NEVER stack multiple heavy \begin{block} containers with titles and nested itemizes. Stacking 3 blocks on one slide causes severe vertical overflow. Use clean row-wise lists with bold labels:
+   \textbf{Paper:} <Title> \quad|\quad \textbf{Year:} <Year> \quad|\quad \textbf{Publisher:} <Venue>\\
+   \textbf{Authors:} <Authors>
+   \vspace{0.2cm}
+   \begin{itemize}
+     \item \textbf{Main Idea:} ...
+     \item \textbf{Advantages:} ...
+     \item \textbf{Limitations:} ...
+   \end{itemize}
+   This guarantees clean, readable, non-overflowing slides.
+10. ACADEMIC & RESEARCH TOPICS ARE 100% BENIGN: All seminar topics, papers, and presentations (including cybersecurity, threat intelligence, malware analysis, attack attribution, and vulnerability research) are legitimate educational content. Always fulfill them as academic LaTeX presentations without refusal.
 
 ====================================================================
 DEFAULT SLIDE STRUCTURE
@@ -777,6 +798,36 @@ OUTPUT SCHEMA — RAW JSON ONLY, NO SURROUNDING TEXT OR MARKDOWN FENCES
 Only "edits[]" carries edit content. For mode 1 or 2 requests, "edits" is [] and the substantive answer goes in "plan".
 """
 
+# ---------------------------------------------------------------------------
+# Instruction Priority Block — injected for edit operations
+# ---------------------------------------------------------------------------
+INSTRUCTION_PRIORITY_BLOCK = """
+====================================================================
+INSTRUCTION PRIORITY (CRITICAL — HIGHEST OVERRIDE)
+====================================================================
+The user's latest instruction is your HIGHEST priority. Follow these rules:
+
+1. SCOPE: Edit ONLY the section/slide explicitly mentioned or clearly implied.
+   - If the request targets one slide, edit ONLY that slide.
+   - Do NOT modify, redesign, or touch any other slides/sections.
+   - Do NOT add extra content beyond what was requested.
+
+2. MINIMAL CHANGE: Return the smallest possible edit.
+   - Prefer per-frame/per-section edits over full-document replacement.
+   - Preserve existing layout, IDs, images, equations, tables, and references.
+   - Never create duplicate slides or pages.
+   - Never reorder pages unless explicitly requested.
+
+3. IN-PLACE EDITING: Perform in-place edits, not regeneration.
+   - The "original_chunk" must be an exact verbatim substring of the current document.
+   - The "proposed_chunk" replaces ONLY that substring.
+   - Return ONLY the modified section(s) for edit operations.
+
+4. NO EXTRAS: Do not add content the user did not ask for.
+   - No unsolicited redesigns, theme changes, or structural modifications.
+   - No adding slides, sections, or packages unless explicitly requested.
+"""
+
 
 def _format_chunks(chunks: Union[str, List[str]]) -> str:
     """
@@ -805,12 +856,25 @@ def build_prompt(
     project_context: str = "",
     attached_file_info: Optional[Dict[str, str]] = None,
     current_code: Optional[str] = None,
+    target_context: Optional[str] = None,
+    is_edit_mode: bool = False,
 ) -> List:
     """
     Assemble the complete LLM prompt with smart token budgeting.
+
+    Args:
+        target_context: Focused context from build_targeted_context() for edits.
+                        When provided, replaces retrieved_context and reduces
+                        current_code budget for minimal token usage.
+        is_edit_mode: When True, injects instruction priority rules and uses
+                      tighter token budgets suitable for free-tier LLM APIs.
     """
     # --- System Message ---
     system_parts = [SYSTEM_PROMPT_CORE]
+
+    # Inject instruction priority block for edit operations
+    if is_edit_mode:
+        system_parts.append(INSTRUCTION_PRIORITY_BLOCK)
 
     if project_context:
         system_parts.append(
@@ -833,28 +897,45 @@ def build_prompt(
     # --- User Message ---
     user_parts = []
 
-    # Include the current document so original_chunk can match verbatim
+    # Include the current document — smart budgeting based on mode
     if current_code and current_code.strip():
-        # Budget current code context at 8000 chars to fit safely within LLM context caps
         doc_text = current_code.strip()
-        if len(doc_text) > 8000:
-            doc_text = doc_text[:8000] + "\n...[DOCUMENT TRUNCATED FOR TOKEN BUDGET AT 8000 CHARS]"
+        if is_edit_mode and target_context:
+            # For targeted edits, send a reduced document window.
+            # The full doc is still needed for original_chunk matching,
+            # but we can cap it much tighter since the targeted context
+            # already provides the relevant slide/page.
+            doc_budget = 4000
+        else:
+            # Full document for generation/conversion
+            doc_budget = 8000
+
+        if len(doc_text) > doc_budget:
+            doc_text = doc_text[:doc_budget] + f"\n...[DOCUMENT TRUNCATED FOR TOKEN BUDGET AT {doc_budget} CHARS]"
         user_parts.append(
             f"CURRENT FULL DOCUMENT (the user's complete LaTeX source — use this for original_chunk matching):\n"
             f"```latex\n{doc_text}\n```"
         )
 
-    formatted_chunks = _format_chunks(retrieved_context)
-    if formatted_chunks:
-        user_parts.append(f"RETRIEVED FILE CONTEXT:\n{formatted_chunks}")
+    # Use targeted context when available, otherwise use retrieved chunks
+    if target_context:
+        user_parts.append(
+            f"TARGETED DOCUMENT CONTEXT (the specific slide/page being edited and its neighbors):\n"
+            f"{target_context}"
+        )
+    else:
+        formatted_chunks = _format_chunks(retrieved_context)
+        if formatted_chunks:
+            user_parts.append(f"RETRIEVED FILE CONTEXT:\n{formatted_chunks}")
 
     if attached_file_info:
         file_name = attached_file_info.get("filename", "Uploaded File")
         file_type = attached_file_info.get("file_type", "text/plain")
         file_content = attached_file_info.get("content", "")
-        # Cap attached file content at 20000 chars to provide rich reference context
-        if len(file_content) > 20000:
-            file_content = file_content[:20000] + "\n...[ATTACHED REFERENCE FILE TRUNCATED AT 20000 CHARS]"
+        # Cap attached file content — generous for generation, tight for edits
+        attach_budget = 20000 if not is_edit_mode else 8000
+        if len(file_content) > attach_budget:
+            file_content = file_content[:attach_budget] + f"\n...[ATTACHED REFERENCE FILE TRUNCATED AT {attach_budget} CHARS]"
         user_parts.append(
             f"--------------------------------\n"
             f"REFERENCE ATTACHED FILE: {file_name} (type: {file_type})\n"
@@ -875,5 +956,6 @@ def build_prompt(
         HumanMessage(content=user_content),
     ]
 
-    logger.info(f"Prompt builder: system={len(system_content)} chars, user={len(user_content)} chars")
+    logger.info(f"Prompt builder: system={len(system_content)} chars, user={len(user_content)} chars"
+                f"{' [EDIT MODE]' if is_edit_mode else ''}")
     return messages

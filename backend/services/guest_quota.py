@@ -41,23 +41,6 @@ def check_guest_conversion_quota(session: Dict[str, Any], fingerprint_hash: str)
             hours_left = max(1, int((resets_at - now_utc).total_seconds() // 3600))
             return False, used, resets_at, f"Daily guest limit reached (1 conversion per 24 hours). Resets in ~{hours_left}h. Sign in for unlimited conversions."
 
-    # 2. Cross-session check via fingerprint: prevent bypass via incognito or clearing cookies
-    res_fp = supabase.table("guest_sessions").select("id, conversions_used, last_conversion_at")\
-        .eq("fingerprint_hash", fingerprint_hash)\
-        .order("last_conversion_at", desc=True)\
-        .limit(5)\
-        .execute()
-
-    for past_s in (res_fp.data or []):
-        p_used = past_s.get("conversions_used", 0)
-        p_last = past_s.get("last_conversion_at")
-        if p_used >= CONVERSION_LIMIT_PER_24H and p_last:
-            last_dt = parse_utc_datetime(p_last)
-            resets_at = last_dt + timedelta(hours=24)
-            if now_utc < resets_at:
-                hours_left = max(1, int((resets_at - now_utc).total_seconds() // 3600))
-                return False, p_used, resets_at, f"Daily guest limit reached for this device (1 conversion per 24 hours). Resets in ~{hours_left}h. Sign up to unlock unlimited projects."
-
     return True, used, None, None
 
 

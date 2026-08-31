@@ -1,9 +1,13 @@
 import logging
-from typing import List, Dict, Any
+import hashlib
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("context_builder")
 
-MAX_CONTEXT_CHARS = 3500
+# Token budgets — edits need far less context than generation
+MAX_CONTEXT_CHARS_EDIT = 2500       # Targeted edit: just the slide window
+MAX_CONTEXT_CHARS_GENERATE = 3500   # Generation/conversion: broader context
+MAX_CONTEXT_CHARS = MAX_CONTEXT_CHARS_GENERATE  # Default (backward compat)
 
 
 def _group_by_file(chunks: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
@@ -65,6 +69,32 @@ def _remove_content_duplicates(chunks: List[Dict[str, Any]]) -> List[Dict[str, A
     return result
 
 
+def _deduplicate_by_content_hash(chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Fast deduplication using content fingerprints.
+    Keeps the chunk with the highest composite_score when duplicates are found.
+    """
+    seen: Dict[str, Dict[str, Any]] = {}
+    for chunk in chunks:
+        content = chunk.get("content", "").strip()
+        if not content:
+            continue
+        # Use a hash of the first 200 chars + length as a fast fingerprint
+        fingerprint = hashlib.md5(
+            f"{content[:200]}:{len(content)}".encode("utf-8")
+        ).hexdigest()
+
+        if fingerprint in seen:
+            # Keep the one with higher score
+            existing = seen[fingerprint]
+            if chunk.get("composite_score", 0) > existing.get("composite_score", 0):
+                seen[fingerprint] = chunk
+        else:
+            seen[fingerprint] = chunk
+
+    return list(seen.values())
+
+
 def _format_chunk_header(chunk: Dict[str, Any], file_path: str) -> str:
     """Format a metadata header for a chunk."""
     chunk_type = chunk.get("chunk_type", "paragraph")
@@ -92,7 +122,8 @@ def build_context(
     if not chunks:
         return "No existing LaTeX chunks found for this file. Generate proposed snippet based on user request."
 
-    # Step 1: Remove content duplicates
+    # Step 1: Fast hash-based dedup first, then content-containment dedup
+    chunks = _deduplicate_by_content_hash(chunks)
     chunks = _remove_content_duplicates(chunks)
 
     # Step 2: Group by file
@@ -158,3 +189,113 @@ def build_context(
     logger.info(f"Context builder: {len(chunks)} chunks → {len(result)} chars "
                 f"across {len(sorted_files)} files")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Targeted context building (for edit operations)
+# ---------------------------------------------------------------------------
+
+def build_targeted_context(
+    retrieved_chunks: List[Dict[str, Any]],
+    current_code: Optional[str],
+    target_page_index: Optional[int],
+    max_chars: int = MAX_CONTEXT_CHARS_EDIT,
+) -> str:
+    """
+    Build a focused context string for edit operations.
+
+    Instead of dumping all retrieved chunks, this:
+    1. Parses the document into a page/slide index
+    2. Extracts only the target page ± 1 neighbor
+    3. Deduplicates retrieved chunks against the page window
+    4. Keeps total context size minimal for free-tier LLM APIs
+
+    Falls back to standard build_context() when targeting isn't possible.
+
+    Args:
+        retrieved_chunks: Chunks from the vector retrieval pipeline
+        current_code: The user's full LaTeX document
+        target_page_index: Index of the target page (from find_target_page)
+        max_chars: Context budget in characters
+    """
+    # If no current code or no target, fall back to standard context
+    if not current_code or target_page_index is None:
+        return build_context(retrieved_chunks, max_chars=max_chars)
+
+    try:
+        from document_index import parse_document_structure, get_page_window
+
+        doc_index = parse_document_structure(current_code)
+
+        if not doc_index.pages:
+            return build_context(retrieved_chunks, max_chars=max_chars)
+
+        # Get the target page window (target ± 1 neighbor)
+        window_pages = get_page_window(doc_index, target_page_index, window=1)
+
+        if not window_pages:
+            return build_context(retrieved_chunks, max_chars=max_chars)
+
+        # Build the targeted context from the page window
+        parts = []
+        total_chars = 0
+
+        for page in window_pages:
+            is_target = page.page_index == target_page_index
+            marker = "TARGET" if is_target else "NEIGHBOR"
+            header = (
+                f"--- [{marker}] {page.page_type.upper()} "
+                f"(id: {page.page_id}, title: {page.title}) ---"
+            )
+
+            content = page.content.strip()
+
+            # Budget check — truncate if needed but always include the target
+            entry = f"{header}\n{content}"
+            if total_chars + len(entry) > max_chars and not is_target:
+                # Skip neighbor pages that would exceed budget
+                continue
+
+            if total_chars + len(entry) > max_chars and is_target:
+                # Truncate target content to fit
+                remaining = max_chars - total_chars - len(header) - 50
+                if remaining > 200:
+                    content = content[:remaining] + "\n... [truncated for budget]"
+                    entry = f"{header}\n{content}"
+
+            parts.append(entry)
+            total_chars += len(entry)
+
+        # Add a few high-scoring retrieved chunks that aren't already in the window
+        # (for cross-reference context), but cap tightly
+        window_hashes = {p.content_hash for p in window_pages}
+        extra_budget = max_chars - total_chars
+
+        if extra_budget > 300 and retrieved_chunks:
+            deduped = _deduplicate_by_content_hash(retrieved_chunks)
+            for chunk in sorted(deduped, key=lambda c: c.get("composite_score", 0), reverse=True)[:3]:
+                chunk_content = chunk.get("content", "").strip()
+                # Skip if this chunk overlaps with window content
+                chunk_hash = hashlib.md5(
+                    f"{chunk_content[:200]}:{len(chunk_content)}".encode("utf-8")
+                ).hexdigest()[:16]
+                if chunk_hash in window_hashes:
+                    continue
+
+                entry = f"--- RETRIEVED (score: {chunk.get('composite_score', 0):.2f}) ---\n{chunk_content[:500]}"
+                if total_chars + len(entry) > max_chars:
+                    break
+                parts.append(entry)
+                total_chars += len(entry)
+
+        result = "\n\n".join(parts)
+        logger.info(
+            f"Targeted context: {len(window_pages)} pages in window, "
+            f"{total_chars} chars (budget: {max_chars})"
+        )
+        return result
+
+    except Exception as e:
+        logger.warning(f"Targeted context building failed, falling back: {e}")
+        return build_context(retrieved_chunks, max_chars=max_chars)
+

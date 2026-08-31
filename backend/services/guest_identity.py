@@ -171,23 +171,7 @@ def get_or_create_guest_session(request: Request) -> Tuple[Dict[str, Any], str, 
                     ensure_guest_user_row(supabase, guest_user_id)
                     return session, raw_cookie, False
 
-    # Step 2: Anti-cookie-clearing check by device fingerprint
-    res_fp = supabase.table("guest_sessions").select("*")\
-        .eq("fingerprint_hash", fingerprint)\
-        .order("created_at", desc=True)\
-        .limit(1)\
-        .execute()
-
-    if res_fp.data and len(res_fp.data) > 0:
-        session = res_fp.data[0]
-        expires_at = parse_utc_datetime(session["expires_at"])
-        if expires_at > now_utc:
-            re_signed_token = sign_guest_token(session["id"])
-            guest_user_id = f"guest_{session['id']}"
-            ensure_guest_user_row(supabase, guest_user_id)
-            return session, re_signed_token, False
-
-    # Step 3: Create a new guest session
+    # Step 2: Create a new guest session for this browser
     new_session_id = str(uuid.uuid4())
     signed_token = sign_guest_token(new_session_id)
     token_hash = hashlib.sha256(signed_token.encode("utf-8")).hexdigest()

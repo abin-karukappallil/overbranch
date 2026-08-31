@@ -34,6 +34,8 @@ from providers import provider_router, LLMProviderError
 from services.pdf_parser import parse_pdf, MAX_ALLOWED_PAGES
 from services.pdf_to_latex import convert_pdf_to_latex
 from services.project_file_writer import write_project_files_and_assets
+import document_index as doc_idx
+import edit_validator
 
 load_dotenv(override=True)
 
@@ -244,11 +246,19 @@ def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
     clean_target = target.strip()
     if not clean_target:
         return None
+    if clean_target in text:
+        return clean_target
 
-    # Escape regex characters and allow flexible whitespace matching
-    norm_target = re.escape(clean_target)
-    pattern_str = re.sub(r'\\s\+', r'\\s+', norm_target)
-    pattern_str = re.sub(r'\\[ \t\r\n]+', r'\\s+', pattern_str)
+    # Token-based normalized regex match: split by whitespace, escape tokens, join with \s+
+    tokens = re.split(r'\s+', clean_target)
+    if not tokens:
+        return None
+
+    escaped_tokens = [re.escape(t) for t in tokens if t]
+    if not escaped_tokens:
+        return None
+
+    pattern_str = r'\s+'.join(escaped_tokens)
     try:
         m = re.search(pattern_str, text, re.DOTALL)
         if m:
@@ -316,6 +326,39 @@ def sanitize_latex_code(code: str) -> str:
             r"\g<1>1.8cm",
             s
         )
+
+    # Auto-repair invalid enumitem options on itemize/enumerate in Beamer
+    # In Beamer, bracket options like [itemsep=0.4em] or [leftmargin=1em] are parsed
+    # as overlay specifications, literally printing "temsep=..." on every slide!
+    def _fix_beamer_itemize(match):
+        env = match.group(1)
+        opts = match.group(2)
+        if any(k in opts for k in ["itemsep", "leftmargin", "topsep", "parsep"]):
+            m_sep = re.search(r'itemsep\s*=\s*([0-9.]+(?:em|pt|ex|cm))', opts)
+            if m_sep:
+                return f"\\begin{{{env}}}\\setlength{{\\itemsep}}{{{m_sep.group(1)}}}"
+            return f"\\begin{{{env}}}"
+        return match.group(0)
+
+    s = re.sub(r'\\begin\{(itemize|enumerate)\}\s*\[([^\]]*)\]', _fix_beamer_itemize, s)
+
+    # Clean any accidental literal 'temsep=...' or 'leftmargin=...' artifact text
+    s = re.sub(r'(?<![a-zA-Z\\\\])temsep\s*=\s*[0-9.]+(?:em|pt|cm|ex)?', '', s)
+    s = re.sub(r'(?<![a-zA-Z\\\\])leftmargin\s*=\s*[0-9.]+(?:em|pt|cm|ex)?', '', s)
+
+    # Auto-repair bare vspace/hspace numbers without units (e.g. \vspace{0.1} -> \vspace{0.1cm})
+    s = re.sub(r'\\(vspace|hspace)\*?\{([0-9.]+)\}', r'\\\1{\2cm}', s)
+
+    # Auto-repair unescaped '&' in text mode (e.g. "Attribution & Reasoning" -> "Attribution \& Reasoning")
+    def _fix_unescaped_amp(line):
+        stripped = line.strip()
+        if any(k in stripped for k in ["\\begin{tabular", "\\end{tabular", "\\begin{matrix", "\\end{matrix", "\\begin{align", "\\end{align"]):
+            return line
+        if "&" in line and not line.rstrip().endswith(r"\\"):
+            return re.sub(r'(?<!\\)&', r'\&', line)
+        return line
+
+    s = "\n".join(_fix_unescaped_amp(l) for l in s.splitlines())
 
     # Auto-repair unclosed environments and trailing truncation
     s = auto_repair_truncated_latex(s)
@@ -708,7 +751,7 @@ def clean_json_response(text: Any) -> Dict[str, Any]:
 from typing import List, Optional, Dict, Any, Tuple
 
 
-def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
+def categorize_user_intent(user_prompt: str, has_attached_file: bool = False) -> Tuple[str, bool]:
     """
     Categorizes user intent into 3 modes:
     1. ("GENERAL_CHAT", False) — Pure greetings & syntax questions ("hi", "how to center text in LaTeX?"). Vector search: False, Edits: False.
@@ -717,24 +760,33 @@ def categorize_user_intent(user_prompt: str) -> Tuple[str, bool]:
     """
     text = user_prompt.lower().strip()
 
+    # If user attached a reference file (PDF, DOCX, etc.), default to EDIT_DOCUMENT
+    # unless asking a pure document question
+    doc_inquiry_keywords = ["where is", "find in my", "what packages", "check my", "show my", "list sections", "is my"]
+    if any(inq in text for inq in doc_inquiry_keywords):
+        return ("INSPECT_DOCUMENT", True)
+
+    # Edit & generation triggers — always EDIT_DOCUMENT
+    edit_triggers = [
+        "instead of", "replace", "change", "modify", "update", "swap", "i need", "i want",
+        "put", "give me", "fix", "remove", "add", "insert", "generate", "create", "make",
+        "build", "draw", "write", "ppt", "slide", "beamer", "presentation", "table", "figure",
+        "section", "framework", "architecture", "diagram", "code", "draft", "overview", "survey"
+    ]
+    if any(e in text for e in edit_triggers) or has_attached_file:
+        return ("EDIT_DOCUMENT", True)
+
     # Pure greetings
     greetings = {"hi", "hello", "hey", "good morning", "good evening", "who are you", "what can you do", "help", "thanks", "thank you"}
     if text in greetings or (len(text.split()) <= 2 and any(g == text for g in greetings)):
         return ("GENERAL_CHAT", False)
 
-    how_to_syntax_keywords = ["how do i", "how to", "how can i", "what is", "explain", "how does", "syntax for", "example of"]
-    my_doc_references = ["my code", "my document", "my title", "my file", "my paper", "this paper", "this document", "this code", "my project"]
+    # Pure LaTeX syntax questions (e.g. "how do I center text", "what is the syntax for booktabs")
+    how_to_syntax_keywords = ["how do i", "how to", "how can i", "what is the syntax", "syntax for", "example of syntax", "how does \\"]
+    my_doc_references = ["my code", "my document", "my title", "my file", "my paper", "this paper", "this document", "this code", "my project", "the paper", "about the paper", "seminar", "slide", "presentation"]
 
-    # Pure syntax explanation request without asking to modify/create
     if any(h in text for h in how_to_syntax_keywords) and not any(r in text for r in my_doc_references):
-        gen_triggers = ["generate", "create", "make", "build", "draw", "write", "ppt", "slide", "beamer", "presentation", "table", "figure", "section", "add", "insert"]
-        if not any(g in text for g in gen_triggers):
-            return ("GENERAL_CHAT", False)
-
-    # Document Inspection / Inquiry Triggers
-    doc_inquiry_keywords = ["where is", "find in my", "what packages", "check my", "show my", "list sections", "is my"]
-    if any(inq in text for inq in doc_inquiry_keywords):
-        return ("INSPECT_DOCUMENT", True)
+        return ("GENERAL_CHAT", False)
 
     # All other prompts default to EDIT_DOCUMENT so tool binding & JSON edit proposals are active
     return ("EDIT_DOCUMENT", True)
@@ -830,7 +882,8 @@ async def agent_chat(request: Request):
         try:
             # Step 1: Categorize intent
             yield sse_event("progress", {"step": "analyze", "message": "Analyzing prompt...", "icon": "zap"})
-            mode, is_search_needed = categorize_user_intent(req.user_prompt)
+            has_attached_file = bool((req.attached_file and req.attached_file.content) or conversation_memory.get_attached_file(req.project_id))
+            mode, is_search_needed = categorize_user_intent(req.user_prompt, has_attached_file=has_attached_file)
             print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})")
 
             # Check if user document already exists
@@ -1052,9 +1105,41 @@ async def agent_chat(request: Request):
             else:
                 yield sse_event("progress", {"step": "skip_search", "message": "Direct response mode", "icon": "message-circle"})
 
-            # Step 3: Build context
+            # Step 3: Build context — targeted for edits, broad for generation
             yield sse_event("progress", {"step": "context", "message": "Building document context...", "icon": "layers"})
-            context_str = context_builder.build_context(retrieved_chunks)
+
+            # Parse document structure and identify target page
+            target_page_index = None
+            targeted_context = None
+            is_targeted_edit = False
+
+            if mode == "EDIT_DOCUMENT" and has_existing_code and req.current_code:
+                try:
+                    document_structure = doc_idx.parse_document_structure(req.current_code)
+                    target_page_index = doc_idx.find_target_page(document_structure, req.user_prompt)
+
+                    if target_page_index is not None:
+                        # Build targeted context (just the target slide ± 1 neighbor)
+                        targeted_context = context_builder.build_targeted_context(
+                            retrieved_chunks=retrieved_chunks,
+                            current_code=req.current_code,
+                            target_page_index=target_page_index,
+                        )
+                        is_targeted_edit = True
+                        target_page = document_structure.get_page_by_index(target_page_index)
+                        yield sse_event("progress", {
+                            "step": "target",
+                            "message": f"Targeting: {target_page.title if target_page else 'slide ' + str(target_page_index)}",
+                            "icon": "crosshair"
+                        })
+                except Exception as idx_err:
+                    logger.warning(f"Document indexing failed, using broad context: {idx_err}")
+
+            # Fall back to standard broad context if targeting wasn't possible
+            if not targeted_context:
+                context_str = context_builder.build_context(retrieved_chunks)
+            else:
+                context_str = targeted_context
 
             # Step 4: Load memory & project asset context
             conv_ctx = conversation_memory.get_conversation_context(req.project_id)
@@ -1111,6 +1196,8 @@ async def agent_chat(request: Request):
                 project_context=full_proj_context,
                 attached_file_info=attached_info,
                 current_code=req.current_code,
+                target_context=targeted_context,
+                is_edit_mode=is_targeted_edit,
             )
 
             # Step 6: Invoke LLM
@@ -1178,8 +1265,15 @@ async def agent_chat(request: Request):
             is_fallback = False
 
             safe_user_content = user_content
-            if len(safe_user_content) > 25000:
-                safe_user_content = safe_user_content[:25000] + "\n...[Content capped for token/payload limit]"
+            # Dynamic content cap: edits need less, generation with PDF attachments needs more
+            if is_targeted_edit:
+                user_content_cap = 20000   # Tight cap for focused edits
+            elif attached_info:
+                user_content_cap = 35000   # Generous for PDF-based generation
+            else:
+                user_content_cap = 25000   # Default
+            if len(safe_user_content) > user_content_cap:
+                safe_user_content = safe_user_content[:user_content_cap] + "\n...[Content capped for token/payload limit]"
 
             messages_list = []
             if system_content:
@@ -1191,6 +1285,15 @@ async def agent_chat(request: Request):
             provider_name = provider.get_provider_name()
             yield sse_event("progress", {"step": "llm_call", "message": f"Generating with {provider_name} ({primary_model})...", "icon": "sparkles"})
 
+            # Dynamic max_tokens: generation needs much more output space than edits
+            # A full 12+ slide Beamer PPT with literature survey needs ~10k tokens
+            if is_new_doc_request or not has_existing_code:
+                llm_max_tokens = 8192   # New document / full generation
+            elif is_targeted_edit:
+                llm_max_tokens = 4096   # Targeted edit (1-2 frames)
+            else:
+                llm_max_tokens = 6144   # General edit / partial regeneration
+
             try:
                 llm_result = None
                 async for item in run_step_with_heartbeat(
@@ -1198,7 +1301,7 @@ async def agent_chat(request: Request):
                     messages=messages_list,
                     model=primary_model,
                     temperature=0.1,
-                    max_tokens=4096,
+                    max_tokens=llm_max_tokens,
                 ):
                     if isinstance(item, str) and item.startswith(":"):
                         yield item
@@ -1246,6 +1349,51 @@ async def agent_chat(request: Request):
                         "explanation": "Extracted LaTeX document proposal."
                     }]
 
+            # Automatic fallback retry if the primary model refused or failed to produce code
+            is_refusal_response = any(ref_kw in response_text.lower() for ref_kw in [
+                "hard time fulfilling",
+                "cannot fulfill",
+                "can't fulfill",
+                "unable to fulfill",
+                "against my safety guidelines",
+                "help you with something else instead",
+                "as an ai language model",
+            ])
+            if (is_refusal_response or (not edits and mode == "EDIT_DOCUMENT")) and not is_fallback:
+                logger.warning(f"Primary model ({primary_model}) refused or returned no code, retrying with fallback provider...")
+                yield sse_event("progress", {"step": "retry_fallback", "message": "Refusal detected, retrying with fallback AI...", "icon": "refresh-cw"})
+                try:
+                    fallback_provider = provider_router.freellm
+                    fb_result = None
+                    async for item in run_step_with_heartbeat(
+                        fallback_provider.chat,
+                        messages=messages_list,
+                        model=fallback_provider.default_model,
+                        temperature=0.1,
+                        max_tokens=llm_max_tokens,
+                    ):
+                        if isinstance(item, str) and item.startswith(":"):
+                            yield item
+                        else:
+                            fb_result = item
+
+                    if fb_result and fb_result.get("content"):
+                        response_text = fb_result["content"]
+                        model_used = fb_result.get("model_used", fallback_provider.default_model)
+                        is_fallback = True
+                        parsed_result = clean_json_response(response_text)
+                        edits = parsed_result.get("edits", [])
+                        if not edits:
+                            extracted_latex = extract_chunk_latex(response_text)
+                            if extracted_latex:
+                                edits = [{
+                                    "original_chunk": "",
+                                    "proposed_chunk": extracted_latex,
+                                    "explanation": "Extracted LaTeX document proposal from fallback."
+                                }]
+                except Exception as fb_err:
+                    logger.warning(f"Fallback attempt failed: {fb_err}")
+
             # If existing document code exists, align proposed edits
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
                 # Detect if user prompt requests replacing/customizing template or document content
@@ -1286,6 +1434,46 @@ async def agent_chat(request: Request):
                     if matched_orig:
                         e["original_chunk"] = matched_orig
                         continue
+
+                    # 2b. Frame-level in-place alignment for Beamer presentations:
+                    # If proposed_chunk is a frame, match it to an existing frame in req.current_code
+                    # so edits replace the existing slide in-place, NEVER duplicating at the document bottom!
+                    if "\\begin{frame}" in pc and "\\end{frame}" in pc:
+                        frame_matched = False
+                        doc_struct = locals().get("document_structure")
+                        if not doc_struct:
+                            try:
+                                doc_struct = doc_idx.parse_document_structure(req.current_code)
+                            except Exception:
+                                doc_struct = None
+
+                        # Match by identified target slide index from Step 3
+                        tgt_idx = locals().get("target_page_index")
+                        if tgt_idx is not None and doc_struct:
+                            target_page = doc_struct.get_page_by_index(tgt_idx)
+                            if target_page and target_page.content and target_page.content in req.current_code:
+                                e["original_chunk"] = target_page.content
+                                frame_matched = True
+
+                        # Match by fraction (e.g. 7/7), title, or survey number in proposed frame
+                        if not frame_matched and doc_struct:
+                            pc_title_m = re.search(r'\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}', pc)
+                            pc_title = pc_title_m.group(1).strip() if pc_title_m else ""
+                            pc_frac_m = re.search(r'\(?(\d+/\d+)\)?', pc)
+                            pc_frac = pc_frac_m.group(1) if pc_frac_m else ""
+
+                            for page in doc_struct.pages:
+                                if page.page_type != "frame":
+                                    continue
+                                if (pc_frac and pc_frac in page.content) or \
+                                   (pc_title and (pc_title.lower() in page.title.lower() or page.title.lower() in pc_title.lower())):
+                                    if page.content in req.current_code:
+                                        e["original_chunk"] = page.content
+                                        frame_matched = True
+                                        break
+
+                        if frame_matched:
+                            continue
 
                     # 3. Special handling for Letter templates/documents:
                     # A letter document has a single \begin{letter}...\end{letter} block.
@@ -1492,6 +1680,42 @@ async def agent_chat(request: Request):
                 if item.get("explanation"):
                     item["explanation"] = sanitize_explanation_text(item["explanation"])
                 clean_edits.append(item)
+
+            # Step 8b: Validation & auto-repair
+            if clean_edits and has_existing_code:
+                try:
+                    validation = edit_validator.validate_edit(
+                        original_code=req.current_code or "",
+                        proposed_edits=clean_edits,
+                    )
+                    if not validation.passed:
+                        # Attempt auto-repair for fixable issues
+                        clean_edits, repairs = edit_validator.auto_repair_edits(
+                            proposed_edits=clean_edits,
+                            original_code=req.current_code or "",
+                        )
+                        if repairs:
+                            logger.info(f"Auto-repaired {len(repairs)} issues: {repairs}")
+                            yield sse_event("progress", {
+                                "step": "repair",
+                                "message": f"Auto-fixed {len(repairs)} issue(s)",
+                                "icon": "tool"
+                            })
+                        # Re-validate after repair
+                        validation = edit_validator.validate_edit(
+                            original_code=req.current_code or "",
+                            proposed_edits=clean_edits,
+                        )
+                        if not validation.passed:
+                            error_msgs = [i.message for i in validation.issues if i.severity == "error"]
+                            logger.warning(f"Edit validation still failing after repair: {error_msgs}")
+                except Exception as val_err:
+                    logger.warning(f"Edit validation skipped due to error: {val_err}")
+
+            # Update first_orig/first_prop after potential repair
+            if clean_edits:
+                first_orig = clean_edits[0].get("original_chunk", first_orig)
+                first_prop = clean_edits[0].get("proposed_chunk", first_prop)
 
             # Step 9: Store in conversation memory
             chunk_summaries = [c.get("summary", "") for c in retrieved_chunks if c.get("summary")]

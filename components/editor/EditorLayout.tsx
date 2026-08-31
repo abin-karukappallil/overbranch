@@ -1321,51 +1321,97 @@ export function EditorLayout({
     return text + "\n\n" + snippet;
   };
 
+  const applySingleEditInPlace = (currentText: string, orig: string, prop: string): string => {
+    if (!prop) return currentText;
+
+    // 1. Full document replacement
+    if (prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
+      return prop;
+    }
+
+    // 2. Direct exact verbatim match
+    if (orig && currentText.includes(orig)) {
+      return currentText.replace(orig, prop);
+    }
+
+    // 3. Whitespace-tolerant regex match
+    if (orig && orig.trim()) {
+      const escaped = orig.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      try {
+        const regex = new RegExp(escaped, 'i');
+        if (regex.test(currentText)) {
+          return currentText.replace(regex, prop);
+        }
+      } catch {
+        // continue to next strategy
+      }
+    }
+
+    // 4. In-place Beamer frame replacement (prevents duplicate slides at bottom of document)
+    if (prop.includes("\\begin{frame}") && prop.includes("\\end{frame}")) {
+      const titleMatch = prop.match(/\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}/);
+      const fracMatch = prop.match(/\(?(\d+\/\d+)\)?/);
+      const numMatch = prop.match(/\b(?:survey|paper|slide|frame)\s*#?\s*(\d+)\b/i);
+
+      const frameRegex = /\\begin\{frame\}[\s\S]*?\\end\{frame\}/g;
+      let m: RegExpExecArray | null;
+      let bestMatch: { index: number; length: number } | null = null;
+
+      while ((m = frameRegex.exec(currentText)) !== null) {
+        const existingFrame = m[0];
+        // Match by fraction like (7/7)
+        if (fracMatch && existingFrame.includes(fracMatch[1])) {
+          bestMatch = { index: m.index, length: existingFrame.length };
+          break;
+        }
+        // Match by title
+        if (titleMatch && existingFrame.toLowerCase().includes(titleMatch[1].toLowerCase().trim())) {
+          bestMatch = { index: m.index, length: existingFrame.length };
+          break;
+        }
+        // Match by survey/slide number
+        if (numMatch && (existingFrame.includes(`(${numMatch[1]}/`) || existingFrame.includes(` ${numMatch[1]}/`))) {
+          bestMatch = { index: m.index, length: existingFrame.length };
+          break;
+        }
+      }
+
+      if (bestMatch) {
+        return currentText.slice(0, bestMatch.index) + prop + currentText.slice(bestMatch.index + bestMatch.length);
+      }
+    }
+
+    // 5. In-place Section replacement
+    if (prop.includes("\\section{")) {
+      const secMatch = prop.match(/\\section\{([^}]+)\}/);
+      if (secMatch) {
+        const secTitle = secMatch[1].trim();
+        const escapedSec = secTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        try {
+          const nextSecRegex = new RegExp(`\\\\section\\{${escapedSec}\\}[\\s\\S]*?(?=\\\\section\\{|\\\\end\\{document\\}|$)`, 'i');
+          if (nextSecRegex.test(currentText)) {
+            return currentText.replace(nextSecRegex, prop + "\n\n");
+          }
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    // 6. Append safely before \end{document}
+    return insertSnippetSafely(currentText, prop);
+  };
+
   const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
     let updatedCode = code;
     const model = editorRef.current?.getModel?.();
 
     if (model) {
       const currentText = model.getValue();
-
-      if (proposedChunk.includes("\\documentclass") && proposedChunk.includes("\\begin{document}")) {
-        updatedCode = proposedChunk;
-      } else {
-        const escapedSearch = originalChunk
-          ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-          : '';
-        const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
-
-        if (originalChunk && regex && regex.test(currentText)) {
-          updatedCode = replaceAllCaseInsensitive(currentText, originalChunk, proposedChunk);
-        } else {
-          const selection = editorRef.current?.getSelection?.();
-          if (selection && !selection.isEmpty()) {
-            editorRef.current.executeEdits("ai-agent", [
-              { range: selection, text: proposedChunk, forceMoveMarkers: true },
-            ]);
-            updatedCode = model.getValue();
-          } else {
-            updatedCode = insertSnippetSafely(currentText, proposedChunk);
-          }
-        }
-      }
+      updatedCode = applySingleEditInPlace(currentText, originalChunk, proposedChunk);
       model.setValue(updatedCode);
     } else {
-      if (proposedChunk.includes("\\documentclass") && proposedChunk.includes("\\begin{document}")) {
-        updatedCode = proposedChunk;
-      } else {
-        const escapedSearch = originalChunk
-          ? originalChunk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+')
-          : '';
-        const regex = escapedSearch ? new RegExp(escapedSearch, 'gi') : null;
-
-        if (originalChunk && regex && regex.test(code)) {
-          updatedCode = replaceAllCaseInsensitive(code, originalChunk, proposedChunk);
-        } else {
-          updatedCode = insertSnippetSafely(code, proposedChunk);
-        }
-      }
+      updatedCode = applySingleEditInPlace(code, originalChunk, proposedChunk);
     }
 
     setCode(updatedCode);
@@ -1387,14 +1433,7 @@ export function EditorLayout({
     itemsToApply.forEach((item) => {
       const orig = item.original_chunk;
       const prop = item.proposed_chunk;
-
-      if (prop && prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
-        updatedCode = prop;
-      } else if (orig && updatedCode.includes(orig)) {
-        updatedCode = replaceAllCaseInsensitive(updatedCode, orig, prop);
-      } else if (prop) {
-        updatedCode = insertSnippetSafely(updatedCode, prop);
-      }
+      updatedCode = applySingleEditInPlace(updatedCode, orig, prop);
     });
 
     if (model) {
@@ -1433,13 +1472,7 @@ export function EditorLayout({
     const orig = item.original_chunk;
     const prop = item.proposed_chunk;
 
-    if (prop && prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
-      updatedCode = prop;
-    } else if (orig && updatedCode.includes(orig)) {
-      updatedCode = replaceAllCaseInsensitive(updatedCode, orig, prop);
-    } else if (prop) {
-      updatedCode = insertSnippetSafely(updatedCode, prop);
-    }
+    updatedCode = applySingleEditInPlace(updatedCode, orig, prop);
 
     if (model) {
       model.setValue(updatedCode);

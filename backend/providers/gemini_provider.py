@@ -156,6 +156,22 @@ class GeminiProvider(LLMProvider):
                     provider="Gemini",
                 )
 
+            # Refusal detection: Gemini Web2API sometimes emits canned refusal prose
+            is_refusal = any(kw in content.lower() for kw in [
+                "hard time fulfilling",
+                "cannot fulfill this request",
+                "can't fulfill this request",
+                "unable to fulfill this request",
+                "against my safety guidelines",
+                "help you with something else instead",
+            ])
+            if is_refusal:
+                logger.warning(f"Gemini returned refusal message: '{content[:120]}'")
+                raise LLMProviderError(
+                    f"Gemini Web2API refusal: '{content[:120]}'",
+                    provider="Gemini"
+                )
+
             logger.info(
                 f"Gemini Response OK | Model: {actual_model} | Duration: {duration}ms | "
                 f"Tokens: {usage.get('completion_tokens', len(content)//4)}"
