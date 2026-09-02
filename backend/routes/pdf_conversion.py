@@ -34,6 +34,7 @@ class ConvertPDFRequest(BaseModel):
     pdf_data: str = Field(..., description="Base64-encoded PDF or data URL")
     project_name: Optional[str] = Field(None, description="Optional custom name for new project")
     user_id: Optional[str] = Field(None, description="Requesting User ID")
+    document_type_hint: Optional[str] = Field(None, description="Optional document type override (beamer, article, report)")
     model: Optional[str] = Field(None, description="Optional target LLM model")
 
 
@@ -41,6 +42,7 @@ class ConvertInProjectRequest(BaseModel):
     pdf_data: str = Field(..., description="Base64-encoded PDF or data URL")
     project_id: str = Field(..., description="Target project UUID")
     user_id: Optional[str] = Field(None, description="Requesting User ID")
+    document_type_hint: Optional[str] = Field(None, description="Optional document type override (beamer, article, report)")
     model: Optional[str] = Field(None, description="Optional target LLM model")
 
 
@@ -66,18 +68,32 @@ async def convert_pdf_to_new_project(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
-    # Determine user_id fallback
+    # Determine user_id securely: Never steal or default to another user's ID!
     user_id = req.user_id
     if not user_id:
-        try:
-            sb = get_supabase_client()
-            res = sb.table("user").select("id").limit(1).execute()
-            if res.data:
-                user_id = res.data[0]["id"]
-        except Exception:
-            pass
+        # Try resolving from better-auth session cookie
+        auth_cookie = (
+            request.cookies.get("better-auth.session_token")
+            or request.cookies.get("__Secure-better-auth.session_token")
+            or request.cookies.get("session_token")
+        )
+        if auth_cookie:
+            try:
+                sb = get_supabase_client()
+                token = auth_cookie.split(".")[0]
+                session_res = sb.table("session").select("userId").eq("token", token).limit(1).execute()
+                if session_res.data and session_res.data[0].get("userId"):
+                    user_id = session_res.data[0]["userId"]
+            except Exception as sess_err:
+                logger.warning(f"Could not resolve user from session cookie: {sess_err}")
+
+    # Fallback to guest identity or default-user
     if not user_id:
-        user_id = "default-user"
+        guest_tok = request.cookies.get("ob_guest_token")
+        if guest_tok:
+            user_id = f"guest-{guest_tok[:16]}"
+        else:
+            user_id = "default-user"
 
     # Enforce single concurrent conversion per user
     async with _lock:
@@ -99,7 +115,13 @@ async def convert_pdf_to_new_project(request: Request):
             try:
                 parse_result = await loop.run_in_executor(
                     None,
-                    lambda: parse_pdf(req.pdf_data, render_300dpi=True, render_150dpi=True, max_pages=MAX_ALLOWED_PAGES)
+                    lambda: parse_pdf(
+                        req.pdf_data,
+                        render_300dpi=True,
+                        render_150dpi=True,
+                        max_pages=MAX_ALLOWED_PAGES,
+                        doc_type_override=req.document_type_hint,
+                    )
                 )
             except ValueError as ve:
                 yield format_sse("error", {"message": str(ve)})

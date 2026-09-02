@@ -15,8 +15,10 @@ export const createContext = async () => {
   });
 
   const cookieStore = await cookies();
-  const guestToken = cookieStore.get('ob_guest_token')?.value;
-  const verifiedGuest = verifyGuestToken(guestToken);
+  const rawGuestToken = cookieStore.get('ob_guest_token')?.value;
+  // If user is authenticated, strictly ignore guestToken so it never shadows the user
+  const guestToken = session?.user ? null : rawGuestToken;
+  const verifiedGuest = guestToken ? verifyGuestToken(guestToken) : null;
 
   return {
     session,
