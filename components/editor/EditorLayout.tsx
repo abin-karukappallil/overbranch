@@ -43,9 +43,13 @@ import {
   Sparkles,
   Undo2,
   Redo2,
+  Maximize2,
 } from "lucide-react";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
-import { PDFViewer } from "@/components/editor/PDFViewer";
+import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
+import { PresentationView } from "@/components/editor/PresentationView";
+import { ModelSelector, type ProviderGroup } from "@/components/editor/ModelSelector";
+import type { SyncTeXForwardResult, SyncState } from "@/types/sync";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
@@ -64,7 +68,7 @@ import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { FolderGit2 } from "lucide-react";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
-import { EditHistoryStore, type EditHistoryEntry } from "@/lib/EditHistoryStore";
+import { EditHistoryStore, type EditHistory } from "@/lib/EditHistoryStore";
 import { ChatMessageContent } from "@/components/editor/ChatMessageContent";
 import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } from "@/lib/IndexedDBEmbeddingCache";
 
@@ -155,18 +159,6 @@ const quickSymbols = [
 
 export const DEFAULT_MODEL = "auto:smart";
 
-// ─── Model Selector Types & Config ───────────────────────────────────────────
-interface ModelOption {
-  id: string;
-  label: string;
-  default?: boolean;
-}
-
-interface ProviderGroup {
-  name: string;
-  models: ModelOption[];
-}
-
 interface ModelsResponse {
   providers: ProviderGroup[];
   default_model: string;
@@ -254,9 +246,276 @@ export function EditorLayout({
   }, [projectId]);
 
   const monacoRef = useRef<any>(null);
+  const pdfViewerRef = useRef<PDFViewerRefHandle>(null);
+  const desktopEditorRef = useRef<any>(null);
+  const mobileEditorRef = useRef<any>(null);
+  const isReverseSyncingRef = useRef<boolean>(false);
+  const pendingJumpRef = useRef<{ line: number; col?: number; matchRange?: any; timestamp: number } | null>(null);
+  const [isPresentationMode, setIsPresentationMode] = useState<boolean>(false);
+  const forwardSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Global Presentation Mode Shortcut (Ctrl + Alt + P)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.altKey && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        setIsPresentationMode((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const handleReverseSyncJump = (file: string, line: number, column: number) => {
+    // Suppress forward sync loop while navigating from PDF to code
+    if (forwardSyncTimerRef.current) {
+      clearTimeout(forwardSyncTimerRef.current);
+    }
+    isReverseSyncingRef.current = true;
+    setTimeout(() => {
+      isReverseSyncingRef.current = false;
+    }, 1000);
+
+    const monaco = monacoRef.current;
+    if (file && file !== activeFilePath) {
+      setActiveFilePath(file);
+    }
+
+    const targetCol = column || 1;
+    pendingJumpRef.current = { line, col: targetCol, timestamp: Date.now() };
+
+    setActiveMobileTab("code");
+
+    const editors = [desktopEditorRef.current, mobileEditorRef.current, editorRef.current].filter(Boolean);
+    const uniqueEditors = Array.from(new Set(editors));
+
+    for (const ed of uniqueEditors) {
+      try {
+        const model = ed.getModel();
+        if (!model) continue;
+
+        ed.revealLineInCenter(line, 0);
+        ed.setPosition({ lineNumber: line, column: targetCol });
+        ed.focus();
+
+        if (monaco) {
+          const decorations = ed.deltaDecorations([], [
+            {
+              range: new monaco.Range(line, 1, line, 1),
+              options: {
+                isWholeLine: true,
+                className: "synctex-highlight-line",
+                glyphMarginClassName: "synctex-gutter-marker",
+              },
+            },
+          ]);
+          setTimeout(() => {
+            try {
+              ed.deltaDecorations(decorations, []);
+            } catch (_) {}
+          }, 1200);
+        }
+      } catch (_) {}
+    }
+
+    // Auto-release browser selection in the PDF so user doesn't have to click away
+    setTimeout(() => {
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch (_) {}
+    }, 250);
+
+    // Mobile jump guarantee: layout and reveal once tab is active
+    setTimeout(() => {
+      if (mobileEditorRef.current) {
+        try {
+          mobileEditorRef.current.layout();
+          mobileEditorRef.current.revealLineInCenter(line, 0);
+          mobileEditorRef.current.setPosition({ lineNumber: line, column: targetCol });
+          mobileEditorRef.current.focus();
+        } catch (_) {}
+      }
+    }, 80);
+    setTimeout(() => {
+      if (mobileEditorRef.current) {
+        try {
+          mobileEditorRef.current.layout();
+          mobileEditorRef.current.revealLineInCenter(line, 0);
+          mobileEditorRef.current.setPosition({ lineNumber: line, column: targetCol });
+          mobileEditorRef.current.focus();
+        } catch (_) {}
+      }
+    }, 250);
+  };
+
+  // Instant selection-to-LaTeX synchronization
+  const handlePdfTextSelected = (selectedText: string) => {
+    // Suppress forward sync loop while navigating from PDF to code
+    if (forwardSyncTimerRef.current) {
+      clearTimeout(forwardSyncTimerRef.current);
+    }
+    isReverseSyncingRef.current = true;
+    setTimeout(() => {
+      isReverseSyncingRef.current = false;
+    }, 1000);
+
+    const monaco = monacoRef.current;
+    const trimmed = selectedText.trim();
+    if (!trimmed || trimmed.length < 2) return;
+
+    setActiveMobileTab("code");
+
+    const editors = [desktopEditorRef.current, mobileEditorRef.current, editorRef.current].filter(Boolean);
+    const uniqueEditors = Array.from(new Set(editors));
+
+    for (const ed of uniqueEditors) {
+      try {
+        const model = ed.getModel();
+        if (!model) continue;
+
+        let matchRange: any = null;
+
+        // 1. Try exact match first
+        let matches = model.findMatches(trimmed, true, false, true, null, true);
+
+        // 2. Try case-insensitive
+        if (!matches || matches.length === 0) {
+          matches = model.findMatches(trimmed, false, false, false, null, true);
+        }
+
+        // 3. Try word sequence search
+        if (!matches || matches.length === 0) {
+          const words = trimmed
+            .split(/\s+/)
+            .map((w) => w.replace(/[^a-zA-Z0-9]/g, ""))
+            .filter((w) => w.length >= 3);
+
+          if (words.length > 0) {
+            for (let count = Math.min(3, words.length); count >= 1; count--) {
+              const searchPhrase = words.slice(0, count).join("[\\s\\S]{0,60}?");
+              try {
+                matches = model.findMatches(searchPhrase, false, true, false, null, true);
+                if (matches && matches.length > 0) break;
+              } catch (_) {}
+            }
+          }
+        }
+
+        // 4. Substring scan across lines
+        if (!matches || matches.length === 0) {
+          const cleanSnippet = trimmed.slice(0, 15).toLowerCase();
+          const lineCount = model.getLineCount();
+          for (let i = 1; i <= lineCount; i++) {
+            const lineText = model.getLineContent(i).toLowerCase();
+            if (lineText.includes(cleanSnippet)) {
+              matchRange = new monaco.Range(i, 1, i, model.getLineMaxColumn(i));
+              break;
+            }
+          }
+        } else {
+          matchRange = matches[0].range;
+        }
+
+        if (matchRange) {
+          const targetLine = matchRange.startLineNumber;
+          const col = matchRange.startColumn || 1;
+          pendingJumpRef.current = { line: targetLine, col, matchRange, timestamp: Date.now() };
+
+          ed.revealLineInCenter(targetLine, 0);
+          ed.setSelection(matchRange);
+          ed.setPosition({
+            lineNumber: targetLine,
+            column: col,
+          });
+          ed.focus();
+
+          // Release cursor in that line after brief flash so the selection does not stay selected/blocked
+          setTimeout(() => {
+            try {
+              ed.setSelection(new monaco.Range(targetLine, col, targetLine, col));
+              ed.setPosition({ lineNumber: targetLine, column: col });
+            } catch (_) {}
+          }, 400);
+
+          if (monaco) {
+            const decorations = ed.deltaDecorations([], [
+              {
+                range: new monaco.Range(targetLine, 1, targetLine, 1),
+                options: {
+                  isWholeLine: true,
+                  className: "synctex-highlight-line",
+                  glyphMarginClassName: "synctex-gutter-marker",
+                },
+              },
+            ]);
+            setTimeout(() => {
+              try {
+                ed.deltaDecorations(decorations, []);
+              } catch (_) {}
+            }, 1200);
+          }
+        }
+      } catch (_) {}
+    }
+
+    // Auto-release browser selection in the PDF so user doesn't have to click away
+    setTimeout(() => {
+      try {
+        window.getSelection()?.removeAllRanges();
+      } catch (_) {}
+    }, 250);
+
+    // Mobile jump guarantee: layout and reveal once tab is active
+    setTimeout(() => {
+      if (mobileEditorRef.current) {
+        try {
+          mobileEditorRef.current.layout();
+          if (pendingJumpRef.current) {
+            mobileEditorRef.current.revealLineInCenter(pendingJumpRef.current.line, 0);
+            mobileEditorRef.current.setPosition({
+              lineNumber: pendingJumpRef.current.line,
+              column: pendingJumpRef.current.col || 1,
+            });
+            mobileEditorRef.current.focus();
+          }
+        } catch (_) {}
+      }
+    }, 80);
+    setTimeout(() => {
+      if (mobileEditorRef.current) {
+        try {
+          mobileEditorRef.current.layout();
+          if (pendingJumpRef.current) {
+            mobileEditorRef.current.revealLineInCenter(pendingJumpRef.current.line, 0);
+            mobileEditorRef.current.setPosition({
+              lineNumber: pendingJumpRef.current.line,
+              column: pendingJumpRef.current.col || 1,
+            });
+            mobileEditorRef.current.focus();
+          }
+        } catch (_) {}
+      }
+    }, 250);
+  };
+
+  // Re-sync jump whenever activeMobileTab switches to "code"
+  useEffect(() => {
+    if (activeMobileTab === "code") {
+      setTimeout(() => {
+        if (mobileEditorRef.current) {
+          mobileEditorRef.current.layout();
+          if (pendingJumpRef.current && Date.now() - pendingJumpRef.current.timestamp < 6000) {
+            const jump = pendingJumpRef.current;
+            mobileEditorRef.current.revealLineInCenter(jump.line, 0);
+            mobileEditorRef.current.setPosition({ lineNumber: jump.line, column: jump.col || 1 });
+            mobileEditorRef.current.focus();
+          }
+        }
+      }, 70);
+    }
+  }, [activeMobileTab]);
 
   // ─── Model Selector State ────────────────────────────────────────────────
-  const [modelSelectorOpen, setModelSelectorOpen] = useState<boolean>(false);
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
 
   // Fetch available models from backend on mount
@@ -298,83 +557,9 @@ export function EditorLayout({
     fetchModels();
   }, []);
 
-  // Helper: get display label for a model ID
-  const getModelLabel = (modelId: string): string => {
-    for (const provider of availableModels) {
-      for (const m of provider.models) {
-        if (m.id === modelId) return m.label;
-      }
-    }
-    return modelId;
-  };
 
-  const renderModelSelectorModal = () => {
-    if (!modelSelectorOpen) return null;
-    return (
-      <div
-        className="fixed inset-0 z-[99999] bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
-        onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-        onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-      >
-        <div
-          className="w-80 max-w-[92vw] bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl overflow-hidden p-3 space-y-3 animate-in zoom-in-95 duration-150 font-sans"
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-2.5 select-none">
-            <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs tracking-wide">
-              <span>Select AI Model</span>
-            </div>
-            <button
-              type="button"
-              onPointerDown={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-              onClick={(e) => { e.stopPropagation(); setModelSelectorOpen(false); }}
-              className="p-1 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors cursor-pointer"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
 
-          <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
-            {availableModels.map((provider) => (
-              <div key={provider.name} className="space-y-1.5">
-                <div className="text-[10px] font-archivo uppercase tracking-widest text-[#00CC68] font-bold px-1">
-                  {provider.name}
-                </div>
-                <div className="space-y-1">
-                  {provider.models.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        setActiveModelName(m.id);
-                        setModelSelectorOpen(false);
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActiveModelName(m.id);
-                        setModelSelectorOpen(false);
-                      }}
-                      className={`w-full text-left px-3 py-2.5 rounded-xl text-xs font-mono flex items-center justify-between gap-3 transition-all cursor-pointer ${activeModelName === m.id
-                        ? "bg-[#00CC68]/20 text-[#00CC68] font-bold border border-[#00CC68]/40"
-                        : "bg-zinc-950/60 text-zinc-300 hover:bg-zinc-800 hover:text-white border border-zinc-800/80"
-                        }`}
-                    >
-                      <span className="truncate">
-                        {m.label}{m.default ? " (Default)" : ""}
-                      </span>
-                      {activeModelName === m.id && <Check className="w-3.5 h-3.5 text-[#00CC68] shrink-0 stroke-[3]" />}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
+
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -981,21 +1166,65 @@ export function EditorLayout({
     }
   };
 
-  const handleEditorMount: OnMount = (editor, monaco) => {
+  const handleEditorMount = (editor: any, monaco: any, isDesktop: boolean = true) => {
+    if (isDesktop) {
+      desktopEditorRef.current = editor;
+    } else {
+      mobileEditorRef.current = editor;
+    }
     editorRef.current = editor;
     monacoRef.current = monaco;
 
     setupDefaultLatexSyntaxAndEmeraldTheme(monaco, editor);
 
-    editor.onDidChangeCursorSelection((e) => {
+    editor.onDidChangeCursorSelection((e: any) => {
       if (e.selection) {
         lastSelectionRef.current = e.selection;
       }
     });
 
-    editor.onDidChangeCursorPosition((e) => {
+    editor.onDidChangeCursorPosition((e: any) => {
       if (e.position) {
         lastPositionRef.current = e.position;
+
+        // DO NOT trigger forward sync if cursor moved due to reverse sync or PDF selection!
+        if (isReverseSyncingRef.current) {
+          return;
+        }
+
+        // Forward Sync: Debounce 120ms
+        if (forwardSyncTimerRef.current) {
+          clearTimeout(forwardSyncTimerRef.current);
+        }
+        forwardSyncTimerRef.current = setTimeout(async () => {
+          if (isReverseSyncingRef.current) return;
+          const pos = e.position;
+          if (!pos) return;
+          try {
+            const res = await fetch(`${BACKEND_URL}/api/synctex/forward`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                file: activeFilePath || "main.tex",
+                line: pos.lineNumber,
+                column: pos.column || 1,
+                project_id: projectId || "",
+              }),
+            });
+            if (res.ok) {
+              const data: SyncTeXForwardResult = await res.json();
+              if (data && data.page && !isReverseSyncingRef.current) {
+                pdfViewerRef.current?.scrollToDestination(
+                  data.page,
+                  data.x,
+                  data.y,
+                  data.width,
+                  data.height
+                );
+              }
+            }
+          } catch (_) {}
+        }, 120);
       }
     });
 
@@ -1542,19 +1771,24 @@ export function EditorLayout({
     setDiffData(null);
     setDiffEditsList([]);
 
-    const historyId = `hist-${Date.now()}`;
+    const historyId = msgId || `edit-${Date.now()}`;
     const userPrompt = messages.filter((m) => m.sender === "user").pop()?.text || "AI Document Edit";
 
     if (editHistoryStoreRef.current) {
       editHistoryStoreRef.current.pushEdit({
         id: historyId,
-        messageId: msgId || `msg-${Date.now()}`,
-        prompt: userPrompt,
         timestamp: Date.now(),
-        filePath: activeFilePath,
-        edits: itemsToApply,
-        codeBeforeEdit,
-        codeAfterEdit: updatedCode,
+        model: activeModelName,
+        prompt: userPrompt,
+        files: [activeFilePath || "main.tex"],
+        beforeCode: { [activeFilePath || "main.tex"]: codeBeforeEdit },
+        afterCode: { [activeFilePath || "main.tex"]: updatedCode },
+        cursorState: {
+          file: activeFilePath || "main.tex",
+          line: editor?.getPosition()?.lineNumber || 1,
+          column: editor?.getPosition()?.column || 1,
+          scrollTop: editor?.getScrollTop() || 0,
+        },
         isReverted: false,
       });
     }
@@ -1625,18 +1859,14 @@ export function EditorLayout({
     handleCompile(updatedCode);
   };
 
-  const handleRevertEdit = (messageId: string) => {
-    const entry = editHistoryStoreRef.current?.getEntryByMessageId(messageId);
-    if (!entry) {
-      toast.error("Could not find edit history entry to revert.");
-      return;
-    }
+  const handleRevertEdit = (editId: string) => {
+    if (!editHistoryStoreRef.current) return;
+    const entry = editHistoryStoreRef.current.revertEdit(editId);
+    if (!entry) return; // Silent safety: Never throw raw exceptions or developer errors
 
-    const prevCode = editHistoryStoreRef.current?.revertEdit(entry.id);
-    if (prevCode === null || prevCode === undefined) {
-      toast.info("This edit is already reverted.");
-      return;
-    }
+    const file = activeFilePath || "main.tex";
+    const restoredCode = entry.beforeCode[file] ?? Object.values(entry.beforeCode)[0];
+    if (restoredCode === undefined) return;
 
     const editor = editorRef.current;
     const model = editor?.getModel?.();
@@ -1645,37 +1875,51 @@ export function EditorLayout({
       editor.executeEdits("ai-revert", [
         {
           range: model.getFullModelRange(),
-          text: prevCode,
+          text: restoredCode,
           forceMoveMarkers: true,
         },
       ]);
       editor.pushUndoStop();
+
+      // Restore cursor position, selection & scroll
+      if (entry.cursorState) {
+        editor.setPosition({
+          lineNumber: entry.cursorState.line || 1,
+          column: entry.cursorState.column || 1,
+        });
+        editor.setScrollTop(entry.cursorState.scrollTop || 0);
+        editor.revealPositionInCenterIfOutsideViewport({
+          lineNumber: entry.cursorState.line || 1,
+          column: entry.cursorState.column || 1,
+        });
+      }
     } else {
-      setCode(prevCode);
+      setCode(restoredCode);
     }
 
-    setCode(prevCode);
-    saveDocument(prevCode, true);
-    handleCompile(prevCode);
+    setCode(restoredCode);
+    saveDocument(restoredCode, true);
+    handleCompile(restoredCode);
 
     setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, isReverted: true } : m))
+      prev.map((m) =>
+        (m.historyEntryId === editId || m.id === editId)
+          ? { ...m, isReverted: true }
+          : m
+      )
     );
-    toast.success("Reverted AI edit!");
+
+    toast.success("Reverted AI edit to previous state.");
   };
 
-  const handleReapplyEdit = (messageId: string) => {
-    const entry = editHistoryStoreRef.current?.getEntryByMessageId(messageId);
-    if (!entry) {
-      toast.error("Could not find edit history entry to reapply.");
-      return;
-    }
+  const handleReapplyEdit = (editId: string) => {
+    if (!editHistoryStoreRef.current) return;
+    const entry = editHistoryStoreRef.current.reapplyEdit(editId);
+    if (!entry) return;
 
-    const nextCode = editHistoryStoreRef.current?.reapplyEdit(entry.id);
-    if (nextCode === null || nextCode === undefined) {
-      toast.info("This edit is already active.");
-      return;
-    }
+    const file = activeFilePath || "main.tex";
+    const reappliedCode = entry.afterCode[file] ?? Object.values(entry.afterCode)[0];
+    if (reappliedCode === undefined) return;
 
     const editor = editorRef.current;
     const model = editor?.getModel?.();
@@ -1684,23 +1928,28 @@ export function EditorLayout({
       editor.executeEdits("ai-reapply", [
         {
           range: model.getFullModelRange(),
-          text: nextCode,
+          text: reappliedCode,
           forceMoveMarkers: true,
         },
       ]);
       editor.pushUndoStop();
     } else {
-      setCode(nextCode);
+      setCode(reappliedCode);
     }
 
-    setCode(nextCode);
-    saveDocument(nextCode, true);
-    handleCompile(nextCode);
+    setCode(reappliedCode);
+    saveDocument(reappliedCode, true);
+    handleCompile(reappliedCode);
 
     setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, isReverted: false } : m))
+      prev.map((m) =>
+        (m.historyEntryId === editId || m.id === editId)
+          ? { ...m, isReverted: false }
+          : m
+      )
     );
-    toast.success("Reapplied AI edit!");
+
+    toast.success("Reapplied AI edit.");
   };
 
   const handleRejectSingleEdit = (itemId: string) => {
@@ -1808,25 +2057,47 @@ export function EditorLayout({
             </div>
             <div className="flex items-center gap-1.5">
               {!m.isReverted ? (
-                <button
-                  type="button"
-                  onClick={() => handleRevertEdit(m.id)}
-                  className="px-2 py-1 rounded-md bg-zinc-900 hover:bg-zinc-800 text-amber-300 hover:text-amber-200 border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
-                  title="Revert this AI edit"
-                >
-                  <Undo2 className="w-3 h-3 text-amber-400" />
-                  <span>Revert</span>
-                </button>
+                (() => {
+                  const targetId = m.historyEntryId || m.id;
+                  const hasHistory = editHistoryStoreRef.current?.hasEntry(targetId) ?? false;
+                  return (
+                    <button
+                      type="button"
+                      disabled={!hasHistory}
+                      onClick={() => handleRevertEdit(targetId)}
+                      className={`px-2 py-1 rounded-md border text-[10px] font-mono font-bold flex items-center gap-1 transition-all shadow-xs ${
+                        hasHistory
+                          ? "bg-zinc-900 hover:bg-zinc-800 text-amber-300 hover:text-amber-200 border-zinc-800 cursor-pointer active:scale-95"
+                          : "bg-zinc-900 border-zinc-800 opacity-35 text-zinc-500 cursor-not-allowed"
+                      }`}
+                      title={hasHistory ? "Revert this AI edit" : "Edit history unavailable"}
+                    >
+                      <Undo2 className="w-3 h-3 text-amber-400" />
+                      <span>Revert</span>
+                    </button>
+                  );
+                })()
               ) : (
-                <button
-                  type="button"
-                  onClick={() => handleReapplyEdit(m.id)}
-                  className="px-2 py-1 rounded-md bg-[#00CC68]/20 hover:bg-[#00CC68]/30 text-[#00CC68] border border-[#00CC68]/40 text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
-                  title="Reapply this AI edit"
-                >
-                  <Redo2 className="w-3 h-3 text-[#00CC68]" />
-                  <span>Reapply</span>
-                </button>
+                (() => {
+                  const targetId = m.historyEntryId || m.id;
+                  const hasHistory = editHistoryStoreRef.current?.hasEntry(targetId) ?? false;
+                  return (
+                    <button
+                      type="button"
+                      disabled={!hasHistory}
+                      onClick={() => handleReapplyEdit(targetId)}
+                      className={`px-2 py-1 rounded-md border text-[10px] font-mono font-bold flex items-center gap-1 transition-all shadow-xs ${
+                        hasHistory
+                          ? "bg-[#00CC68]/20 hover:bg-[#00CC68]/30 text-[#00CC68] border-[#00CC68]/40 cursor-pointer active:scale-95"
+                          : "bg-zinc-900 border-zinc-800 opacity-35 text-zinc-500 cursor-not-allowed"
+                      }`}
+                      title={hasHistory ? "Reapply this AI edit" : "Edit history unavailable"}
+                    >
+                      <Redo2 className="w-3 h-3 text-[#00CC68]" />
+                      <span>Reapply</span>
+                    </button>
+                  );
+                })()
               )}
             </div>
           </div>
@@ -1924,9 +2195,13 @@ export function EditorLayout({
 
       <header className="h-14 border-b border-zinc-800 bg-zinc-950 px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10 select-none">
         <div className="flex items-center gap-2 overflow-hidden">
-          <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity">
+          <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity flex items-center gap-1.5" title="OverBranch (Beta) — Return to Dashboard">
             <OverBranchLogo size="sm" variant="icon" colored />
+            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-900 text-[#00CC68] border border-zinc-800 tracking-wider">
+              BETA
+            </span>
           </Link>
+          <div className="w-[1px] h-4 bg-zinc-800 mx-0.5 shrink-0 hidden sm:block" />
           <div className="truncate">
             <h1 className="font-archivo font-bold text-xs sm:text-sm text-white tracking-tight truncate">
               {projectDetail?.name || (projectId ? `${projectId}.tex` : "main.tex")}
@@ -2004,6 +2279,18 @@ export function EditorLayout({
               <span>Preview</span>
             </Button>
 
+            {/* Fullscreen Presentation Mode Button */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setIsPresentationMode(true)}
+              className="h-8 px-2.5 text-xs font-mono hidden lg:flex items-center gap-1.5 transition-colors bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white cursor-pointer"
+              title="Fullscreen Presentation Mode (Ctrl+Alt+P)"
+            >
+              <Maximize2 className="w-3.5 h-3.5 text-purple-400" />
+              <span>Present</span>
+            </Button>
+
             <Button
               variant="outline"
               size="sm"
@@ -2037,6 +2324,17 @@ export function EditorLayout({
               <span className="hidden sm:inline">Save</span>
             </Button>
           </div>
+
+          <a
+            href="https://github.com/abin-karukappallil/overbranch/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-amber-300 font-mono transition-colors"
+            title="OverBranch is in active Beta — Report any bugs on GitHub Issues"
+          >
+            <span className="text-[9px] font-mono font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-0.5 rounded">BETA</span>
+            <span>Report Bug</span>
+          </a>
 
           <CollaboratorAvatars projectId={projectId} />
         </div>
@@ -2134,7 +2432,7 @@ export function EditorLayout({
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                 theme="vs-dark"
                 value={code}
-                onMount={handleEditorMount}
+                onMount={(editor, monaco) => handleEditorMount(editor, monaco, true)}
                 onChange={handleCodeChange}
                 options={{
                   minimap: { enabled: false },
@@ -2231,10 +2529,15 @@ export function EditorLayout({
           >
             <div className="flex-1 h-full min-w-0 max-w-full w-full flex flex-col overflow-hidden">
               <PDFViewer
+                ref={pdfViewerRef}
                 pdfBase64={pdfBase64}
                 isCompiling={isCompiling}
                 onRecompile={() => handleCompile()}
                 errorLog={errorLog}
+                projectId={projectId}
+                onReverseSync={handleReverseSyncJump}
+                onTextSelected={handlePdfTextSelected}
+                onEnterPresentation={() => setIsPresentationMode(true)}
               />
             </div>
           </div>
@@ -2281,28 +2584,12 @@ export function EditorLayout({
                       </button>
 
                       {/* Model Selector */}
-                      <button
-                        type="button"
-                        onPointerDown={(e) => {
-                          if (!isAgentThinking) {
-                            e.stopPropagation();
-                            setModelSelectorOpen(true);
-                          }
-                        }}
-                        onClick={(e) => {
-                          if (!isAgentThinking) {
-                            e.stopPropagation();
-                            setModelSelectorOpen(true);
-                          }
-                        }}
+                      <ModelSelector
+                        activeModelName={activeModelName}
+                        onSelectModel={setActiveModelName}
+                        availableModels={availableModels}
                         disabled={isAgentThinking}
-                        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                        title="Select AI Model"
-                      >
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                        <span className="truncate max-w-[105px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                        {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                      </button>
+                      />
                     </div>
                   </div>
 
@@ -2562,153 +2849,157 @@ export function EditorLayout({
         </div>
       </div>
 
-      {/* Mobile Viewports */}
+      {/* Mobile Viewports - Keep components mounted with CSS toggle so editor state & sync are never lost */}
       <div className="flex md:hidden flex-1 min-h-0 overflow-hidden relative">
-        {activeMobileTab === "files" && (
-          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
-            <ProjectFilesPanel
-              projectId={projectId || "proj-1"}
-              activeFilePath={activeFilePath}
-              isOpen={true}
-              onClose={() => setActiveMobileTab("code")}
-              onSelectFile={(filePath) => {
-                setActiveFilePath(filePath);
-                setActiveMobileTab("code");
-              }}
-              onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
-              refreshTrigger={filesRefreshTrigger}
-            />
-          </div>
-        )}
+        <div className={`flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
+          <ProjectFilesPanel
+            projectId={projectId || "proj-1"}
+            activeFilePath={activeFilePath}
+            isOpen={true}
+            onClose={() => setActiveMobileTab("code")}
+            onSelectFile={(filePath) => {
+              setActiveFilePath(filePath);
+              setActiveMobileTab("code");
+            }}
+            onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
+            refreshTrigger={filesRefreshTrigger}
+          />
+        </div>
 
-        {activeMobileTab === "code" && (
-          <div className="flex-1 flex flex-col bg-background overflow-hidden relative min-h-0">
-            <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
-              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
+        <div className={`flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 ${activeMobileTab === "code" ? "flex" : "hidden"}`}>
+          <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
+              <button
+                type="button"
+                onClick={handleSelectAll}
+                className="px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+              >
+                <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Select All</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSelectLine}
+                className="px-2 py-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+              >
+                <MousePointerClick className="w-3.5 h-3.5 text-sky-400" />
+                <span>Select Line</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCustomCopy}
+                className="px-2 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+              >
+                <Copy className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Copy</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleCustomPaste}
+                className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+              >
+                <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Paste</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleUndo}
+                className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Undo</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleRedo}
+                className="px-2 py-1 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo2 className="w-3.5 h-3.5 text-orange-400" />
+                <span>Redo</span>
+              </button>
+              {quickSymbols.map((sym) => (
                 <button
-                  type="button"
-                  onClick={handleSelectAll}
-                  className="px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
+                  key={sym.label}
+                  onClick={() => insertSymbol(sym.insert)}
+                  className="px-2 py-1 rounded bg-muted/60 text-indigo-300 border border-border/40 shrink-0 text-xs"
                 >
-                  <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
-                  <span>Select All</span>
+                  {sym.label}
                 </button>
-                <button
-                  type="button"
-                  onClick={handleSelectLine}
-                  className="px-2 py-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                >
-                  <MousePointerClick className="w-3.5 h-3.5 text-sky-400" />
-                  <span>Select Line</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCustomCopy}
-                  className="px-2 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                >
-                  <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Copy</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCustomPaste}
-                  className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                >
-                  <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Paste</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleUndo}
-                  className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                  title="Undo (Ctrl+Z)"
-                >
-                  <Undo2 className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Undo</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRedo}
-                  className="px-2 py-1 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                  title="Redo (Ctrl+Y)"
-                >
-                  <Redo2 className="w-3.5 h-3.5 text-orange-400" />
-                  <span>Redo</span>
-                </button>
-                {quickSymbols.map((sym) => (
-                  <button
-                    key={sym.label}
-                    onClick={() => insertSymbol(sym.insert)}
-                    className="px-2 py-1 rounded bg-muted/60 text-indigo-300 border border-border/40 shrink-0 text-xs"
-                  >
-                    {sym.label}
-                  </button>
-                ))}
-              </div>
+              ))}
             </div>
-            <div className="flex-1 min-h-0 overflow-hidden relative">
-              <EditorErrorBoundary>
-                <Editor
-                  height="100%"
-                  defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
-                  theme="vs-dark"
-                  value={code}
-                  onMount={handleEditorMount}
-                  onChange={handleCodeChange}
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                    wordWrap: "on",
-                    automaticLayout: true,
-                    contextmenu: false,
-                  }}
-                />
-              </EditorErrorBoundary>
-              {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
-                  <div className="flex items-center justify-between font-bold text-slate-100">
-                    <div className="flex items-center gap-1.5 text-indigo-400">
-                      <span>Pending Edit</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAcceptAllEdits(diffEditsList)}
-                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Accept</span>
-                    </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-hidden relative">
+            <EditorErrorBoundary>
+              <Editor
+                height="100%"
+                defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
+                theme="vs-dark"
+                value={code}
+                onMount={(editor, monaco) => handleEditorMount(editor, monaco, false)}
+                onChange={handleCodeChange}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 14,
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  contextmenu: false,
+                }}
+              />
+            </EditorErrorBoundary>
+            {diffData && diffEditsList.length > 0 && (
+              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
+                <div className="flex items-center justify-between font-bold text-slate-100">
+                  <div className="flex items-center gap-1.5 text-indigo-400">
+                    <span>Pending Edit</span>
                   </div>
                 </div>
-              )}
-            </div>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleRejectAllEdits}
+                    className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Reject</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAcceptAllEdits(diffEditsList)}
+                    className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Accept</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
-        {activeMobileTab === "pdf" && (
-          <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden min-h-0">
-            <PDFViewer
-              pdfBase64={pdfBase64}
-              isCompiling={isCompiling}
-              onRecompile={() => handleCompile()}
-              errorLog={errorLog}
-            />
-          </div>
-        )}
+        <div className={`flex-1 flex flex-col bg-zinc-950 overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
+          <PDFViewer
+            ref={pdfViewerRef}
+            pdfBase64={pdfBase64}
+            isCompiling={isCompiling}
+            onRecompile={() => handleCompile()}
+            errorLog={errorLog}
+            projectId={projectId}
+            onReverseSync={(file, line, col) => {
+              setActiveMobileTab("code");
+              handleReverseSyncJump(file, line, col);
+            }}
+            onTextSelected={(text) => {
+              setActiveMobileTab("code");
+              handlePdfTextSelected(text);
+            }}
+            onEnterPresentation={() => setIsPresentationMode(true)}
+          />
+        </div>
 
-        {activeMobileTab === "ai" && (
-          <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans">
-            <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
+        <div className={`flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
+          <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold">
                   <div className="flex items-center gap-1.5 shrink-0">
@@ -2742,28 +3033,12 @@ export function EditorLayout({
                   </button>
 
                   {/* Model Selector */}
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    onClick={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
+                  <ModelSelector
+                    activeModelName={activeModelName}
+                    onSelectModel={setActiveModelName}
+                    availableModels={availableModels}
                     disabled={isAgentThinking}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    title="Select AI Model"
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                  </button>
+                  />
                 </div>
               </div>
 
@@ -2991,8 +3266,7 @@ export function EditorLayout({
               )}
             </form>
           </div>
-        )}
-      </div>
+        </div>
 
       {/* Mobile Bottom Navigation */}
       <nav className="md:hidden border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-xl shrink-0 z-40 pb-[env(safe-area-inset-bottom,0px)]">
@@ -3074,28 +3348,12 @@ export function EditorLayout({
                   </button>
 
                   {/* Model Selector */}
-                  <button
-                    type="button"
-                    onPointerDown={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
-                    onClick={(e) => {
-                      if (!isAgentThinking) {
-                        e.stopPropagation();
-                        setModelSelectorOpen(true);
-                      }
-                    }}
+                  <ModelSelector
+                    activeModelName={activeModelName}
+                    onSelectModel={setActiveModelName}
+                    availableModels={availableModels}
                     disabled={isAgentThinking}
-                    className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[10px] border border-[#00CC68]/20 font-bold hover:bg-[#00CC68]/20 transition-colors cursor-pointer shrink-0 ${isAgentThinking ? "opacity-60 cursor-not-allowed" : ""}`}
-                    title="Select AI Model"
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                    <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
-                    {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
-                  </button>
+                  />
                   <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
                     <X className="w-5 h-5" />
                   </button>
@@ -3262,13 +3520,17 @@ export function EditorLayout({
                 </Button>
               )}
             </form>
-            {renderModelSelectorModal()}
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
 
-      {/* Custom AI Model Selection Modal */}
-      {renderModelSelectorModal()}
+      {/* Fullscreen Presentation Mode View */}
+      {isPresentationMode && (
+        <PresentationView
+          blobUrl={pdfViewerRef.current?.getBlobUrl() || null}
+          onExit={() => setIsPresentationMode(false)}
+        />
+      )}
     </div>
   );
 }
