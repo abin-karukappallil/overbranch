@@ -11,6 +11,7 @@ interface LogoProps {
   iconClassName?: string;
   animated?: boolean;
   colored?: boolean;
+  showBeta?: boolean;
 }
 
 export function OverBranchLogo({
@@ -22,6 +23,7 @@ export function OverBranchLogo({
   iconClassName = "",
   animated = true,
   colored = true,
+  showBeta = false,
 }: LogoProps) {
   const reactId = React.useId ? React.useId().replace(/:/g, "") : "obLogo";
   const gradientId = `obLogoGrad_${reactId}`;
@@ -116,18 +118,25 @@ export function OverBranchLogo({
       )}
 
       {showText && (
-        <span
-          className={`font-archivo font-black uppercase tracking-[-0.04em] text-foreground ${
-            size === "sm"
-              ? "text-sm"
-              : size === "md"
-              ? "text-base sm:text-lg"
-              : size === "lg"
-              ? "text-xl"
-              : "text-2xl"
-          } ${textClassName}`}
-        >
-          OverBranch
+        <span className="flex items-center gap-1.5 shrink-0">
+          <span
+            className={`font-archivo font-black uppercase tracking-[-0.04em] text-foreground ${
+              size === "sm"
+                ? "text-sm"
+                : size === "md"
+                ? "text-base sm:text-lg"
+                : size === "lg"
+                ? "text-xl"
+                : "text-2xl"
+            } ${textClassName}`}
+          >
+            OverBranch
+          </span>
+          {showBeta && (
+            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+              BETA
+            </span>
+          )}
         </span>
       )}
     </div>
