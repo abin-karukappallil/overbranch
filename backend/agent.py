@@ -68,6 +68,7 @@ class AgentChatRequest(BaseModel):
     attached_file: Optional[AttachedFile] = Field(None, description="Optional attached file from user chat")
     model: Optional[str] = Field(None, description="Primary LLM model name")
     fallback_model: Optional[str] = Field(None, description="Fallback LLM model name")
+    mode: Optional[str] = Field("edit", description="Chat mode: 'ask' (question-only) or 'edit' (agentic editing)")
 
 
 
@@ -884,17 +885,17 @@ async def agent_chat(request: Request):
             yield sse_event("progress", {"step": "analyze", "message": "Analyzing prompt...", "icon": "zap"})
             has_attached_file = bool((req.attached_file and req.attached_file.content) or conversation_memory.get_attached_file(req.project_id))
             mode, is_search_needed = categorize_user_intent(req.user_prompt, has_attached_file=has_attached_file)
-            print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})")
 
-            # Check if user document already exists
-            has_existing_code = bool(req.current_code and len(req.current_code.strip()) > 50 and "\\documentclass" in req.current_code)
+            # Ask-mode override: client explicitly requested question-only mode
+            is_ask_mode = (req.mode or "edit").lower() == "ask"
+            if is_ask_mode:
+                mode = "GENERAL_CHAT"
+                is_search_needed = True  # Still use RAG for context in Ask mode
+                yield sse_event("progress", {"step": "ask_mode", "message": "Ask Mode — answering question only", "icon": "message-circle"})
 
-            # Fast-path: Bypass vector search ONLY when creating a new presentation on an empty document
-            is_new_doc_request = (not has_existing_code) and any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
-            if is_new_doc_request:
-                is_search_needed = False
+            print(f"\n [AGENT CHAT REQUEST RECEIVED]\n  > Prompt: '{req.user_prompt}'\n  > Project ID: {req.project_id}\n  > Mode: {mode} (Vector Search = {is_search_needed})\n  > Client Mode: {'ask' if is_ask_mode else 'edit'}")
 
-            yield sse_event("progress", {"step": "intent", "message": f"Mode: {mode.replace('_', ' ').title()}", "icon": "brain"})
+            yield sse_event("progress", {"step": "intent", "message": f"Mode: {'Ask' if is_ask_mode else mode.replace('_', ' ').title()}", "icon": "brain"})
 
             # Fast-path for simple greetings
             text_clean = req.user_prompt.lower().strip()
@@ -909,6 +910,17 @@ async def agent_chat(request: Request):
 
             # Fast-path: In-project PDF to Editable LaTeX conversion
             # Fast-path: In-project PDF to Editable LaTeX conversion
+
+            # Check if user document already exists
+            has_existing_code = bool(req.current_code and len(req.current_code.strip()) > 50 and "\\documentclass" in req.current_code)
+
+            # Fast-path: Bypass vector search ONLY when creating a new presentation on an empty document (edit mode only)
+            is_new_doc_request = False
+            if not is_ask_mode:
+                is_new_doc_request = (not has_existing_code) and any(kw in req.user_prompt.lower() for kw in ["ppt", "presentation", "beamer", "slide", "create ppt", "make ppt", "generate ppt"])
+                if is_new_doc_request:
+                    is_search_needed = False
+
             is_pdf = False
             pdf_data_input = None
             if req.attached_file and req.attached_file.content:
@@ -970,7 +982,7 @@ async def agent_chat(request: Request):
             words = prompt_clean.split()
             is_short_convert_cmd = len(words) <= 3 and any(w in prompt_clean for w in ["recreate", "convert", "pdf2latex"])
 
-            is_pdf_conversion_request = is_pdf and (pdf_data_input is not None) and (is_explicit_recreate or is_short_convert_cmd)
+            is_pdf_conversion_request = (not is_ask_mode) and is_pdf and (pdf_data_input is not None) and (is_explicit_recreate or is_short_convert_cmd)
 
             if is_pdf_conversion_request:
                 yield sse_event("progress", {"step": "pdf_parse", "message": "Analyzing PDF structure with PyMuPDF...", "icon": "file-text"})
@@ -1094,6 +1106,7 @@ async def agent_chat(request: Request):
                         query_embedding=prompt_embedding,
                         project_id=req.project_id,
                         file_path=req.file_path,
+                        top_k=8 if is_ask_mode else 5,
                     ):
                         if isinstance(item, str) and item.startswith(":"):
                             yield item
@@ -1189,16 +1202,27 @@ async def agent_chat(request: Request):
                     logger.info(f"Referencing persistent attached document context for project '{req.project_id}': '{cached_file_info.get('filename')}'")
                     yield sse_event("progress", {"step": "file_cached", "message": f"Referencing document: {cached_file_info.get('filename')}", "icon": "paperclip"})
 
-            messages = prompt_builder.build_prompt(
-                user_request=req.user_prompt,
-                retrieved_context=context_str,
-                conversation_context=conv_ctx,
-                project_context=full_proj_context,
-                attached_file_info=attached_info,
-                current_code=req.current_code,
-                target_context=targeted_context,
-                is_edit_mode=is_targeted_edit,
-            )
+            # Use Ask-mode or Edit-mode prompt builder
+            if is_ask_mode:
+                messages = prompt_builder.build_ask_prompt(
+                    user_request=req.user_prompt,
+                    retrieved_context=context_str,
+                    conversation_context=conv_ctx,
+                    project_context=full_proj_context,
+                    attached_file_info=attached_info,
+                    current_code=req.current_code,
+                )
+            else:
+                messages = prompt_builder.build_prompt(
+                    user_request=req.user_prompt,
+                    retrieved_context=context_str,
+                    conversation_context=conv_ctx,
+                    project_context=full_proj_context,
+                    attached_file_info=attached_info,
+                    current_code=req.current_code,
+                    target_context=targeted_context,
+                    is_edit_mode=is_targeted_edit,
+                )
 
             # Step 6: Invoke LLM
             system_content = messages[0].content if (isinstance(messages, list) and len(messages) > 0) else ""
@@ -1325,6 +1349,39 @@ async def agent_chat(request: Request):
                 return
 
             # Step 7: Parse response
+            if is_ask_mode:
+                clean_answer = response_text.strip()
+                yield sse_event("progress", {"step": "done", "message": "Complete", "icon": "check"})
+
+                chunk_summaries = [c.get("summary", "") for c in retrieved_chunks if c.get("summary")]
+                conversation_memory.add_turn(
+                    project_id=req.project_id,
+                    user_prompt=req.user_prompt,
+                    assistant_response={"explanation": clean_answer},
+                    file_path=req.file_path,
+                    chunk_summaries=chunk_summaries,
+                )
+
+                fallback_notice = (
+                    f"Note: Primary model ({primary_model}) was unavailable. Used fallback model ({model_used})."
+                    if is_fallback
+                    else None
+                )
+
+                yield sse_event("result", {
+                    "plan": "",
+                    "edits": [],
+                    "original_chunk": "",
+                    "proposed_chunk": "",
+                    "explanation": clean_answer,
+                    "retrieved_chunks_count": len(retrieved_chunks),
+                    "model_used": model_used,
+                    "is_fallback": is_fallback,
+                    "fallback_notice": fallback_notice,
+                    "mode": "ask"
+                })
+                return
+
             yield sse_event("progress", {"step": "parse", "message": "Parsing AI response...", "icon": "code"})
             parsed_result = clean_json_response(response_text)
 

@@ -15,8 +15,8 @@ OVERLAP_THRESHOLD = 0.70      # Stage 4: dedup if >70% content overlap
 MMR_LAMBDA = 0.6              # MMR trade-off: relevance vs diversity
 
 # Score weights for composite ranking
-W_SEMANTIC = 0.60
-W_RECENCY = 0.15
+W_SEMANTIC = 0.55
+W_RECENCY = 0.20
 W_QUALITY = 0.15
 W_FILE_RELEVANCE = 0.10
 
@@ -51,14 +51,27 @@ def _compute_composite_score(
     last_modified: str,
     chunk_file: str,
     active_file: str,
+    chunk_section: str = "",
+    target_section: str = "",
+    is_nearby: bool = False,
 ) -> float:
     """Compute weighted composite score for a retrieved chunk."""
-    return (
+    score = (
         W_SEMANTIC * semantic_score
         + W_RECENCY * _recency_score(last_modified)
         + W_QUALITY * _chunk_quality_score(chunk_type)
         + W_FILE_RELEVANCE * _file_relevance_score(chunk_file, active_file)
     )
+
+    # Prioritize same section
+    if target_section and chunk_section and target_section.lower() in chunk_section.lower():
+        score += 0.15
+
+    # Prioritize nearby chunks to top-scoring anchors
+    if is_nearby:
+        score += 0.10
+
+    return score
 
 
 def _jaccard_similarity(text_a: str, text_b: str) -> float:
@@ -141,6 +154,8 @@ def stage1_broad_search(
             "similarity": getattr(hit, "score", 0.0),
             "chunk_index": payload.get("chunk_index", 0),
             "chunk_type": payload.get("chunk_type", "paragraph"),
+            "section": payload.get("section", ""),
+            "approx_position": payload.get("approx_position", 0.0),
             "start_line": payload.get("start_line", 0),
             "end_line": payload.get("end_line", 0),
             "file_path": payload.get("file_path", ""),
@@ -157,15 +172,24 @@ def stage1_broad_search(
 def stage2_metadata_scoring(
     chunks: List[Dict[str, Any]],
     active_file: str,
+    target_section: str = "",
 ) -> List[Dict[str, Any]]:
-    """Stage 2: Re-score chunks using composite scoring (semantic + metadata)."""
+    """Stage 2: Re-score chunks using composite scoring (semantic + metadata + section/proximity)."""
+    # Identify anchor chunk indices from top semantic matches
+    anchor_indices = {c.get("chunk_index", 0) for c in chunks[:3]}
+    nearby_indices = {i + offset for i in anchor_indices for offset in (-1, 1)}
+
     for chunk in chunks:
+        c_idx = chunk.get("chunk_index", 0)
         chunk["composite_score"] = _compute_composite_score(
             semantic_score=chunk.get("similarity", 0.0),
             chunk_type=chunk.get("chunk_type", "paragraph"),
             last_modified=chunk.get("last_modified", ""),
             chunk_file=chunk.get("file_path", ""),
             active_file=active_file,
+            chunk_section=chunk.get("section", ""),
+            target_section=target_section,
+            is_nearby=(c_idx in nearby_indices),
         )
 
     # Sort by composite score descending
@@ -252,13 +276,15 @@ def retrieve(
     query_embedding: List[float],
     project_id: str,
     file_path: str = "",
+    top_k: int = FINAL_RESULT_COUNT,
+    target_section: str = "",
 ) -> List[Dict[str, Any]]:
     """
     Full multi-stage retrieval pipeline.
 
-    Returns up to FINAL_RESULT_COUNT diverse, high-quality, deduplicated chunks.
+    Returns up to top_k diverse, high-quality, deduplicated chunks.
     """
-    print(f"\n🔎 [QDRANT RETRIEVAL] Starting vector retrieval for project='{project_id}', file='{file_path}'")
+    print(f"\n🔎 [QDRANT RETRIEVAL] Starting vector retrieval for project='{project_id}', file='{file_path}', top_k={top_k}")
     # Stage 1: Broad search
     raw_hits = stage1_broad_search(qdrant_client, collection_name, query_embedding, project_id, file_path)
 
@@ -269,11 +295,11 @@ def retrieve(
     print(f"  ► Stage 1 (Broad Search): Retrieved {len(raw_hits)} raw vector hits")
 
     # Stage 2: Metadata-boosted scoring
-    scored = stage2_metadata_scoring(raw_hits, active_file=file_path)
+    scored = stage2_metadata_scoring(raw_hits, active_file=file_path, target_section=target_section)
     print(f"  ► Stage 2 (Composite Scoring): Scored {len(scored)} candidates")
 
     # Stage 3: MMR diversity selection
-    diverse = stage3_mmr_diversity(scored)
+    diverse = stage3_mmr_diversity(scored, select_count=max(top_k * 2, DIVERSITY_SELECT_COUNT))
     print(f"  ► Stage 3 (MMR Diversity): Selected {len(diverse)} diverse candidates")
 
     # Stage 4: Overlap deduplication
@@ -281,7 +307,7 @@ def retrieve(
     print(f"  ► Stage 4 (Overlap Dedup): Retained {len(deduped)} deduplicated candidates")
 
     # Stage 5: Final selection
-    final = stage5_final_selection(deduped)
+    final = stage5_final_selection(deduped, max_results=top_k)
     print(f"  ✅ [QDRANT RETRIEVAL COMPLETE] Returning top {len(final)} chunks for context builder\n")
 
     return final

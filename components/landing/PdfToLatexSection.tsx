@@ -30,15 +30,32 @@ export function LandingPdfToLatex() {
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
           <div className="space-y-3 max-w-3xl">
             <div className="inline-flex items-center gap-2 font-mono text-xs sm:text-sm font-bold text-[#00CC68] tracking-widest uppercase">
-            
               <span>02 // PDF TO LATEX CODE</span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 border border-[#00CC68]/40 text-[#00CC68] font-bold">
+                BETA FEATURE
+              </span>
             </div>
-            <h2 className="font-archivo font-black uppercase text-3xl sm:text-5xl lg:text-7xl text-white tracking-[-0.04em] leading-[0.92]">
-              DECOMPILE PDFS INTO REAL LATEX.
+            <h2 className="font-archivo font-black uppercase text-3xl sm:text-5xl lg:text-7xl text-white tracking-[-0.04em] leading-[0.92] flex items-center gap-3 flex-wrap">
+              <span>DECOMPILE PDFS INTO REAL LATEX.</span>
+              <span className="text-xs sm:text-base font-mono font-black uppercase bg-[#00CC68] text-black px-2.5 py-1 rounded tracking-widest self-center shadow-[3px_3px_0px_0px_#ffffff]">
+                BETA
+              </span>
             </h2>
             <p className="font-sans text-base sm:text-xl text-zinc-300 leading-relaxed pt-2">
               Stop re-typing papers by hand. Upload any paper, thesis, or problem set and get a clean, compilable project directory with native math environments and extracted assets.
             </p>
+            <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs font-mono text-zinc-400 flex items-center gap-2 flex-wrap">
+              <span className="text-[#00CC68] font-bold">ℹ️ Beta Notice:</span>
+              <span>PDF decompilation is in active Beta. Layouts and extracted formulas are constantly improving — if you find formatting quirks or bugs, please</span>
+              <a
+                href="https://github.com/abin-karukappallil/overbranch/issues"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#00CC68] hover:underline font-bold inline-flex items-center gap-1"
+              >
+                report them on GitHub Issues →
+              </a>
+            </div>
           </div>
 
           <Link
@@ -46,6 +63,9 @@ export function LandingPdfToLatex() {
             className="inline-flex items-center gap-3 bg-[#00CC68] hover:bg-[#00E676] text-black px-6 py-3.5 rounded-full font-mono text-xs sm:text-sm font-bold uppercase tracking-wider border-2 border-black shadow-[4px_4px_0px_0px_#ffffff] hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-none transition-all duration-150 shrink-0 self-start md:self-end"
           >
             <span>{isAuthenticated ? "DECOMPILE A PDF" : "DECOMPILE A PDF — NO SIGN UP"}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-black text-[#00CC68] font-black uppercase tracking-wider">
+              BETA
+            </span>
             <ArrowRight className="w-4 h-4 stroke-[3]" />
           </Link>
         </div>
@@ -236,7 +256,7 @@ export function LandingPdfToLatex() {
               Instant Editor Fork
             </h3>
             <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-              One click opens your decompiled project in the OverBranch editor with real-time compilation, SyncTeX cursor jumping, and multi-author editing.
+              One click opens your decompiled project in the OverBranch <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] font-bold">BETA</span> editor with real-time compilation, SyncTeX cursor jumping, and multi-author editing.
             </p>
           </div>
         </div>

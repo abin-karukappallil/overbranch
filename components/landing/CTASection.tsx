@@ -39,13 +39,21 @@ export function LandingCTA() {
               href="/register"
               className="inline-flex items-center gap-3 bg-black text-white font-mono text-lg sm:text-2xl font-bold uppercase tracking-wider px-10 py-5 rounded-full border-2 border-black shadow-[6px_6px_0px_0px_#FFFFFF] hover:scale-110 hover:translate-x-2 transition-all duration-200"
             >
-              <span>GET OVERBRANCH</span>
+              <span className="flex items-center gap-2">
+                <span>GET OVERBRANCH</span>
+                <span className="text-[10px] sm:text-xs px-2 py-0.5 rounded bg-[#00CC68] text-black font-black uppercase tracking-wider">
+                  BETA
+                </span>
+              </span>
               <ArrowRight className="w-6 h-6 stroke-[3] text-[#00CC68]" />
             </Link>
           )}
         </div>
 
-        <div className="font-mono text-xs sm:text-sm font-bold tracking-widest text-black/90 pt-8 uppercase">
+     
+       
+
+        <div className="font-mono text-xs sm:text-sm font-bold tracking-widest text-black/90 pt-6 uppercase">
           ANTIGRAVITY FOR LATEX · FASTER THAN OVERLEAF · UNLIMITED CO-AUTHORS
         </div>
       </div>

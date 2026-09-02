@@ -75,12 +75,21 @@ def decode_pdf_input(pdf_input: Any) -> bytes:
     raise ValueError("Invalid PDF input: expected bytes or base64 string")
 
 
-def infer_doc_type(pages: List[PageData], full_text: str) -> Tuple[str, str, str]:
+def infer_doc_type(
+    pages: List[PageData],
+    full_text: str,
+    doc_type_override: Optional[str] = None,
+) -> Tuple[str, str, str]:
     """
     Infers document type, aspect ratio, and paper size from extracted pages and text.
-    Strictly avoids misclassifying academic papers or reports as Beamer slide decks.
     Returns: (doc_type, aspect_ratio_hint, page_size_hint)
     """
+    if doc_type_override and doc_type_override.lower() in ["beamer", "article", "report", "resume"]:
+        override = doc_type_override.lower()
+        aspect_ratio_hint = "169" if override == "beamer" else "portrait"
+        page_size_hint = "custom" if override == "beamer" else "a4paper"
+        return override, aspect_ratio_hint, page_size_hint
+
     if not pages:
         return "article", "portrait", "a4paper"
 
@@ -88,25 +97,14 @@ def infer_doc_type(pages: List[PageData], full_text: str) -> Tuple[str, str, str
     ar = first_page.aspect_ratio
     text_lower = full_text.lower()
 
-    # Clear indicators of academic papers, technical reports, or theses
-    has_paper_indicators = any(kw in text_lower for kw in [
-        "abstract", "introduction", "conclusion", "references", "bibliography",
-        "table of contents", "chapter 1", "acknowledgement", "ieee", "acm", "arxiv", "doi:"
-    ])
+    # Landscape check: Slide presentations are strictly landscape with width >= 1.25x height.
+    # PowerPoint, Google Slides, Keynote, and Beamer decks have AR ~1.78 (16:9) or ~1.33 (4:3).
+    # Academic papers, reports, theses, resumes are portrait (AR ~0.70-0.77).
+    is_landscape = ar >= 1.25
 
-    # Landscape check: Slide presentations are strictly landscape with width >= 1.28x height
-    is_landscape = ar >= 1.28
-    aspect_ratio_hint = "portrait"
-
-    if is_landscape and not has_paper_indicators:
-        if ar >= 1.55:
-            aspect_ratio_hint = "169"
-        else:
-            aspect_ratio_hint = "43"
-
-        slide_keywords = ["slide", "presentation", "deck", "keynote", "powerpoint", "agenda", "talk outline"]
-        if ar >= 1.55 or any(k in text_lower for k in slide_keywords):
-            return "beamer", aspect_ratio_hint, "custom"
+    if is_landscape:
+        aspect_ratio_hint = "169" if ar >= 1.50 else "43"
+        return "beamer", aspect_ratio_hint, "custom"
 
     # Resume / CV check (typically 1-3 pages portrait with work history / education)
     resume_keywords = ["curriculum vitae", "resume", "work experience", "education", "technical skills", "projects", "certifications"]
@@ -127,6 +125,7 @@ def parse_pdf(
     render_300dpi: bool = True,
     render_150dpi: bool = True,
     max_pages: int = MAX_ALLOWED_PAGES,
+    doc_type_override: Optional[str] = None,
 ) -> PDFParseResult:
     """
     Parses a PDF using PyMuPDF and extracts text, layout, embedded images, and rendered pages.
@@ -262,7 +261,9 @@ def parse_pdf(
     doc.close()
 
     full_text = "\n\n".join(full_text_parts)
-    doc_type, aspect_ratio_hint, page_size_hint = infer_doc_type(pages_data, full_text)
+    doc_type, aspect_ratio_hint, page_size_hint = infer_doc_type(
+        pages_data, full_text, doc_type_override=doc_type_override
+    )
 
     return PDFParseResult(
         num_pages=total_pages,

@@ -8,11 +8,25 @@ export function LandingFooter() {
       <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-12 items-start">
         {/* Left Column */}
         <div className="space-y-2 text-center md:text-left">
-          <div className="font-archivo text-2xl font-black tracking-tight text-black">
-            OVERBRANCH
+          <div className="font-archivo text-2xl font-black tracking-tight text-black flex items-center justify-center md:justify-start gap-2">
+            <span>OVERBRANCH</span>
+            <span className="text-[10px] font-mono font-black uppercase bg-black text-[#00CC68] px-2 py-0.5 rounded tracking-wider">
+              BETA
+            </span>
           </div>
-          <div className="text-black/80">© 2026 OVERBRANCH</div>
+          <div className="text-black/80">© 2026 OVERBRANCH (BETA)</div>
           <div className="text-black/80">OPEN SOURCE SOFTWARE</div>
+          <div className="pt-2 text-xs font-mono">
+            <span className="text-black/90">OverBranch is in active Beta. Found bugs? </span>
+            <a
+              href="https://github.com/abin-karukappallil/overbranch/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline font-bold hover:bg-black hover:text-white px-1 rounded transition-colors"
+            >
+              Report on GitHub Issues
+            </a>
+          </div>
         </div>
 
         {/* Center Column */}
@@ -40,6 +54,16 @@ export function LandingFooter() {
               className="text-black hover:bg-black hover:text-white px-2 py-1 transition-colors"
             >
               GITHUB
+            </a>
+          </div>
+          <div>
+            <a
+              href="https://github.com/abin-karukappallil/overbranch/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-black hover:bg-black hover:text-white px-2 py-1 transition-colors underline"
+            >
+              REPORT BUGS (BETA)
             </a>
           </div>
           <div>

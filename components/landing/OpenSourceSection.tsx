@@ -16,8 +16,10 @@ export function LandingOpenSource() {
         </h2>
 
         <p className="font-sans text-xl sm:text-3xl text-zinc-200 max-w-3xl leading-relaxed">
-          OverBranch is 100% free and open source. The agentic LaTeX editor for researchers who demand lightning-fast compilation, AI document drafting, and unlimited co-authors with zero paywalls.
+          OverBranch <span className="text-xs font-mono uppercase bg-[#00CC68] text-black px-2 py-0.5 rounded font-black align-middle">BETA</span> is 100% free and open source. The agentic LaTeX editor for researchers who demand lightning-fast compilation, AI document drafting, and unlimited co-authors with zero paywalls.
         </p>
+
+
 
         <div className="pt-6">
           <a

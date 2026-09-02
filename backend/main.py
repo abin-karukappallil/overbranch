@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from compiler import compile_latex
@@ -84,6 +84,54 @@ def compile_endpoint(req: CompileRequest):
         project_id=req.project_id
     )
     return result
+
+
+class SyncTeXBackwardRequest(BaseModel):
+    page: int
+    x: float
+    y: float
+    project_id: Optional[str] = None
+
+
+class SyncTeXForwardRequest(BaseModel):
+    file: str
+    line: int
+    column: Optional[int] = 1
+    project_id: Optional[str] = None
+
+
+@app.post("/api/synctex/backward")
+def synctex_backward_endpoint(req: SyncTeXBackwardRequest):
+    from synctex_service import backward_lookup
+    res = backward_lookup(
+        project_id=req.project_id,
+        page=req.page,
+        x=req.x,
+        y=req.y,
+    )
+    if not res:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No SyncTeX mapping found for this position"
+        )
+    return res
+
+
+@app.post("/api/synctex/forward")
+def synctex_forward_endpoint(req: SyncTeXForwardRequest):
+    from synctex_service import forward_lookup
+    res = forward_lookup(
+        project_id=req.project_id,
+        file_path=req.file,
+        line=req.line,
+        column=req.column or 1,
+    )
+    if not res:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No SyncTeX mapping found for this source line"
+        )
+    return res
 
 if __name__ == "__main__":
     import uvicorn

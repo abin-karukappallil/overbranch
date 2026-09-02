@@ -13,17 +13,20 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("chunker")
 
-# Chunk size limits
-MAX_CHUNK_CHARS = 2000
+# Chunk size limits (600–900 tokens target, ~4 chars per token)
+MAX_CHUNK_CHARS = 3200
 MIN_CHUNK_CHARS = 100
-FALLBACK_CHUNK_SIZE = 1200
-FALLBACK_OVERLAP = 150
+FALLBACK_CHUNK_SIZE = 2800
+FALLBACK_OVERLAP = 480   # ~120 tokens overlap
 
 # Chunk type quality weights (used by retriever for scoring)
 CHUNK_TYPE_WEIGHTS: Dict[str, float] = {
     "section": 1.0,
     "frame": 0.95,
     "subsection": 0.9,
+    "table": 0.88,
+    "figure": 0.88,
+    "bibliography": 0.85,
     "environment": 0.8,
     "paragraph": 0.6,
     "preamble": 0.3,
@@ -80,6 +83,12 @@ def _classify_chunk(text: str) -> str:
         return "subsection"
     if re.match(r"\\begin\{frame\}", stripped):
         return "frame"
+    if "\\begin{table}" in stripped or "\\begin{tabular}" in stripped:
+        return "table"
+    if "\\begin{figure}" in stripped:
+        return "figure"
+    if "\\begin{thebibliography}" in stripped or "\\bibliography{" in stripped or "\\bibliographystyle{" in stripped:
+        return "bibliography"
     if _ENV_BEGIN_RE.match(stripped):
         return "environment"
     return "paragraph"
@@ -93,6 +102,8 @@ def _split_keeping_environments(text: str) -> List[str]:
     for m in _SECTION_RE.finditer(text):
         boundaries.append(m.start())
     for m in _SUBSECTION_RE.finditer(text):
+        boundaries.append(m.start())
+    for m in re.finditer(r"\\begin\{(table|figure|thebibliography)\}", text):
         boundaries.append(m.start())
 
     # If we have structural boundaries, split on them
@@ -185,7 +196,7 @@ def _enforce_size_limits(chunks: List[str]) -> List[str]:
     buffer = ""
     for chunk in result:
         chunk_is_structural = bool(
-            re.match(r"\\(section|subsection|begin\{frame\})", chunk.strip())
+            re.match(r"\\(section|subsection|begin\{frame\}|begin\{table\}|begin\{figure\}|begin\{thebibliography\})", chunk.strip())
         )
         # If this chunk starts a new structural element, flush the buffer
         if chunk_is_structural:
@@ -273,15 +284,19 @@ def semantic_chunk_latex(
         end_line = start_line + chunk_text.count("\n")
 
         summary = _strip_tex_for_summary(chunk_text)
+        approx_pos = round((idx + 1) / max(len(raw_chunks), 1), 2)
 
         result.append({
             "project_id": project_id,
             "file_path": file_path,
             "chunk_index": idx,
             "chunk_type": chunk_type,
+            "section": current_section,
+            "approx_position": approx_pos,
             "start_line": start_line,
             "end_line": end_line,
             "content": display_content,
+            "raw_text": chunk_text,
             "summary": summary,
             "file_hash": file_hash,
             "last_modified": now_iso,

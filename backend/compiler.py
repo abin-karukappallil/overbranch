@@ -547,6 +547,30 @@ def get_template_roots() -> List[Path]:
     return _TEMPLATE_ROOTS_CACHE
 
 
+def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str]) -> None:
+    """Save main.pdf, main.synctex.gz, and source .tex files to persistent build directory."""
+    try:
+        from synctex_service import get_project_build_dir, invalidate_project_synctex_cache
+        build_dir = get_project_build_dir(project_id)
+        invalidate_project_synctex_cache(project_id)
+        pdf_path = tmpdir / "main.pdf"
+        if pdf_path.exists():
+            shutil.copy2(pdf_path, build_dir / "main.pdf")
+        synctex_gz = tmpdir / "main.synctex.gz"
+        if synctex_gz.exists():
+            shutil.copy2(synctex_gz, build_dir / "main.synctex.gz")
+        synctex_raw = tmpdir / "main.synctex"
+        if synctex_raw.exists():
+            shutil.copy2(synctex_raw, build_dir / "main.synctex")
+        for tex_file in tmpdir.rglob("*.tex"):
+            rel_t = tex_file.relative_to(tmpdir)
+            target_t = build_dir / rel_t
+            target_t.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(tex_file, target_t)
+    except Exception as synctex_err:
+        logger.debug(f"SyncTeX caching note: {synctex_err}")
+
+
 def compile_latex(
     latex_code: str,
     engine: str = "pdfLaTeX",
@@ -667,23 +691,23 @@ def compile_latex(
 
             COMPILE_TIMEOUT = 30
 
-            # Target engine selection (Matching Overleaf nonstopmode behavior without -halt-on-error)
+            # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled)
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [["pdflatex", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"]]
+                cmd_list = [["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"]]
             elif eng_clean in ["xelatex", "xe"]:
-                cmd_list = [["xelatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["lualatex", "lua"]:
-                cmd_list = [["lualatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [["lualatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean == "tectonic":
                 cmd_list = [["tectonic", "main.tex"]]
             elif eng_clean == "latexmk":
-                cmd_list = [["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
+                cmd_list = [["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
             else:
                 cmd_list = [
-                    ["pdflatex", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"],
-                    ["xelatex", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
-                    ["latexmk", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
+                    ["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"],
+                    ["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                    ["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
                 ]
 
             last_output = ""
@@ -724,6 +748,7 @@ def compile_latex(
                             )
                             last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
 
+                        _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -769,6 +794,7 @@ def compile_latex(
                     cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
                     pdf_path = tmpdir / "main.pdf"
                     if pdf_path.exists():
+                        _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -802,6 +828,7 @@ def compile_latex(
                         result = subprocess.run(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
+                            _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -834,6 +861,7 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
+                            _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -879,6 +907,7 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
+                            _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)

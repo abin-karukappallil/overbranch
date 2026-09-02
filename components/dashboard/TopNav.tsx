@@ -28,8 +28,11 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
           </Button>
         )}
         <div className="flex items-center gap-1.5 text-xs font-mono text-zinc-400 min-w-0 truncate">
-          <Link href="/dashboard" className="hover:text-white transition-colors font-bold text-white shrink-0">
-            OverBranch
+          <Link href="/dashboard" className="hover:text-white transition-colors font-bold text-white shrink-0 flex items-center gap-1.5">
+            <span>OverBranch</span>
+            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+              BETA
+            </span>
           </Link>
           {pathSegments.map((segment, index) => (
             <React.Fragment key={segment}>
@@ -43,6 +46,17 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
       </div>
 
       <div className="flex items-center gap-2">
+        <a
+          href="https://github.com/abin-karukappallil/overbranch/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 text-[11px] text-zinc-400 hover:text-amber-300 font-mono transition-colors"
+          title="OverBranch is in active Beta — Report any bugs on GitHub Issues"
+        >
+          <span className="text-[9px] font-mono font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-0.5 rounded">BETA</span>
+          <span>Report Bug</span>
+        </a>
+
         <button
           onClick={onOpenCommandPalette}
           className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 text-[11px] text-zinc-400 font-mono transition-colors"

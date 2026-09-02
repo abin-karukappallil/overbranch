@@ -143,8 +143,10 @@ function DashboardContent() {
                 size="lg"
                 className="h-10 sm:h-11 w-full sm:w-auto px-5 bg-zinc-800 hover:bg-zinc-700 text-white font-mono font-bold uppercase tracking-wider border border-zinc-700 hover:border-[#00CC68] rounded-xl shrink-0 text-xs justify-center cursor-pointer transition-all shadow-md flex items-center gap-2"
               >
-                
                 <span>PDF to LaTeX</span>
+                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded bg-zinc-900 text-[#00CC68] border border-zinc-700 tracking-wider">
+                  BETA
+                </span>
               </Button>
 
               <Button
@@ -172,13 +174,21 @@ function DashboardContent() {
               <div className="p-2.5 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/30 text-[#00CC68] group-hover:bg-[#00CC68] group-hover:text-black transition-all">
                 <FileText className="w-5 h-5 stroke-[2.5]" />
               </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 uppercase">
-                AI Powered
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-black bg-zinc-800 text-[#00CC68] border border-zinc-700 uppercase tracking-wider">
+                  BETA
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 uppercase">
+                  AI Powered
+                </span>
+              </div>
             </div>
             <div>
-              <h3 className="text-base font-archivo font-bold text-white group-hover:text-[#00CC68] transition-colors">
-                PDF to LaTeX
+              <h3 className="text-base font-archivo font-bold text-white group-hover:text-[#00CC68] transition-colors flex items-center gap-2">
+                <span>PDF to LaTeX</span>
+                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+                  BETA
+                </span>
               </h3>
               <p className="text-xs text-zinc-400 font-sans leading-relaxed mt-1">
                 Upload any PDF document to automatically extract text, layout, and images into an editable LaTeX project.

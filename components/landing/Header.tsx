@@ -20,6 +20,9 @@ export function LandingHeader() {
       >
         <OverBranchLogo size="sm" variant="icon" colored={false} iconClassName="text-black stroke-black" />
         <span>OVERBRANCH</span>
+        <span className="text-[10px] uppercase font-mono font-black px-1.5 py-0.5 rounded bg-black text-[#00CC68] tracking-widest">
+          BETA
+        </span>
       </Link>
 
       {/* Center Navigation Pill */}
@@ -61,6 +64,17 @@ export function LandingHeader() {
 
       {/* Right Controls / Auth */}
       <div className="pointer-events-auto hidden lg:flex items-center gap-2.5 shrink-0">
+        <a
+          href="https://github.com/abin-karukappallil/overbranch/issues"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-black text-[#00CC68] hover:text-white px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-all duration-150 hover:bg-zinc-900"
+          title="OverBranch is currently in Beta. Found a bug? Report it on GitHub Issues!"
+        >
+          <span className="text-[9px] bg-amber-400 text-black px-1.5 py-0.5 rounded font-black">BETA</span>
+          <span>REPORT BUGS</span>
+        </a>
+
         <div className="bg-black text-[#00CC68] px-3 py-1.5 rounded-full border-2 border-black font-mono text-[11px] xl:text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full bg-[#00CC68] animate-pulse" />
           <span>OPEN SOURCE</span>
@@ -149,6 +163,19 @@ export function LandingHeader() {
               <div className="flex items-center gap-2">
                 <Star className="w-4 h-4 fill-[#00CC68]" />
                 <span>STAR ON GITHUB</span>
+              </div>
+              <ArrowUpRight className="w-4 h-4" />
+            </a>
+            <a
+              href="https://github.com/abin-karukappallil/overbranch/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setMobileMenuOpen(false)}
+              className="px-3 py-2 rounded-lg hover:bg-white/10 text-amber-300 flex items-center justify-between font-bold"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] bg-amber-400 text-black px-1.5 py-0.5 rounded font-black">BETA</span>
+                <span>REPORT BUGS (GITHUB)</span>
               </div>
               <ArrowUpRight className="w-4 h-4" />
             </a>
