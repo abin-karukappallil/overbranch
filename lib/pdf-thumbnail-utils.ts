@@ -77,3 +77,49 @@ export function renderPdfThumbnailUrl({
 
   return thumbnailPromise
 }
+
+export async function renderPdfSlide({
+  url,
+  pageIndex,
+  targetWidth = 1920,
+  targetHeight = 1080,
+  dpr = 1,
+}: {
+  url: string;
+  pageIndex: number;
+  targetWidth?: number;
+  targetHeight?: number;
+  dpr?: number;
+}): Promise<{ url: string; pageCount: number; width: number; height: number } | null> {
+  try {
+    const [engine, document] = await Promise.all([
+      loadSharedPdfEngine(),
+      loadPdfDocument(url),
+    ]);
+    const page = document.pages[pageIndex];
+    if (!page) return null;
+
+    const scaleX = targetWidth / page.size.width;
+    const scaleY = targetHeight / page.size.height;
+    const scaleFactor = Math.min(scaleX, scaleY);
+
+    const blob = await engine
+      .renderThumbnail(document, page, {
+        dpr: 1,
+        imageType: "image/png",
+        scaleFactor: scaleFactor > 0 ? scaleFactor : 1.5,
+        withAnnotations: true,
+      })
+      .toPromise();
+
+    return {
+      url: URL.createObjectURL(blob),
+      pageCount: document.pageCount,
+      width: page.size.width,
+      height: page.size.height,
+    };
+  } catch (err) {
+    console.warn("renderPdfSlide error:", err);
+    return null;
+  }
+}
