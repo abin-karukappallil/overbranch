@@ -66,6 +66,11 @@ export default function ConvertPage() {
 
   useEffect(() => {
     if (!isAuthPending && authSession?.user) {
+      // Clean up stale guest token for logged-in users
+      try {
+        localStorage.removeItem("ob_guest_token");
+        document.cookie = "ob_guest_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+      } catch (_) {}
       router.replace("/dashboard?openPdfModal=true");
     }
   }, [authSession, isAuthPending, router]);
@@ -75,6 +80,10 @@ export default function ConvertPage() {
   const [quotaStatus, setQuotaStatus] = useState<any | null>(null);
 
   const fetchSessionStatus = async () => {
+    if (authSession?.user) {
+      setSessionLoading(false);
+      return;
+    }
     try {
       const res = await fetch(`${BACKEND_URL}/api/guest/session`, {
         credentials: "include",
@@ -82,7 +91,7 @@ export default function ConvertPage() {
       if (res.ok) {
         const data = await res.json();
         setQuotaStatus(data);
-        if (data.token) {
+        if (data.token && !authSession?.user) {
           document.cookie = `ob_guest_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
           localStorage.setItem("ob_guest_token", data.token);
         }
@@ -258,13 +267,22 @@ export default function ConvertPage() {
       <header className="h-16 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2.5 hover:opacity-90 transition-opacity">
-            <OverBranchLogo size="sm" colored />
+            <OverBranchLogo size="sm" colored showBeta />
           </Link>
           <div className="h-4 w-px bg-zinc-800 hidden sm:block" />
-          
         </div>
 
         <div className="flex items-center gap-3">
+          <a
+            href="https://github.com/abin-karukappallil/overbranch/issues"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-900 text-[11px] text-zinc-400 hover:text-amber-300 font-mono transition-colors"
+            title="OverBranch is in active Beta — Report any bugs on GitHub Issues"
+          >
+            <span className="text-[9px] font-mono font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-0.5 rounded">BETA</span>
+            <span>Report Bug</span>
+          </a>
           <Link
             href="/login"
             className="text-xs font-mono text-zinc-400 hover:text-white transition-colors px-3 py-1.5 rounded-lg"
@@ -285,15 +303,29 @@ export default function ConvertPage() {
       <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col justify-center">
         {/* Header Hero */}
         <div className="text-center space-y-3 mb-8">
-         
-
-          <h1 className="text-2xl sm:text-4xl font-archivo font-black uppercase tracking-tight text-white">
-            Convert PDF Document to <span className="text-[#00CC68]">Editable LaTeX</span>
+          <h1 className="text-2xl sm:text-4xl font-archivo font-black uppercase tracking-tight text-white flex items-center justify-center gap-2.5 flex-wrap">
+            <span>Convert PDF Document to <span className="text-[#00CC68]">Editable LaTeX</span></span>
+            <span className="text-xs sm:text-sm font-mono font-black uppercase px-2 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+              BETA
+            </span>
           </h1>
 
           <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto font-sans leading-relaxed">
             Upload research papers, lecture slides, seminar reports, or resumes. Our neural pipeline analyzes layouts, extracts figures into assets, and generates compilable LaTeX with modular structure.
           </p>
+
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-400">
+            <span className="text-[#00CC68] font-bold">⚠️ Beta Feature:</span>
+            <span>Encountering bugs or formatting issues? Please</span>
+            <a
+              href="https://github.com/abin-karukappallil/overbranch/issues"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#00CC68] underline font-bold"
+            >
+              report on GitHub Issues →
+            </a>
+          </div>
         </div>
 
         {/* Existing Active Project Banner */}
