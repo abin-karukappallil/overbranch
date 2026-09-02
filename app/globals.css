@@ -344,3 +344,35 @@ html, body {
     animation: none !important;
   }
 }
+
+/* Monaco Editor Mobile Cursor & Caret Enhancements */
+.monaco-editor .cursors-layer .cursor {
+  background-color: #00CC68 !important;
+  border-color: #00CC68 !important;
+  width: 2.5px !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  animation: monaco-cursor-blink 1s step-end infinite !important;
+}
+
+@keyframes monaco-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Ensure editor textarea captures mobile touch events cleanly */
+.monaco-editor .inputarea.ime-input {
+  caret-color: #00CC68 !important;
+}
+
+/* Monaco selection visibility */
+.monaco-editor .selected-text {
+  background-color: rgba(0, 204, 104, 0.28) !important;
+}
+
+/* Prevent unwanted selection flicker on mobile touches */
+.monaco-editor {
+  touch-action: pan-x pan-y !important;
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}

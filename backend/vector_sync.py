@@ -130,8 +130,22 @@ def sync_file(req: SyncFileRequest):
 
         file_hash = chunks[0].get("file_hash", "")
         if file_hash and _check_file_hash_unchanged(qdrant, req.project_id, req.file_path, file_hash):
-            logger.info(f"File hash unchanged for '{req.file_path}' — skipping re-embed.")
-            return {"synced": True, "total_chunks": len(chunks), "skipped": True}
+            return {
+                "synced": True,
+                "total_chunks": len(chunks),
+                "skipped": True,
+                "file_hash": file_hash,
+                "chunks": [
+                    {
+                        "chunk_index": c.get("chunk_index", 0),
+                        "chunk_type": c.get("chunk_type", "paragraph"),
+                        "section": c.get("section", ""),
+                        "content": c.get("content", ""),
+                        "summary": c.get("summary", ""),
+                    }
+                    for c in chunks
+                ],
+            }
 
         try:
             qdrant.delete(
@@ -195,6 +209,17 @@ def sync_file(req: SyncFileRequest):
             "synced": True,
             "total_chunks": len(chunks),
             "skipped": False,
+            "file_hash": file_hash,
+            "chunks": [
+                {
+                    "chunk_index": c.get("chunk_index", 0),
+                    "chunk_type": c.get("chunk_type", "paragraph"),
+                    "section": c.get("section", ""),
+                    "content": c.get("content", ""),
+                    "summary": c.get("summary", ""),
+                }
+                for c in chunks
+            ],
             "chunk_types": [c["chunk_type"] for c in chunks],
         }
 

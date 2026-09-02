@@ -63,6 +63,10 @@ import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { FolderGit2 } from "lucide-react";
+import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
+import { EditHistoryStore, type EditHistoryEntry } from "@/lib/EditHistoryStore";
+import { ChatMessageContent } from "@/components/editor/ChatMessageContent";
+import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } from "@/lib/IndexedDBEmbeddingCache";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -77,8 +81,11 @@ interface ChatMessage {
   sender: "user" | "assistant";
   text: string;
   time: string;
+  mode?: ChatMode;
   edits?: EditItem[];
   isApplied?: boolean;
+  isReverted?: boolean;
+  historyEntryId?: string;
   diff?: {
     original_chunk: string;
     proposed_chunk: string;
@@ -239,6 +246,13 @@ export function EditorLayout({
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
+  const [chatMode, setChatMode] = useState<ChatMode>("edit");
+  const editHistoryStoreRef = useRef<EditHistoryStore | null>(null);
+
+  useEffect(() => {
+    editHistoryStoreRef.current = new EditHistoryStore(projectId || "default");
+  }, [projectId]);
+
   const monacoRef = useRef<any>(null);
 
   // ─── Model Selector State ────────────────────────────────────────────────
@@ -644,7 +658,7 @@ export function EditorLayout({
       const editor = editorRef.current;
       const selection = editor.getSelection();
       const model = editor.getModel();
-      const selectedText = selection && model ? model.getValueInRange(selection) : "";
+      const selectedText = selection && model && !selection.isEmpty() ? model.getValueInRange(selection) : "";
       const textToCopy = selectedText || editor.getValue();
 
       if (!textToCopy) {
@@ -652,12 +666,38 @@ export function EditorLayout({
         return;
       }
 
+      // 1. Try modern Async Clipboard API
       try {
-        await navigator.clipboard.writeText(textToCopy);
-        toast.success(selectedText ? "Copied selected code!" : "Copied full document code!");
-        return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(textToCopy);
+          toast.success(selectedText ? "Copied selected text!" : "Copied full document code!");
+          return;
+        }
       } catch (err) {
-        console.warn("Clipboard write API error:", err);
+        console.warn("navigator.clipboard.writeText error, attempting fallback:", err);
+      }
+
+      // 2. Fallback: execCommand('copy') with hidden textarea
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = textToCopy;
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "-9999px";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const success = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (success) {
+          toast.success(selectedText ? "Copied selected text!" : "Copied full document code!");
+          // Restore Monaco selection
+          if (selection) editor.setSelection(selection);
+          return;
+        }
+      } catch (fallbackErr) {
+        console.warn("execCommand copy fallback error:", fallbackErr);
       }
     } else if (code) {
       try {
@@ -666,22 +706,25 @@ export function EditorLayout({
         return;
       } catch (err) { }
     }
-    toast.error("Unable to access clipboard for copy.");
+    toast.error("Unable to access clipboard. Use Ctrl+C or Cmd+C.");
   };
 
   const handleCustomPaste = async () => {
+    // Try Clipboard Read API
     try {
       if (navigator.clipboard && navigator.clipboard.readText) {
         const text = await navigator.clipboard.readText();
         if (text) {
           insertSymbol(text);
-          toast.success("Pasted text into TeX editor at cursor!");
+          toast.success("Pasted text at cursor!");
           return;
         }
       }
     } catch (err) {
       console.warn("Direct clipboard read blocked by browser permissions:", err);
     }
+
+    // Focus editor so user can press Ctrl+V / Cmd+V
     if (editorRef.current) {
       editorRef.current.focus();
     }
@@ -956,10 +999,11 @@ export function EditorLayout({
       }
     });
 
-    // Safely attach paste listener to container DOM node to handle mobile/Gboard clipboard paste operations without crashing Monaco
+    // Attach touch/mobile fallback paste listener only on touch-enabled devices
     try {
+      const isTouchDevice = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
       const containerNode = editor.getContainerDomNode();
-      if (containerNode) {
+      if (containerNode && isTouchDevice) {
         containerNode.addEventListener(
           "paste",
           (e: ClipboardEvent) => {
@@ -968,9 +1012,10 @@ export function EditorLayout({
               if (pastedText !== undefined && pastedText !== null && editorRef.current) {
                 const activeEd = editorRef.current;
                 const selection = activeEd.getSelection();
-                if (selection) {
+                if (selection && !selection.isEmpty()) {
                   e.preventDefault();
                   e.stopPropagation();
+                  activeEd.pushUndoStop();
                   activeEd.executeEdits("safe-mobile-paste", [
                     {
                       range: selection,
@@ -978,6 +1023,7 @@ export function EditorLayout({
                       forceMoveMarkers: true,
                     },
                   ]);
+                  activeEd.pushUndoStop();
                   handleCodeChange(activeEd.getValue());
                 }
               }
@@ -985,18 +1031,12 @@ export function EditorLayout({
               console.warn("Handled mobile paste fallback exception:", pasteErr);
             }
           },
-          true
+          false
         );
       }
     } catch (err) {
-      console.warn("Failed to attach paste event listener:", err);
+      console.warn("Failed to attach touch paste event listener:", err);
     }
-
-    try {
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, () => {
-        handleCustomCopy();
-      });
-    } catch (e) { }
 
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
@@ -1006,20 +1046,38 @@ export function EditorLayout({
     });
   };
 
+  const lastSyncedHashRef = useRef<string>("");
+
   const syncVectorDatabase = async (updatedCode: string) => {
     try {
+      const fileHash = computeContentHash(updatedCode);
+      if (lastSyncedHashRef.current === fileHash) {
+        return;
+      }
+
       const response = await fetch(`${BACKEND_URL}/api/sync-file`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project_id: projectId || "00000000-0000-0000-0000-000000000000",
-          file_path: "main.tex",
+          file_path: activeFilePath || "main.tex",
           new_code: updatedCode,
         }),
       });
       const data = await response.json();
       if (data.synced) {
+        lastSyncedHashRef.current = fileHash;
         setSaveStatus("saved");
+
+        // Cache document chunks in local IndexedDB
+        if (data.chunks && Array.isArray(data.chunks) && data.chunks.length > 0) {
+          setCachedDocumentChunks(
+            projectId || "proj-default",
+            activeFilePath || "main.tex",
+            fileHash,
+            data.chunks
+          ).catch((e) => console.warn("IndexedDB chunk save note:", e));
+        }
       }
     } catch (err) {
       console.warn("Background vector sync failed:", err);
@@ -1118,6 +1176,7 @@ export function EditorLayout({
           current_code: code,
           model: activeModelName || "auto:smart",
           attached_file: filePayload,
+          mode: chatMode,
         }),
       });
       clearTimeout(timeoutId);
@@ -1209,8 +1268,10 @@ export function EditorLayout({
       const rawExplanation = data.explanation || "I have processed your LaTeX request.";
       const responseText = sanitizeChunkReferences(rawExplanation);
 
-      // Build explicit edits list
-      let editsList: EditItem[] = (data.edits && Array.isArray(data.edits) && data.edits.length > 0)
+      const isAskModeResponse = chatMode === "ask" || data.mode === "ask";
+
+      // Build explicit edits list (only in Edit mode)
+      let editsList: EditItem[] = (!isAskModeResponse && data.edits && Array.isArray(data.edits) && data.edits.length > 0)
         ? data.edits
           .filter((e: any) => e.original_chunk || e.proposed_chunk)
           .map((e: any, idx: number) => ({
@@ -1219,7 +1280,7 @@ export function EditorLayout({
             proposed_chunk: e.proposed_chunk || "",
             explanation: sanitizeChunkReferences(e.explanation || rawExplanation),
           }))
-        : (data.original_chunk || data.proposed_chunk)
+        : (!isAskModeResponse && (data.original_chunk || data.proposed_chunk))
           ? [{
             id: `edit-${Date.now()}-0`,
             original_chunk: data.original_chunk || "",
@@ -1228,8 +1289,8 @@ export function EditorLayout({
           }]
           : [];
 
-      // Fallback: extract LaTeX from raw explanation
-      if (editsList.length === 0) {
+      // Fallback: extract LaTeX from raw explanation ONLY in Edit mode
+      if (!isAskModeResponse && editsList.length === 0) {
         const extractedCode = extractLatexFromResponse(rawExplanation);
         if (extractedCode) {
           editsList = [{
@@ -1250,6 +1311,7 @@ export function EditorLayout({
           sender: "assistant",
           text: responseText + (data.is_fallback ? `\n\n*(⚠️ Fallback Model Used: ${data.model_used})*` : ""),
           time: assistantTime,
+          mode: chatMode,
           edits: editsList,
           isApplied: false,
         },
@@ -1421,15 +1483,23 @@ export function EditorLayout({
   };
 
   const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
-    let updatedCode = code;
-    const model = editorRef.current?.getModel?.();
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const currentText = model ? model.getValue() : code;
+    const updatedCode = applySingleEditInPlace(currentText, originalChunk, proposedChunk);
 
-    if (model) {
-      const currentText = model.getValue();
-      updatedCode = applySingleEditInPlace(currentText, originalChunk, proposedChunk);
-      model.setValue(updatedCode);
+    if (editor && model) {
+      editor.pushUndoStop();
+      editor.executeEdits("ai-diff-edit", [
+        {
+          range: model.getFullModelRange(),
+          text: updatedCode,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
     } else {
-      updatedCode = applySingleEditInPlace(code, originalChunk, proposedChunk);
+      setCode(updatedCode);
     }
 
     setCode(updatedCode);
@@ -1439,14 +1509,14 @@ export function EditorLayout({
 
     // Auto-save to Supabase & Qdrant
     saveDocument(updatedCode, true);
-
-    // Recompile PDF
     handleCompile(updatedCode);
   };
 
   const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
-    const model = editorRef.current?.getModel?.();
-    let updatedCode = model ? model.getValue() : code;
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const codeBeforeEdit = model ? model.getValue() : code;
+    let updatedCode = codeBeforeEdit;
 
     itemsToApply.forEach((item) => {
       const orig = item.original_chunk;
@@ -1454,21 +1524,56 @@ export function EditorLayout({
       updatedCode = applySingleEditInPlace(updatedCode, orig, prop);
     });
 
-    if (model) {
-      model.setValue(updatedCode);
+    if (editor && model) {
+      editor.pushUndoStop();
+      editor.executeEdits("ai-accept-all", [
+        {
+          range: model.getFullModelRange(),
+          text: updatedCode,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+    } else {
+      setCode(updatedCode);
     }
 
     setCode(updatedCode);
     setDiffData(null);
     setDiffEditsList([]);
 
+    const historyId = `hist-${Date.now()}`;
+    const userPrompt = messages.filter((m) => m.sender === "user").pop()?.text || "AI Document Edit";
+
+    if (editHistoryStoreRef.current) {
+      editHistoryStoreRef.current.pushEdit({
+        id: historyId,
+        messageId: msgId || `msg-${Date.now()}`,
+        prompt: userPrompt,
+        timestamp: Date.now(),
+        filePath: activeFilePath,
+        edits: itemsToApply,
+        codeBeforeEdit,
+        codeAfterEdit: updatedCode,
+        isReverted: false,
+      });
+    }
+
     if (msgId) {
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, isApplied: true } : m))
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, isApplied: true, isReverted: false, historyEntryId: historyId }
+            : m
+        )
       );
     } else {
       setMessages((prev) =>
-        prev.map((m) => (m.edits && m.edits.length > 0 ? { ...m, isApplied: true } : m))
+        prev.map((m) =>
+          m.edits && m.edits.length > 0
+            ? { ...m, isApplied: true, isReverted: false, historyEntryId: historyId }
+            : m
+        )
       );
     }
 
@@ -1485,15 +1590,26 @@ export function EditorLayout({
   };
 
   const handleAcceptSingleEdit = (item: EditItem) => {
-    const model = editorRef.current?.getModel?.();
-    let updatedCode = model ? model.getValue() : code;
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const codeBeforeEdit = model ? model.getValue() : code;
     const orig = item.original_chunk;
     const prop = item.proposed_chunk;
 
-    updatedCode = applySingleEditInPlace(updatedCode, orig, prop);
+    const updatedCode = applySingleEditInPlace(codeBeforeEdit, orig, prop);
 
-    if (model) {
-      model.setValue(updatedCode);
+    if (editor && model) {
+      editor.pushUndoStop();
+      editor.executeEdits("ai-accept-single", [
+        {
+          range: model.getFullModelRange(),
+          text: updatedCode,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+    } else {
+      setCode(updatedCode);
     }
 
     setCode(updatedCode);
@@ -1507,6 +1623,84 @@ export function EditorLayout({
 
     saveDocument(updatedCode, true);
     handleCompile(updatedCode);
+  };
+
+  const handleRevertEdit = (messageId: string) => {
+    const entry = editHistoryStoreRef.current?.getEntryByMessageId(messageId);
+    if (!entry) {
+      toast.error("Could not find edit history entry to revert.");
+      return;
+    }
+
+    const prevCode = editHistoryStoreRef.current?.revertEdit(entry.id);
+    if (prevCode === null || prevCode === undefined) {
+      toast.info("This edit is already reverted.");
+      return;
+    }
+
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    if (editor && model) {
+      editor.pushUndoStop();
+      editor.executeEdits("ai-revert", [
+        {
+          range: model.getFullModelRange(),
+          text: prevCode,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+    } else {
+      setCode(prevCode);
+    }
+
+    setCode(prevCode);
+    saveDocument(prevCode, true);
+    handleCompile(prevCode);
+
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, isReverted: true } : m))
+    );
+    toast.success("Reverted AI edit!");
+  };
+
+  const handleReapplyEdit = (messageId: string) => {
+    const entry = editHistoryStoreRef.current?.getEntryByMessageId(messageId);
+    if (!entry) {
+      toast.error("Could not find edit history entry to reapply.");
+      return;
+    }
+
+    const nextCode = editHistoryStoreRef.current?.reapplyEdit(entry.id);
+    if (nextCode === null || nextCode === undefined) {
+      toast.info("This edit is already active.");
+      return;
+    }
+
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    if (editor && model) {
+      editor.pushUndoStop();
+      editor.executeEdits("ai-reapply", [
+        {
+          range: model.getFullModelRange(),
+          text: nextCode,
+          forceMoveMarkers: true,
+        },
+      ]);
+      editor.pushUndoStop();
+    } else {
+      setCode(nextCode);
+    }
+
+    setCode(nextCode);
+    saveDocument(nextCode, true);
+    handleCompile(nextCode);
+
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, isReverted: false } : m))
+    );
+    toast.success("Reapplied AI edit!");
   };
 
   const handleRejectSingleEdit = (itemId: string) => {
@@ -1607,9 +1801,34 @@ export function EditorLayout({
             </button>
           </div>
         ) : (
-          <div className="text-[11px] text-[#00CC68] font-mono font-bold flex items-center gap-1 pt-0.5">
-            <Check className="w-3.5 h-3.5" />
-            <span>Applied changes to TeX editor</span>
+          <div className="pt-1.5 border-t border-zinc-800/80 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-[#00CC68]">
+              <Check className="w-3.5 h-3.5" />
+              <span>{m.isReverted ? "Reverted" : "Applied to TeX"}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {!m.isReverted ? (
+                <button
+                  type="button"
+                  onClick={() => handleRevertEdit(m.id)}
+                  className="px-2 py-1 rounded-md bg-zinc-900 hover:bg-zinc-800 text-amber-300 hover:text-amber-200 border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                  title="Revert this AI edit"
+                >
+                  <Undo2 className="w-3 h-3 text-amber-400" />
+                  <span>Revert</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => handleReapplyEdit(m.id)}
+                  className="px-2 py-1 rounded-md bg-[#00CC68]/20 hover:bg-[#00CC68]/30 text-[#00CC68] border border-[#00CC68]/40 text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                  title="Reapply this AI edit"
+                >
+                  <Redo2 className="w-3 h-3 text-[#00CC68]" />
+                  <span>Reapply</span>
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -1924,7 +2143,14 @@ export function EditorLayout({
                   scrollBeyondLastLine: false,
                   wordWrap: "on",
                   automaticLayout: true,
-                  contextmenu: false,
+                  contextmenu: true,
+                  selectOnLineNumbers: true,
+                  cursorBlinking: "blink",
+                  cursorSmoothCaretAnimation: "on",
+                  cursorStyle: "line",
+                  cursorWidth: 2,
+                  roundedSelection: true,
+                  copyWithSyntaxHighlighting: false,
                   readOnly: isViewer,
                 }}
               />
@@ -1955,12 +2181,30 @@ export function EditorLayout({
                     )}
                   </div>
 
-                  {/* Accept / Reject Buttons */}
-                  <div className="flex items-center gap-2 pt-1">
+                  {/* Action Buttons: Copy Patch, Reject, Accept */}
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        let patch = "";
+                        diffEditsList.forEach((e) => {
+                          if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
+                          if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
+                        });
+                        navigator.clipboard.writeText(patch.trim());
+                        toast.success("Copied patch to clipboard!");
+                      }}
+                      className="h-7 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                      title="Copy diff patch to clipboard"
+                    >
+                      <Copy className="w-3 h-3 text-zinc-300" />
+                      <span>Copy</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                       <span>Reject</span>
@@ -1969,7 +2213,7 @@ export function EditorLayout({
                     <button
                       type="button"
                       onClick={() => handleAcceptAllEdits(diffEditsList)}
-                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors shadow-md shadow-emerald-600/20"
+                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20 cursor-pointer"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Accept</span>
@@ -2003,10 +2247,13 @@ export function EditorLayout({
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
                 <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold text-xs">
-                      <Bot className="w-4 h-4 text-[#00CC68]" />
-                      <span>Agent</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs">
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Bot className="w-4 h-4 text-[#00CC68]" />
+                        <span>Agent</span>
+                      </div>
+                      <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -2053,14 +2300,14 @@ export function EditorLayout({
                         title="Select AI Model"
                       >
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isAgentThinking ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"}`} />
-                        <span className="truncate max-w-[95px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
+                        <span className="truncate max-w-[105px]">{isAgentThinking ? "Thinking..." : getModelLabel(activeModelName)}</span>
                         {!isAgentThinking && <ChevronDown className="w-3 h-3 text-[#00CC68] shrink-0" />}
                       </button>
                     </div>
                   </div>
 
                   {fallbackModelNotice && (
-                    <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-mono flex items-center justify-between gap-2 shrink-0">
+                    <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 truncate">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span className="truncate">{fallbackModelNotice}</span>
@@ -2082,10 +2329,21 @@ export function EditorLayout({
                         }`}
                     >
                       <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                        <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                          {m.mode && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-zinc-400 bg-zinc-800/80 border border-zinc-700">
+                              {m.mode}
+                            </span>
+                          )}
+                        </div>
                         <span>{m.time}</span>
                       </div>
-                      <p className="leading-relaxed whitespace-pre-wrap break-words text-xs">{m.text}</p>
+                      {m.sender === "assistant" ? (
+                        <ChatMessageContent text={m.text} />
+                      ) : (
+                        <p className="leading-relaxed whitespace-pre-wrap break-words text-xs">{m.text}</p>
+                      )}
                       {renderMessageEditsCard(m)}
                     </div>
                   ))}
@@ -2161,7 +2419,25 @@ export function EditorLayout({
                     </div>
 
                     {/* Action Buttons Directly Above Chat Input */}
-                    <div className="flex items-center gap-2 pt-1 font-bold">
+                    <div className="flex items-center gap-1.5 pt-1 font-bold">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          let patch = "";
+                          diffEditsList.forEach((e) => {
+                            if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
+                            if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
+                          });
+                          navigator.clipboard.writeText(patch.trim());
+                          toast.success("Copied patch to clipboard!");
+                        }}
+                        className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                        title="Copy diff patch to clipboard"
+                      >
+                        <Copy className="w-3.5 h-3.5 text-zinc-300" />
+                        <span>Copy</span>
+                      </button>
+
                       <button
                         type="button"
                         onClick={handleRejectAllEdits}
@@ -2238,7 +2514,7 @@ export function EditorLayout({
                     <textarea
                       id="ai-chat-input"
                       rows={1}
-                      placeholder="Ask agent to edit LaTeX..."
+                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
                       value={chatInput}
                       disabled={isAgentThinking}
                       onChange={(e) => {
@@ -2433,10 +2709,13 @@ export function EditorLayout({
         {activeMobileTab === "ai" && (
           <div className="flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans">
             <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 font-archivo uppercase text-white font-bold">
-                  <Bot className="w-4 h-4 text-[#00CC68]" />
-                  <span>Agent</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Bot className="w-4 h-4 text-[#00CC68]" />
+                    <span>Agent</span>
+                  </div>
+                  <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                 </div>
                 <div className="flex items-center gap-1.5">
                   {/* New Chat Button */}
@@ -2511,10 +2790,21 @@ export function EditorLayout({
                     }`}
                 >
                   <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                    <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                      {m.mode && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-zinc-400 bg-zinc-800/80 border border-zinc-700">
+                          {m.mode}
+                        </span>
+                      )}
+                    </div>
                     <span>{m.time}</span>
                   </div>
-                  <p className="leading-relaxed text-xs whitespace-pre-wrap break-words">{m.text}</p>
+                  {m.sender === "assistant" ? (
+                    <ChatMessageContent text={m.text} />
+                  ) : (
+                    <p className="leading-relaxed text-xs whitespace-pre-wrap break-words">{m.text}</p>
+                  )}
                   {renderMessageEditsCard(m)}
                 </div>
               ))}
@@ -2575,7 +2865,24 @@ export function EditorLayout({
                     {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 pt-1 font-bold">
+                <div className="flex items-center gap-1.5 pt-1 font-bold">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      let patch = "";
+                      diffEditsList.forEach((e) => {
+                        if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
+                        if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
+                      });
+                      navigator.clipboard.writeText(patch.trim());
+                      toast.success("Copied patch to clipboard!");
+                    }}
+                    className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                    title="Copy diff patch"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-zinc-300" />
+                    <span>Copy</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleRejectAllEdits}
@@ -2642,7 +2949,7 @@ export function EditorLayout({
               <textarea
                 id="ai-chat-input-2"
                 rows={1}
-                placeholder="Ask agent to edit LaTeX..."
+                placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
                 value={chatInput}
                 disabled={isAgentThinking}
                 onChange={(e) => {
