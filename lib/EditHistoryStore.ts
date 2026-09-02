@@ -1,37 +1,40 @@
 /**
- * EditHistoryStore.ts — AI Edit History with Patch/Inverse-Patch Storage
+ * EditHistoryStore.ts — Persistent AI Edit History
  *
- * Stores every accepted AI edit for revert/reapply functionality.
- * Each entry captures the full document state before and after the edit,
- * enabling force-revert regardless of subsequent manual edits.
+ * Captures full multi-file snapshots, cursor position, scroll state,
+ * and prompt metadata before and after AI edits for reliable revert/reapply.
  */
 
-import type { EditItem } from "@/components/editor/InlineDiffEditor";
-
-export interface EditHistoryEntry {
+export interface EditHistory {
   id: string;
-  messageId: string;         // Chat message ID this edit came from
-  prompt: string;            // User prompt that triggered this edit
-  timestamp: number;         // When the edit was accepted
-  filePath: string;          // File path that was edited
-  edits: EditItem[];         // The edit items that were applied
-  codeBeforeEdit: string;    // Full document state before this edit
-  codeAfterEdit: string;     // Full document state after this edit
-  isReverted: boolean;       // Whether this edit has been reverted
+  timestamp: number;
+  model: string;
+  prompt: string;
+  files: string[];
+  beforeCode: Record<string, string>;
+  afterCode: Record<string, string>;
+  cursorState: {
+    file: string;
+    line: number;
+    column: number;
+    scrollTop: number;
+  };
+  isReverted?: boolean;
 }
 
-const MAX_HISTORY = 50;
+const MAX_HISTORY = 30;
 
 export class EditHistoryStore {
-  private entries: EditHistoryEntry[] = [];
+  private entries: EditHistory[] = [];
   private storageKey: string;
 
   constructor(projectId: string) {
-    this.storageKey = `overbranch_${projectId}_edit_history`;
+    this.storageKey = `overbranch_${projectId || "default"}_edit_history_v2`;
     this.loadFromStorage();
   }
 
   private loadFromStorage(): void {
+    if (typeof window === "undefined") return;
     try {
       const saved = localStorage.getItem(this.storageKey);
       if (saved) {
@@ -41,66 +44,63 @@ export class EditHistoryStore {
         }
       }
     } catch (e) {
-      console.warn("Failed to load edit history from localStorage:", e);
+      console.warn("EditHistoryStore: failed to load history from storage", e);
     }
   }
 
   private saveToStorage(): void {
+    if (typeof window === "undefined") return;
     try {
-      // Only persist metadata, not full code snapshots (too large)
-      // Store last 20 entries with full snapshots, older ones are summary-only
-      const toSave = this.entries.slice(-20);
+      const toSave = this.entries.slice(-MAX_HISTORY);
       localStorage.setItem(this.storageKey, JSON.stringify(toSave));
     } catch (e) {
-      console.warn("Failed to save edit history to localStorage:", e);
+      console.warn("EditHistoryStore: failed to save history to storage", e);
     }
   }
 
-  pushEdit(entry: EditHistoryEntry): void {
-    this.entries.push(entry);
-    // Trim to MAX_HISTORY
+  pushEdit(entry: EditHistory): void {
+    // Avoid duplicate entries
+    const existingIndex = this.entries.findIndex((e) => e.id === entry.id);
+    if (existingIndex >= 0) {
+      this.entries[existingIndex] = entry;
+    } else {
+      this.entries.push(entry);
+    }
+
     if (this.entries.length > MAX_HISTORY) {
       this.entries = this.entries.slice(-MAX_HISTORY);
     }
     this.saveToStorage();
   }
 
-  /**
-   * Force-revert an AI edit by restoring the document to codeBeforeEdit.
-   * Returns the code to restore, or null if the entry is not found.
-   */
-  revertEdit(id: string): string | null {
-    const entry = this.entries.find((e) => e.id === id);
-    if (!entry || entry.isReverted) return null;
-
-    entry.isReverted = true;
-    this.saveToStorage();
-    return entry.codeBeforeEdit;
+  hasEntry(id: string): boolean {
+    return this.entries.some((e) => e.id === id);
   }
 
-  /**
-   * Reapply a previously reverted AI edit by restoring codeAfterEdit.
-   * Returns the code to apply, or null if the entry is not found or not reverted.
-   */
-  reapplyEdit(id: string): string | null {
-    const entry = this.entries.find((e) => e.id === id);
-    if (!entry || !entry.isReverted) return null;
-
-    entry.isReverted = false;
-    this.saveToStorage();
-    return entry.codeAfterEdit;
-  }
-
-  getEntry(id: string): EditHistoryEntry | undefined {
+  getEntry(id: string): EditHistory | undefined {
     return this.entries.find((e) => e.id === id);
   }
 
-  getEntryByMessageId(messageId: string): EditHistoryEntry | undefined {
-    return this.entries.find((e) => e.messageId === messageId);
+  getEntryByMessageId(messageId: string): EditHistory | undefined {
+    return this.entries.find((e) => e.id === messageId);
   }
 
-  getHistory(): EditHistoryEntry[] {
-    return [...this.entries];
+  revertEdit(id: string): EditHistory | null {
+    const entry = this.entries.find((e) => e.id === id);
+    if (!entry) return null;
+
+    entry.isReverted = true;
+    this.saveToStorage();
+    return entry;
+  }
+
+  reapplyEdit(id: string): EditHistory | null {
+    const entry = this.entries.find((e) => e.id === id);
+    if (!entry) return null;
+
+    entry.isReverted = false;
+    this.saveToStorage();
+    return entry;
   }
 
   isReverted(id: string): boolean {
@@ -108,8 +108,13 @@ export class EditHistoryStore {
     return entry?.isReverted ?? false;
   }
 
+  getHistory(): EditHistory[] {
+    return [...this.entries];
+  }
+
   clear(): void {
     this.entries = [];
+    if (typeof window === "undefined") return;
     try {
       localStorage.removeItem(this.storageKey);
     } catch (_) {}
