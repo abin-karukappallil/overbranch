@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { authClient } from "@/lib/auth-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -47,9 +48,11 @@ const STEPS: StepConfig[] = [
 export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { data: session } = authClient.useSession();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [projectName, setProjectName] = useState("");
+  const [documentTypeHint, setDocumentTypeHint] = useState<"auto" | "beamer" | "report" | "article">("auto");
   const [isDragging, setIsDragging] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [currentStep, setCurrentStep] = useState<StepKey>("uploading");
@@ -119,12 +122,22 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
       const pdfBase64 = reader.result as string;
 
       try {
+        // Clean up any stale guest tokens for logged-in users so project ownership is crystal clear
+        if (session?.user?.id) {
+          try {
+            localStorage.removeItem("ob_guest_token");
+            document.cookie = "ob_guest_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+          } catch (_) {}
+        }
+
         const response = await fetch(`${BACKEND_URL}/api/pdf/convert`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             pdf_data: pdfBase64,
             project_name: projectName.trim() || undefined,
+            user_id: session?.user?.id,
+            document_type_hint: documentTypeHint !== "auto" ? documentTypeHint : undefined,
           }),
         });
 
@@ -237,6 +250,9 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                 <h3 className="text-sm font-archivo font-black uppercase text-white tracking-wide">
                   PDF to Editable LaTeX
                 </h3>
+                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+                  BETA
+                </span>
               </div>
               <p className="text-xs text-zinc-400 font-sans">
                 Convert any PDF paper, slides, resume, or report into compilable LaTeX with assets.
@@ -337,6 +353,59 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                 />
               </div>
 
+              {/* Target Format / Document Class Selector */}
+              <div className="space-y-1.5">
+                <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider">
+                  Target LaTeX Template
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDocumentTypeHint("auto")}
+                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                      documentTypeHint === "auto"
+                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Auto-Detect
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocumentTypeHint("beamer")}
+                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                      documentTypeHint === "beamer"
+                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Slides (Beamer)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocumentTypeHint("report")}
+                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                      documentTypeHint === "report"
+                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Report / Thesis
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocumentTypeHint("article")}
+                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                      documentTypeHint === "article"
+                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                    }`}
+                  >
+                    Paper (Article)
+                  </button>
+                </div>
+              </div>
+
               {/* Error Alert if any */}
               {errorMessage && (
                 <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
@@ -344,6 +413,22 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                   <div className="font-sans leading-relaxed">{errorMessage}</div>
                 </div>
               )}
+
+              {/* Beta Notice Banner */}
+              <div className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 text-[11px] text-zinc-400 font-sans flex items-start gap-2.5">
+                <span className="text-[#00CC68] font-mono font-bold text-[9px] px-1.5 py-0.5 rounded bg-[#00CC68]/15 border border-[#00CC68]/30 shrink-0">BETA</span>
+                <div className="leading-relaxed">
+                  PDF decompilation is currently in Beta. Scanned documents or complex layouts may have formatting differences. Found any issues or bugs? Please{" "}
+                  <a
+                    href="https://github.com/abin-karukappallil/overbranch/issues"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[#00CC68] hover:underline font-bold"
+                  >
+                    report them on GitHub Issues →
+                  </a>
+                </div>
+              </div>
 
               {/* Action Buttons */}
               <div className="flex items-center justify-end gap-2 pt-2 text-xs font-mono font-bold">
@@ -358,10 +443,11 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                 <Button
                   type="submit"
                   disabled={!selectedFile}
-                  className="h-9 px-5 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black font-bold border border-black shadow-[3px_3px_0px_0px_#000000] rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center gap-1.5"
+                  className="h-9 px-5 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black font-bold border border-black shadow-[3px_3px_0px_0px_#000000] rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center gap-2"
                 >
-                  
-                  <span>Start Conversion →</span>
+                  <span>Start Conversion</span>
+                  <span className="text-[9px] bg-black text-[#00CC68] px-1.5 py-0.5 rounded font-black">BETA</span>
+                  <span>→</span>
                 </Button>
               </div>
             </form>
