@@ -70,6 +70,11 @@ export function DashboardSidebar({
                 size={isCompact ? "sm" : "md"}
                 colored
               />
+              {!isCompact && (
+                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+                  BETA
+                </span>
+              )}
             </Link>
 
             {!isMobile && (
