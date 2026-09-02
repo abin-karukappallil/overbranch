@@ -376,3 +376,17 @@ html, body {
   -webkit-user-select: text !important;
   user-select: text !important;
 }
+
+/* SyncTeX Reverse Navigation Line Highlight & Gutter Accent */
+.synctex-highlight-line {
+  background-color: rgba(0, 204, 104, 0.22) !important;
+  border-left: 4px solid #00CC68 !important;
+  transition: background-color 0.8s ease-out !important;
+}
+
+.synctex-gutter-marker {
+  background-color: #00CC68 !important;
+  width: 5px !important;
+  height: 100% !important;
+  border-radius: 2px !important;
+}

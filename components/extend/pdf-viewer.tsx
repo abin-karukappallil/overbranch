@@ -166,6 +166,7 @@ export type PDFViewerProps = {
     event: React.PointerEvent<HTMLDivElement>,
     pageNumber: number
   ) => void
+  onTextSelected?: (text: string) => void
 }
 
 const DEFAULT_ZOOM = "automatic"
@@ -1770,6 +1771,88 @@ function isEditableCopyTarget(target: EventTarget | null) {
   return Boolean(target.closest("input, textarea, [contenteditable='true']"))
 }
 
+function PDFViewerSelectionSyncListener({
+  documentId,
+  onTextSelected,
+}: {
+  documentId: string
+  onTextSelected?: (text: string) => void
+}) {
+  const { provides: selection } = useSelectionCapability()
+
+  React.useEffect(() => {
+    if (!selection || !onTextSelected) return
+
+    const docSelection = selection.forDocument(documentId)
+
+    const notifySelectedText = () => {
+      setTimeout(() => {
+        // 1. Try native browser DOM selection
+        const domText = window.getSelection()?.toString()?.trim()
+        if (domText && domText.length >= 2) {
+          onTextSelected(domText)
+          setTimeout(() => {
+            try {
+              window.getSelection()?.removeAllRanges()
+            } catch (_) {}
+          }, 300)
+          return
+        }
+
+        // 2. Try @embedpdf plugin selection
+        try {
+          docSelection.getSelectedText().wait(
+            (textArray) => {
+              if (textArray && textArray.length > 0) {
+                const text = textArray.join(" ").trim()
+                if (text.length >= 2) {
+                  onTextSelected(text)
+                  setTimeout(() => {
+                    try {
+                      window.getSelection()?.removeAllRanges()
+                    } catch (_) {}
+                  }, 300)
+                }
+              }
+            },
+            () => undefined
+          )
+        } catch (_) {}
+      }, 40)
+    }
+
+    const handlePointerUp = () => {
+      notifySelectedText()
+    }
+
+    window.addEventListener("pointerup", handlePointerUp)
+    window.addEventListener("mouseup", handlePointerUp)
+    window.addEventListener("touchend", handlePointerUp)
+    document.addEventListener("selectionchange", handlePointerUp)
+
+    const unhookEnd = docSelection.onEndSelection(() => {
+      notifySelectedText()
+    })
+
+    const unhookChange = docSelection.onSelectionChange((range) => {
+      if (range) {
+        notifySelectedText()
+      }
+    })
+
+    return () => {
+      window.removeEventListener("pointerup", handlePointerUp)
+      window.removeEventListener("mouseup", handlePointerUp)
+      window.removeEventListener("touchend", handlePointerUp)
+      document.removeEventListener("selectionchange", handlePointerUp)
+      unhookEnd?.()
+      unhookChange?.()
+    }
+  }, [documentId, onTextSelected, selection])
+
+  return null
+}
+
 function PDFViewerSelectionCopyShortcut({
   documentId,
 }: {
@@ -2133,6 +2216,7 @@ type PDFViewerInnerProps = {
   onPagePointerMove?: PDFViewerProps["onPagePointerMove"]
   onPagePointerUp?: PDFViewerProps["onPagePointerUp"]
   onPagePointerCancel?: PDFViewerProps["onPagePointerCancel"]
+  onTextSelected?: (text: string) => void
   onUploadFile: (file: File) => void
 }
 
@@ -2157,6 +2241,7 @@ function PDFViewerInner({
   onPagePointerMove,
   onPagePointerUp,
   onPagePointerCancel,
+  onTextSelected,
   onUploadFile,
 }: PDFViewerInnerProps) {
   const { registry } = useRegistry()
@@ -2513,6 +2598,9 @@ function PDFViewerInner({
             rotation={pageRotation}
             key={`${page.pageIndex}-${pageRotation}`}
             data-pdf-viewer-page={pageNumber}
+            data-page-width={page.width}
+            data-page-height={page.height}
+            data-page-scale={currentZoomLevel}
             className={cn(
               "relative border border-transparent bg-transparent shadow-xs select-none selection:bg-transparent selection:text-inherit touch-auto",
               pageClassName?.(pageNumber)
@@ -2657,6 +2745,10 @@ function PDFViewerInner({
           >
             <PDFViewerViewportBridge viewportElementRef={viewportElementRef} />
             <PDFViewerSelectionCopyShortcut documentId={documentId} />
+            <PDFViewerSelectionSyncListener
+              documentId={documentId}
+              onTextSelected={onTextSelected}
+            />
             <PDFViewerSelectionReleaseGuard documentId={documentId} />
             <GlobalPointerProvider documentId={documentId} className="touch-auto">
               <PDFViewerScroller
@@ -2781,6 +2873,7 @@ export const PDFViewer = React.forwardRef<PDFViewerHandle, PDFViewerProps>(
       onPagePointerMove,
       onPagePointerUp,
       onPagePointerCancel,
+      onTextSelected,
     },
     ref
   ) {
@@ -2916,6 +3009,7 @@ export const PDFViewer = React.forwardRef<PDFViewerHandle, PDFViewerProps>(
             onPagePointerMove={onPagePointerMove}
             onPagePointerUp={onPagePointerUp}
             onPagePointerCancel={onPagePointerCancel}
+            onTextSelected={onTextSelected}
             onUploadFile={handleUploadFile}
           />
         </EmbedPDF>
