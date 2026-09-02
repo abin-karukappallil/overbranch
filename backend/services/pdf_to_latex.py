@@ -302,13 +302,25 @@ def build_conversion_prompt(parse_result: PDFParseResult) -> str:
         parts.append("")
 
     parts.append("TASK:")
-    parts.append(
-        "Generate the complete, editable LaTeX project replicating the layout, structure, and text of this document. "
-        "CRITICAL: Write ALL document content, title, abstract, chapters, sections, paragraphs, tables, and equations "
-        "DIRECTLY inside main.tex. DO NOT use \\input{sections/...} or \\include{} to split content into separate files. "
-        "The entire document must be fully contained and editable directly within main.tex. "
-        "Return ONLY the structured JSON with 'document_class', 'engine', 'files', and 'assets'."
-    )
+    if parse_result.doc_type_hint == "beamer":
+        parts.append(
+            "CRITICAL: The uploaded document is a SLIDE DECK / PRESENTATION (PowerPoint / Keynote / Beamer). "
+            "You MUST use \\documentclass[11pt,aspectratio=169]{beamer}. "
+            "Every slide/page MUST be enclosed inside \\begin{frame}{Slide Title} ... \\end{frame}. "
+            "Do NOT use \\documentclass{report} or \\documentclass{article}. "
+            "Do NOT use \\chapter or \\section* as slide dividers. "
+            "Use \\begin{itemize}, \\begin{columns}, \\begin{block}{...}, and \\includegraphics inside frames to recreate the slides faithfully. "
+            "Write ALL slides DIRECTLY inside main.tex. "
+            "Return ONLY the structured JSON with 'document_class': 'beamer', 'engine': 'pdflatex', 'files', and 'assets'."
+        )
+    else:
+        parts.append(
+            "Generate the complete, editable LaTeX project replicating the layout, structure, and text of this document. "
+            "CRITICAL: Write ALL document content, title, abstract, chapters, sections, paragraphs, tables, and equations "
+            "DIRECTLY inside main.tex. DO NOT use \\input{sections/...} or \\include{} to split content into separate files. "
+            "The entire document must be fully contained and editable directly within main.tex. "
+            "Return ONLY the structured JSON with 'document_class', 'engine', 'files', and 'assets'."
+        )
 
     return "\n".join(parts)
 
