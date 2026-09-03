@@ -363,8 +363,6 @@ export function EditorLayout({
     const trimmed = selectedText.trim();
     if (!trimmed || trimmed.length < 2) return;
 
-    setActiveMobileTab("code");
-
     const editors = [desktopEditorRef.current, mobileEditorRef.current, editorRef.current].filter(Boolean);
     const uniqueEditors = Array.from(new Set(editors));
 
@@ -458,12 +456,7 @@ export function EditorLayout({
       } catch (_) {}
     }
 
-    // Auto-release browser selection in the PDF so user doesn't have to click away
-    setTimeout(() => {
-      try {
-        window.getSelection()?.removeAllRanges();
-      } catch (_) {}
-    }, 250);
+
 
     // Mobile jump guarantee: layout and reveal once tab is active
     setTimeout(() => {
@@ -2991,7 +2984,6 @@ export function EditorLayout({
               handleReverseSyncJump(file, line, col);
             }}
             onTextSelected={(text) => {
-              setActiveMobileTab("code");
               handlePdfTextSelected(text);
             }}
             onEnterPresentation={() => setIsPresentationMode(true)}

@@ -167,12 +167,16 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       getBlobUrl: () => blobUrl,
     }));
 
-    // Reverse SyncTeX click handler
+    // Reverse SyncTeX click handler (triggered on Ctrl/Cmd + click or double-click)
     const handlePagePointerDown = useCallback(
       async (
         event: React.PointerEvent<HTMLDivElement>,
         pageNumber: number
       ) => {
+        // Only trigger reverse SyncTeX on Ctrl/Cmd + click or double-click (event.detail >= 2)
+        const isSyncAction = event.ctrlKey || event.metaKey || event.detail >= 2;
+        if (!isSyncAction) return;
+
         const pageEl = event.currentTarget;
         const rect = pageEl.getBoundingClientRect();
         const clickX = event.clientX - rect.left;
@@ -250,11 +254,6 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
           const domText = window.getSelection()?.toString()?.trim();
           if (domText && domText.length >= 2) {
             onTextSelected?.(domText);
-            setTimeout(() => {
-              try {
-                window.getSelection()?.removeAllRanges();
-              } catch (_) {}
-            }, 300);
           }
         }, 30);
       },
