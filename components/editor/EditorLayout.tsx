@@ -45,6 +45,12 @@ import {
   Redo2,
   Maximize2,
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
 import { PresentationView } from "@/components/editor/PresentationView";
@@ -64,7 +70,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { trpc } from "@/trpc/client";
+import { trpc, trpcClient } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { FolderGit2 } from "lucide-react";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
@@ -511,20 +517,20 @@ export function EditorLayout({
   // ─── Model Selector State ────────────────────────────────────────────────
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
 
-  // Fetch available models from backend on mount
+  // Fetch available models via protected tRPC on mount
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/models`);
-        if (res.ok) {
-          const data: ModelsResponse = await res.json();
-          setAvailableModels(data.providers || []);
-          if (data.default_model) {
-            setActiveModelName(data.default_model);
+        const data = await trpcClient.ai.models.query();
+        if (data && Array.isArray(data) && data.length > 0) {
+          setAvailableModels(data);
+          const firstDefault = data.flatMap((g) => g.models).find((m) => m.default)?.id;
+          if (firstDefault) {
+            setActiveModelName(firstDefault);
           }
         }
       } catch (err) {
-        console.warn("Failed to fetch models:", err);
+        console.warn("Failed to fetch models via tRPC:", err);
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
           {
@@ -1194,27 +1200,21 @@ export function EditorLayout({
           const pos = e.position;
           if (!pos) return;
           try {
-            const res = await fetch(`${BACKEND_URL}/api/synctex/forward`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                file: activeFilePath || "main.tex",
-                line: pos.lineNumber,
-                column: pos.column || 1,
-                project_id: projectId || "",
-              }),
+            const data: any = await trpcClient.synctex.forward.mutate({
+              file: activeFilePath || "main.tex",
+              line: pos.lineNumber,
+              column: pos.column || 1,
+              projectId: projectId || undefined,
             });
-            if (res.ok) {
-              const data: SyncTeXForwardResult = await res.json();
-              if (data && data.page && !isReverseSyncingRef.current) {
-                pdfViewerRef.current?.scrollToDestination(
-                  data.page,
-                  data.x,
-                  data.y,
-                  data.width,
-                  data.height
-                );
-              }
+
+            if (data && data.page && !isReverseSyncingRef.current) {
+              pdfViewerRef.current?.scrollToDestination(
+                data.page,
+                data.x,
+                data.y,
+                data.width,
+                data.height
+              );
             }
           } catch (_) {}
         }, 120);
@@ -2543,39 +2543,44 @@ export function EditorLayout({
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
                 <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold text-xs">
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <Bot className="w-4 h-4 text-[#00CC68]" />
-                        <span>Agent</span>
-                      </div>
+                  <div className="flex items-center justify-between gap-1.5">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {/* Bot Icon Dropdown for New Chat & Delete Chat */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            disabled={isAgentThinking}
+                            className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                            title="Chat options (New Chat, Delete Chat)"
+                          >
+                            <Bot className="w-4 h-4 text-[#00CC68]" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
+                          <DropdownMenuItem
+                            onClick={handleNewChat}
+                            disabled={isAgentThinking}
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
+                          >
+                            <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                            <span>New Chat</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={handleClearChat}
+                            disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Delete Chat</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+
                       <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                     </div>
 
-                    <div className="flex items-center gap-1.5">
-                      {/* New Chat Button */}
-                      <button
-                        type="button"
-                        onClick={handleNewChat}
-                        disabled={isAgentThinking}
-                        className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
-                        title="Start new chat session"
-                      >
-                        <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
-                        <span>New</span>
-                      </button>
-
-                      {/* Clear / Delete Chat Button */}
-                      <button
-                        type="button"
-                        onClick={handleClearChat}
-                        disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                        className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30"
-                        title="Delete chat history and document context"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-
+                    <div className="flex items-center gap-1.5 min-w-0">
                       {/* Model Selector */}
                       <ModelSelector
                         activeModelName={activeModelName}
@@ -2992,38 +2997,43 @@ export function EditorLayout({
 
         <div className={`flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
           <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold">
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <Bot className="w-4 h-4 text-[#00CC68]" />
-                    <span>Agent</span>
-                  </div>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Bot Icon Dropdown for New Chat & Delete Chat */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={isAgentThinking}
+                        className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                        title="Chat options (New Chat, Delete Chat)"
+                      >
+                        <Bot className="w-4 h-4 text-[#00CC68]" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
+                      <DropdownMenuItem
+                        onClick={handleNewChat}
+                        disabled={isAgentThinking}
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                        <span>New Chat</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={handleClearChat}
+                        disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Chat</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
                   <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                 </div>
-                <div className="flex items-center gap-1.5">
-                  {/* New Chat Button */}
-                  <button
-                    type="button"
-                    onClick={handleNewChat}
-                    disabled={isAgentThinking}
-                    className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                    title="Start new chat session"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
-                    <span>New</span>
-                  </button>
-
-                  {/* Clear / Delete Chat Button */}
-                  <button
-                    type="button"
-                    onClick={handleClearChat}
-                    disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30 shrink-0"
-                    title="Delete chat history and document context"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-
+                <div className="flex items-center gap-1.5 min-w-0">
                   {/* Model Selector */}
                   <ModelSelector
                     activeModelName={activeModelName}
@@ -3310,35 +3320,43 @@ export function EditorLayout({
           <Drawer.Content className="fixed inset-0 z-50 bg-zinc-950 flex flex-col p-4 space-y-3 text-zinc-100 font-sans h-[100dvh] max-h-[100dvh]">
             <div className="w-12 h-1.5 rounded-full bg-zinc-800 mx-auto shrink-0" />
             <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 font-archivo uppercase text-white font-bold">
-                  <Bot className="w-5 h-5 text-[#00CC68]" />
-                  <span className="font-bold text-sm text-white">OverBranch Agent</span>
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Bot Icon Dropdown for New Chat & Delete Chat */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        disabled={isAgentThinking}
+                        className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                        title="Chat options (New Chat, Delete Chat)"
+                      >
+                        <Bot className="w-5 h-5 text-[#00CC68]" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
+                      <DropdownMenuItem
+                        onClick={handleNewChat}
+                        disabled={isAgentThinking}
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
+                      >
+                        <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                        <span>New Chat</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={handleClearChat}
+                        disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Chat</span>
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+
+                  <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                 </div>
-                <div className="flex items-center gap-1.5">
-                  {/* New Chat Button */}
-                  <button
-                    type="button"
-                    onClick={handleNewChat}
-                    disabled={isAgentThinking}
-                    className="px-2 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-[#00CC68] border border-zinc-800 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50 shrink-0"
-                    title="Start new chat session"
-                  >
-                    <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
-                    <span>New</span>
-                  </button>
-
-                  {/* Clear / Delete Chat Button */}
-                  <button
-                    type="button"
-                    onClick={handleClearChat}
-                    disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                    className="p-1.5 rounded-lg bg-zinc-900 hover:bg-rose-950/50 text-zinc-400 hover:text-rose-400 border border-zinc-800 text-[10px] font-mono transition-colors cursor-pointer disabled:opacity-30 shrink-0"
-                    title="Delete chat history and document context"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-
+                <div className="flex items-center gap-1.5 min-w-0">
                   {/* Model Selector */}
                   <ModelSelector
                     activeModelName={activeModelName}
@@ -3346,7 +3364,8 @@ export function EditorLayout({
                     availableModels={availableModels}
                     disabled={isAgentThinking}
                   />
-                  <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer">
+
+                  <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer shrink-0">
                     <X className="w-5 h-5" />
                   </button>
                 </div>

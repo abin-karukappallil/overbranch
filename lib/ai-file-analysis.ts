@@ -1,3 +1,5 @@
+import { trpcClient } from "@/trpc/client";
+
 export interface FileAnalysisUsage {
   promptTokens?: number;
   candidatesTokens?: number;
@@ -24,107 +26,131 @@ export interface AnalyzeFileOptions {
   signal?: AbortSignal;
 }
 
+const BACKEND_URL = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.BACKEND_URL ||
+  "http://localhost:8000"
+).replace(/\/$/, "");
+
 /**
  * Reusable client function for sending uploaded files + custom prompts
- * to Gemini (or other configured providers) via OverBranch's file analysis API.
+ * to Gemini (or other configured providers) via OverBranch's protected tRPC file analysis procedure.
  */
 export async function analyzeFile(options: AnalyzeFileOptions): Promise<FileAnalysisResponse> {
   const { file, prompt, provider = "gemini", model, stream = true, onChunk, signal } = options;
 
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("prompt", prompt);
-  formData.append("provider", provider);
-  if (model) {
-    formData.append("model", model);
-  }
-  formData.append("stream", stream ? "true" : "false");
-
-  const response = await fetch("/api/ai/analyze-file", {
-    method: "POST",
-    body: formData,
-    signal,
-  });
-
-  if (!response.ok) {
-    let errorText = "";
-    try {
-      const errJson = await response.json();
-      errorText = errJson.error || errJson.detail || `Server returned HTTP ${response.status}`;
-    } catch {
-      errorText = await response.text();
+  // If streaming is requested and onChunk handler is supplied, stream from backend directly
+  if (stream && onChunk) {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("prompt", prompt);
+    formData.append("provider", provider);
+    if (model) {
+      formData.append("model", model);
     }
-    throw new Error(errorText || `Analysis request failed with status ${response.status}`);
-  }
+    formData.append("stream", "true");
 
-  const contentType = response.headers.get("content-type") || "";
+    const response = await fetch(`${BACKEND_URL}/api/ai/analyze-file`, {
+      method: "POST",
+      body: formData,
+      signal,
+    });
 
-  if (contentType.includes("text/event-stream") && response.body) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let accumulatedText = "";
-    let finalUsage: FileAnalysisUsage | undefined = undefined;
-    let buffer = "";
+    if (!response.ok) {
+      let errorText = "";
+      try {
+        const errJson = await response.json();
+        errorText = errJson.error || errJson.detail || `Server returned HTTP ${response.status}`;
+      } catch {
+        errorText = await response.text();
+      }
+      throw new Error(errorText || `Analysis request failed with status ${response.status}`);
+    }
 
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("text/event-stream") && response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+      let finalUsage: FileAnalysisUsage | undefined = undefined;
+      let buffer = "";
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep partial line in buffer
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("data: ")) {
-            const dataStr = trimmed.substring(6).trim();
-            if (!dataStr) continue;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep partial line in buffer
 
-            try {
-              const data = JSON.parse(dataStr);
-              if (data.error) {
-                throw new Error(data.detail || "Error during streaming analysis.");
-              }
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const dataStr = trimmed.substring(6).trim();
+              if (!dataStr) continue;
 
-              if (data.chunk) {
-                accumulatedText += data.chunk;
-                if (onChunk) {
-                  onChunk(data.chunk);
+              try {
+                const data = JSON.parse(dataStr);
+                if (data.error) {
+                  throw new Error(data.detail || "Error during streaming analysis.");
                 }
-              }
 
-              if (data.done) {
-                if (data.usage) {
-                  finalUsage = data.usage;
+                if (data.chunk) {
+                  accumulatedText += data.chunk;
+                  if (onChunk) {
+                    onChunk(data.chunk);
+                  }
                 }
-              }
-            } catch (e: any) {
-              if (e.message && e.message !== "Unexpected end of JSON input") {
-                console.warn("Failed to parse SSE data chunk:", e);
+
+                if (data.done) {
+                  if (data.usage) {
+                    finalUsage = data.usage;
+                  }
+                }
+              } catch (e: any) {
+                if (e.message && e.message !== "Unexpected end of JSON input") {
+                  console.warn("Failed to parse SSE data chunk:", e);
+                }
               }
             }
           }
         }
+      } finally {
+        reader.releaseLock();
       }
-    } finally {
-      reader.releaseLock();
+
+      return {
+        success: true,
+        filename: file.name,
+        mimeType: file.type || "application/octet-stream",
+        analysis: accumulatedText,
+        usage: finalUsage,
+        provider,
+      };
     }
-
-    return {
-      success: true,
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      analysis: accumulatedText,
-      usage: finalUsage,
-      provider,
-    };
   }
 
-  // Handle standard JSON response
-  const jsonResult: FileAnalysisResponse = await response.json();
-  if (!jsonResult.success && jsonResult.error) {
-    throw new Error(jsonResult.error);
-  }
-  return jsonResult;
+  // Use protected tRPC mutation for file analysis
+  const arrayBuffer = await file.arrayBuffer();
+  const fileBase64 = Buffer.from(arrayBuffer).toString("base64");
+
+  const result: any = await trpcClient.ai.analyzeFile.mutate({
+    filename: file.name,
+    fileBase64,
+    mimeType: file.type || "application/octet-stream",
+    prompt,
+    provider,
+    model,
+  });
+
+  return {
+    success: result.success ?? true,
+    filename: file.name,
+    mimeType: file.type || "application/octet-stream",
+    analysis: result.analysis || result.result || "",
+    usage: result.usage,
+    provider: result.provider || provider,
+  };
 }
+

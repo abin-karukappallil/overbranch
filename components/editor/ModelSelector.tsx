@@ -127,7 +127,7 @@ export function ModelSelector({
         type="button"
         disabled={disabled}
         onClick={() => setIsOpen((prev) => !prev)}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[11px] border border-[#00CC68]/25 font-bold hover:bg-[#00CC68]/20 transition-all cursor-pointer select-none max-w-[240px] truncate ${
+        className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-[#00CC68]/10 text-[#00CC68] font-mono text-[11px] border border-[#00CC68]/25 font-bold hover:bg-[#00CC68]/20 transition-all cursor-pointer select-none max-w-[140px] sm:max-w-[170px] shrink min-w-0 ${
           disabled ? "opacity-60 cursor-not-allowed" : "active:scale-98"
         } ${triggerClassName}`}
         title={`AI Model: ${activeLabel}`}
@@ -137,11 +137,11 @@ export function ModelSelector({
             disabled ? "bg-amber-400 animate-ping" : "bg-[#00CC68]"
           }`}
         />
-        <span className="truncate max-w-[170px] sm:max-w-[190px]">
+        <span className="truncate max-w-[75px] sm:max-w-[110px]">
           {disabled ? "Reasoning..." : activeLabel}
         </span>
         <ChevronDown
-          className={`w-3.5 h-3.5 text-[#00CC68] shrink-0 transition-transform duration-150 ${
+          className={`w-3 h-3 text-[#00CC68] shrink-0 transition-transform duration-150 ${
             isOpen ? "rotate-180" : ""
           }`}
         />

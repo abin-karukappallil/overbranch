@@ -13,15 +13,7 @@ export function LandingHero() {
     <section id="product" className="relative min-h-screen bg-[#00CC68] text-black flex flex-col justify-between pt-28 pb-10 px-4 sm:px-8 lg:px-12 select-none border-b-2 border-black overflow-hidden">
       {/* Top / Main Hero Content */}
       <div className="relative z-10 flex-1 flex flex-col justify-center items-center text-center my-auto">
-        <a
-          href="https://github.com/abin-karukappallil/overbranch/issues"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 mb-4 px-3.5 py-1.5 rounded-full bg-black text-white font-mono text-xs font-bold uppercase tracking-wider border-2 border-black hover:bg-white hover:text-black shadow-[3px_3px_0px_0px_#000000] hover:translate-x-0.5 hover:translate-y-0.5 transition-all duration-150"
-        >
-          <span className="px-1.5 py-0.5 rounded bg-[#00CC68] text-black text-[10px] font-black">BETA</span>
-          <span>OverBranch is in active Beta — Found a bug? Report to GitHub Issues →</span>
-        </a>
+    
 
         <h1 className="font-archivo font-black uppercase text-4xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-[8vw] tracking-[-0.04em] leading-[0.9] text-black max-w-full drop-shadow-sm flex items-center justify-center gap-3 flex-wrap">
           <span>OVERBRANCH</span>
