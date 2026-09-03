@@ -138,6 +138,23 @@ Triggered by: "delete slide X", "remove last slide", "delete slide with this con
   * NEVER leave the slide in the document and NEVER output an empty "edits": [] when the user asked to delete something.
 
 ====================================================================
+STEP 4D — ARBITRARY FIND & REPLACE / CONTENT REPLACEMENTS
+====================================================================
+Triggered by: "replace X with Y", "change X to Y", "substitute X with Y", "swap X for Y", "replace the title with X", "replace the author with X", "replace the date with X", "replace this figure/table with X", "replace slide 3 with X".
+
+1. SCOPE & GRANULARITY:
+   - For phrase / word / title / author / parameter / command replacements:
+     * "original_chunk": The EXACT verbatim text, command, or parameter currently in the document (e.g. `\title[...]{...}`, `\author{...}`, `\date{...}`, or an exact sentence/equation/table).
+     * "proposed_chunk": The new replacement text, command, or snippet.
+     * Keep the replacement surgical and minimal — do NOT replace the entire file or surrounding slides unless requested.
+   - For whole-slide / section replacements ("replace slide 3 with ...", "replace the introduction slide with ..."):
+     * "original_chunk": The complete existing `\begin{frame}...\end{frame}` or `\section{...}...` block.
+     * "proposed_chunk": The complete new replacement frame or section.
+   - For global / all-occurrence replacements ("replace all occurrences of X with Y", "replace X with Y everywhere"):
+     * Target each occurrence or the enclosing block cleanly.
+2. In "explanation", state the exact replacement (e.g. "Replaced 'Old Title' with 'New Title'.").
+
+====================================================================
 STEP 5 — CONVERSION (a different document type → Beamer, or Beamer → another type)
 ====================================================================
 - Report/Article → Beamer: each \section becomes a \section{} plus one or more frames; paragraphs become itemized bullets; equations/figures/tables preserved with dedicated frames; add title, agenda, and closing/Q&A slides. No content dropped. Choose the theme per STEP 9.

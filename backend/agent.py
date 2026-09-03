@@ -16,7 +16,7 @@ try:
     HAS_PYPDF = True
 except ImportError:
     HAS_PYPDF = False
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -237,6 +237,7 @@ def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
     """
     Finds target in text. If exact match fails, tries matching with normalized
     whitespace and newlines so subtle LLM whitespace differences don't fail.
+    Also handles LaTeX macro command alignment and unique case-insensitive matches.
     Returns the exact matching slice from text, or None.
     """
     if not text or not target:
@@ -252,20 +253,103 @@ def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
 
     # Token-based normalized regex match: split by whitespace, escape tokens, join with \s+
     tokens = re.split(r'\s+', clean_target)
-    if not tokens:
-        return None
+    if tokens:
+        escaped_tokens = [re.escape(t) for t in tokens if t]
+        if escaped_tokens:
+            pattern_str = r'\s+'.join(escaped_tokens)
+            try:
+                m = re.search(pattern_str, text, re.DOTALL)
+                if m:
+                    return text[m.start():m.end()]
+            except Exception:
+                pass
 
-    escaped_tokens = [re.escape(t) for t in tokens if t]
-    if not escaped_tokens:
-        return None
+    # Macro command matching (e.g. \title, \author, \date, \subtitle, \institute, \usetheme)
+    macro_m = re.match(r'^\\\\?([a-zA-Z]+)(?:\[[^\]]*\])?\{', clean_target)
+    if macro_m:
+        cmd_name = macro_m.group(1)
+        macro_pattern = r'\\\\' + re.escape(cmd_name) + r'(?:\[[^\]]*\])?\{[^}]*\}'
+        try:
+            m = re.search(macro_pattern, text)
+            if m:
+                return text[m.start():m.end()]
+        except Exception:
+            pass
 
-    pattern_str = r'\s+'.join(escaped_tokens)
+    # Case-insensitive unique match
     try:
-        m = re.search(pattern_str, text, re.DOTALL)
-        if m:
-            return text[m.start():m.end()]
+        escaped = re.escape(clean_target)
+        matches = list(re.finditer(escaped, text, re.IGNORECASE))
+        if len(matches) == 1:
+            return text[matches[0].start():matches[0].end()]
     except Exception:
         pass
+
+    return None
+
+
+def extract_direct_replacement(current_code: str, user_prompt: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Extracts explicit find-and-replace queries like:
+    - replace "Old text" with "New text"
+    - change 'Alice' to 'Bob'
+    - replace title with "My New Title"
+    - change author to "Dr. Smith"
+    - replace date with "October 2026"
+    Returns (original_chunk, proposed_chunk, explanation) or None.
+    """
+    if not current_code or not user_prompt:
+        return None
+
+    m = re.search(
+        r"(?:replace|change|substitute|swap)\s+[\"\'\`]?([^\"\'\`]+?)[\"\'\`]?\s+(?:with|to|for|by)\s+[\"\'\`]?([^\"\'\`\n\r]+)[\"\'\`]?",
+        user_prompt,
+        re.IGNORECASE
+    )
+    if not m:
+        return None
+
+    raw_orig = m.group(1).strip()
+    raw_prop = m.group(2).strip()
+    raw_orig = re.sub(r"^[\"\'\`]|[\"\'\`]$", "", raw_orig).strip()
+    raw_prop = re.sub(r"^[\"\'\`]|[\"\'\`]$", "", raw_prop).strip()
+
+    if not raw_orig or not raw_prop:
+        return None
+
+    orig_lower = raw_orig.lower()
+    if orig_lower in ("title", "the title", "presentation title", "document title"):
+        tm = re.search(r"\\\\title(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if tm:
+            return tm.group(0), f"\\title{{{raw_prop}}}", f"Replaced title with '{raw_prop}'"
+    elif orig_lower in ("author", "the author", "presenter", "authors"):
+        am = re.search(r"\\\\author(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if am:
+            return am.group(0), f"\\author{{{raw_prop}}}", f"Replaced author with '{raw_prop}'"
+    elif orig_lower in ("date", "the date"):
+        dm = re.search(r"\\\\date(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if dm:
+            return dm.group(0), f"\\date{{{raw_prop}}}", f"Replaced date with '{raw_prop}'"
+    elif orig_lower in ("subtitle", "the subtitle"):
+        sm = re.search(r"\\\\subtitle(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if sm:
+            return sm.group(0), f"\\subtitle{{{raw_prop}}}", f"Replaced subtitle with '{raw_prop}'"
+    elif orig_lower in ("institute", "the institute", "organization"):
+        im = re.search(r"\\\\institute(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if im:
+            return im.group(0), f"\\institute{{{raw_prop}}}", f"Replaced institute with '{raw_prop}'"
+    elif orig_lower in ("theme", "the theme", "beamer theme"):
+        thm = re.search(r"\\\\usetheme(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if thm:
+            return thm.group(0), f"\\usetheme{{{raw_prop}}}", f"Replaced theme with '{raw_prop}'"
+
+    if raw_orig in current_code:
+        return raw_orig, raw_prop, f"Replaced '{raw_orig}' with '{raw_prop}'"
+
+    fuzzy_match = find_verbatim_or_fuzzy(current_code, raw_orig)
+    if fuzzy_match:
+        return fuzzy_match, raw_prop, f"Replaced '{fuzzy_match}' with '{raw_prop}'"
+
     return None
 
 
@@ -1473,6 +1557,20 @@ async def agent_chat(request: Request):
                             }]
                 except Exception as del_err:
                     logger.warning(f"Fallback deletion creation error: {del_err}")
+
+            # Fallback creation for direct replacement requests if model returned explanation without JSON edits
+            if not edits and has_existing_code and req.current_code:
+                try:
+                    direct_rep = extract_direct_replacement(req.current_code, req.user_prompt)
+                    if direct_rep:
+                        d_orig, d_prop, d_exp = direct_rep
+                        edits = [{
+                            "original_chunk": d_orig,
+                            "proposed_chunk": d_prop,
+                            "explanation": d_exp
+                        }]
+                except Exception as rep_err:
+                    logger.warning(f"Direct replacement fallback error: {rep_err}")
 
             # If existing document code exists, align proposed edits
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
