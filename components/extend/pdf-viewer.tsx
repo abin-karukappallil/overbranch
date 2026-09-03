@@ -1779,6 +1779,7 @@ function PDFViewerSelectionSyncListener({
   onTextSelected?: (text: string) => void
 }) {
   const { provides: selection } = useSelectionCapability()
+  const lastNotifiedTextRef = React.useRef<string>("")
 
   React.useEffect(() => {
     if (!selection || !onTextSelected) return
@@ -1790,12 +1791,10 @@ function PDFViewerSelectionSyncListener({
         // 1. Try native browser DOM selection
         const domText = window.getSelection()?.toString()?.trim()
         if (domText && domText.length >= 2) {
-          onTextSelected(domText)
-          setTimeout(() => {
-            try {
-              window.getSelection()?.removeAllRanges()
-            } catch (_) {}
-          }, 300)
+          if (lastNotifiedTextRef.current !== domText) {
+            lastNotifiedTextRef.current = domText
+            onTextSelected(domText)
+          }
           return
         }
 
@@ -1805,14 +1804,12 @@ function PDFViewerSelectionSyncListener({
             (textArray) => {
               if (textArray && textArray.length > 0) {
                 const text = textArray.join(" ").trim()
-                if (text.length >= 2) {
+                if (text.length >= 2 && lastNotifiedTextRef.current !== text) {
+                  lastNotifiedTextRef.current = text
                   onTextSelected(text)
-                  setTimeout(() => {
-                    try {
-                      window.getSelection()?.removeAllRanges()
-                    } catch (_) {}
-                  }, 300)
                 }
+              } else {
+                lastNotifiedTextRef.current = ""
               }
             },
             () => undefined
@@ -1828,7 +1825,6 @@ function PDFViewerSelectionSyncListener({
     window.addEventListener("pointerup", handlePointerUp)
     window.addEventListener("mouseup", handlePointerUp)
     window.addEventListener("touchend", handlePointerUp)
-    document.addEventListener("selectionchange", handlePointerUp)
 
     const unhookEnd = docSelection.onEndSelection(() => {
       notifySelectedText()
@@ -1837,6 +1833,8 @@ function PDFViewerSelectionSyncListener({
     const unhookChange = docSelection.onSelectionChange((range) => {
       if (range) {
         notifySelectedText()
+      } else {
+        lastNotifiedTextRef.current = ""
       }
     })
 
@@ -1844,7 +1842,6 @@ function PDFViewerSelectionSyncListener({
       window.removeEventListener("pointerup", handlePointerUp)
       window.removeEventListener("mouseup", handlePointerUp)
       window.removeEventListener("touchend", handlePointerUp)
-      document.removeEventListener("selectionchange", handlePointerUp)
       unhookEnd?.()
       unhookChange?.()
     }
