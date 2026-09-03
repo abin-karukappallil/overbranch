@@ -24,13 +24,7 @@ import {
   type PDFViewerHandle,
   type PDFViewerPageOverlayProps,
 } from "@/components/extend/pdf-viewer";
-import type { SyncTeXBackwardResult } from "@/types/sync";
-
-const BACKEND_URL = (
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  process.env.BACKEND_URL ||
-  "http://localhost:8000"
-).replace(/\/$/, "");
+import { trpcClient } from "@/trpc/client";
 
 export interface PDFViewerRefHandle {
   scrollToDestination: (
@@ -196,36 +190,15 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         const ptY = clickY / (scale || 1.0);
 
         try {
-          let res = await fetch(`${BACKEND_URL}/api/synctex/backward`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              page: pageNumber,
-              x: ptX,
-              y: ptY,
-              project_id: projectId || "",
-            }),
+          const data = await trpcClient.synctex.backward.mutate({
+            projectId: projectId || undefined,
+            page: pageNumber,
+            x: ptX,
+            y: ptY,
           });
 
-          // If direct backend request failed, try local Next.js proxy route
-          if (!res.ok) {
-            res = await fetch(`/api/synctex/backward`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                page: pageNumber,
-                x: ptX,
-                y: ptY,
-                project_id: projectId || "",
-              }),
-            });
-          }
-
-          if (res.ok) {
-            const data: SyncTeXBackwardResult = await res.json();
-            if (data && data.line) {
-              onReverseSync?.(data.file, data.line, data.column || 1);
-            }
+          if (data && data.file && data.line) {
+            onReverseSync?.(data.file, data.line, data.column || 1);
           }
         } catch (_) {
           // Graceful handling without intrusive error toast in PDF section

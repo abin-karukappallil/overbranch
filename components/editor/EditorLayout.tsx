@@ -70,7 +70,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
-import { trpc } from "@/trpc/client";
+import { trpc, trpcClient } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { FolderGit2 } from "lucide-react";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
@@ -517,20 +517,20 @@ export function EditorLayout({
   // ─── Model Selector State ────────────────────────────────────────────────
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
 
-  // Fetch available models from backend on mount
+  // Fetch available models via protected tRPC on mount
   useEffect(() => {
     const fetchModels = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/api/models`);
-        if (res.ok) {
-          const data: ModelsResponse = await res.json();
-          setAvailableModels(data.providers || []);
-          if (data.default_model) {
-            setActiveModelName(data.default_model);
+        const data = await trpcClient.ai.models.query();
+        if (data && Array.isArray(data) && data.length > 0) {
+          setAvailableModels(data);
+          const firstDefault = data.flatMap((g) => g.models).find((m) => m.default)?.id;
+          if (firstDefault) {
+            setActiveModelName(firstDefault);
           }
         }
       } catch (err) {
-        console.warn("Failed to fetch models:", err);
+        console.warn("Failed to fetch models via tRPC:", err);
         // Fallback: hardcode defaults so selector still works
         setAvailableModels([
           {
@@ -1200,27 +1200,21 @@ export function EditorLayout({
           const pos = e.position;
           if (!pos) return;
           try {
-            const res = await fetch(`${BACKEND_URL}/api/synctex/forward`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                file: activeFilePath || "main.tex",
-                line: pos.lineNumber,
-                column: pos.column || 1,
-                project_id: projectId || "",
-              }),
+            const data: any = await trpcClient.synctex.forward.mutate({
+              file: activeFilePath || "main.tex",
+              line: pos.lineNumber,
+              column: pos.column || 1,
+              projectId: projectId || undefined,
             });
-            if (res.ok) {
-              const data: SyncTeXForwardResult = await res.json();
-              if (data && data.page && !isReverseSyncingRef.current) {
-                pdfViewerRef.current?.scrollToDestination(
-                  data.page,
-                  data.x,
-                  data.y,
-                  data.width,
-                  data.height
-                );
-              }
+
+            if (data && data.page && !isReverseSyncingRef.current) {
+              pdfViewerRef.current?.scrollToDestination(
+                data.page,
+                data.x,
+                data.y,
+                data.width,
+                data.height
+              );
             }
           } catch (_) {}
         }, 120);

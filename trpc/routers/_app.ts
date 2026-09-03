@@ -9,6 +9,8 @@ import { notificationsRouter } from './notifications';
 import { invitationsRouter } from './invitations';
 import { commentsRouter } from './comments';
 import { templatesRouter } from './templates';
+import { synctexRouter } from './synctex';
+import { aiRouter } from './ai';
 
 export const appRouter = router({
   hello: publicProcedure
@@ -33,6 +35,8 @@ export const appRouter = router({
   notifications: notificationsRouter,
   invitations: invitationsRouter,
   comments: commentsRouter,
+  synctex: synctexRouter,
+  ai: aiRouter,
 });
 
 export type AppRouter = typeof appRouter;
