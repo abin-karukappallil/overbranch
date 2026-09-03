@@ -336,13 +336,15 @@ def find_target_page(
     text = re.sub(r"\bconetnts\b|\bcontetns\b", "contents", text)
 
     content_pages = [p for p in doc_index.pages if p.page_type not in ("preamble", "postamble")]
+    if not content_pages:
+        return None
 
     # 2. Match fractional numbers like "7/7", "(7/7)", "1/7"
     fraction_match = re.search(r"\(?(\d+)\s*/\s*(\d+)\)?", text)
     if fraction_match:
         target_num = fraction_match.group(1)
         for page in content_pages:
-            if f"({target_num}/" in page.title or f" {target_num}/" in page.title:
+            if f"({target_num}/" in page.title or f" {target_num}/" in page.title or f"({target_num}/" in page.content:
                 return page.page_index
 
     # 3. Match survey / paper / item / topic numbering: "literature survey 7", "survey 7", "paper 3"
@@ -351,7 +353,7 @@ def find_target_page(
     )
     if survey_match:
         num = survey_match.group(1)
-        # Check if any slide has this specific survey/paper number in its title
+        # Check if any slide has this specific survey/paper number in its title or content
         for page in content_pages:
             title_lower = page.title.lower()
             if (f"({num}/" in title_lower or f" {num}/" in title_lower or
@@ -359,40 +361,96 @@ def find_target_page(
                 f"survey {num}" in title_lower or f"({num})" in title_lower):
                 return page.page_index
 
-    # 4. Explicit slide/page/frame number references: "slide 7", "frame 3", "page 12"
+    # 4. Explicit slide/page/frame number references: "slide 7", "slide #7", "slide-7", "frame 3", "page 12", "7th slide"
     slide_num_match = re.search(
-        r"(?:slide|frame|page)\s*#?\s*(\d+)", text
+        r"(?:slide|frame|page|section)\s*[:#\-]?\s*(\d+)", text
     )
     if slide_num_match:
         num = int(slide_num_match.group(1))
         if 1 <= num <= len(content_pages):
             return content_pages[num - 1].page_index
-        return None
 
-    # 5. Explicit title references: "the introduction slide", "conclusion section"
+    # Ordinal numbers: "7th slide", "3rd frame", "1st page", "seventh slide"
+    ordinal_map = {
+        "1st": 1, "first": 1,
+        "2nd": 2, "second": 2,
+        "3rd": 3, "third": 3,
+        "4th": 4, "fourth": 4,
+        "5th": 5, "fifth": 5,
+        "6th": 6, "sixth": 6,
+        "7th": 7, "seventh": 7,
+        "8th": 8, "eighth": 8,
+        "9th": 9, "ninth": 9,
+        "10th": 10, "tenth": 10,
+    }
+    ord_match = re.search(
+        r"\b(1st|2nd|3rd|[4-9]th|10th|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+(?:slide|frame|page|section)\b",
+        text
+    )
+    if ord_match:
+        ord_word = ord_match.group(1)
+        num = ordinal_map.get(ord_word)
+        if num and 1 <= num <= len(content_pages):
+            return content_pages[num - 1].page_index
+
+    # 5. Position references: "penultimate slide", "2nd last slide", "last slide", "final slide", "first slide"
+    if any(w in text for w in ["penultimate slide", "second to last slide", "2nd to last slide", "2nd last slide", "penultimate frame"]):
+        if len(content_pages) >= 2:
+            return content_pages[-2].page_index
+    if any(w in text for w in ["last slide", "final slide", "end slide", "closing slide", "last frame", "final frame"]):
+        return content_pages[-1].page_index
+    if any(w in text for w in ["title page", "title slide", "first slide", "cover slide", "first frame", "cover page"]):
+        return content_pages[0].page_index
+    if any(w in text for w in ["outline", "agenda", "table of contents"]):
+        if len(content_pages) >= 2:
+            return content_pages[1].page_index
+
+    # 6. Content matching: "slide with this content", "slide containing", "slide about", or unique content query
+    # Check if user instruction mentions text inside page.content
+    content_query = ""
+    content_phrase_m = re.search(
+        r"(?:with\s+this\s+content|with\s+content|having\s+content|slide\s+with|containing|titled|having|about|content|text)\s*[:\-]?\s*[\"']?([^\"'\n\r]+)[\"']?",
+        text,
+        re.IGNORECASE
+    )
+    if content_phrase_m:
+        extracted = content_phrase_m.group(1).strip()
+        content_query = re.sub(
+            r"^(?:this\s+content|content|text|words|the|that|a|an)\s*[:\-]?\s*",
+            "",
+            extracted,
+            flags=re.IGNORECASE
+        ).strip().lower()
+
     best_match_idx = None
     best_match_score = 0.0
 
-    # Generic words that should not count as title matches
-    _GENERIC_WORDS = {"slide", "frame", "page", "section", "the", "this", "that", "edit", "change", "modify", "update", "issue", "overflow", "fix"}
+    # Generic words that should not count as title/content matches
+    _GENERIC_WORDS = {"slide", "frame", "page", "section", "the", "this", "that", "edit", "change", "modify", "update", "issue", "overflow", "fix", "delete", "remove", "drop", "erase", "content", "with"}
 
     # Extract any numbers in the prompt
     prompt_numbers = set(re.findall(r"\b\d+\b", text))
 
     for page in content_pages:
         title_lower = page.title.lower()
-        if not title_lower:
-            continue
+        content_lower = page.content.lower()
+
+        # If user gave an explicit content query substring
+        if content_query and len(content_query) >= 3 and content_query in content_lower:
+            score = 10.0 + len(content_query)
+            if score > best_match_score:
+                best_match_score = score
+                best_match_idx = page.page_index
+                continue
 
         page_numbers = set(re.findall(r"\b\d+\b", title_lower))
 
         # If user specified a number and the slide has numbers, they MUST overlap
-        # (prevents "survey 7" from matching "Literature Survey (1/7)")
         if prompt_numbers and page_numbers and not (prompt_numbers & page_numbers):
             continue
 
         # Exact title substring in instruction — high priority
-        if title_lower in text:
+        if title_lower and title_lower in text:
             score = 2.0 + len(title_lower) / max(len(text), 1)
             if prompt_numbers and (prompt_numbers & page_numbers):
                 score += 3.0  # Big boost when numbers align
@@ -413,15 +471,15 @@ def find_target_page(
                     best_match_score = score
                     best_match_idx = page.page_index
 
-    # 6. Keyword heuristics for common slide positions
-    if best_match_idx is None and content_pages:
-        if any(w in text for w in ["title page", "title slide", "first slide", "cover"]):
-            best_match_idx = content_pages[0].page_index
-        elif any(w in text for w in ["last slide", "final slide", "thank you", "closing"]):
-            best_match_idx = content_pages[-1].page_index
-        elif any(w in text for w in ["outline", "agenda", "table of contents"]):
-            if len(content_pages) >= 2:
-                best_match_idx = content_pages[1].page_index
+        # Content keyword overlap (if title did not match)
+        if best_match_score < 1.0 and text_words:
+            content_words = set(re.findall(r"[a-z]{4,}", content_lower)) - _GENERIC_WORDS
+            content_overlap = text_words & content_words
+            if len(content_overlap) >= 1:
+                c_score = len(content_overlap) * 0.8
+                if c_score > best_match_score:
+                    best_match_score = c_score
+                    best_match_idx = page.page_index
 
     if best_match_idx is not None:
         target = doc_index.get_page_by_index(best_match_idx)

@@ -354,8 +354,8 @@ def validate_edit(
     for edit in proposed_edits:
         pc = edit.get("proposed_chunk", "")
         oc = edit.get("original_chunk", "")
-        if pc and oc and oc in final_doc:
-            final_doc = final_doc.replace(oc, pc, 1)
+        if oc and oc in final_doc:
+            final_doc = final_doc.replace(oc, pc or "", 1)
         elif pc and not oc:
             # Insertion — just check the proposed chunk itself
             final_doc = pc

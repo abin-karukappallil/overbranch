@@ -1596,16 +1596,21 @@ export function EditorLayout({
   };
 
   const applySingleEditInPlace = (currentText: string, orig: string, prop: string): string => {
-    if (!prop) return currentText;
+    const propVal = prop !== undefined && prop !== null ? prop : "";
+    if (!propVal && !orig) return currentText;
 
     // 1. Full document replacement
-    if (prop.includes("\\documentclass") && prop.includes("\\begin{document}")) {
-      return prop;
+    if (propVal.includes("\\documentclass") && propVal.includes("\\begin{document}")) {
+      return propVal;
     }
 
-    // 2. Direct exact verbatim match
+    // 2. Direct exact verbatim match (including deletions where propVal is "")
     if (orig && currentText.includes(orig)) {
-      return currentText.replace(orig, prop);
+      let res = currentText.replace(orig, propVal);
+      if (!propVal.trim()) {
+        res = res.replace(/\n{3,}/g, "\n\n");
+      }
+      return res;
     }
 
     // 3. Whitespace-tolerant regex match
@@ -1614,18 +1619,27 @@ export function EditorLayout({
       try {
         const regex = new RegExp(escaped, 'i');
         if (regex.test(currentText)) {
-          return currentText.replace(regex, prop);
+          let res = currentText.replace(regex, propVal);
+          if (!propVal.trim()) {
+            res = res.replace(/\n{3,}/g, "\n\n");
+          }
+          return res;
         }
       } catch {
         // continue to next strategy
       }
     }
 
+    // If this was a deletion operation and exact/regex matching failed, don't append empty snippet
+    if (!propVal.trim()) {
+      return currentText;
+    }
+
     // 4. In-place Beamer frame replacement (prevents duplicate slides at bottom of document)
-    if (prop.includes("\\begin{frame}") && prop.includes("\\end{frame}")) {
-      const titleMatch = prop.match(/\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}/);
-      const fracMatch = prop.match(/\(?(\d+\/\d+)\)?/);
-      const numMatch = prop.match(/\b(?:survey|paper|slide|frame)\s*#?\s*(\d+)\b/i);
+    if (propVal.includes("\\begin{frame}") && propVal.includes("\\end{frame}")) {
+      const titleMatch = propVal.match(/\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}/);
+      const fracMatch = propVal.match(/\(?(\d+\/\d+)\)?/);
+      const numMatch = propVal.match(/\b(?:survey|paper|slide|frame)\s*#?\s*(\d+)\b/i);
 
       const frameRegex = /\\begin\{frame\}[\s\S]*?\\end\{frame\}/g;
       let m: RegExpExecArray | null;
@@ -1651,20 +1665,20 @@ export function EditorLayout({
       }
 
       if (bestMatch) {
-        return currentText.slice(0, bestMatch.index) + prop + currentText.slice(bestMatch.index + bestMatch.length);
+        return currentText.slice(0, bestMatch.index) + propVal + currentText.slice(bestMatch.index + bestMatch.length);
       }
     }
 
     // 5. In-place Section replacement
-    if (prop.includes("\\section{")) {
-      const secMatch = prop.match(/\\section\{([^}]+)\}/);
+    if (propVal.includes("\\section{")) {
+      const secMatch = propVal.match(/\\section\{([^}]+)\}/);
       if (secMatch) {
         const secTitle = secMatch[1].trim();
         const escapedSec = secTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         try {
           const nextSecRegex = new RegExp(`\\\\section\\{${escapedSec}\\}[\\s\\S]*?(?=\\\\section\\{|\\\\end\\{document\\}|$)`, 'i');
           if (nextSecRegex.test(currentText)) {
-            return currentText.replace(nextSecRegex, prop + "\n\n");
+            return currentText.replace(nextSecRegex, propVal + "\n\n");
           }
         } catch {
           // continue
@@ -1673,7 +1687,7 @@ export function EditorLayout({
     }
 
     // 6. Append safely before \end{document}
-    return insertSnippetSafely(currentText, prop);
+    return insertSnippetSafely(currentText, propVal);
   };
 
   const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {

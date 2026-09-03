@@ -1451,6 +1451,29 @@ async def agent_chat(request: Request):
                 except Exception as fb_err:
                     logger.warning(f"Fallback attempt failed: {fb_err}")
 
+            # Check if user requested a deletion/removal
+            is_delete_req = any(kw in req.user_prompt.lower() for kw in [
+                "delete", "remove", "drop", "erase", "omit", "get rid of", "strip", "cut"
+            ])
+
+            # Fallback creation for deletion requests if model returned explanation without JSON edits
+            if not edits and is_delete_req and has_existing_code and req.current_code:
+                try:
+                    doc_struct = locals().get("document_structure") or doc_idx.parse_document_structure(req.current_code)
+                    tgt_idx = locals().get("target_page_index")
+                    if tgt_idx is None and doc_struct:
+                        tgt_idx = doc_idx.find_target_page(doc_struct, req.user_prompt)
+                    if tgt_idx is not None and doc_struct:
+                        tp = doc_struct.get_page_by_index(tgt_idx)
+                        if tp and tp.content and tp.content in req.current_code:
+                            edits = [{
+                                "original_chunk": tp.content,
+                                "proposed_chunk": "",
+                                "explanation": f"Removed {tp.title or f'slide {tgt_idx}'} as requested."
+                            }]
+                except Exception as del_err:
+                    logger.warning(f"Fallback deletion creation error: {del_err}")
+
             # If existing document code exists, align proposed edits
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
                 # Detect if user prompt requests replacing/customizing template or document content
@@ -1469,10 +1492,36 @@ async def agent_chat(request: Request):
                     ("\\begin{letter}" in req.current_code)
                 )
 
+                doc_struct = locals().get("document_structure")
+                if not doc_struct:
+                    try:
+                        doc_struct = doc_idx.parse_document_structure(req.current_code)
+                    except Exception:
+                        doc_struct = None
+
+                tgt_idx = locals().get("target_page_index")
+                if tgt_idx is None and doc_struct:
+                    try:
+                        tgt_idx = doc_idx.find_target_page(doc_struct, req.user_prompt)
+                    except Exception:
+                        tgt_idx = None
+
                 for e in edits:
                     oc = e.get("original_chunk", "")
                     pc = e.get("proposed_chunk", "")
-                    if not pc:
+
+                    # Handle deletion edits (where proposed_chunk is empty or user requested deletion)
+                    if not pc or pc.strip() == "" or (is_delete_req and not ("\\begin{frame}" in pc and "\\end{frame}" in pc)):
+                        matched_orig = find_verbatim_or_fuzzy(req.current_code, oc) if oc else None
+                        if matched_orig:
+                            e["original_chunk"] = matched_orig
+                        elif tgt_idx is not None and doc_struct:
+                            target_page = doc_struct.get_page_by_index(tgt_idx)
+                            if target_page and target_page.content and target_page.content in req.current_code:
+                                e["original_chunk"] = target_page.content
+                        elif oc and oc.strip() in req.current_code:
+                            e["original_chunk"] = oc.strip()
+                        e["proposed_chunk"] = ""
                         continue
 
                     if "aspectratio=160" in pc:
@@ -1497,15 +1546,8 @@ async def agent_chat(request: Request):
                     # so edits replace the existing slide in-place, NEVER duplicating at the document bottom!
                     if "\\begin{frame}" in pc and "\\end{frame}" in pc:
                         frame_matched = False
-                        doc_struct = locals().get("document_structure")
-                        if not doc_struct:
-                            try:
-                                doc_struct = doc_idx.parse_document_structure(req.current_code)
-                            except Exception:
-                                doc_struct = None
 
                         # Match by identified target slide index from Step 3
-                        tgt_idx = locals().get("target_page_index")
                         if tgt_idx is not None and doc_struct:
                             target_page = doc_struct.get_page_by_index(tgt_idx)
                             if target_page and target_page.content and target_page.content in req.current_code:
