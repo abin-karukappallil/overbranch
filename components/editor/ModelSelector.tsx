@@ -86,7 +86,8 @@ export function ModelSelector({
 
   // Get active model label
   const activeLabel = useMemo(() => {
-    if (activeModelName === "auto:smart") return "Auto (Smart)";
+    if (activeModelName === "gemini-3.7-flash") return "Gemini 3.7 Flash";
+    if (activeModelName === "auto:smart") return "FreeLLM Auto Smart";
     for (const group of availableModels) {
       const match = group.models.find((m) => m.id === activeModelName);
       if (match) return match.label;
