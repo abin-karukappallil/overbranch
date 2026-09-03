@@ -1190,39 +1190,6 @@ export function EditorLayout({
     editor.onDidChangeCursorPosition((e: any) => {
       if (e.position) {
         lastPositionRef.current = e.position;
-
-        // DO NOT trigger forward sync if cursor moved due to reverse sync or PDF selection!
-        if (isReverseSyncingRef.current) {
-          return;
-        }
-
-        // Forward Sync: Debounce 120ms
-        if (forwardSyncTimerRef.current) {
-          clearTimeout(forwardSyncTimerRef.current);
-        }
-        forwardSyncTimerRef.current = setTimeout(async () => {
-          if (isReverseSyncingRef.current) return;
-          const pos = e.position;
-          if (!pos) return;
-          try {
-            const data: any = await trpcClient.synctex.forward.mutate({
-              file: activeFilePath || "main.tex",
-              line: pos.lineNumber,
-              column: pos.column || 1,
-              projectId: projectId || undefined,
-            });
-
-            if (data && data.page && !isReverseSyncingRef.current) {
-              pdfViewerRef.current?.scrollToDestination(
-                data.page,
-                data.x,
-                data.y,
-                data.width,
-                data.height
-              );
-            }
-          } catch (_) {}
-        }, 120);
       }
     });
 
