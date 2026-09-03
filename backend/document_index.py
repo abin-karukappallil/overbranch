@@ -334,10 +334,33 @@ def find_target_page(
     text = re.sub(r"\blitertaure\b", "literature", text)
     text = re.sub(r"\bsldies\b|\bslidee\b|\bslid\b", "slide", text)
     text = re.sub(r"\bconetnts\b|\bcontetns\b", "contents", text)
+    text = re.sub(r"\bbetwen\b|\bbetweeen\b", "between", text)
+    text = re.sub(r"\binsertin\b|\badditionedits\b|\badditonal\b", "add", text)
 
     content_pages = [p for p in doc_index.pages if p.page_type not in ("preamble", "postamble")]
     if not content_pages:
         return None
+
+    # 1b. Relative positioning: "between slide X and Y", "after slide X", "before slide Y", "after literature survey"
+    between_match = re.search(r"between\s+(?:slide|frame|page|section)?\s*#?\s*(\d+)\s+(?:and|&)\s+(?:slide|frame|page|section)?\s*#?\s*(\d+)", text)
+    if between_match:
+        first_num = int(between_match.group(1))
+        # Anchor on the first slide (insertion will happen directly after it)
+        if 1 <= first_num <= len(content_pages):
+            return content_pages[first_num - 1].page_index
+
+    after_num_match = re.search(r"(?:after|following|behind|post)\s+(?:slide|frame|page|section)?\s*#?\s*(\d+)", text)
+    if after_num_match:
+        num = int(after_num_match.group(1))
+        if 1 <= num <= len(content_pages):
+            return content_pages[num - 1].page_index
+
+    before_num_match = re.search(r"(?:before|prior\s+to|preceding|ahead\s+of)\s+(?:slide|frame|page|section)?\s*#?\s*(\d+)", text)
+    if before_num_match:
+        num = int(before_num_match.group(1))
+        # Insertion before slide N means anchoring on slide N (or slide N-1)
+        if 1 <= num <= len(content_pages):
+            return content_pages[num - 1].page_index
 
     # 2. Match fractional numbers like "7/7", "(7/7)", "1/7"
     fraction_match = re.search(r"\(?(\d+)\s*/\s*(\d+)\)?", text)

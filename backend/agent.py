@@ -69,6 +69,7 @@ class AgentChatRequest(BaseModel):
     model: Optional[str] = Field(None, description="Primary LLM model name")
     fallback_model: Optional[str] = Field(None, description="Fallback LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'ask' (question-only) or 'edit' (agentic editing)")
+    api_keys: Optional[Dict[str, str]] = Field(None, description="User-provided API keys")
 
 
 
@@ -1410,6 +1411,7 @@ async def agent_chat(request: Request):
                     model=primary_model,
                     temperature=0.1,
                     max_tokens=llm_max_tokens,
+                    api_keys=req.api_keys,
                 ):
                     if isinstance(item, str) and item.startswith(":"):
                         yield item
@@ -1512,6 +1514,7 @@ async def agent_chat(request: Request):
                         model=fallback_provider.default_model,
                         temperature=0.1,
                         max_tokens=llm_max_tokens,
+                        api_keys=req.api_keys,
                     ):
                         if isinstance(item, str) and item.startswith(":"):
                             yield item
