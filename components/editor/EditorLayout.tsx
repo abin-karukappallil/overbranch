@@ -240,7 +240,7 @@ export function EditorLayout({
   const lastPositionRef = useRef<any>(null);
   const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("auto:smart");
+  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.7-flash");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
@@ -515,42 +515,47 @@ export function EditorLayout({
   }, [activeMobileTab]);
 
   // ─── Model Selector State ────────────────────────────────────────────────
-  const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([]);
+  const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([
+    {
+      name: "Gemini Web2API",
+      models: [
+        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: true },
+        { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", default: false },
+        { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", default: false },
+        { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: false },
+        { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite", default: false },
+      ],
+    },
+    {
+      name: "FreeLLM API",
+      models: [
+        { id: "auto:smart", label: "FreeLLM Auto Smart", default: false },
+        { id: "auto", label: "FreeLLM Auto Router", default: false },
+        { id: "auto:fast", label: "FreeLLM Auto Fast", default: false },
+        { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: false },
+      ],
+    },
+  ]);
 
   // Fetch available models via protected tRPC on mount
   useEffect(() => {
     const fetchModels = async () => {
       try {
         const data = await trpcClient.ai.models.query();
-        if (data && Array.isArray(data) && data.length > 0) {
+        if (data?.providers && Array.isArray(data.providers) && data.providers.length > 0) {
+          setAvailableModels(data.providers);
+          if (data.defaultModel) {
+            setActiveModelName(data.defaultModel);
+          }
+        } else if (Array.isArray(data) && data.length > 0) {
           setAvailableModels(data);
-          const firstDefault = data.flatMap((g) => g.models).find((m) => m.default)?.id;
+          const firstDefault = data.flatMap((g: any) => g.models).find((m: any) => m.default)?.id;
           if (firstDefault) {
             setActiveModelName(firstDefault);
           }
         }
       } catch (err) {
         console.warn("Failed to fetch models via tRPC:", err);
-        // Fallback: hardcode defaults so selector still works
-        setAvailableModels([
-          {
-            name: "Gemini Web2API", models: [
-              { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash (Web2API)", default: true },
-              { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
-              { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-              { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking" },
-              { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite" },
-            ]
-          },
-          {
-            name: "FreeLLM API", models: [
-              { id: "auto:smart", label: "FreeLLM Auto Smart" },
-              { id: "auto", label: "FreeLLM Auto Router" },
-              { id: "auto:fast", label: "FreeLLM Auto Fast" },
-              { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B" },
-            ]
-          },
-        ]);
       }
     };
     fetchModels();
