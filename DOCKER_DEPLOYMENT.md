@@ -228,6 +228,59 @@ That's it! OverBranch is now live on your VM:
 
 ---
 
+## 🌐 Production Nginx Reverse Proxy Setup (Preventing 502 Bad Gateway)
+
+If you use Nginx to reverse proxy traffic to OverBranch Docker containers, **default Nginx settings will cause intermittent 502 Bad Gateway errors** after running for some time due to:
+1. **Uvicorn Keep-Alive Race**: Uvicorn drops idle TCP connections after 5s by default, while Nginx upstream keepalive defaults to 65s. When Nginx sends a request over a dead connection, it returns 502.
+2. **Short Read Timeouts**: Nginx's default `proxy_read_timeout` is 60s. Heavy LaTeX builds (`pdflatex`/`latexmk`) or multi-step AI Agent LLM streams can take 30–90s, causing Nginx to terminate with 502/504.
+3. **Response Buffering**: Default Nginx buffers responses, which breaks Server-Sent Events (SSE) in the AI Agent Reasoning Window.
+
+### 1. Ready-to-Use Configuration
+A production-hardened configuration is included in [`nginx/overbranch.conf`](nginx/overbranch.conf).
+
+Key settings implemented:
+```nginx
+upstream overbranch_backend {
+    server 127.0.0.1:8000;
+    keepalive 32;                # Connection pooling prevents socket exhaustion
+}
+
+server {
+    server_name overapi.yourdomain.com;
+    client_max_body_size 100M;   # Allows large PDFs and asset bundles
+
+    location / {
+        proxy_pass http://overbranch_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection ""; # Required for upstream keepalive
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;        # Accommodates long TeX compiles & LLM streaming
+        proxy_buffering off;            # Real-time SSE streaming (Agent Reasoning Window)
+        proxy_cache off;
+        proxy_next_upstream error timeout invalid_header http_502 http_503; # Auto-retry on worker recycle
+    }
+}
+```
+
+### 2. Apply to Your Server (Ubuntu / Debian)
+```bash
+# Copy site configuration to Nginx
+sudo cp nginx/overbranch.conf /etc/nginx/sites-available/overbranch.conf
+
+# Enable site
+sudo ln -sf /etc/nginx/sites-available/overbranch.conf /etc/nginx/sites-enabled/
+
+# Test syntax and reload
+sudo nginx -t && sudo systemctl reload nginx
+
+# (Optional) Provision free Let's Encrypt SSL certificates
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d overapi.yourdomain.com -d overbranch.yourdomain.com
+```
+
+---
+
 ## ⚡ Automated CI/CD Deployment with GitHub Actions
 
 OverBranch includes an automated GitHub Actions CI/CD pipeline ([`.github/workflows/deploy.yml`](file:///.github/workflows/deploy.yml)).
