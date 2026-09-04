@@ -39,6 +39,85 @@ Access the application:
 
 ---
 
+## 🐍 Backend-Only Docker Deployment (FastAPI + TeX Live)
+
+If you want to host **only the Python + TeX Live compiler & AI backend** in Docker (and host the frontend separately on Cloudflare Workers, Vercel, or standalone), OverBranch provides multiple options:
+
+### Option A: Dedicated Docker Compose (Recommended)
+```bash
+docker compose -f docker-compose.backend.yml up --build -d
+```
+
+### Option B: Root Compose Selecting Backend Service
+```bash
+docker compose up --build -d backend
+```
+
+### Option C: Direct Docker Build from Repo Root
+```bash
+# Build standalone backend image
+docker build -f Dockerfile.backend -t overbranch-backend .
+
+# Run standalone backend container on port 8000
+docker run -d \
+  --name overbranch-backend \
+  --restart always \
+  -p 8000:8000 \
+  --env-file .env \
+  -v $(pwd)/uploads:/app/uploads \
+  -v $(pwd)/backend/templates:/app/backend/templates:ro \
+  overbranch-backend
+```
+
+### Option D: Build Directly Inside `backend/` Folder
+```bash
+cd backend
+docker build -t overbranch-backend .
+docker run -d -p 8000:8000 --env-file ../.env overbranch-backend
+```
+
+---
+
+## ☁️ Frontend Deployment on Cloudflare Workers
+
+OverBranch is fully compatible with **Cloudflare Workers** using `@opennextjs/cloudflare` and `wrangler`.
+
+### 1. Prerequisites
+- A Cloudflare account
+- Authenticated with Wrangler CLI:
+  ```bash
+  bun x wrangler login
+  # or: npx wrangler login
+  ```
+- Your backend Docker container running and accessible via public URL (e.g. `https://overapi.yourdomain.com`).
+
+### 2. Configure Environment Variables
+In your `.env` or Cloudflare Worker environment settings:
+```env
+NEXT_PUBLIC_BACKEND_URL="https://overapi.yourdomain.com"
+BACKEND_URL="https://overapi.yourdomain.com"
+BETTER_AUTH_SECRET="your-better-auth-secret"
+BETTER_AUTH_URL="https://overbranch.your-subdomain.workers.dev"
+NEXT_PUBLIC_APP_URL="https://overbranch.your-subdomain.workers.dev"
+```
+
+### 3. Build & Deploy to Cloudflare Workers
+Run the dedicated Cloudflare Workers scripts:
+```bash
+# Build for Cloudflare Workers
+bun run build:worker
+
+# Deploy to Cloudflare Workers
+bun run deploy:worker
+```
+
+Or preview locally in the Cloudflare Workers runtime (Workerd):
+```bash
+bun run preview:worker
+```
+
+---
+
 ## ☁️ Ubuntu VM/Server Deployment (Standalone VM)
 
 This setup uses **only standard Azure,Aws,Gcp,Linode,Digital Ocean VM compute**.

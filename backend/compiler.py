@@ -608,7 +608,7 @@ def compile_latex(
             # 1. Copy project disk assets if project_id is provided
             if project_id and project_id.strip():
                 safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
-                uploads_base_dir = Path(os.path.join(os.path.dirname(__file__), "..", "uploads", "projects")).resolve()
+                uploads_base_dir = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
                 project_dir = uploads_base_dir / safe_project
                 if project_dir.exists():
                     for item in project_dir.rglob("*"):

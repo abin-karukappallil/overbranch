@@ -22,3 +22,22 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./backend/templates:/app/backend/templates:ro
+
+  backend:
+    image: ${BACKEND_IMAGE:-overbranch-backend:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: overbranch-backend
+    restart: always
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - UPLOADS_BASE_DIR=/app/uploads/projects
+    volumes:
+      - ./uploads:/app/uploads
+      - ./backend/templates:/app/backend/templates:ro

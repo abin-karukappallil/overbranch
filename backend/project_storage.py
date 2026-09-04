@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 
 router = APIRouter()
 
-UPLOADS_BASE_DIR = Path(os.path.join(os.path.dirname(__file__), "..", "uploads", "projects")).resolve()
+UPLOADS_BASE_DIR = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
 
 
 class SaveDocumentRequest(BaseModel):
