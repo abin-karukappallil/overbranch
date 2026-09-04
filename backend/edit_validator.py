@@ -300,6 +300,124 @@ def validate_no_duplicate_headings(
     return issues
 
 
+def validate_no_comment_overlap(latex: str) -> List[ValidationIssue]:
+    """
+    Check for comment overlap issues in LaTeX:
+    1. Unescaped % hiding code or closing braces on the same line (e.g. \\textbf{95% accuracy}).
+    2. Non-LaTeX comment syntax (<!-- ... -->, // ..., /* ... */).
+    3. Conversational commentary leaking into LaTeX output.
+    """
+    issues = []
+    if not latex or not latex.strip():
+        return issues
+
+    # 1. Non-LaTeX comment syntax
+    if re.search(r"<!--[\s\S]*?-->", latex):
+        issues.append(ValidationIssue(
+            check="comment_overlap_html",
+            severity="error",
+            message="HTML-style comments (<!-- ... -->) found in LaTeX code",
+            auto_fixable=True,
+        ))
+
+    if re.search(r"/\*[\s\S]*?\*/", latex):
+        issues.append(ValidationIssue(
+            check="comment_overlap_c_style",
+            severity="error",
+            message="C-style block comments (/* ... */) found in LaTeX code",
+            auto_fixable=True,
+        ))
+
+    lines = latex.splitlines()
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+
+        # Check for C++ style comments: // at start of line
+        if stripped.startswith("//"):
+            issues.append(ValidationIssue(
+                check="comment_overlap_slash_slash",
+                severity="error",
+                message=f"Line {idx}: C++ style '//' comment found in LaTeX code",
+                auto_fixable=True,
+            ))
+            continue
+
+        # Check for conversational leakage at start of line
+        if re.match(r"^(?:Here\s+is\s+(?:the|your)?\s*(?:updated|clean|fixed)?\s*(?:code|latex|document|section)|Note:\s+|Sure,?\s+|Below\s+is\s+the|Certainly!|I\s+have\s+(?:updated|fixed|added))\b", stripped, re.IGNORECASE):
+            issues.append(ValidationIssue(
+                check="comment_overlap_conversational_leak",
+                severity="error",
+                message=f"Line {idx}: Conversational text leaked into LaTeX code: '{stripped[:50]}...'",
+                auto_fixable=True,
+            ))
+            continue
+
+        # Check for unescaped % that swallows closing braces on the same line
+        percent_matches = list(re.finditer(r"(?<!\\)%", line))
+        if percent_matches:
+            first_pct = percent_matches[0].start()
+            prefix = line[:first_pct]
+            comment_part = line[first_pct + 1:]
+
+            open_before = len(re.findall(r"(?<!\\)\{", prefix)) - len(re.findall(r"(?<!\\)\}", prefix))
+            close_after = len(re.findall(r"(?<!\\)\}", comment_part))
+
+            if open_before > 0 and close_after > 0:
+                issues.append(ValidationIssue(
+                    check="comment_overlap_swallowed_brace",
+                    severity="error",
+                    message=(
+                        f"Line {idx}: Unescaped '%' comments out closing brace(s) on the same line: "
+                        f"'{stripped[:60]}...'"
+                    ),
+                    auto_fixable=True,
+                ))
+            elif re.search(r"\b\d+(?:\.\d+)?%", prefix + "%") and not stripped.startswith("%"):
+                issues.append(ValidationIssue(
+                    check="comment_overlap_unescaped_percent",
+                    severity="warning",
+                    message=f"Line {idx}: Unescaped '%' after number — likely intended as '\\%': '{stripped[:60]}'",
+                    auto_fixable=True,
+                ))
+
+    return issues
+
+
+def validate_no_unmatched_braces(latex: str) -> List[ValidationIssue]:
+    """
+    Check that braces { and } are balanced across the LaTeX code.
+    Strips out comments (lines or portions starting with unescaped %)
+    and escaped braces \\{ and \\} before counting.
+    """
+    issues = []
+    if not latex or not latex.strip():
+        return issues
+
+    open_braces = 0
+    close_braces = 0
+
+    for line in latex.splitlines():
+        # Strip comments
+        m = re.search(r"(?<!\\)%", line)
+        code_part = line[:m.start()] if m else line
+
+        # Strip escaped braces
+        clean_code = re.sub(r"\\\{|\\\}", "", code_part)
+
+        open_braces += clean_code.count("{")
+        close_braces += clean_code.count("}")
+
+    if open_braces != close_braces:
+        issues.append(ValidationIssue(
+            check="unmatched_braces",
+            severity="error",
+            message=f"Unmatched braces: {open_braces} open '{{' vs {close_braces} closing '}}'",
+            auto_fixable=False,
+        ))
+
+    return issues
+
+
 def validate_no_structural_regression(original: str, proposed: str) -> List[ValidationIssue]:
     """Check that the proposed document didn't lose major sections or environments."""
     issues = []
@@ -465,6 +583,8 @@ def validate_edit(
     result.issues.extend(validate_scope(original_code, proposed_edits, target_page_ids))
     result.issues.extend(validate_no_structural_regression(original_code, final_doc))
     result.issues.extend(validate_no_duplicate_headings(original_code, proposed_edits))
+    result.issues.extend(validate_no_comment_overlap(final_doc))
+    result.issues.extend(validate_no_unmatched_braces(final_doc))
 
     # Update passed flag
     result.passed = not any(i.severity == "error" for i in result.issues)
@@ -481,6 +601,72 @@ def validate_edit(
         logger.info("Edit validation: all checks passed")
 
     return result
+
+
+def auto_repair_comment_overlap(latex: str) -> Tuple[str, List[str]]:
+    """
+    Auto-repair comment overlap issues:
+    1. Replaces unescaped % after numbers or inside macro brackets with \\%.
+    2. Strips HTML <!-- ... --> and C-style /* ... */ comments.
+    3. Converts C++ // comments at line start to % comments.
+    4. Removes or comments out conversational leakage lines.
+    """
+    repairs = []
+    if not latex or not latex.strip():
+        return latex, repairs
+
+    s = latex
+
+    # 1. Strip HTML comments
+    if "<!--" in s:
+        s = re.sub(r"<!--[\s\S]*?-->", "", s)
+        repairs.append("Stripped HTML-style comments (<!-- ... -->)")
+
+    # 2. Strip C-style block comments
+    if "/*" in s:
+        s = re.sub(r"/\*[\s\S]*?\*/", "", s)
+        repairs.append("Stripped C-style comments (/* ... */)")
+
+    cleaned_lines = []
+    for line in s.splitlines():
+        stripped = line.strip()
+
+        # Convert C++ comments
+        if stripped.startswith("//"):
+            repairs.append(f"Converted C++ comment to LaTeX: '{stripped[:40]}'")
+            cleaned_lines.append(re.sub(r"^(\s*)//", r"\1%", line))
+            continue
+
+        # Strip conversational leakage
+        if re.match(r"^(?:Here\s+is\s+(?:the|your)?\s*(?:updated|clean|fixed)?\s*(?:code|latex|document|section)|Note:\s+|Sure,?\s+|Below\s+is\s+the|Certainly!)\b", stripped, re.IGNORECASE):
+            repairs.append(f"Removed conversational leak: '{stripped[:40]}'")
+            continue
+
+        # Repair unescaped % inside macro where it comments out closing brace
+        pct_matches = list(re.finditer(r"(?<!\\)%", line))
+        if pct_matches:
+            first_pct = pct_matches[0].start()
+            prefix = line[:first_pct]
+            comment_part = line[first_pct + 1:]
+
+            open_before = len(re.findall(r"(?<!\\)\{", prefix)) - len(re.findall(r"(?<!\\)\}", prefix))
+            close_after = len(re.findall(r"(?<!\\)\}", comment_part))
+
+            if open_before > 0 and close_after > 0:
+                fixed_line = line[:first_pct] + r"\%" + line[first_pct + 1:]
+                repairs.append(f"Escaped '%' that swallowed closing brace: '{stripped[:50]}'")
+                line = fixed_line
+
+        # Repair unescaped % after numbers on non-comment lines
+        if not stripped.startswith("%") and re.search(r"(?<!\\)(\d+(?:\.\d+)?)\s*%(?![a-zA-Z%])", line):
+            new_line = re.sub(r"(?<!\\)(\d+(?:\.\d+)?)\s*%(?![a-zA-Z%])", r"\1\\%", line)
+            if new_line != line:
+                repairs.append(f"Escaped '%' in numeric percentage: '{stripped[:50]}'")
+                line = new_line
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines), repairs
 
 
 def auto_repair_duplicate_headings(
@@ -573,6 +759,10 @@ def auto_repair_edits(
         # Auto-repair duplicate structural elements
         pc, struct_repairs = auto_repair_structure(pc)
         all_repairs.extend(struct_repairs)
+
+        # Auto-repair comment overlap & unescaped %
+        pc, comment_repairs = auto_repair_comment_overlap(pc)
+        all_repairs.extend(comment_repairs)
 
         new_edit["proposed_chunk"] = pc
         repaired_edits.append(new_edit)
