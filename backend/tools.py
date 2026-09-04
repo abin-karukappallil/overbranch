@@ -89,7 +89,27 @@ def search_document_chunks(query: str) -> Dict[str, Any]:
         "explanation": f"Searching vector DB for query '{query}'",
     }
 
-AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all]
+class InsertAfterArgs(BaseModel):
+    collection_id: str = Field(..., description="ID of the collection to append to")
+    insertion_offset: int = Field(..., description="Character offset for insertion")
+    content: str = Field(..., description="LaTeX content to insert")
+    rationale: str = Field(..., description="Explanation")
+
+@tool("insert_after", args_schema=InsertAfterArgs)
+def insert_after(collection_id: str, insertion_offset: int, content: str, rationale: str) -> Dict[str, Any]:
+    """Insert content at a specific offset after the last member of a collection."""
+    print(f"\n➕ [TOOL EXECUTION: insert_after]\n  ► Collection: '{collection_id}'\n  ► Offset: {insertion_offset}\n  ► Rationale: {rationale}\n")
+    return {
+        "action": "insert_after",
+        "collection_id": collection_id,
+        "insertion_offset": insertion_offset,
+        "content": content,
+        "original_chunk": "",
+        "proposed_chunk": content,
+        "explanation": rationale,
+    }
+
+AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all, insert_after]
 
 def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     print(f"\n⚙️  [TOOL PROCESSOR] Received {len(tool_calls)} raw tool call(s) from LLM:")
@@ -173,6 +193,21 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                     "explanation": exp,
                 })
             plans.append(f"Global replace '{search_pat}' -> '{replace_pat}'.")
+
+        elif tool_name == "insert_after":
+            coll_id = args.get("collection_id", "")
+            offset = args.get("insertion_offset", 0)
+            content = args.get("content", "")
+            exp = args.get("rationale", "Insert after collection")
+            edits.append({
+                "action": "insert_after",
+                "collection_id": coll_id,
+                "insertion_offset": offset,
+                "original_chunk": "",
+                "proposed_chunk": content,
+                "explanation": exp,
+            })
+            plans.append(f"Insert new item into collection '{coll_id}' at offset {offset}.")
 
     first_orig = edits[0].get("original_chunk", "") if edits else ""
     first_prop = edits[0].get("proposed_chunk", "") if edits else ""
