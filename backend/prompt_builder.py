@@ -444,18 +444,29 @@ def build_ask_prompt(
 # BROAD EDIT MODE — Per-Chapter/Section Scoped Prompt
 # ============================================================================
 
-BROAD_EDIT_SYSTEM_PROMPT = r"""You are an expert LaTeX editing agent embedded inside OverBranch, a professional LaTeX IDE. You are editing ONE SPECIFIC existing chapter/section of a document as part of a multi-section batch edit.
+BROAD_EDIT_SYSTEM_PROMPT = r"""You are an expert LaTeX editing agent embedded inside OverBranch, a professional LaTeX IDE. You are editing ONE SPECIFIC existing chapter/section/preamble of a document as part of a multi-section batch edit.
 
 CRITICAL RULES:
 1. You are editing an EXISTING section. Do NOT create new sections or chapters. Do NOT use create_content.
 2. You MUST use edit_chunk to modify the existing content in-place.
 3. The `original_chunk` must be the EXACT existing text provided below.
 4. The `proposed_chunk` must be the improved/edited version of that same section.
-5. PRESERVE the section heading (e.g. \chapter{...} or \section{...}) — only edit the body content.
-6. Your response must be ONLY a JSON object matching this schema — NO freeform prose, NO commentary, NO markdown:
+5. PRESERVE the section heading (e.g. \chapter{...} or \section{...}) — only edit the body content (or preamble setup if editing the preamble).
+6. BROKEN CODE & SYNTAX REPAIR:
+   - Ensure all braces `{` and `}` are strictly balanced.
+   - Ensure all environments (`\begin{...}` ... `\end{...}`) are properly closed.
+   - Escape special characters in text mode: use `\%`, `\&`, `\_`, `\#`, `\$`.
+7. COMMENT OVERLAP PREVENTION:
+   - Never leave unescaped `%` in text or macro arguments (e.g. `\textbf{95% of users}` comments out the closing brace!). Always use `\%`.
+   - Never put LaTeX commands on the same line after `%` (it comments them out).
+   - Never leak non-LaTeX comments (`<!-- ... -->`, `// ...`, `/* ... */`, `#`) or conversational commentary into LaTeX.
+8. "ALL OK" RULE (NO UNNECESSARY EDITS):
+   - If the existing section has NO errors, no broken code, no comment overlaps, and already fulfills the user request, DO NOT invent arbitrary changes. Return an empty edits array:
+     {"plan": "All OK in this section — no changes needed", "edits": []}
+9. Your response must be ONLY a JSON object matching this schema — NO freeform prose, NO commentary, NO markdown:
 
 {
-  "plan": "Brief description of changes",
+  "plan": "Brief description of changes or 'All OK in this section'",
   "edits": [
     {
       "original_chunk": "The exact existing text provided",
@@ -465,9 +476,9 @@ CRITICAL RULES:
   ]
 }
 
-7. The proposed_chunk must be complete, compilable LaTeX. No truncation. No placeholders.
-8. Do NOT add \documentclass, \begin{document}, or \end{document} — you are editing a section WITHIN an existing document.
-9. Max output: the edited section only. Keep it focused and complete.
+10. The proposed_chunk must be complete, compilable LaTeX. No truncation. No placeholders.
+11. Do NOT add \documentclass, \begin{document}, or \end{document} unless you are specifically editing the preamble.
+12. Max output: the edited section only. Keep it focused and complete.
 """
 
 
@@ -638,11 +649,22 @@ def build_broad_edit_prompt(
                 f"this section, keep the existing content with minimal improvements."
             )
 
+    # Append audit & repair directive when user asks to fix issues or verify code
+    is_audit = any(w in user_request.lower() for w in ["fix", "broken", "comment", "issue", "error", "clean", "repair", "all ok", "bug"])
+    if is_audit:
+        user_parts.append(
+            "AUDIT & REPAIR DIRECTIVE FOR THIS SECTION:\n"
+            "- Carefully inspect this section for broken code, unclosed environments, unmatched braces, and comment overlaps.\n"
+            "- Check for unescaped '%' (e.g. in percentages) that accidentally comments out closing braces or code.\n"
+            "- If any broken code or comment overlap is present, fix it in proposed_chunk.\n"
+            "- If this section has NO broken code, NO comment overlap, and is already valid LaTeX: return empty edits: {\"plan\": \"All OK in this section\", \"edits\": []}."
+        )
+
     user_parts.append(
         f"USER REQUEST (apply to this section): {user_request}\n\n"
         f"REMINDER: Respond with ONLY the JSON edit object. "
         f"original_chunk = the exact existing text above. "
-        f"proposed_chunk = your improved version. "
+        f"proposed_chunk = your improved version (or empty edits [] if All OK). "
         f"Do NOT create new sections. Do NOT wrap in \\documentclass."
     )
 
