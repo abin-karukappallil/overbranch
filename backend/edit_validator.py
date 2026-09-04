@@ -6,6 +6,7 @@ Catches duplicate slides, broken references, scope violations,
 and structural integrity issues.
 """
 import re
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -684,6 +685,89 @@ def validate_numbering_continuity(
 
 
 # ---------------------------------------------------------------------------
+# Anchored relative insertion validation
+# ---------------------------------------------------------------------------
+
+def validate_anchor_integrity(
+    original_code: str,
+    final_doc: str,
+    proposed_chunk: str,
+    anchor_target: Any,
+    insertion_offset: Optional[int] = None,
+    position: str = "after",
+) -> List[ValidationIssue]:
+    """
+    Validate that an insert_relative edit leaves the anchor section
+    completely untouched (verified via content hash) and is positioned at the expected boundary.
+    """
+    issues = []
+    if not anchor_target or not original_code:
+        return issues
+
+    anchor_start = getattr(anchor_target, "start_offset", None)
+    anchor_end = getattr(anchor_target, "end_offset", None)
+    expected_hash = getattr(anchor_target, "content_hash", None)
+    anchor_title = getattr(anchor_target, "title", "")
+    anchor_content = getattr(anchor_target, "content", "")
+
+    if anchor_start is None or anchor_end is None:
+        return issues
+
+    # 1. Expected insertion offset check
+    expected_offset = anchor_end if position == "after" else anchor_start
+    if insertion_offset is not None and insertion_offset != expected_offset:
+        issues.append(ValidationIssue(
+            check="anchor_offset_mismatch",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} does not match expected anchor boundary {expected_offset} (position: {position})",
+            auto_fixable=True,
+        ))
+
+    # 2. Check that proposed_chunk does not verbatim duplicate the anchor section or re-emit its heading
+    if anchor_content and len(anchor_content.strip()) > 15:
+        clean_anchor = re.sub(r"\s+", " ", anchor_content.strip())
+        clean_proposed = re.sub(r"\s+", " ", proposed_chunk.strip())
+        if clean_anchor in clean_proposed:
+            issues.append(ValidationIssue(
+                check="anchor_duplicated_in_content",
+                severity="error",
+                message=f"Proposed content duplicates anchor section '{anchor_title}' verbatim",
+                auto_fixable=True,
+            ))
+        elif anchor_title and len(anchor_title.strip()) >= 3:
+            heading_re = rf"\\(?:section|chapter|begin\{{frame\}})(?:\[[^\]]*\])?\s*\{{{re.escape(anchor_title.strip())}\}}"
+            if re.search(heading_re, proposed_chunk):
+                issues.append(ValidationIssue(
+                    check="anchor_heading_re_emitted",
+                    severity="error",
+                    message=f"Proposed content re-emits anchor heading '{anchor_title}'",
+                    auto_fixable=True,
+                ))
+
+    # 3. Hash comparison of anchor in original vs final document
+    orig_anchor_text = original_code[anchor_start:anchor_end]
+    if not expected_hash:
+        expected_hash = hashlib.sha256(orig_anchor_text.strip().encode("utf-8")).hexdigest()[:16]
+
+    if position == "after":
+        final_anchor_text = final_doc[anchor_start:anchor_end]
+    else:
+        inserted_len = len(final_doc) - len(original_code)
+        final_anchor_text = final_doc[anchor_start + inserted_len : anchor_end + inserted_len]
+
+    final_hash = hashlib.sha256(final_anchor_text.strip().encode("utf-8")).hexdigest()[:16]
+    if final_hash != expected_hash:
+        issues.append(ValidationIssue(
+            check="anchor_content_modified",
+            severity="error",
+            message=f"Anchor section '{anchor_title}' was modified during insertion (expected hash {expected_hash}, got {final_hash})",
+            auto_fixable=False,
+        ))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Top-level validation
 # ---------------------------------------------------------------------------
 
@@ -693,6 +777,8 @@ def validate_edit(
     target_page_ids: Optional[Set[str]] = None,
     collection_entry: Optional[Any] = None,
     expected_ordinal: Optional[int] = None,
+    anchor_target: Optional[Any] = None,
+    expected_position: Optional[str] = None,
 ) -> ValidationResult:
     """
     Run all validation checks on proposed edits.
@@ -703,6 +789,8 @@ def validate_edit(
         target_page_ids: If set, only these pages should have been edited
         collection_entry: Optional CollectionEntry if appending to a collection
         expected_ordinal: Optional expected ordinal number for collection append
+        anchor_target: Optional PageEntry anchor target for anchored relative insert
+        expected_position: Optional 'after' or 'before' for anchored relative insert
 
     Returns:
         ValidationResult with pass/fail and issue details
@@ -730,12 +818,28 @@ def validate_edit(
         if oc and oc in final_doc:
             final_doc = final_doc.replace(oc, pc or "", 1)
         elif pc and not oc:
-            if edit.get("action") == "insert_after" and edit.get("insertion_offset") is not None:
+            if edit.get("action") in ("insert_after", "insert_relative") and edit.get("insertion_offset") is not None:
                 off = edit["insertion_offset"]
                 final_doc = final_doc[:off] + "\n\n" + pc + "\n\n" + final_doc[off:]
             else:
                 # Insertion — just check the proposed chunk itself
                 final_doc = pc
+
+    # Anchored relative insertion checks
+    if anchor_target is not None:
+        for edit in proposed_edits:
+            if edit.get("action") == "insert_relative":
+                pos = edit.get("position", expected_position or "after")
+                off = edit.get("insertion_offset")
+                pc = edit.get("proposed_chunk", "")
+                result.issues.extend(validate_anchor_integrity(
+                    original_code=original_code,
+                    final_doc=final_doc,
+                    proposed_chunk=pc,
+                    anchor_target=anchor_target,
+                    insertion_offset=off,
+                    position=pos,
+                ))
 
     # Run all checks on the final document
     result.issues.extend(validate_no_duplicate_slide_ids(final_doc))
@@ -898,6 +1002,8 @@ def auto_repair_duplicate_headings(
 def auto_repair_edits(
     proposed_edits: List[Dict[str, Any]],
     original_code: str,
+    anchor_target: Optional[Any] = None,
+    expected_position: Optional[str] = None,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     Attempt to auto-repair common issues in proposed edits.
@@ -914,6 +1020,26 @@ def auto_repair_edits(
             continue
 
         new_edit = dict(edit)
+
+        # Auto-repair for anchored relative insertions
+        if edit.get("action") == "insert_relative" and anchor_target is not None:
+            anchor_title = getattr(anchor_target, "title", "")
+            pos = edit.get("position", expected_position or "after")
+            expected_offset = getattr(anchor_target, "end_offset" if pos == "after" else "start_offset", None)
+            if expected_offset is not None and edit.get("insertion_offset") != expected_offset:
+                new_edit["insertion_offset"] = expected_offset
+                all_repairs.append(f"Corrected insertion offset to anchor boundary {expected_offset}")
+
+            # Strip re-emitted anchor heading from proposed chunk if present
+            if anchor_title and len(anchor_title.strip()) >= 3:
+                frame_re = rf"\\begin\{{frame\}}(?:\[[^\]]*\])?\s*\{{{re.escape(anchor_title.strip())}\}}.*?\\end\{{frame\}}\s*"
+                sec_re = rf"\\(?:section|chapter)(?:\[[^\]]*\])?\s*\{{{re.escape(anchor_title.strip())}\}}[^\\]*"
+                if re.search(frame_re, pc, re.DOTALL):
+                    pc = re.sub(frame_re, "", pc, count=1, flags=re.DOTALL).strip()
+                    all_repairs.append(f"Stripped duplicated anchor frame '{anchor_title}'")
+                elif re.search(sec_re, pc):
+                    pc = re.sub(sec_re, "", pc, count=1).strip()
+                    all_repairs.append(f"Stripped re-emitted anchor heading '{anchor_title}'")
 
         # Auto-repair duplicate frames
         pc, dup_repairs = auto_repair_duplicates(pc)

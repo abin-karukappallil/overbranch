@@ -12,7 +12,7 @@ import re
 import hashlib
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Set, Dict, Any
 
 logger = logging.getLogger("document_index")
 
@@ -968,42 +968,156 @@ def _build_frame_collection(group: List[PageEntry], prefix: str, style: Optional
     )
 
 
-def resolve_collection(
+# ── Content shape classification & collection signature ────────────────────
+
+CONTENT_SHAPE_PAPER = "academic_paper"
+CONTENT_SHAPE_BIBITEM = "bibitem"
+CONTENT_SHAPE_LIST_ITEM = "list_item"
+CONTENT_SHAPE_TABLE_ROW = "table_row"
+CONTENT_SHAPE_SLIDE = "slide"
+
+
+def classify_content_shape(instruction: str) -> Optional[str]:
+    """
+    Classify what kind/shape of content the user wants to add/insert.
+    E.g.
+      "add xai ieee paper" -> "academic_paper"
+      "add another reference" -> "bibitem"
+      "add bullet point" -> "list_item"
+      "add row comparing accuracy" -> "table_row"
+    """
+    if not instruction:
+        return None
+    text = instruction.lower().strip()
+
+    # Academic paper / survey paper / research publication summary
+    if re.search(r"\b(?:paper|ieee|arxiv|acm|conference|journal|survey\s+paper|literature\s+survey|research\s+work|study)\b", text):
+        if re.search(r"\b(?:bibitem|citation|bib\s+entry|bibtex)\b", text):
+            return CONTENT_SHAPE_BIBITEM
+        return CONTENT_SHAPE_PAPER
+
+    # Bibliographic reference / citation
+    if re.search(r"\b(?:reference|citation|bib|bibitem|source|bibliography)\b", text):
+        return CONTENT_SHAPE_BIBITEM
+
+    # List items / bullets
+    if re.search(r"\b(?:bullet|item|bullet\s+point|numbered\s+item|list\s+item|step|point)\b", text):
+        return CONTENT_SHAPE_LIST_ITEM
+
+    # Table rows
+    if re.search(r"\b(?:table\s+row|row|table\s+entry|column\s+entry)\b", text):
+        return CONTENT_SHAPE_TABLE_ROW
+
+    # Slide / frame
+    if re.search(r"\b(?:slide|frame)\b", text):
+        return CONTENT_SHAPE_SLIDE
+
+    return None
+
+
+def get_collection_shape_signature(collection: CollectionEntry) -> str:
+    """
+    Inspect a CollectionEntry's type, parent_title, numbering_style,
+    and member contents to determine its structural shape signature.
+    """
+    if collection.collection_type == "bibitem":
+        return CONTENT_SHAPE_BIBITEM
+    if collection.collection_type in ("enumerate", "itemize"):
+        return CONTENT_SHAPE_LIST_ITEM
+    if collection.collection_type == "table_rows":
+        return CONTENT_SHAPE_TABLE_ROW
+
+    if collection.collection_type == "beamer_frame_group":
+        paper_signals = 0
+        parent_lower = (collection.parent_title or "").lower()
+        style_lower = (collection.numbering_style or "").lower()
+
+        if any(w in parent_lower for w in ["survey", "literature", "paper", "research", "prior", "work", "studies", "state of the art", "related"]):
+            paper_signals += 3
+        if "paper" in style_lower:
+            paper_signals += 3
+
+        sample_text = " ".join(collection.sample_members).lower()
+        paper_indicators = [
+            r"\bauthors?\b", r"\btitle\b", r"\bmethod(?:ology)?\b", r"\bproposed\b",
+            r"\bdataset\b", r"\bfindings\b", r"\bresults\b", r"\bcontribution\b",
+            r"\baccuracy\b", r"\bmodel\b", r"\bieee\b", r"\barxiv\b", r"\bconference\b",
+            r"\bjournal\b", r"\bpublication\b", r"\byear\b", r"\bmetrics?\b", r"\bframework\b",
+            r"\badvantages?\b", r"\blimitations?\b", r"\bkey\s+takeaway\b", r"\bhighlights?\b",
+            r"\bobjective\b"
+        ]
+        for ind in paper_indicators:
+            if re.search(ind, sample_text):
+                paper_signals += 1
+
+        if paper_signals >= 2:
+            return CONTENT_SHAPE_PAPER
+
+        return CONTENT_SHAPE_SLIDE
+
+    return "unknown"
+
+
+def resolve_collection_with_candidates(
     doc_index: DocumentIndex,
     latex_code: str,
     instruction: str,
-) -> Optional[CollectionEntry]:
+) -> Tuple[Optional[CollectionEntry], bool, List[CollectionEntry]]:
     """
     Resolve the best-matching CollectionEntry for a given user instruction.
+    Returns:
+        (best_match, is_ambiguous, candidate_list)
+        If ambiguous, best_match is None, is_ambiguous is True, and candidate_list contains the ties.
     """
     if not instruction or not instruction.strip():
-        return None
+        return None, False, []
 
     collections = detect_collections(doc_index, latex_code)
     if not collections:
-        return None
+        return None, False, []
 
     inst_lower = instruction.lower()
+    target_shape = classify_content_shape(instruction)
 
     if len(collections) == 1:
         c = collections[0]
-        if c.collection_type == "bibitem" and any(w in inst_lower for w in ["slide", "frame"]):
-            return None
-        if c.collection_type == "beamer_frame_group" and any(w in inst_lower for w in ["reference", "bibitem", "cite"]):
-            return None
-        return c
+        c_shape = get_collection_shape_signature(c)
+        if target_shape:
+            # Check for direct contradictions
+            if target_shape in (CONTENT_SHAPE_PAPER, CONTENT_SHAPE_SLIDE) and c_shape in (CONTENT_SHAPE_BIBITEM, CONTENT_SHAPE_TABLE_ROW):
+                return None, False, []
+            if target_shape == CONTENT_SHAPE_BIBITEM and c_shape in (CONTENT_SHAPE_SLIDE, CONTENT_SHAPE_TABLE_ROW):
+                return None, False, []
+        return c, False, [c]
 
-    best_score = -1.0
-    best_coll = None
     inst_words = set(re.findall(r"\b[a-z0-9_\-]+\b", inst_lower))
     stopwords = {"add", "append", "insert", "include", "put", "new", "another", "one", "more", "the", "a", "an", "to", "in", "for", "of", "and", "please", "can", "you", "my"}
     keywords = inst_words - stopwords
 
+    scored_candidates: List[Tuple[CollectionEntry, float]] = []
+
     for c in collections:
         score = 0.0
+        c_shape = get_collection_shape_signature(c)
         parent_lower = c.parent_title.lower()
         style_lower = c.numbering_style.lower()
 
+        # 1. Content-shape match (Bug A: matches by shape, not requiring literal phrase)
+        if target_shape:
+            if target_shape == c_shape:
+                score += 8.0
+            elif target_shape == CONTENT_SHAPE_PAPER and c.collection_type == "beamer_frame_group":
+                score += 5.0
+            elif target_shape in (CONTENT_SHAPE_PAPER, CONTENT_SHAPE_SLIDE) and c_shape in (CONTENT_SHAPE_BIBITEM, CONTENT_SHAPE_TABLE_ROW, CONTENT_SHAPE_LIST_ITEM):
+                score -= 10.0
+            elif target_shape == CONTENT_SHAPE_BIBITEM and c_shape != CONTENT_SHAPE_BIBITEM:
+                score -= 10.0
+            elif target_shape == CONTENT_SHAPE_TABLE_ROW and c_shape != CONTENT_SHAPE_TABLE_ROW:
+                score -= 10.0
+            elif target_shape == CONTENT_SHAPE_LIST_ITEM and c_shape != CONTENT_SHAPE_LIST_ITEM:
+                score -= 10.0
+
+        # 2. Keyword overlap in parent title, numbering style, and sample members (retained as strong signal)
         for kw in keywords:
             if kw in parent_lower:
                 score += 4.0
@@ -1012,27 +1126,158 @@ def resolve_collection(
             if any(kw in s.lower() for s in c.sample_members):
                 score += 1.5
 
-        if c.collection_type == "beamer_frame_group":
-            if any(w in inst_lower for w in ["paper", "survey", "slide", "frame", "literature"]):
-                score += 4.0
-            if "literature" in parent_lower and any(w in inst_lower for w in ["paper", "survey", "xai", "ieee"]):
-                score += 5.0
-        elif c.collection_type == "bibitem":
-            if any(w in inst_lower for w in ["reference", "citation", "bib", "bibitem", "source"]):
-                score += 6.0
-        elif c.collection_type in ("enumerate", "itemize"):
-            if any(w in inst_lower for w in ["item", "bullet", "point", "list", "numbered"]):
-                score += 5.0
-        elif c.collection_type == "table_rows":
-            if any(w in inst_lower for w in ["table", "row", "entry", "column", "comparison"]):
-                score += 5.0
+        # 3. Explicit title phrase matching when present
+        if "literature" in parent_lower and any(w in inst_lower for w in ["literature", "survey", "paper", "xai", "ieee"]):
+            score += 5.0
+        elif "survey" in parent_lower and any(w in inst_lower for w in ["survey", "paper"]):
+            score += 4.0
 
-        if score > best_score:
-            best_score = score
-            best_coll = c
+        if c.collection_type == "bibitem" and any(w in inst_lower for w in ["reference", "citation", "bib", "bibitem", "source"]):
+            score += 5.0
+        elif c.collection_type in ("enumerate", "itemize") and any(w in inst_lower for w in ["item", "bullet", "point", "list", "numbered"]):
+            score += 5.0
+        elif c.collection_type == "table_rows" and any(w in inst_lower for w in ["table", "row", "entry", "column", "comparison"]):
+            score += 5.0
 
-    if best_score >= 2.0:
-        return best_coll
+        if score >= 2.0:
+            scored_candidates.append((c, score))
+
+    if not scored_candidates:
+        return None, False, []
+
+    # Sort descending by score
+    scored_candidates.sort(key=lambda x: x[1], reverse=True)
+    top_coll, top_score = scored_candidates[0]
+
+    # Check for ambiguity: if top two candidates have near-identical high scores
+    if len(scored_candidates) > 1:
+        second_coll, second_score = scored_candidates[1]
+        # Ambiguous if both are strong and difference is small (< 1.5)
+        if top_score >= 6.0 and second_score >= 6.0 and (top_score - second_score) < 1.5:
+            ambiguous_list = [c for c, s in scored_candidates if s >= (top_score - 1.5)]
+            logger.info(
+                f"Ambiguous collection match for '{instruction[:60]}': "
+                f"{[(c.parent_title, s) for c, s in scored_candidates[:3]]}"
+            )
+            return None, True, ambiguous_list
+
+    return top_coll, False, [top_coll]
+
+
+def resolve_collection(
+    doc_index: DocumentIndex,
+    latex_code: str,
+    instruction: str,
+) -> Optional[CollectionEntry]:
+    """
+    Resolve the best-matching CollectionEntry for a given user instruction.
+    If ambiguous, returns None so the caller can handle clarification.
+    """
+    coll, is_ambiguous, _ = resolve_collection_with_candidates(doc_index, latex_code, instruction)
+    if is_ambiguous:
+        return None
+    return coll
+
+
+# ── Anchored relative insertion detection & resolution ─────────────────────
+
+_ANCHORED_INSERT_PATTERNS = [
+    # "after conclusion, add a future scope section"
+    re.compile(
+        r"^\s*(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*,\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+)\s*$",
+        re.IGNORECASE
+    ),
+    # "add a future scope section after conclusion" / "insert related work before methodology"
+    re.compile(
+        r"^\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+?)\s+(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*$",
+        re.IGNORECASE
+    ),
+]
+
+
+def is_anchored_insert_instruction(user_prompt: str) -> bool:
+    """
+    Detect whether user wants to insert new content immediately before or after
+    a specific named section/slide in the document.
+    """
+    if not user_prompt:
+        return False
+    text = user_prompt.strip()
+
+    # Exclude broad-edit and fix-all instructions
+    if is_broad_instruction(text) or is_fix_all_instruction(text):
+        return False
+
+    for pattern in _ANCHORED_INSERT_PATTERNS:
+        if pattern.search(text):
+            return True
+
+    return False
+
+
+def parse_anchored_insert_instruction(user_prompt: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Parse an anchored relative insertion prompt into:
+        (new_content_desc, position, anchor_description)
+    where position is 'after' or 'before'.
+    """
+    if not user_prompt:
+        return None
+    text = user_prompt.strip()
+
+    for pattern in _ANCHORED_INSERT_PATTERNS:
+        m = pattern.match(text)
+        if m:
+            groups = m.groups()
+            if len(groups) == 3:
+                # Determine which group is position
+                g0, g1, g2 = groups
+                if g0.lower() in ("after", "following", "behind", "post", "before", "prior to", "preceding"):
+                    pos_raw, anchor_desc, content_desc = g0, g1, g2
+                else:
+                    content_desc, pos_raw, anchor_desc = g0, g1, g2
+
+                pos = "before" if pos_raw.lower() in ("before", "prior to", "preceding") else "after"
+                clean_anchor = anchor_desc.strip()
+                clean_content = content_desc.strip()
+                return (clean_content, pos, clean_anchor)
 
     return None
+
+
+def resolve_anchor_target(
+    doc: DocumentIndex,
+    anchor_description: str,
+    latex_code: Optional[str] = None,
+) -> Optional[PageEntry]:
+    """
+    Precisely locate an anchor section/slide in the document index.
+    Reuses single-target resolution logic to pinpoint the anchor PageEntry,
+    ensuring exact start_offset, end_offset, and content_hash.
+    """
+    if not doc or not anchor_description or not doc.pages:
+        return None
+
+    clean_desc = anchor_description.strip()
+    # Normalize phrases like "the conclusion section", "the conclusion", "conclusion section"
+    clean_desc = re.sub(r"^(?:the|a|an)\s+", "", clean_desc, flags=re.IGNORECASE)
+    clean_desc = re.sub(r"\s+(?:section|slide|frame|part|chapter)$", "", clean_desc, flags=re.IGNORECASE).strip()
+
+    # 1. First attempt with cleaned anchor description
+    target_idx = find_target_page(doc, clean_desc)
+
+    # 2. Fall back to raw anchor description if cleaned attempt returned None
+    if target_idx is None:
+        target_idx = find_target_page(doc, anchor_description)
+
+    # 3. If target found, ensure content_hash is populated
+    if target_idx is not None:
+        page = doc.get_page_by_index(target_idx)
+        if page:
+            if not page.content_hash and page.content:
+                page.content_hash = hashlib.sha256(page.content.strip().encode("utf-8")).hexdigest()[:16]
+            return page
+
+    return None
+
 
