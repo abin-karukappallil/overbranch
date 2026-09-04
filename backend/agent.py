@@ -1214,6 +1214,226 @@ async def agent_chat(request: Request):
             if mode == "EDIT_DOCUMENT" and has_existing_code and req.current_code:
                 try:
                     document_structure = doc_idx.parse_document_structure(req.current_code)
+
+                    # ── Broad-edit detection ──────────────────────────────
+                    # If the instruction targets ALL chapters/sections/slides,
+                    # run a per-target iteration loop instead of a single LLM call.
+                    if doc_idx.is_broad_instruction(req.user_prompt):
+                        broad_targets = doc_idx.resolve_all_targets(document_structure)
+
+                        MAX_BROAD_TARGETS = 12
+                        if broad_targets and len(broad_targets) >= 2:
+                            if len(broad_targets) > MAX_BROAD_TARGETS:
+                                yield sse_event("progress", {
+                                    "step": "broad_limit",
+                                    "message": f"Too many targets ({len(broad_targets)}) — limiting to first {MAX_BROAD_TARGETS}",
+                                    "icon": "alert-triangle"
+                                })
+                                broad_targets = broad_targets[:MAX_BROAD_TARGETS]
+
+                            target_titles = [t.title for t in broad_targets]
+                            yield sse_event("progress", {
+                                "step": "broad_edit",
+                                "message": f"Found {len(broad_targets)} sections — editing each individually",
+                                "icon": "layers"
+                            })
+                            logger.info(f"Broad edit mode: {len(broad_targets)} targets: {target_titles}")
+
+                            # Load memory & project context for the loop
+                            conv_ctx = conversation_memory.get_conversation_context(req.project_id)
+                            proj_ctx = project_memory.get_project_context(req.project_id)
+                            proj_assets = get_project_assets_info(req.project_id)
+                            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
+
+                            # Load attached file for the broad-edit loop
+                            broad_attached_info = None
+                            if req.attached_file and req.attached_file.content:
+                                yield sse_event("progress", {"step": "file", "message": f"Extracting content from {req.attached_file.filename}...", "icon": "paperclip"})
+                                processed_content = process_attached_file_content(
+                                    filename=req.attached_file.filename,
+                                    content=req.attached_file.content,
+                                    file_type=req.attached_file.file_type or "text/plain",
+                                )
+                                broad_attached_info = {
+                                    "filename": req.attached_file.filename,
+                                    "file_type": req.attached_file.file_type or "text/plain",
+                                    "content": processed_content,
+                                }
+                                conversation_memory.set_attached_file(req.project_id, broad_attached_info)
+                                yield sse_event("progress", {"step": "file_done", "message": f"Attached: {req.attached_file.filename}", "icon": "check-square"})
+                            else:
+                                # Retrieve persistent attached document context from memory
+                                cached_file_info = conversation_memory.get_attached_file(req.project_id)
+                                if cached_file_info:
+                                    broad_attached_info = cached_file_info
+                                    logger.info(f"Broad-edit referencing persistent attached document: '{cached_file_info.get('filename')}'")
+                                    yield sse_event("progress", {"step": "file_cached", "message": f"Referencing document: {cached_file_info.get('filename')}", "icon": "paperclip"})
+
+                            # Resolve provider
+                            raw_model = req.model or ""
+                            if " (via " in raw_model:
+                                raw_model = raw_model.split(" (via ", 1)[0]
+                            if raw_model.lower().startswith("via "):
+                                raw_model = ""
+                            if "(" in raw_model and raw_model.endswith(")"):
+                                raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+                            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+                            provider = provider_router.route(primary_model)
+                            provider_name = provider.get_provider_name()
+
+                            broad_edits = []
+                            total_targets = len(broad_targets)
+
+                            for t_idx, target_page in enumerate(broad_targets):
+                                yield sse_event("progress", {
+                                    "step": "broad_iter",
+                                    "message": f"Editing [{t_idx + 1}/{total_targets}]: {target_page.title}",
+                                    "icon": "edit-3"
+                                })
+
+                                # Build scoped prompt for this single chapter
+                                iter_messages = prompt_builder.build_broad_edit_prompt(
+                                    user_request=req.user_prompt,
+                                    page_id=target_page.page_id,
+                                    page_title=target_page.title,
+                                    page_content=target_page.content,
+                                    page_index=t_idx,
+                                    total_targets=total_targets,
+                                    conversation_context=conv_ctx,
+                                    project_context=full_proj_context,
+                                    attached_file_info=broad_attached_info,
+                                )
+
+                                system_content = iter_messages[0].content if len(iter_messages) > 0 else ""
+                                user_content = iter_messages[1].content if len(iter_messages) > 1 else ""
+
+                                iter_messages_list = []
+                                if system_content:
+                                    iter_messages_list.append({"role": "system", "content": system_content})
+                                iter_messages_list.append({"role": "user", "content": user_content})
+
+                                # Call LLM with tight per-chapter budget
+                                try:
+                                    iter_result = None
+                                    async for item in run_step_with_heartbeat(
+                                        provider.chat,
+                                        messages=iter_messages_list,
+                                        model=primary_model,
+                                        temperature=0.1,
+                                        max_tokens=4096,
+                                        api_keys=req.api_keys,
+                                    ):
+                                        if isinstance(item, str) and item.startswith(":"):
+                                            yield item
+                                        else:
+                                            iter_result = item
+
+                                    if iter_result and iter_result.get("content"):
+                                        parsed = clean_json_response(iter_result["content"])
+                                        iter_edits = parsed.get("edits", [])
+                                        if not iter_edits:
+                                            oc = parsed.get("original_chunk", "")
+                                            pc = parsed.get("proposed_chunk", "")
+                                            if oc or pc:
+                                                iter_edits = [{"original_chunk": oc, "proposed_chunk": pc, "explanation": parsed.get("explanation", "")}]
+
+                                        # If no edits parsed, try extracting LaTeX directly
+                                        if not iter_edits:
+                                            extracted_latex = extract_chunk_latex(iter_result["content"])
+                                            if extracted_latex:
+                                                iter_edits = [{
+                                                    "original_chunk": target_page.content,
+                                                    "proposed_chunk": extracted_latex,
+                                                    "explanation": f"Edited {target_page.title}",
+                                                }]
+
+                                        for e in iter_edits:
+                                            pc = e.get("proposed_chunk", "")
+                                            oc = e.get("original_chunk", "")
+
+                                            # Sanitize proposed chunk
+                                            if pc:
+                                                e["proposed_chunk"] = sanitize_latex_code(pc)
+
+                                            # Ensure original_chunk aligns with the actual page content
+                                            if not oc or oc.strip() == "":
+                                                e["original_chunk"] = target_page.content
+                                            else:
+                                                matched = find_verbatim_or_fuzzy(req.current_code, oc)
+                                                if matched:
+                                                    e["original_chunk"] = matched
+                                                elif target_page.content in req.current_code:
+                                                    e["original_chunk"] = target_page.content
+
+                                            # Strip document-level wrappers from proposed
+                                            if "\\documentclass" in e.get("proposed_chunk", ""):
+                                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', e["proposed_chunk"])
+                                                if inner_m:
+                                                    e["proposed_chunk"] = inner_m.group(1).strip()
+
+                                            if e.get("proposed_chunk"):
+                                                broad_edits.append(e)
+
+                                except Exception as iter_err:
+                                    logger.warning(f"Broad edit iteration {t_idx + 1} failed for '{target_page.title}': {iter_err}")
+                                    yield sse_event("progress", {
+                                        "step": "broad_iter_warn",
+                                        "message": f"Failed to edit {target_page.title}: {str(iter_err)[:60]}",
+                                        "icon": "alert-triangle"
+                                    })
+
+                            # Validate and assemble broad edits
+                            if broad_edits:
+                                try:
+                                    validation = edit_validator.validate_edit(
+                                        original_code=req.current_code or "",
+                                        proposed_edits=broad_edits,
+                                    )
+                                    if not validation.passed:
+                                        broad_edits, repairs = edit_validator.auto_repair_edits(
+                                            proposed_edits=broad_edits,
+                                            original_code=req.current_code or "",
+                                        )
+                                        if repairs:
+                                            logger.info(f"Broad edit auto-repaired {len(repairs)} issues: {repairs}")
+                                            yield sse_event("progress", {
+                                                "step": "repair",
+                                                "message": f"Auto-fixed {len(repairs)} issue(s)",
+                                                "icon": "tool"
+                                            })
+                                except Exception as val_err:
+                                    logger.warning(f"Broad edit validation error: {val_err}")
+
+                            # Store in memory
+                            conversation_memory.add_turn(
+                                project_id=req.project_id,
+                                user_prompt=req.user_prompt,
+                                assistant_response={"edits": broad_edits, "plan": f"Broad edit: {len(broad_edits)} sections updated"},
+                                file_path=req.file_path,
+                                chunk_summaries=[],
+                            )
+
+                            first_orig = broad_edits[0].get("original_chunk", "") if broad_edits else ""
+                            first_prop = broad_edits[0].get("proposed_chunk", "") if broad_edits else ""
+                            overall_exp = f"Edited {len(broad_edits)} sections individually as requested."
+
+                            yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} sections edited", "icon": "check"})
+
+                            yield sse_event("result", {
+                                "plan": f"Broad edit: applied changes to {len(broad_edits)} sections individually",
+                                "edits": broad_edits,
+                                "original_chunk": first_orig,
+                                "proposed_chunk": first_prop,
+                                "explanation": overall_exp,
+                                "retrieved_chunks_count": 0,
+                                "model_used": primary_model,
+                                "is_fallback": False,
+                                "is_broad_edit": True,
+                            })
+                            return
+                        # End of broad-edit branch — fall through to single-target
+
+                    # ── Single-target resolution (existing path) ──────────
                     target_page_index = doc_idx.find_target_page(document_structure, req.user_prompt)
 
                     if target_page_index is not None:
@@ -1632,9 +1852,40 @@ async def agent_chat(request: Request):
                     # 1. Standalone full document returned (\documentclass ... \begin{document})
                     # Keep \documentclass intact so the editor cleanly replaces the entire document
                     if "\\documentclass" in pc and "\\begin{document}" in pc:
-                        e["original_chunk"] = req.current_code
-                        e["proposed_chunk"] = pc
-                        continue
+                        # GUARD: If existing document has substantially more structure than proposed,
+                        # the LLM likely hallucinated a partial rewrite. Extract inner content instead.
+                        if has_existing_code and req.current_code:
+                            orig_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', req.current_code))
+                            prop_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', pc))
+                            orig_frames = len(re.findall(r'\\begin\{frame\}', req.current_code))
+                            prop_frames = len(re.findall(r'\\begin\{frame\}', pc))
+                            orig_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', req.current_code))
+                            prop_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', pc))
+                            
+                            # If proposed lost >50% of sections/frames or key environments, it's a bad rewrite
+                            lost_sections = orig_sections > 3 and prop_sections < orig_sections * 0.5
+                            lost_frames = orig_frames > 3 and prop_frames < orig_frames * 0.5
+                            lost_envs = orig_envs > 0 and prop_envs == 0
+                            
+                            if lost_sections or lost_frames or lost_envs:
+                                logger.warning(f"Prevented full doc replacement: sections {orig_sections}->{prop_sections}, frames {orig_frames}->{prop_frames}, envs {orig_envs}->{prop_envs}")
+                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', pc)
+                                if inner_m:
+                                    pc = inner_m.group(1).strip()
+                                    e["proposed_chunk"] = pc
+                                    # Fall through to the rest of the edit parsing logic
+                                else:
+                                    e["original_chunk"] = req.current_code
+                                    e["proposed_chunk"] = pc
+                                    continue
+                            else:
+                                e["original_chunk"] = req.current_code
+                                e["proposed_chunk"] = pc
+                                continue
+                        else:
+                            e["original_chunk"] = req.current_code
+                            e["proposed_chunk"] = pc
+                            continue
 
                     # 2. Check if original_chunk matches verbatim or with normalized whitespace
                     matched_orig = find_verbatim_or_fuzzy(req.current_code, oc) if oc else None
