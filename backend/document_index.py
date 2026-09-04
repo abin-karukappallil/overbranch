@@ -554,6 +554,17 @@ def get_page_window(
 # Broad / plural instruction detection
 # ---------------------------------------------------------------------------
 
+# Patterns that indicate the user wants to audit, fix, or clean up issues across the code
+_FIX_ALL_PATTERNS = [
+    re.compile(r"\b(?:fix|repair|clean\s*up|resolve|debug|check)\s+all\s+(?:the\s+)?(?:issues|errors|bugs|problems|warnings|broken\s*code)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+all\s+(?:issues|errors|bugs|problems|warnings|broken\s*code)\s+(?:in|throughout|across)\s+(?:this|the)?\s*(?:latex|code|document|paper|report|presentation|project|file)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:check|make\s*sure|ensure)\s+(?:no\s+)?(?:broken\s*code|errors|issues|comment\s*overlap)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+(?:all\s+)?(?:broken\s*code|broken\s*latex|syntax\s*errors)\b", re.IGNORECASE),
+    re.compile(r"\b(?:fix|correct)\s+(?:all\s+)?(?:comment\s*overlap|comment\s*issues|escaped\s*characters)\b", re.IGNORECASE),
+    re.compile(r"\b(?:all\s+ok\s+if\s+any\s+changes\s+fix|if\s+any\s+issues\s+fix)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+(?:all\s+)?(?:compile|compilation)\s+(?:errors|issues)\b", re.IGNORECASE),
+]
+
 # Patterns that indicate the user wants to edit ALL sections/chapters/slides,
 # not just a single specific one.
 _BROAD_PATTERNS = [
@@ -564,7 +575,24 @@ _BROAD_PATTERNS = [
     re.compile(r"\bevery\s+(?:single\s+)?(?:chapter|section|slide|frame|page|part)\b", re.IGNORECASE),
     re.compile(r"\b(?:across|in)\s+all\s+(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
     re.compile(r"\ball\s+(?:the\s+)?(?:existing\s+)?(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
-]
+] + _FIX_ALL_PATTERNS
+
+
+def is_fix_all_instruction(user_instruction: str) -> bool:
+    """
+    Detect whether user wants to audit/repair errors, broken code,
+    or comment overlaps throughout the entire document.
+    """
+    if not user_instruction:
+        return False
+
+    text = user_instruction.strip()
+    for pattern in _FIX_ALL_PATTERNS:
+        if pattern.search(text):
+            logger.info(f"Fix-all instruction detected: '{text[:80]}' matched {pattern.pattern}")
+            return True
+
+    return False
 
 
 def is_broad_instruction(user_instruction: str) -> bool:
@@ -577,6 +605,8 @@ def is_broad_instruction(user_instruction: str) -> bool:
       - "add more detail to every section"
       - "improve content throughout the document"
       - "expand each slide"
+      - "fix all issues in this latex code"
+      - "make sure no broken code or comment overlap is there"
 
     Returns False for single-target instructions like:
       - "expand the methodology section"
@@ -598,18 +628,21 @@ def is_broad_instruction(user_instruction: str) -> bool:
 def resolve_all_targets(
     doc_index: DocumentIndex,
     target_type: Optional[str] = None,
+    include_preamble: bool = False,
 ) -> List[PageEntry]:
     """
     Return all content PageEntry objects of the requested type.
 
     For broad/plural instructions, this returns every chapter/section/frame
-    in the document (excluding preamble and postamble) so the caller can
-    iterate over them individually.
+    in the document (excluding postamble, and preamble unless include_preamble=True)
+    so the caller can iterate over them individually.
 
     Args:
         doc_index: Parsed document index.
         target_type: Optional filter — "frame", "section", or None for all
                      content pages.
+        include_preamble: When True, also includes the preamble page so
+                          packages and document-level setup are audited.
 
     Returns:
         List of PageEntry objects matching the filter, in document order.
@@ -617,9 +650,10 @@ def resolve_all_targets(
     if not doc_index.pages:
         return []
 
+    excluded = ("postamble",) if include_preamble else ("preamble", "postamble")
     content_pages = [
         p for p in doc_index.pages
-        if p.page_type not in ("preamble", "postamble")
+        if p.page_type not in excluded
     ]
 
     if target_type:
@@ -627,6 +661,6 @@ def resolve_all_targets(
 
     logger.info(
         f"resolve_all_targets: {len(content_pages)} targets "
-        f"(type={target_type or 'all'}, total_pages={len(doc_index.pages)})"
+        f"(type={target_type or 'all'}, include_preamble={include_preamble}, total_pages={len(doc_index.pages)})"
     )
     return content_pages
