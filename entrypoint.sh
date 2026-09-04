@@ -12,9 +12,16 @@ mkdir -p /app/uploads/projects
 trap 'kill -TERM $BACKEND_PID 2>/dev/null' EXIT INT TERM
 
 # Start Python FastAPI Backend on port 8000 in background
-echo "► Starting FastAPI Backend (0.0.0.0:8000)..."
+echo "► Starting FastAPI Backend (0.0.0.0:${BACKEND_PORT:-8000})..."
 cd /app/backend
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 &
+python3 -m uvicorn main:app \
+    --host 0.0.0.0 \
+    --port "${BACKEND_PORT:-8000}" \
+    --workers "${WORKERS:-2}" \
+    --timeout-keep-alive 65 \
+    --timeout-graceful-shutdown 30 \
+    --limit-concurrency 100 \
+    --limit-max-requests 2000 &
 BACKEND_PID=$!
 
 # Wait for backend to initialize
