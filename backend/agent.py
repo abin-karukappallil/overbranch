@@ -1447,6 +1447,222 @@ async def agent_chat(request: Request):
                             return
                         # End of broad-edit branch — fall through to single-target
 
+                    # ── Append-to-collection branch (third intent) ───────
+                    if doc_idx.is_append_to_collection_instruction(req.user_prompt):
+                        collection = doc_idx.resolve_collection(
+                            document_structure, req.current_code, req.user_prompt
+                        )
+                        if collection:
+                            next_ordinal, next_label = doc_idx.compute_next_ordinal(collection)
+                            yield sse_event("progress", {
+                                "step": "collection",
+                                "message": f"Appending to {collection.parent_title} as {next_label} (Item {next_ordinal})...",
+                                "icon": "list-plus"
+                            })
+                            logger.info(
+                                f"Append-to-collection matched: type={collection.collection_type}, "
+                                f"parent='{collection.parent_title}', count={collection.current_count}, "
+                                f"next_ordinal={next_ordinal}, next_label='{next_label}'"
+                            )
+
+                            conv_ctx = conversation_memory.get_conversation_context(req.project_id)
+                            proj_ctx = project_memory.get_project_context(req.project_id)
+                            proj_assets = get_project_assets_info(req.project_id)
+                            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
+
+                            attached_info = None
+                            if req.attached_file and req.attached_file.content:
+                                attached_info = {
+                                    "filename": req.attached_file.filename,
+                                    "file_type": req.attached_file.file_type or "text/plain",
+                                    "content": req.attached_file.content,
+                                }
+
+                            append_messages = prompt_builder.build_append_to_collection_prompt(
+                                user_request=req.user_prompt,
+                                collection_entry=collection,
+                                next_ordinal=next_ordinal,
+                                next_label=next_label,
+                                sample_members=collection.sample_members,
+                                conversation_context=conv_ctx,
+                                project_context=full_proj_context,
+                                attached_file_info=attached_info,
+                            )
+
+                            system_content = ""
+                            user_content = ""
+                            for m in append_messages:
+                                if isinstance(m, SystemMessage):
+                                    system_content = m.content
+                                elif isinstance(m, HumanMessage):
+                                    user_content = m.content
+
+                            raw_model = req.model or ""
+                            if " (via " in raw_model:
+                                raw_model = raw_model.split(" (via ", 1)[0]
+                            if raw_model.lower().startswith("via "):
+                                raw_model = ""
+                            if "(" in raw_model and raw_model.endswith(")"):
+                                raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+                            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+
+                            provider = provider_router.route(primary_model)
+                            provider_name = provider.get_provider_name()
+                            yield sse_event("progress", {
+                                "step": "llm_call",
+                                "message": f"Generating item with {provider_name} ({primary_model})...",
+                                "icon": "sparkles"
+                            })
+
+                            messages_list = []
+                            if system_content:
+                                messages_list.append({"role": "system", "content": system_content})
+                            messages_list.append({"role": "user", "content": user_content})
+
+                            iter_result = None
+                            async for item in run_step_with_heartbeat(
+                                provider.chat,
+                                messages=messages_list,
+                                model=primary_model,
+                                temperature=0.1,
+                                max_tokens=4096,
+                                api_keys=req.api_keys,
+                            ):
+                                if isinstance(item, str) and item.startswith(":"):
+                                    yield item
+                                else:
+                                    iter_result = item
+
+                            response_text = iter_result.get("content", "") if iter_result else ""
+                            parsed = clean_json_response(response_text)
+
+                            new_content = ""
+                            if parsed.get("content"):
+                                new_content = parsed["content"]
+                            elif parsed.get("proposed_chunk"):
+                                new_content = parsed["proposed_chunk"]
+                            elif parsed.get("edits"):
+                                new_content = parsed["edits"][0].get("proposed_chunk", "")
+                            elif parsed.get("new_code"):
+                                new_content = parsed["new_code"]
+
+                            if not new_content:
+                                extracted = extract_chunk_latex(response_text)
+                                if extracted:
+                                    new_content = extracted
+
+                            if not new_content:
+                                new_content = response_text.strip()
+
+                            new_content = sanitize_latex_code(new_content)
+                            if "\\documentclass" in new_content:
+                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', new_content)
+                                if inner_m:
+                                    new_content = inner_m.group(1).strip()
+
+                            # Validate and fix numbering continuity deterministically
+                            continuity_issues = edit_validator.validate_numbering_continuity(
+                                new_content, collection, next_ordinal
+                            )
+                            if continuity_issues:
+                                logger.warning(
+                                    f"Numbering issue detected in LLM output: {[i.message for i in continuity_issues]}. "
+                                    f"Applying deterministic ordinal fix for {next_label}."
+                                )
+                                if collection.collection_type == "beamer_frame_group":
+                                    if re.search(r"\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]*)\}", new_content):
+                                        new_content = re.sub(
+                                            r"\\begin\{frame\}((?:\[[^\]]*\])?)\s*\{([^}]*)\}",
+                                            rf"\\begin{{frame}}\1{{{next_label}}}",
+                                            new_content,
+                                            count=1,
+                                        )
+                                    elif re.search(r"\\frametitle\{([^}]*)\}", new_content):
+                                        new_content = re.sub(
+                                            r"\\frametitle\{([^}]*)\}",
+                                            rf"\\frametitle{{{next_label}}}",
+                                            new_content,
+                                            count=1,
+                                        )
+                                elif collection.collection_type == "bibitem":
+                                    new_content = re.sub(
+                                        r"\\bibitem(?:\[[^\]]*\])?\{[^}]+\}",
+                                        next_label,
+                                        new_content,
+                                        count=1,
+                                    )
+
+                            last_member_content = ""
+                            if collection.member_offsets:
+                                last_start, last_end = collection.member_offsets[-1]
+                                last_member_content = req.current_code[last_start:last_end]
+
+                            separator = "\n\n" if collection.collection_type in ("beamer_frame_group", "table_rows") else "\n"
+
+                            if last_member_content and last_member_content in req.current_code:
+                                edit_item = {
+                                    "action": "insert_after",
+                                    "collection_id": collection.collection_id,
+                                    "insertion_offset": collection.last_member_end_offset,
+                                    "original_chunk": last_member_content,
+                                    "proposed_chunk": f"{last_member_content}{separator}{new_content.strip()}",
+                                    "explanation": f"Appended {next_label} to {collection.parent_title}",
+                                }
+                            else:
+                                edit_item = {
+                                    "action": "insert_after",
+                                    "collection_id": collection.collection_id,
+                                    "insertion_offset": collection.last_member_end_offset,
+                                    "original_chunk": "",
+                                    "proposed_chunk": new_content.strip(),
+                                    "explanation": f"Appended {next_label} to {collection.parent_title}",
+                                }
+
+                            validation = edit_validator.validate_edit(
+                                original_code=req.current_code,
+                                proposed_edits=[edit_item],
+                                collection_entry=collection,
+                                expected_ordinal=next_ordinal,
+                            )
+                            if not validation.passed:
+                                logger.warning(
+                                    f"Append validation had errors: {[i.message for i in validation.issues if i.severity == 'error']}"
+                                )
+
+                            conversation_memory.add_turn(
+                                project_id=req.project_id,
+                                user_prompt=req.user_prompt,
+                                assistant_response={
+                                    "plan": f"Appended {next_label} after existing {collection.current_count} items in {collection.parent_title}.",
+                                    "edits": [edit_item],
+                                    "explanation": edit_item["explanation"],
+                                },
+                                file_path=req.file_path,
+                                chunk_summaries=[],
+                            )
+
+                            yield sse_event("progress", {"step": "done", "message": f"Appended {next_label}", "icon": "check"})
+
+                            yield sse_event("result", {
+                                "plan": f"Appended {next_label} after existing {collection.current_count} items in {collection.parent_title}.",
+                                "edits": [edit_item],
+                                "original_chunk": edit_item["original_chunk"],
+                                "proposed_chunk": edit_item["proposed_chunk"],
+                                "explanation": f"Appended {next_label} to {collection.parent_title} directly following existing {collection.current_count} items.",
+                                "retrieved_chunks_count": 0,
+                                "model_used": primary_model,
+                                "is_fallback": False,
+                                "is_append_to_collection": True,
+                            })
+                            return
+                        else:
+                            yield sse_event("progress", {
+                                "step": "fallback_notice",
+                                "message": "No matching ordered collection found — creating as new content",
+                                "icon": "info"
+                            })
+                            logger.info("Append-to-collection instruction detected, but no collection resolved — falling through to standard creation")
+
                     # ── Single-target resolution (existing path) ──────────
                     target_page_index = doc_idx.find_target_page(document_structure, req.user_prompt)
 
