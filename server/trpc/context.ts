@@ -1,13 +1,24 @@
-import { initTRPC, TRPCError } from '@trpc/server';
 import { auth } from '@/lib/auth';
-import superjson from 'superjson';
 import { headers } from 'next/headers';
 
 export const createContext = async () => {
   const requestHeaders = await headers();
-  const session = await auth.api.getSession({
-    headers: requestHeaders,
-  });
+  let session = null;
+  try {
+    session = await Promise.race([
+      auth.api.getSession({
+        headers: requestHeaders,
+      }),
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 5000);
+        if (typeof timer === 'object' && 'unref' in timer) {
+          (timer as any).unref();
+        }
+      }),
+    ]);
+  } catch (err) {
+    console.warn('[tRPC Context] Failed to get session:', err);
+  }
 
   return {
     session,
