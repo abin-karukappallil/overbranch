@@ -1,13 +1,10 @@
 import { auth } from "@/lib/auth";
-import { toNextJsHandler } from "better-auth/next-js";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-const handlers = toNextJsHandler(auth);
-
 async function handleWithTimeout(
-  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  method: string,
   req: NextRequest
 ) {
   try {
@@ -21,7 +18,7 @@ async function handleWithTimeout(
     });
 
     const response = await Promise.race([
-      handlers[method](req),
+      auth.handler(req),
       timeoutPromise,
     ]);
 
