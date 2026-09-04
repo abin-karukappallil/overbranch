@@ -244,6 +244,102 @@ def validate_continuous_numbering(latex: str) -> List[ValidationIssue]:
     return issues
 
 
+def validate_no_duplicate_headings(
+    original_code: str,
+    proposed_edits: List[Dict[str, Any]],
+) -> List[ValidationIssue]:
+    """
+    Check that create_content edits don't duplicate existing chapter/section headings.
+
+    When the AI uses create_content (original_chunk == "") to add content that
+    has the same heading as an existing chapter/section, this is almost always
+    a bug — the AI should have used edit_chunk instead.
+
+    Returns issues with auto_fixable=True so the caller can retry as edit_chunk.
+    """
+    issues = []
+
+    if not original_code or not proposed_edits:
+        return issues
+
+    # Extract existing headings from the original document
+    existing_headings: Dict[str, str] = {}  # normalized_title -> raw_title
+    for m in re.finditer(r"\\(?:chapter|section|subsection)\{([^}]+)\}", original_code):
+        raw_title = m.group(1).strip()
+        normalized = re.sub(r"\s+", " ", raw_title).lower().strip()
+        existing_headings[normalized] = raw_title
+
+    if not existing_headings:
+        return issues
+
+    for i, edit in enumerate(proposed_edits):
+        oc = edit.get("original_chunk", "")
+        pc = edit.get("proposed_chunk", "")
+
+        # Only check create_content edits (empty original_chunk)
+        if oc or not pc:
+            continue
+
+        # Extract headings from the proposed chunk
+        for m in re.finditer(r"\\(?:chapter|section|subsection)\{([^}]+)\}", pc):
+            proposed_title = m.group(1).strip()
+            proposed_normalized = re.sub(r"\s+", " ", proposed_title).lower().strip()
+
+            if proposed_normalized in existing_headings:
+                existing_raw = existing_headings[proposed_normalized]
+                issues.append(ValidationIssue(
+                    check="duplicate_heading_create",
+                    severity="error",
+                    message=(
+                        f"create_content edit {i} duplicates existing heading "
+                        f"'{existing_raw}' — should use edit_chunk instead"
+                    ),
+                    auto_fixable=True,
+                ))
+
+    return issues
+
+
+def validate_no_structural_regression(original: str, proposed: str) -> List[ValidationIssue]:
+    """Check that the proposed document didn't lose major sections or environments."""
+    issues = []
+    
+    if not original or not proposed:
+        return issues
+        
+    orig_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', original))
+    prop_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', proposed))
+    
+    orig_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', original))
+    prop_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', proposed))
+    
+    if orig_sections > 3 and prop_sections < orig_sections * 0.5:
+        issues.append(ValidationIssue(
+            check="structural_regression_sections",
+            severity="error",
+            message=f"Proposed document lost >50% of sections ({orig_sections} -> {prop_sections})",
+            auto_fixable=False,
+        ))
+        
+    if orig_envs > 0 and prop_envs == 0:
+        issues.append(ValidationIssue(
+            check="structural_regression_environments",
+            severity="warning",
+            message="Proposed document lost key front-matter or back-matter environments",
+            auto_fixable=False,
+        ))
+        
+    if len(original) > 1000 and len(proposed) < len(original) * 0.4:
+        issues.append(ValidationIssue(
+            check="structural_regression_length",
+            severity="warning",
+            message=f"Proposed document is < 40% of the original length ({len(original)} -> {len(proposed)} chars)",
+            auto_fixable=False,
+        ))
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Auto-repair functions
 # ---------------------------------------------------------------------------
@@ -367,6 +463,8 @@ def validate_edit(
     result.issues.extend(validate_continuous_numbering(final_doc))
     result.issues.extend(validate_references_intact(original_code, final_doc))
     result.issues.extend(validate_scope(original_code, proposed_edits, target_page_ids))
+    result.issues.extend(validate_no_structural_regression(original_code, final_doc))
+    result.issues.extend(validate_no_duplicate_headings(original_code, proposed_edits))
 
     # Update passed flag
     result.passed = not any(i.severity == "error" for i in result.issues)
@@ -383,6 +481,69 @@ def validate_edit(
         logger.info("Edit validation: all checks passed")
 
     return result
+
+
+def auto_repair_duplicate_headings(
+    proposed_edits: List[Dict[str, Any]],
+    original_code: str,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Convert create_content edits that duplicate existing headings into
+    edit_chunk edits by finding the matching section text in the original.
+
+    Returns (repaired_edits, list_of_repairs_made).
+    """
+    repairs = []
+    repaired = []
+
+    if not original_code:
+        return proposed_edits, repairs
+
+    # Build a map of normalized heading -> full section text in original
+    section_map: Dict[str, str] = {}  # normalized_title -> section_content
+    section_matches = list(re.finditer(
+        r"(\\(?:chapter|section|subsection)\{([^}]+)\})", original_code
+    ))
+    for i, m in enumerate(section_matches):
+        raw_title = m.group(2).strip()
+        normalized = re.sub(r"\s+", " ", raw_title).lower().strip()
+        # Section extends from this heading to the next heading or end
+        start = m.start()
+        end = section_matches[i + 1].start() if i + 1 < len(section_matches) else len(original_code)
+        # Don't go past \end{document}
+        end_doc = original_code.find("\\end{document}", start)
+        if end_doc != -1 and end_doc < end:
+            end = end_doc
+        section_text = original_code[start:end].strip()
+        section_map[normalized] = section_text
+
+    for edit in proposed_edits:
+        oc = edit.get("original_chunk", "")
+        pc = edit.get("proposed_chunk", "")
+
+        if oc or not pc:
+            repaired.append(edit)
+            continue
+
+        # Check if proposed heading duplicates an existing one
+        heading_m = re.search(r"\\(?:chapter|section|subsection)\{([^}]+)\}", pc)
+        if heading_m:
+            proposed_title = heading_m.group(1).strip()
+            proposed_normalized = re.sub(r"\s+", " ", proposed_title).lower().strip()
+
+            if proposed_normalized in section_map:
+                # Convert create -> edit by setting original_chunk to existing section
+                new_edit = dict(edit)
+                new_edit["original_chunk"] = section_map[proposed_normalized]
+                repaired.append(new_edit)
+                repairs.append(
+                    f"Converted duplicate create '{proposed_title}' to edit_chunk"
+                )
+                continue
+
+        repaired.append(edit)
+
+    return repaired, repairs
 
 
 def auto_repair_edits(
@@ -415,6 +576,12 @@ def auto_repair_edits(
 
         new_edit["proposed_chunk"] = pc
         repaired_edits.append(new_edit)
+
+    # Auto-repair duplicate heading creates (convert to edit_chunk)
+    repaired_edits, heading_repairs = auto_repair_duplicate_headings(
+        repaired_edits, original_code
+    )
+    all_repairs.extend(heading_repairs)
 
     if all_repairs:
         logger.info(f"Auto-repair applied {len(all_repairs)} fix(es): {all_repairs}")
