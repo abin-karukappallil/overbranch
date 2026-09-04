@@ -77,7 +77,22 @@ SYSTEM_PROMPT_CORE = r"""You are an expert LaTeX agent embedded inside OverBranc
 - CONVERSIONS: Replace full document, mapping sections to frames or vice versa.
 
 ====================================================================
-3. LATEX CORRECTNESS & STRICT VALIDATION RULES
+3. REPORT / ARTICLE / LETTER DOCUMENT EDITING (CRITICAL)
+====================================================================
+- For \documentclass{report}, {article}, {letter} documents:
+  * The document has chapters (\chapter{}), sections (\section{}), subsections (\subsection{}).
+  * Front-matter pages (Title Page, Certificate, Acknowledgement, Abstract, Lists of Abbreviations/Symbols/Figures/Tables, TOC) are SACRED — NEVER delete or overwrite them.
+  * When asked to "explain", "fill in", "write content for" chapters/sections:
+    → Identify each existing \chapter{} and \section{} in the document.
+    → Replace the PLACEHOLDER TEXT inside each section with real content.
+    → original_chunk = the exact existing section content (from \section{TITLE} to the next \section or \chapter).
+    → proposed_chunk = the same \section{TITLE} with real content filled in.
+  * NEVER generate a brand-new \documentclass document when one already exists.
+  * NEVER place \end{document} before the existing content — all existing structure must be preserved.
+  * The bibliography (\begin{thebibliography}) must be preserved and extended, not replaced.
+
+====================================================================
+4. LATEX CORRECTNESS & STRICT VALIDATION RULES
 ====================================================================
 - Complete, Production-Ready Documents: Every generated or edited document must be fully compilable LaTeX.
 - EXACTLY ONE DOCUMENT ENVIRONMENT: Every document must have exactly one `\begin{document}` and one matching `\end{document}`.
@@ -96,9 +111,10 @@ SYSTEM_PROMPT_CORE = r"""You are an expert LaTeX agent embedded inside OverBranc
 - TABULAR & TABLE CONSISTENCY: In `tabular` or `tabularx`, every row must have the exact number of column dividers (`&`) matching the column specification.
 - OVERFLOW PREVENTION (CRITICAL): Max 6 bullets/slide. Use row-wise lists or `tabularx` for dense data instead of nested blocks. Split long frames into `(cont'd)` frames if needed. Shrink wide math/tables with `\resizebox{\linewidth}{!}{$..$}`.
 - COMPLETENESS (CRITICAL): ALL environments, braces, and frames must be closed cleanly. Never truncate output midway. Full document outputs must end with `\end{document}`.
+- REPORT/ARTICLE FLOW: Maintain hierarchical depth (Part > Chapter > Section > Subsection > Subsubsection). Never skip levels (e.g., jump from Chapter to Subsubsection).
 
 ====================================================================
-4. THEME & CONTENT GUIDELINES
+5. THEME & CONTENT GUIDELINES
 ====================================================================
 - THEME LOCK: The established theme (colors, layout) remains locked for ordinary content edits. Only replace frame content.
 - BEAMER DEFAULT REGALIA (Navy & Gold):
@@ -125,7 +141,7 @@ SYSTEM_PROMPT_CORE = r"""You are an expert LaTeX agent embedded inside OverBranc
 - ANTI-HALLUCINATION: Use EXACTLY provided names, citations, and stats. Do not fabricate metrics.
 
 ====================================================================
-5. STRUCTURAL SELF-CHECK & OUTPUT SCHEMA
+6. STRUCTURAL SELF-CHECK & OUTPUT SCHEMA
 ====================================================================
 Before returning the response, perform a mandatory structural self-check for:
   * Balanced `\begin` / `\end` environments.
@@ -154,7 +170,7 @@ OUTPUT SCHEMA (RAW JSON ONLY):
 # ---------------------------------------------------------------------------
 # Instruction Priority Block — injected for edit operations
 # ---------------------------------------------------------------------------
-INSTRUCTION_PRIORITY_BLOCK = """
+INSTRUCTION_PRIORITY_BLOCK = r"""
 ====================================================================
 INSTRUCTION PRIORITY (CRITICAL — HIGHEST OVERRIDE)
 ====================================================================
@@ -170,7 +186,7 @@ INSTRUCTION PRIORITY (CRITICAL — HIGHEST OVERRIDE)
      - Anchor on slide X (the first one).
      - `original_chunk`: `<slide_X_verbatim>`
      - `proposed_chunk`: `<slide_X_verbatim>\n\n<new_slide_verbatim>`
-   * CASE 3 (Insert before slide Y):
+   * CASE 3 (Insert before slide Y):i
      - Anchor on the slide immediately preceding slide Y (slide Y-1) and place the new slide after it.
      - If inserting before slide 2 (right after Title Slide), anchor on Slide 1 (the title slide).
    * NEVER output only the new slide isolated without its anchor. Always chain the anchor frame with the new frame.
@@ -267,8 +283,8 @@ def build_prompt(
             # already provides the relevant slide/page.
             doc_budget = 4000
         else:
-            # Full document for generation/conversion
-            doc_budget = 8000
+            # Full document for generation/conversion/full edits
+            doc_budget = 12000
 
         if len(doc_text) > doc_budget:
             doc_text = doc_text[:doc_budget] + f"\n...[DOCUMENT TRUNCATED FOR TOKEN BUDGET AT {doc_budget} CHARS]"
@@ -302,9 +318,13 @@ def build_prompt(
             f"--------------------------------\n"
             f"CONTENT:\n{file_content}\n"
             f"[END REFERENCE FILE]\n"
-            f"INSTRUCTION FOR REFERENCE FILE: Use this attached file as reference content to satisfy the USER REQUEST. "
-            f"Modify the CURRENT DOCUMENT to incorporate the requested topic, author names, roll numbers, abstracts, or sections "
-            f"while strictly preserving the existing document structure and styling."
+            f"INSTRUCTION FOR REFERENCE FILE: Use this attached file as reference content to satisfy the USER REQUEST.\n"
+            f"1. Extract key topics, names, content, and structure from the PDF.\n"
+            f"2. Map the extracted content to EXISTING chapters/sections/slides in the CURRENT DOCUMENT.\n"
+            f"3. Replace placeholder/template text inside each matching section with real content.\n"
+            f"4. Strictly preserve ALL front-matter (title page, certificate, acknowledgement, abstract) and styling.\n"
+            f"5. Preserve ALL back-matter (bibliography, appendices).\n"
+            f"6. Do NOT create new chapters/sections unless the existing document has no matching section for that content."
         )
 
     user_parts.append(f"USER REQUEST: {user_request}")
@@ -417,4 +437,226 @@ def build_ask_prompt(
     ]
 
     logger.info(f"Ask-mode prompt: system={len(system_content)} chars, user={len(user_content)} chars")
+    return messages
+
+
+# ============================================================================
+# BROAD EDIT MODE — Per-Chapter/Section Scoped Prompt
+# ============================================================================
+
+BROAD_EDIT_SYSTEM_PROMPT = r"""You are an expert LaTeX editing agent embedded inside OverBranch, a professional LaTeX IDE. You are editing ONE SPECIFIC existing chapter/section of a document as part of a multi-section batch edit.
+
+CRITICAL RULES:
+1. You are editing an EXISTING section. Do NOT create new sections or chapters. Do NOT use create_content.
+2. You MUST use edit_chunk to modify the existing content in-place.
+3. The `original_chunk` must be the EXACT existing text provided below.
+4. The `proposed_chunk` must be the improved/edited version of that same section.
+5. PRESERVE the section heading (e.g. \chapter{...} or \section{...}) — only edit the body content.
+6. Your response must be ONLY a JSON object matching this schema — NO freeform prose, NO commentary, NO markdown:
+
+{
+  "plan": "Brief description of changes",
+  "edits": [
+    {
+      "original_chunk": "The exact existing text provided",
+      "proposed_chunk": "Your improved version",
+      "explanation": "What you changed and why"
+    }
+  ]
+}
+
+7. The proposed_chunk must be complete, compilable LaTeX. No truncation. No placeholders.
+8. Do NOT add \documentclass, \begin{document}, or \end{document} — you are editing a section WITHIN an existing document.
+9. Max output: the edited section only. Keep it focused and complete.
+"""
+
+
+def _extract_relevant_attached_content(
+    full_content: str,
+    page_title: str,
+    budget: int = 4000,
+) -> str:
+    """
+    Extract the portion of attached file content most relevant to a specific
+    chapter/section title. Uses keyword matching to find relevant paragraphs.
+
+    If the full content is small enough (≤ budget), returns it as-is.
+    Otherwise, finds paragraphs containing title keywords and returns those
+    plus a truncated global context.
+    """
+    import re as _re
+
+    if not full_content or not full_content.strip():
+        return ""
+
+    # Small file shortcut — just send the whole thing
+    if len(full_content) <= budget:
+        return full_content
+
+    # Extract significant keywords from the chapter title
+    stop_words = {
+        "the", "a", "an", "of", "and", "or", "in", "on", "for", "to",
+        "with", "by", "at", "from", "is", "are", "was", "were", "be",
+        "this", "that", "it", "its", "as", "not", "but", "if", "can",
+    }
+    title_words = set(
+        w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", page_title)
+    ) - stop_words
+
+    if not title_words:
+        # No meaningful keywords — return first chunk
+        return full_content[:budget] + "\n...[TRUNCATED]"
+
+    # Split into paragraphs and score by keyword overlap
+    paragraphs = _re.split(r"\n\s*\n|\n(?=\[Page \d)", full_content)
+    scored = []
+    for para in paragraphs:
+        para_stripped = para.strip()
+        if len(para_stripped) < 20:
+            continue
+        para_words = set(w.lower() for w in _re.findall(r"[a-zA-Z]{3,}", para_stripped))
+        overlap = len(title_words & para_words)
+        if overlap > 0:
+            scored.append((overlap, para_stripped))
+
+    # Sort by relevance (most keyword matches first)
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    if scored:
+        # Build relevant content from top-matching paragraphs
+        relevant_parts = []
+        total_chars = 0
+        for score, para in scored:
+            if total_chars + len(para) > budget:
+                remaining = budget - total_chars
+                if remaining > 200:
+                    relevant_parts.append(para[:remaining] + "...[TRUNCATED]")
+                break
+            relevant_parts.append(para)
+            total_chars += len(para)
+        return "\n\n".join(relevant_parts)
+    else:
+        # No keyword matches — return first chunk as global context
+        return full_content[:budget] + "\n...[TRUNCATED]"
+
+
+def build_broad_edit_prompt(
+    user_request: str,
+    page_id: str,
+    page_title: str,
+    page_content: str,
+    page_index: int,
+    total_targets: int,
+    conversation_context: str = "",
+    project_context: str = "",
+    attached_file_info: Optional[Dict[str, str]] = None,
+) -> List:
+    """
+    Build a scoped prompt for editing a single chapter/section as part of
+    a broad multi-target edit loop.
+
+    This prompt gives the LLM:
+    - The exact existing content of ONE chapter/section
+    - The user's broad instruction
+    - Relevant portions of the attached reference document (if any)
+    - Strict instructions to use edit_chunk (not create_content)
+    - A tight JSON-only output contract
+
+    Args:
+        user_request: The user's original broad instruction
+        page_id: Stable ID of this target page (e.g. "sec-introduction")
+        page_title: Human-readable title (e.g. "Introduction")
+        page_content: Full existing LaTeX source of this page
+        page_index: 0-based index of this page in the document
+        total_targets: Total number of targets being edited in this batch
+        conversation_context: Recent conversation history
+        project_context: Project-level context (assets, metadata)
+        attached_file_info: Optional attached reference file dict with
+                           keys: filename, file_type, content
+    """
+    # --- System Message ---
+    system_parts = [BROAD_EDIT_SYSTEM_PROMPT]
+
+    if project_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"PROJECT CONTEXT\n"
+            f"--------------------------------\n"
+            f"{project_context[:800]}"
+        )
+
+    if conversation_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"CONVERSATION HISTORY\n"
+            f"--------------------------------\n"
+            f"{conversation_context[:800]}"
+        )
+
+    system_content = "\n".join(system_parts)
+
+    # --- User Message ---
+    user_parts = []
+
+    # Cap page content to prevent overly large prompts (single chapter should be <8k)
+    content_budget = 8000
+    display_content = page_content.strip()
+    if len(display_content) > content_budget:
+        display_content = display_content[:content_budget] + "\n...[SECTION TRUNCATED FOR TOKEN BUDGET]"
+
+    user_parts.append(
+        f"EDITING TARGET: Section {page_index + 1} of {total_targets}\n"
+        f"PAGE ID: {page_id}\n"
+        f"SECTION TITLE: {page_title}\n\n"
+        f"EXISTING SECTION CONTENT (this is your original_chunk — edit this in-place):\n"
+        f"```latex\n{display_content}\n```"
+    )
+
+    # Include relevant portions of the attached reference document
+    if attached_file_info and attached_file_info.get("content"):
+        file_name = attached_file_info.get("filename", "Uploaded File")
+        file_content = attached_file_info.get("content", "")
+
+        # Extract only the portion relevant to this chapter's topic
+        relevant_content = _extract_relevant_attached_content(
+            full_content=file_content,
+            page_title=page_title,
+            budget=4000,
+        )
+
+        if relevant_content:
+            user_parts.append(
+                f"REFERENCE DOCUMENT: {file_name}\n"
+                f"(Relevant content for '{page_title}' section extracted below)\n"
+                f"--------------------------------\n"
+                f"{relevant_content}\n"
+                f"[END REFERENCE CONTENT]\n\n"
+                f"INSTRUCTION: Use the REFERENCE DOCUMENT content above as the source "
+                f"of real data, names, facts, and details to fill into this section. "
+                f"Do NOT invent or hallucinate content — use ONLY what is in the "
+                f"reference document. If the reference has no relevant content for "
+                f"this section, keep the existing content with minimal improvements."
+            )
+
+    user_parts.append(
+        f"USER REQUEST (apply to this section): {user_request}\n\n"
+        f"REMINDER: Respond with ONLY the JSON edit object. "
+        f"original_chunk = the exact existing text above. "
+        f"proposed_chunk = your improved version. "
+        f"Do NOT create new sections. Do NOT wrap in \\documentclass."
+    )
+
+    user_content = "\n\n".join(user_parts)
+
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_content),
+    ]
+
+    logger.info(
+        f"Broad-edit prompt [{page_index + 1}/{total_targets}]: "
+        f"page_id='{page_id}', title='{page_title}', "
+        f"system={len(system_content)} chars, user={len(user_content)} chars"
+        f"{' [+attached]' if attached_file_info else ''}"
+    )
     return messages
