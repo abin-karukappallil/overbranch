@@ -61,6 +61,20 @@ class DocumentIndex:
         return None
 
 
+@dataclass
+class CollectionEntry:
+    """An ordered/enumerated collection of structural sibling items."""
+    collection_id: str           # stable hash of the shared heading pattern
+    collection_type: str         # "beamer_frame_group" | "bibitem" | "itemize" | "enumerate" | "table_rows"
+    member_page_ids: list        # ordered list of member page_ids (or item identifiers)
+    member_offsets: list         # list of (start_offset, end_offset) for each member
+    last_member_end_offset: int  # char offset right after the last member
+    numbering_style: str         # e.g. "Paper {n}", "\\bibitem{{key}}", ordinal, or "none"
+    current_count: int           # number of existing members
+    parent_title: str            # e.g. "Literature Survey" or section name
+    sample_members: list         # 1-2 existing member content strings for style reference
+
+
 # ---------------------------------------------------------------------------
 # Regex patterns
 # ---------------------------------------------------------------------------
@@ -664,3 +678,361 @@ def resolve_all_targets(
         f"(type={target_type or 'all'}, include_preamble={include_preamble}, total_pages={len(doc_index.pages)})"
     )
     return content_pages
+
+
+# ---------------------------------------------------------------------------
+# Ordered Collection Detection & Resolution
+# ---------------------------------------------------------------------------
+
+_APPEND_COLLECTION_PATTERNS = [
+    # "add [a new/another/...] [xai ieee] paper/slide/reference/item/row"
+    re.compile(r"\b(?:add|append|insert|include)\s+(?:a\s+|an\s+|one\s+)?(?:new|another|extra|more|additional|next)?\s*(?:[\w\-]+\s+)*(?:paper|slide|frame|reference|citation|bibitem|item|bullet|point|row|entry|work|study|survey)\b", re.IGNORECASE),
+    # "add another ...", "add one more ...", "insert a new ..."
+    re.compile(r"\b(?:add|append|insert)\s+(?:another|one\s+more|a\s+new|an\s+additional|the\s+next)\b", re.IGNORECASE),
+    # "add xai ieee paper", "insert survey paper"
+    re.compile(r"\b(?:add|append|insert)\s+(?:[\w\-]+\s+)*(?:paper|reference|citation|slide|item|row)\b", re.IGNORECASE),
+    # "add paper 8", "insert slide 8"
+    re.compile(r"\b(?:add|append|insert)\s+(?:paper|slide|frame|item|ref|row)\s*#?\s*\d+\b", re.IGNORECASE),
+    # "add ... to (the) survey/collection/list/references/table"
+    re.compile(r"\b(?:add|append|insert)\s+.*?\bto\s+(?:the\s+)?(?:collection|survey|literature\s+survey|list|references|bibliography|table)\b", re.IGNORECASE),
+]
+
+
+def is_append_to_collection_instruction(user_prompt: str) -> bool:
+    """
+    Detect whether user wants to append a new item to an existing
+    ordered collection (slide, paper, reference, item, row, etc.).
+    """
+    if not user_prompt:
+        return False
+
+    text = user_prompt.strip()
+
+    # Exclude broad-edit and fix-all instructions
+    if is_broad_instruction(text) or is_fix_all_instruction(text):
+        return False
+
+    # Exclude explicit edit, delete, or new-from-scratch instructions
+    if re.search(r"^\s*(?:edit|modify|update|change|rewrite|improve|fix|repair|debug|delete|remove|drop)\b", text, re.IGNORECASE):
+        if not re.search(r"\b(?:add|append|insert|include)\b", text, re.IGNORECASE):
+            return False
+
+    # Exclude brand new document creation from scratch
+    if re.search(r"^\s*(?:create|generate|make|build|write)\s+(?:a\s+|an\s+)?(?:new\s+)?(?:presentation|paper|report|document|deck|slides|cv|resume)\b", text, re.IGNORECASE):
+        return False
+
+    # Positive match patterns
+    for pattern in _APPEND_COLLECTION_PATTERNS:
+        if pattern.search(text):
+            logger.info(f"Append-to-collection instruction detected: '{text[:80]}' matched {pattern.pattern}")
+            return True
+
+    return False
+
+
+def compute_next_ordinal(collection: CollectionEntry) -> Tuple[int, str]:
+    """
+    Deterministically compute the next ordinal number and formatted label
+    for appending to an existing collection.
+
+    Returns:
+        (next_ordinal, next_label)
+        e.g. (8, "Paper 8") or (8, "Literature Survey (8/8)") or (5, "\\bibitem{ref5}")
+    """
+    next_ord = collection.current_count + 1
+    style = collection.numbering_style or ""
+
+    if "{n}" in style:
+        if "{total}" in style:
+            label = style.format(n=next_ord, total=next_ord)
+        else:
+            label = style.format(n=next_ord)
+    elif collection.collection_type == "bibitem":
+        label = f"\\bibitem{{ref{next_ord}}}"
+    elif collection.collection_type in ("enumerate", "itemize"):
+        label = "\\item"
+    elif collection.collection_type == "beamer_frame_group":
+        if "paper" in collection.parent_title.lower():
+            label = f"Paper {next_ord}"
+        else:
+            label = f"{collection.parent_title} {next_ord}"
+    else:
+        label = f"{collection.parent_title} {next_ord}" if collection.parent_title else f"Item {next_ord}"
+
+    return next_ord, label
+
+
+def detect_collections(
+    doc_index: DocumentIndex,
+    latex_code: str,
+) -> List[CollectionEntry]:
+    """
+    Detect ordered/enumerated collections of structural sibling items in the document.
+
+    Identifies:
+      1. Beamer frame groups (consecutive frames sharing a title prefix, fraction, or numbering template)
+      2. \\bibitem bibliography entries inside or outside \\begin{thebibliography}
+      3. \\item entries inside enumerate and itemize environments
+      4. Table rows inside tabular environments
+
+    Returns:
+        List of CollectionEntry objects.
+    """
+    if not latex_code:
+        return []
+
+    collections: List[CollectionEntry] = []
+
+    # ── 1. Beamer frame groups ───────────────────────────────────────────
+    frame_pages = [p for p in doc_index.pages if p.page_type == "frame"]
+    if frame_pages:
+        def extract_frame_info(p: PageEntry):
+            title = p.title.strip()
+            # Fraction pattern: e.g. "Literature Survey (1/7)" or "Survey (1/7): Paper A"
+            m_frac = re.search(r"(.*?)\s*\((\d+)\s*/\s*(\d+)\)(.*)", title)
+            if m_frac:
+                prefix = m_frac.group(1).strip() or "Literature Survey"
+                cur_n = int(m_frac.group(2))
+                return prefix, f"{prefix} ({{n}}/{{total}})", cur_n
+
+            # "Paper 1", "Paper 2", etc.
+            m_paper = re.search(r"^(.*?)(?:\b(Paper|Slide|Survey|Work|Ref|Study|Model)\s*#?\s*)(\d+)(.*)$", title, re.IGNORECASE)
+            if m_paper:
+                prefix = (m_paper.group(1).strip() + " " + m_paper.group(2).strip()).strip()
+                cur_n = int(m_paper.group(3))
+                return prefix, f"{prefix} {{n}}", cur_n
+
+            # Prefix before colon or dash, e.g. "Literature Survey - Paper A"
+            m_colon = re.search(r"^(.*?)\s*[:\-\u2013\u2014]\s*(.*)$", title)
+            if m_colon and len(m_colon.group(1).strip()) >= 3:
+                prefix = m_colon.group(1).strip()
+                return prefix, f"{prefix} {{n}}", None
+
+            # Generic fallback: if title contains "Literature Survey" or "Survey"
+            if re.search(r"\b(?:literature\s+survey|survey\s+paper|paper)\b", title, re.IGNORECASE):
+                prefix = "Literature Survey" if "survey" in title.lower() else "Paper"
+                return prefix, f"{prefix} {{n}}", None
+
+            return None, None, None
+
+        # Group consecutive frames with compatible prefix / pattern
+        current_group: List[PageEntry] = []
+        current_prefix = None
+        current_style = None
+
+        for p in frame_pages:
+            prefix, style, _ = extract_frame_info(p)
+            if prefix:
+                norm_prefix = prefix.lower()
+                norm_cur = current_prefix.lower() if current_prefix else None
+
+                if norm_cur and (norm_prefix in norm_cur or norm_cur in norm_prefix):
+                    current_group.append(p)
+                else:
+                    if current_group:
+                        if len(current_group) >= 2 or (len(current_group) == 1 and current_style and "{n}" in current_style):
+                            collections.append(_build_frame_collection(current_group, current_prefix, current_style))
+                    current_group = [p]
+                    current_prefix = prefix
+                    current_style = style
+            else:
+                if current_group:
+                    if len(current_group) >= 2 or (len(current_group) == 1 and current_style and "{n}" in current_style):
+                        collections.append(_build_frame_collection(current_group, current_prefix, current_style))
+                    current_group = []
+                    current_prefix = None
+                    current_style = None
+
+        if current_group and (len(current_group) >= 2 or (len(current_group) == 1 and current_style and "{n}" in current_style)):
+            collections.append(_build_frame_collection(current_group, current_prefix, current_style))
+
+    # ── 2. \bibitem entries ──────────────────────────────────────────────
+    bib_matches = list(re.finditer(r"\\bibitem(?:\s*\[([^\]]*)\])?\s*\{([^}]+)\}", latex_code))
+    if bib_matches:
+        member_ids = []
+        member_offsets = []
+        sample_members = []
+        for i, m in enumerate(bib_matches):
+            key = m.group(2)
+            member_ids.append(key)
+            start_off = m.start()
+            if i + 1 < len(bib_matches):
+                end_off = bib_matches[i + 1].start()
+            else:
+                end_env = re.search(r"\\end\{thebibliography\}", latex_code[start_off:])
+                if end_env:
+                    end_off = start_off + end_env.start()
+                else:
+                    end_off = m.end()
+            member_offsets.append((start_off, end_off))
+
+        for s, e in member_offsets[-2:]:
+            sample_members.append(latex_code[s:e].strip())
+
+        last_offset = member_offsets[-1][1] if member_offsets else 0
+        collections.append(CollectionEntry(
+            collection_id="collection-bibitem-references",
+            collection_type="bibitem",
+            member_page_ids=member_ids,
+            member_offsets=member_offsets,
+            last_member_end_offset=last_offset,
+            numbering_style="\\bibitem{{{key}}}",
+            current_count=len(member_ids),
+            parent_title="References",
+            sample_members=sample_members,
+        ))
+
+    # ── 3. enumerate and itemize lists ───────────────────────────────────
+    for env_m in re.finditer(r"\\begin\{(enumerate|itemize)\}([\s\S]*?)\\end\{\1\}", latex_code):
+        env_type = env_m.group(1)
+        env_body = env_m.group(2)
+        body_start = env_m.start(2)
+
+        item_matches = list(re.finditer(r"\\item(?:\s*\[[^\]]*\])?", env_body))
+        if len(item_matches) >= 2:
+            item_offsets = []
+            item_ids = []
+            for i, itm in enumerate(item_matches):
+                item_start = body_start + itm.start()
+                if i + 1 < len(item_matches):
+                    item_end = body_start + item_matches[i + 1].start()
+                else:
+                    item_end = body_start + len(env_body)
+                item_offsets.append((item_start, item_end))
+                item_ids.append(f"{env_type}-item-{i+1}")
+
+            sample_items = [latex_code[s:e].strip() for s, e in item_offsets[-2:]]
+            collections.append(CollectionEntry(
+                collection_id=f"collection-{env_type}-{env_m.start()}",
+                collection_type=env_type,
+                member_page_ids=item_ids,
+                member_offsets=item_offsets,
+                last_member_end_offset=item_offsets[-1][1],
+                numbering_style="\\item",
+                current_count=len(item_ids),
+                parent_title=f"{env_type.title()} List",
+                sample_members=sample_items,
+            ))
+
+    # ── 4. Table rows inside tabular ─────────────────────────────────────
+    for tab_m in re.finditer(r"\\begin\{(?:tabular|tabularx)\}(?:\{[^}]*\})*([\s\S]*?)\\end\{(?:tabular|tabularx)\}", latex_code):
+        tab_body = tab_m.group(1)
+        tab_start = tab_m.start(1)
+
+        raw_rows = tab_body.split("\\\\")
+        valid_rows = []
+        curr_offset = tab_start
+        for r in raw_rows:
+            clean_r = re.sub(r"\\(?:hline|toprule|midrule|bottomrule)", "", r).strip()
+            if clean_r and "&" in clean_r:
+                valid_rows.append((curr_offset, curr_offset + len(r) + 2, r.strip()))
+            curr_offset += len(r) + 2
+
+        if len(valid_rows) >= 2:
+            collections.append(CollectionEntry(
+                collection_id=f"collection-table-rows-{tab_m.start()}",
+                collection_type="table_rows",
+                member_page_ids=[f"row-{i+1}" for i in range(len(valid_rows))],
+                member_offsets=[(r[0], r[1]) for r in valid_rows],
+                last_member_end_offset=valid_rows[-1][1],
+                numbering_style="row",
+                current_count=len(valid_rows),
+                parent_title="Table Rows",
+                sample_members=[r[2] for r in valid_rows[-2:]],
+            ))
+
+    return collections
+
+
+def _build_frame_collection(group: List[PageEntry], prefix: str, style: Optional[str]) -> CollectionEntry:
+    """Helper to build a CollectionEntry for a group of frames."""
+    parent_title = prefix or "Literature Survey"
+    numbering_style = style or (f"{parent_title} {{n}}" if "paper" not in parent_title.lower() else "Paper {n}")
+
+    sample_members = []
+    if group:
+        sample_members.append(group[0].content)
+        if len(group) > 1:
+            sample_members.append(group[-1].content)
+
+    return CollectionEntry(
+        collection_id=f"collection-beamer-{_slug(parent_title)}",
+        collection_type="beamer_frame_group",
+        member_page_ids=[p.page_id for p in group],
+        member_offsets=[(p.start_offset, p.end_offset) for p in group],
+        last_member_end_offset=group[-1].end_offset,
+        numbering_style=numbering_style,
+        current_count=len(group),
+        parent_title=parent_title,
+        sample_members=sample_members,
+    )
+
+
+def resolve_collection(
+    doc_index: DocumentIndex,
+    latex_code: str,
+    instruction: str,
+) -> Optional[CollectionEntry]:
+    """
+    Resolve the best-matching CollectionEntry for a given user instruction.
+    """
+    if not instruction or not instruction.strip():
+        return None
+
+    collections = detect_collections(doc_index, latex_code)
+    if not collections:
+        return None
+
+    inst_lower = instruction.lower()
+
+    if len(collections) == 1:
+        c = collections[0]
+        if c.collection_type == "bibitem" and any(w in inst_lower for w in ["slide", "frame"]):
+            return None
+        if c.collection_type == "beamer_frame_group" and any(w in inst_lower for w in ["reference", "bibitem", "cite"]):
+            return None
+        return c
+
+    best_score = -1.0
+    best_coll = None
+    inst_words = set(re.findall(r"\b[a-z0-9_\-]+\b", inst_lower))
+    stopwords = {"add", "append", "insert", "include", "put", "new", "another", "one", "more", "the", "a", "an", "to", "in", "for", "of", "and", "please", "can", "you", "my"}
+    keywords = inst_words - stopwords
+
+    for c in collections:
+        score = 0.0
+        parent_lower = c.parent_title.lower()
+        style_lower = c.numbering_style.lower()
+
+        for kw in keywords:
+            if kw in parent_lower:
+                score += 4.0
+            if kw in style_lower:
+                score += 3.0
+            if any(kw in s.lower() for s in c.sample_members):
+                score += 1.5
+
+        if c.collection_type == "beamer_frame_group":
+            if any(w in inst_lower for w in ["paper", "survey", "slide", "frame", "literature"]):
+                score += 4.0
+            if "literature" in parent_lower and any(w in inst_lower for w in ["paper", "survey", "xai", "ieee"]):
+                score += 5.0
+        elif c.collection_type == "bibitem":
+            if any(w in inst_lower for w in ["reference", "citation", "bib", "bibitem", "source"]):
+                score += 6.0
+        elif c.collection_type in ("enumerate", "itemize"):
+            if any(w in inst_lower for w in ["item", "bullet", "point", "list", "numbered"]):
+                score += 5.0
+        elif c.collection_type == "table_rows":
+            if any(w in inst_lower for w in ["table", "row", "entry", "column", "comparison"]):
+                score += 5.0
+
+        if score > best_score:
+            best_score = score
+            best_coll = c
+
+    if best_score >= 2.0:
+        return best_coll
+
+    return None
+
