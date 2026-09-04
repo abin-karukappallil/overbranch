@@ -205,7 +205,6 @@ export function InlineDiffEditor({
 
   const handleCopyPatch = async () => {
     if (!activeEdits || activeEdits.length === 0) {
-      toast.info("No active patch to copy.");
       return;
     }
 
@@ -228,7 +227,6 @@ export function InlineDiffEditor({
 
     try {
       await navigator.clipboard.writeText(patchContent.trim());
-      toast.success("Copied diff patch to clipboard!");
     } catch (_) {
       toast.error("Failed to copy patch to clipboard.");
     }

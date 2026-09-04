@@ -77,6 +77,7 @@ import { FolderGit2 } from "lucide-react";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
 import { EditHistoryStore, type EditHistory } from "@/lib/EditHistoryStore";
 import { ChatMessageContent } from "@/components/editor/ChatMessageContent";
+import { AgentReasoningWindow } from "@/components/editor/AgentReasoningWindow";
 import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } from "@/lib/IndexedDBEmbeddingCache";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -604,9 +605,6 @@ export function EditorLayout({
           content: reader.result as string,
           file_type: fileType,
         });
-        const sizeMB = (selectedFile.size / (1024 * 1024)).toFixed(1);
-        const label = fileType.includes("pdf") || lowerName.endsWith(".pdf") ? "PDF document" : "file";
-        toast.success(`Attached ${label} ${filename} (${sizeMB}MB)`);
       };
     } else {
       reader.readAsText(selectedFile);
@@ -616,7 +614,6 @@ export function EditorLayout({
           content: reader.result as string,
           file_type: fileType,
         });
-        toast.success(`Attached file ${filename}`);
       };
     }
 
@@ -629,7 +626,6 @@ export function EditorLayout({
       abortControllerRef.current = null;
     }
     setIsAgentThinking(false);
-    toast.info("AI response generation stopped.");
     setMessages((prev) => [
       ...prev,
       {
@@ -753,7 +749,6 @@ export function EditorLayout({
       localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
       localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
     } catch (_) { }
-    toast.success("Started a new chat session.");
   };
 
   const handleClearChat = () => {
@@ -769,7 +764,6 @@ export function EditorLayout({
         localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
         localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
       } catch (_) { }
-      toast.info("Chat history and document context deleted.");
     }
   };
 
@@ -799,11 +793,11 @@ export function EditorLayout({
     );
   }
 
-  // Auto-scroll chat window to bottom when new messages, thinking state, or diffs update
+  // Auto-scroll chat window to bottom when new messages, thinking state, diffs, or agent progress steps update
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     mobileChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isAgentThinking, diffData]);
+  }, [messages, isAgentThinking, diffData, agentProgressSteps.length]);
 
   // Apply native line decorations (red deletion highlights) directly inside Monaco Editor
   useEffect(() => {
@@ -861,7 +855,6 @@ export function EditorLayout({
       const textToCopy = selectedText || editor.getValue();
 
       if (!textToCopy) {
-        toast.info("Nothing to copy.");
         return;
       }
 
@@ -869,7 +862,6 @@ export function EditorLayout({
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
           await navigator.clipboard.writeText(textToCopy);
-          toast.success(selectedText ? "Copied selected text!" : "Copied full document code!");
           return;
         }
       } catch (err) {
@@ -890,7 +882,6 @@ export function EditorLayout({
         const success = document.execCommand("copy");
         document.body.removeChild(textarea);
         if (success) {
-          toast.success(selectedText ? "Copied selected text!" : "Copied full document code!");
           // Restore Monaco selection
           if (selection) editor.setSelection(selection);
           return;
@@ -901,7 +892,6 @@ export function EditorLayout({
     } else if (code) {
       try {
         await navigator.clipboard.writeText(code);
-        toast.success("Copied code to clipboard!");
         return;
       } catch (err) { }
     }
@@ -915,7 +905,6 @@ export function EditorLayout({
         const text = await navigator.clipboard.readText();
         if (text) {
           insertSymbol(text);
-          toast.success("Pasted text at cursor!");
           return;
         }
       }
@@ -927,7 +916,6 @@ export function EditorLayout({
     if (editorRef.current) {
       editorRef.current.focus();
     }
-    toast.info("Use Ctrl+V or Cmd+V to paste directly into the editor at your cursor.");
   };
 
   const handleSelectAll = () => {
@@ -939,7 +927,6 @@ export function EditorLayout({
         const fullRange = model.getFullModelRange();
         editor.setSelection(fullRange);
         lastSelectionRef.current = fullRange;
-        toast.info("Selected entire document code.");
       }
     }
   };
@@ -960,7 +947,6 @@ export function EditorLayout({
         };
         editor.setSelection(lineRange);
         lastSelectionRef.current = lineRange;
-        toast.info(`Selected line ${pos.lineNumber}`);
       }
     }
   };
@@ -969,7 +955,6 @@ export function EditorLayout({
     if (editorRef.current) {
       editorRef.current.focus();
       editorRef.current.trigger("toolbar", "undo", null);
-      toast.info("Undo");
     }
   };
 
@@ -977,7 +962,6 @@ export function EditorLayout({
     if (editorRef.current) {
       editorRef.current.focus();
       editorRef.current.trigger("toolbar", "redo", null);
-      toast.info("Redo");
     }
   };
 
@@ -1084,9 +1068,6 @@ export function EditorLayout({
 
       if (res.ok) {
         setSaveStatus("saved");
-        if (showToast) {
-          toast.success(`Saved ${activeFilePath}!`);
-        }
       } else {
         setSaveStatus("unsaved");
       }
@@ -1306,7 +1287,6 @@ export function EditorLayout({
       const data = await res.json();
       if (data.success) {
         setPdfBase64(data.pdf_base64);
-        toast.success("LaTeX PDF compiled successfully.");
       } else {
         setErrorLog(data.error_log || "Compilation failed.");
         toast.error("LaTeX compilation failed.");
@@ -1531,7 +1511,6 @@ export function EditorLayout({
       ]);
 
       if (hasEdits) {
-        toast.info(`Generated ${editsList.length} edit proposal(s). Review inline diff.`, { icon: "✨" });
         setDiffEditsList(editsList);
         setDiffData({
           original_chunk: data.original_chunk || editsList[0].original_chunk,
@@ -1774,7 +1753,6 @@ export function EditorLayout({
     setCode(updatedCode);
     setDiffData(null);
     setDiffEditsList([]);
-    toast.success("Applied changes into the LaTeX editor!");
 
     // Auto-save to Supabase & Qdrant
     saveDocument(updatedCode, true);
@@ -1851,8 +1829,6 @@ export function EditorLayout({
       );
     }
 
-    toast.success(`Accepted ${itemsToApply.length} AI edit(s) into editor!`);
-
     saveDocument(updatedCode, true);
     handleCompile(updatedCode);
   };
@@ -1860,7 +1836,6 @@ export function EditorLayout({
   const handleRejectAllEdits = () => {
     setDiffData(null);
     setDiffEditsList([]);
-    toast.info("Rejected all AI proposed edits.");
   };
 
   const handleAcceptSingleEdit = (item: EditItem) => {
@@ -1887,7 +1862,6 @@ export function EditorLayout({
     }
 
     setCode(updatedCode);
-    toast.success("Accepted single edit!");
 
     const remaining = diffEditsList.filter((e) => e.id !== item.id);
     setDiffEditsList(remaining);
@@ -1948,8 +1922,6 @@ export function EditorLayout({
           : m
       )
     );
-
-    toast.success("Reverted AI edit to previous state.");
   };
 
   const handleReapplyEdit = (editId: string) => {
@@ -1988,14 +1960,11 @@ export function EditorLayout({
           : m
       )
     );
-
-    toast.success("Reapplied AI edit.");
   };
 
   const handleRejectSingleEdit = (itemId: string) => {
     const remaining = diffEditsList.filter((e) => e.id !== itemId);
     setDiffEditsList(remaining);
-    toast.info("Rejected single edit.");
     if (remaining.length === 0) {
       setDiffData(null);
     }
@@ -2538,7 +2507,6 @@ export function EditorLayout({
                           if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
                         });
                         navigator.clipboard.writeText(patch.trim());
-                        toast.success("Copied patch to clipboard!");
                       }}
                       className="h-7 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
                       title="Copy diff patch to clipboard"
@@ -2688,46 +2656,11 @@ export function EditorLayout({
                     </div>
                   ))}
                   {isAgentThinking && (
-                    <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-[11px] space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
-                      <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
-                        <div className="flex items-center gap-1.5">
-                          <span>AI Agent Reasoning...</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleStopAgentResponse}
-                          className="px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-[10px] font-mono font-bold flex items-center gap-1 transition-colors shrink-0"
-                        >
-                          <Square className="w-2.5 h-2.5 fill-current text-rose-300" />
-                          <span>Stop</span>
-                        </button>
-                      </div>
-
-                      <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                        {agentProgressSteps.length === 0 ? (
-                          <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-[10px]">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
-                            <span>Initializing TeX intelligence engine...</span>
-                          </div>
-                        ) : (
-                          agentProgressSteps.map((s, idx) => {
-                            const isLatest = idx === agentProgressSteps.length - 1;
-                            return (
-                              <div
-                                key={idx}
-                                className={`flex items-center gap-2 transition-all font-mono text-[10px] ${isLatest
-                                  ? "text-[#00CC68] font-bold animate-pulse"
-                                  : "text-zinc-400 font-normal"
-                                  }`}
-                              >
-                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
-                                <span className="truncate">{s.message}</span>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
+                    <AgentReasoningWindow
+                      steps={agentProgressSteps}
+                      onStop={handleStopAgentResponse}
+                      compact
+                    />
                   )}
                   <div ref={chatEndRef} />
                 </div>
@@ -2769,7 +2702,6 @@ export function EditorLayout({
                             if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
                           });
                           navigator.clipboard.writeText(patch.trim());
-                          toast.success("Copied patch to clipboard!");
                         }}
                         className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
                         title="Copy diff patch to clipboard"
@@ -3141,47 +3073,10 @@ export function EditorLayout({
               </div>
             ))}
             {isAgentThinking && (
-              <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-xs space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
-                <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
-                  <div className="flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 text-[#00CC68] animate-pulse shrink-0" />
-                    <span>AI Agent Reasoning...</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleStopAgentResponse}
-                    className="px-2 py-0.5 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-mono font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
-                  >
-                    <Square className="w-3 h-3 fill-current text-rose-300" />
-                    <span>Stop</span>
-                  </button>
-                </div>
-
-                <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
-                  {agentProgressSteps.length === 0 ? (
-                    <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-xs">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
-                      <span>Initializing TeX intelligence engine...</span>
-                    </div>
-                  ) : (
-                    agentProgressSteps.map((s, idx) => {
-                      const isLatest = idx === agentProgressSteps.length - 1;
-                      return (
-                        <div
-                          key={idx}
-                          className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
-                            ? "text-[#00CC68] font-bold animate-pulse"
-                            : "text-zinc-400 font-normal"
-                            }`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
-                          <span className="truncate">{s.message}</span>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+              <AgentReasoningWindow
+                steps={agentProgressSteps}
+                onStop={handleStopAgentResponse}
+              />
             )}
             <div ref={mobileChatEndRef} />
           </div>
@@ -3207,7 +3102,6 @@ export function EditorLayout({
                       if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
                     });
                     navigator.clipboard.writeText(patch.trim());
-                    toast.success("Copied patch to clipboard!");
                   }}
                   className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
                   title="Copy diff patch"
@@ -3457,47 +3351,10 @@ export function EditorLayout({
                 </div>
               ))}
               {isAgentThinking && (
-                <div className="p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/30 text-zinc-100 font-mono text-xs space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1">
-                  <div className="flex items-center justify-between font-bold border-b border-zinc-800 pb-2 text-[#00CC68]">
-                    <div className="flex items-center gap-1.5">
-                      <Zap className="w-4 h-4 text-[#00CC68] animate-pulse shrink-0" />
-                      <span>AI Agent Reasoning...</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleStopAgentResponse}
-                      className="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 text-xs font-mono font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
-                    >
-                      <Square className="w-3 h-3 fill-current text-rose-300" />
-                      <span>Stop</span>
-                    </button>
-                  </div>
-
-                  <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
-                    {agentProgressSteps.length === 0 ? (
-                      <div className="flex items-center gap-2 text-[#00CC68]/80 animate-pulse py-0.5 font-mono text-xs">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#00CC68] animate-ping" />
-                        <span>Initializing TeX intelligence engine...</span>
-                      </div>
-                    ) : (
-                      agentProgressSteps.map((s, idx) => {
-                        const isLatest = idx === agentProgressSteps.length - 1;
-                        return (
-                          <div
-                            key={idx}
-                            className={`flex items-center gap-2 transition-all font-mono text-xs ${isLatest
-                              ? "text-[#00CC68] font-bold animate-pulse"
-                              : "text-zinc-400 font-normal"
-                              }`}
-                          >
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isLatest ? "bg-[#00CC68] animate-ping" : "bg-zinc-600"}`} />
-                            <span className="truncate">{s.message}</span>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                <AgentReasoningWindow
+                  steps={agentProgressSteps}
+                  onStop={handleStopAgentResponse}
+                />
               )}
               <div ref={mobileChatEndRef} />
             </div>

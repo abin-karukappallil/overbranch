@@ -218,13 +218,23 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      toast.success("Downloading PDF document...");
     };
 
     const handlePagePointerUp = useCallback(
       (event: React.PointerEvent<HTMLDivElement>, pageNumber: number) => {
+        const pageEl = event.currentTarget;
         setTimeout(() => {
-          const domText = window.getSelection()?.toString()?.trim();
+          const sel = window.getSelection();
+          if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+          const anchorNode = sel.anchorNode;
+          const focusNode = sel.focusNode;
+          const isInsidePage = Boolean(
+            (anchorNode && pageEl.contains(anchorNode)) ||
+            (focusNode && pageEl.contains(focusNode))
+          );
+          if (!isInsidePage) return;
+
+          const domText = sel.toString().trim();
           if (domText && domText.length >= 2) {
             onTextSelected?.(domText);
           }

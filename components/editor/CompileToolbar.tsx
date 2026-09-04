@@ -23,9 +23,7 @@ export function CompileToolbar({
   const [autoCompile, setAutoCompile] = useState(true);
   const [engine, setEngine] = useState("pdfLaTeX");
 
-  const handleDownloadPdf = () => {
-    toast.success("Downloading compiled paper PDF (main.pdf)...");
-  };
+  const handleDownloadPdf = () => {};
 
   return (
     <div className="h-12 px-3 sm:px-4 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between gap-2 text-xs font-mono text-zinc-100 overflow-x-auto shrink-0 select-none">
@@ -52,7 +50,6 @@ export function CompileToolbar({
         <button
           onClick={() => {
             setAutoCompile(!autoCompile);
-            toast.info(`Auto-compile on edit: ${!autoCompile ? "ENABLED" : "DISABLED"}`);
           }}
           className={`hidden xs:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-colors shrink-0 cursor-pointer ${
             autoCompile

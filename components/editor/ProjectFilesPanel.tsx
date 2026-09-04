@@ -250,7 +250,6 @@ export function ProjectFilesPanel({
 
     navigator.clipboard.writeText(snippet);
     setCopiedPath(filePath);
-    toast.success("Copied LaTeX code block to clipboard!");
     setTimeout(() => setCopiedPath(null), 2000);
   };
 
