@@ -1,23 +1,45 @@
 import { auth } from "@/lib/auth";
 import { toNextJsHandler } from "better-auth/next-js";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const handlers = toNextJsHandler(auth.handler);
+export const dynamic = "force-dynamic";
 
-export const GET = async (req: NextRequest) => {
+const handlers = toNextJsHandler(auth);
+
+async function handleWithTimeout(
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
+  req: NextRequest
+) {
   try {
-    return await handlers.GET(req);
-  } catch (error) {
-    console.error("[Auth API Exception - GET]:", error);
-    throw error;
-  }
-};
+    const timeoutPromise = new Promise<Response>((_, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`Auth ${method} ${req.nextUrl.pathname} timed out after 20s`));
+      }, 20000);
+      if (typeof timer === "object" && "unref" in timer) {
+        (timer as any).unref();
+      }
+    });
 
-export const POST = async (req: NextRequest) => {
-  try {
-    return await handlers.POST(req);
-  } catch (error) {
-    console.error("[Auth API Exception - POST]:", error);
-    throw error;
+    const response = await Promise.race([
+      handlers[method](req),
+      timeoutPromise,
+    ]);
+
+    return response;
+  } catch (error: any) {
+    console.error(`[Auth API Exception - ${method} ${req.nextUrl.pathname}]:`, error);
+    return NextResponse.json(
+      {
+        error: "Authentication service error",
+        message: error?.message || "An unexpected error occurred during authentication",
+      },
+      { status: error?.message?.includes("timed out") ? 504 : 500 }
+    );
   }
-};
+}
+
+export const GET = (req: NextRequest) => handleWithTimeout("GET", req);
+export const POST = (req: NextRequest) => handleWithTimeout("POST", req);
+export const PATCH = (req: NextRequest) => handleWithTimeout("PATCH", req);
+export const PUT = (req: NextRequest) => handleWithTimeout("PUT", req);
+export const DELETE = (req: NextRequest) => handleWithTimeout("DELETE", req);

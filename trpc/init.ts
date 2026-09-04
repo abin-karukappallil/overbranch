@@ -10,9 +10,23 @@ import { verifyGuestToken } from '@/lib/guest-token';
 
 export const createContext = async () => {
   const reqHeaders = await headers();
-  const session = await auth.api.getSession({
-    headers: reqHeaders,
-  });
+  let session = null;
+  try {
+    session = await Promise.race([
+      auth.api.getSession({
+        headers: reqHeaders,
+      }),
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => resolve(null), 5000);
+        if (typeof timer === 'object' && 'unref' in timer) {
+          (timer as any).unref();
+        }
+      }),
+    ]);
+  } catch (err) {
+    console.warn('[tRPC Context] Failed to get session:', err);
+    session = null;
+  }
 
   const cookieStore = await cookies();
   const rawGuestToken = cookieStore.get('ob_guest_token')?.value;

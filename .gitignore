@@ -49,4 +49,6 @@ yarn-error.log*
 next-env.d.ts
 backend/__pycache__/
 backend/providers/__pycache__/
+**/__pycache__/
+*.pyc
 /.vscode
