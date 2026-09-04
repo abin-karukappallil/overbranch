@@ -39,6 +39,14 @@ const DEFAULT_PROVIDER_GROUPS: ProviderGroup[] = [
       { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: false },
     ],
   },
+  {
+    name: "OpenRouter",
+    models: [
+      { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra Free", default: false },
+      { id: "minimax/minimax-m3:free", label: "Minimax 3 Free", default: false },
+      { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 Flash Free", default: false },
+    ],
+  },
 ];
 
 export const aiRouter = router({
