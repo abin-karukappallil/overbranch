@@ -55,10 +55,24 @@ WORKDIR /app/backend
 
 ENV PORT=8000
 ENV HOST=0.0.0.0
+ENV WORKERS=2
 ENV UPLOADS_BASE_DIR=/app/uploads/projects
 
 EXPOSE 8000
 
 VOLUME ["/app/uploads"]
 
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check to ensure Docker and reverse proxies can detect hung workers
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -sf http://localhost:${PORT:-8000}/api/health || exit 1
+
+# Production Uvicorn startup with multi-worker concurrency, keepalive > proxy timeout, and request recycling
+CMD exec python3 -m uvicorn main:app \
+    --host 0.0.0.0 \
+    --port ${PORT:-8000} \
+    --workers ${WORKERS:-2} \
+    --timeout-keep-alive 65 \
+    --timeout-graceful-shutdown 30 \
+    --limit-concurrency 100 \
+    --limit-max-requests 2000
+
