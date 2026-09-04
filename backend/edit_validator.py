@@ -539,6 +539,151 @@ def auto_repair_structure(latex: str) -> Tuple[str, List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Collection Append Validators
+# ---------------------------------------------------------------------------
+
+def validate_insertion_position(
+    latex: str,
+    insertion_offset: int,
+    collection_entry: Any,
+) -> List[ValidationIssue]:
+    """
+    Validate that an append-to-collection insertion is positioned correctly:
+    - Offset falls within document bounds
+    - Offset falls immediately at or after the last member of the collection
+    - Offset does not precede earlier members of the collection
+    - Offset is not outside the document body (e.g. after \\end{document})
+    """
+    issues = []
+    if not latex or collection_entry is None:
+        return issues
+
+    doc_len = len(latex)
+    if insertion_offset < 0:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is negative",
+            auto_fixable=False,
+        ))
+        return issues
+
+    # Check against \end{document}
+    end_doc = latex.find("\\end{document}")
+    if end_doc != -1 and insertion_offset > end_doc:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is after \\end{{document}} ({end_doc})",
+            auto_fixable=False,
+        ))
+
+    if insertion_offset > doc_len:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is outside document boundaries [0, {doc_len}]",
+            auto_fixable=False,
+        ))
+        return issues
+
+    last_offset = getattr(collection_entry, "last_member_end_offset", None)
+    if last_offset is not None:
+        if insertion_offset < last_offset - 10:
+            issues.append(ValidationIssue(
+                check="insertion_position",
+                severity="error",
+                message=f"Insertion offset {insertion_offset} precedes the last member end offset {last_offset}",
+                auto_fixable=False,
+            ))
+
+    member_offsets = getattr(collection_entry, "member_offsets", [])
+    if member_offsets:
+        first_start = member_offsets[0][0]
+        if insertion_offset < first_start:
+            issues.append(ValidationIssue(
+                check="insertion_position",
+                severity="error",
+                message=f"Insertion offset {insertion_offset} precedes the start of the collection ({first_start})",
+                auto_fixable=False,
+            ))
+
+    return issues
+
+
+def validate_numbering_continuity(
+    inserted_content: str,
+    collection_entry: Any,
+    expected_ordinal: int,
+) -> List[ValidationIssue]:
+    """
+    Validate that an inserted collection item has the correct sequential ordinal number
+    without gaps or duplicates.
+    """
+    issues = []
+    if not inserted_content or expected_ordinal is None:
+        return issues
+
+    found_ordinal = None
+
+    # Check for fraction pattern e.g. (8/8) or (8/7)
+    m_frac = re.search(r"\((\d+)\s*/\s*(\d+)\)", inserted_content)
+    if m_frac:
+        found_ordinal = int(m_frac.group(1))
+
+    # Check for "Paper 8", "Slide 8", etc.
+    if found_ordinal is None:
+        m_num = re.search(r"\b(?:Paper|Slide|Survey|Work|Item|Ref|Row)\s*#?\s*(\d+)\b", inserted_content, re.IGNORECASE)
+        if m_num:
+            found_ordinal = int(m_num.group(1))
+
+    # Check for \bibitem{...8...} or \bibitem[8]{...}
+    if found_ordinal is None and getattr(collection_entry, "collection_type", "") == "bibitem":
+        m_bib_opt = re.search(r"\\bibitem\s*\[(\d+)\]", inserted_content)
+        if m_bib_opt:
+            found_ordinal = int(m_bib_opt.group(1))
+        else:
+            m_bib_key = re.search(r"\\bibitem(?:\[[^\]]*\])?\{[^}]*?(\d+)[^}]*\}", inserted_content)
+            if m_bib_key:
+                found_ordinal = int(m_bib_key.group(1))
+
+    # Check for \item[8.]
+    if found_ordinal is None and getattr(collection_entry, "collection_type", "") in ("enumerate", "itemize"):
+        m_item_opt = re.search(r"\\item\s*\[(\d+)[\.\)]?\]", inserted_content)
+        if m_item_opt:
+            found_ordinal = int(m_item_opt.group(1))
+
+    # If title has a standalone number in frame title: \begin{frame}{... 8 ...} or \frametitle{... 8 ...}
+    if found_ordinal is None:
+        m_frame_title = re.search(r"\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]*)\}", inserted_content)
+        if not m_frame_title:
+            m_frame_title = re.search(r"\\frametitle\{([^}]*)\}", inserted_content)
+        if m_frame_title:
+            title_text = m_frame_title.group(1)
+            num_in_title = re.search(r"\b(\d+)\b", title_text)
+            if num_in_title:
+                found_ordinal = int(num_in_title.group(1))
+
+    if found_ordinal is not None:
+        if found_ordinal < expected_ordinal:
+            issues.append(ValidationIssue(
+                check="numbering_continuity",
+                severity="error",
+                message=f"Duplicate or regressive ordinal: found {found_ordinal}, expected {expected_ordinal}",
+                auto_fixable=True,
+            ))
+        elif found_ordinal > expected_ordinal:
+            issues.append(ValidationIssue(
+                check="numbering_continuity",
+                severity="error",
+                message=f"Numbering gap: found {found_ordinal}, expected {expected_ordinal}",
+                auto_fixable=True,
+            ))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Top-level validation
 # ---------------------------------------------------------------------------
 
@@ -546,6 +691,8 @@ def validate_edit(
     original_code: str,
     proposed_edits: List[Dict[str, Any]],
     target_page_ids: Optional[Set[str]] = None,
+    collection_entry: Optional[Any] = None,
+    expected_ordinal: Optional[int] = None,
 ) -> ValidationResult:
     """
     Run all validation checks on proposed edits.
@@ -554,6 +701,8 @@ def validate_edit(
         original_code: The current document source
         proposed_edits: List of edit dicts with original_chunk/proposed_chunk
         target_page_ids: If set, only these pages should have been edited
+        collection_entry: Optional CollectionEntry if appending to a collection
+        expected_ordinal: Optional expected ordinal number for collection append
 
     Returns:
         ValidationResult with pass/fail and issue details
@@ -563,6 +712,16 @@ def validate_edit(
     if not proposed_edits:
         return result
 
+    # Insertion-specific validation for collection appends
+    for edit in proposed_edits:
+        if edit.get("action") == "insert_after":
+            off = edit.get("insertion_offset")
+            pc = edit.get("proposed_chunk", "")
+            if collection_entry is not None and off is not None:
+                result.issues.extend(validate_insertion_position(original_code, off, collection_entry))
+            if expected_ordinal is not None and pc:
+                result.issues.extend(validate_numbering_continuity(pc, collection_entry, expected_ordinal))
+
     # Build the "final" document by applying edits to see what the result looks like
     final_doc = original_code or ""
     for edit in proposed_edits:
@@ -571,8 +730,12 @@ def validate_edit(
         if oc and oc in final_doc:
             final_doc = final_doc.replace(oc, pc or "", 1)
         elif pc and not oc:
-            # Insertion — just check the proposed chunk itself
-            final_doc = pc
+            if edit.get("action") == "insert_after" and edit.get("insertion_offset") is not None:
+                off = edit["insertion_offset"]
+                final_doc = final_doc[:off] + "\n\n" + pc + "\n\n" + final_doc[off:]
+            else:
+                # Insertion — just check the proposed chunk itself
+                final_doc = pc
 
     # Run all checks on the final document
     result.issues.extend(validate_no_duplicate_slide_ids(final_doc))
