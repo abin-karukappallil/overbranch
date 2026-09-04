@@ -61,7 +61,12 @@ class ProviderRouter:
             return self.groq
 
         # OpenRouter specific
-        if clean_model.startswith("nvidia/") or clean_model.startswith("minimax/") or clean_model.startswith("openrouter/"):
+        if (
+            clean_model.startswith("nvidia/")
+            or clean_model.startswith("minimax/")
+            or clean_model.startswith("deepseek/")
+            or clean_model.startswith("openrouter/")
+        ):
             return self.openrouter
 
         # FreeLLM Provider for all other models (has built-in Groq fallback)

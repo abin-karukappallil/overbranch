@@ -34,6 +34,7 @@ class OpenRouterProvider(LLMProvider):
         return [
             {"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra Free", "default": True},
             {"id": "minimax/minimax-m3:free", "label": "Minimax 3 Free", "default": False},
+            {"id": "deepseek/deepseek-v4-flash:free", "label": "DeepSeek V4 Flash Free", "default": False},
         ]
 
     def chat(
