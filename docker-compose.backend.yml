@@ -13,7 +13,15 @@ services:
     environment:
       - PORT=8000
       - HOST=0.0.0.0
+      - WORKERS=${WORKERS:-2}
       - UPLOADS_BASE_DIR=/app/uploads/projects
     volumes:
       - ./uploads:/app/uploads
       - ./backend/templates:/app/backend/templates:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
