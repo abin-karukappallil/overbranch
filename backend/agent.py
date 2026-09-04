@@ -1219,7 +1219,11 @@ async def agent_chat(request: Request):
                     # If the instruction targets ALL chapters/sections/slides,
                     # run a per-target iteration loop instead of a single LLM call.
                     if doc_idx.is_broad_instruction(req.user_prompt):
-                        broad_targets = doc_idx.resolve_all_targets(document_structure)
+                        is_fix_all = doc_idx.is_fix_all_instruction(req.user_prompt)
+                        broad_targets = doc_idx.resolve_all_targets(
+                            document_structure,
+                            include_preamble=is_fix_all,
+                        )
 
                         MAX_BROAD_TARGETS = 12
                         if broad_targets and len(broad_targets) >= 2:
@@ -1372,6 +1376,10 @@ async def agent_chat(request: Request):
                                                     e["proposed_chunk"] = inner_m.group(1).strip()
 
                                             if e.get("proposed_chunk"):
+                                                # Check if this is a no-op edit (already OK / no changes needed)
+                                                if oc and e.get("proposed_chunk", "").strip() == oc.strip():
+                                                    logger.info(f"Broad edit: target '{target_page.title}' already clean/unchanged, skipping no-op edit")
+                                                    continue
                                                 broad_edits.append(e)
 
                                 except Exception as iter_err:
@@ -1408,19 +1416,25 @@ async def agent_chat(request: Request):
                             conversation_memory.add_turn(
                                 project_id=req.project_id,
                                 user_prompt=req.user_prompt,
-                                assistant_response={"edits": broad_edits, "plan": f"Broad edit: {len(broad_edits)} sections updated"},
+                                assistant_response={"edits": broad_edits, "plan": f"Broad edit: {len(broad_edits)} sections updated" if broad_edits else "Audit complete: all sections clean"},
                                 file_path=req.file_path,
                                 chunk_summaries=[],
                             )
 
                             first_orig = broad_edits[0].get("original_chunk", "") if broad_edits else ""
                             first_prop = broad_edits[0].get("proposed_chunk", "") if broad_edits else ""
-                            overall_exp = f"Edited {len(broad_edits)} sections individually as requested."
 
-                            yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} sections edited", "icon": "check"})
+                            if broad_edits:
+                                overall_exp = f"Edited {len(broad_edits)} sections individually as requested."
+                                yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} sections edited", "icon": "check"})
+                                plan_msg = f"Broad edit: applied changes to {len(broad_edits)} sections individually"
+                            else:
+                                overall_exp = "All sections verified: no broken code or comment overlap found. Code is clean and compilable."
+                                yield sse_event("progress", {"step": "done", "message": "All sections clean — no issues found", "icon": "check"})
+                                plan_msg = "Audit complete: all sections verified, code is clean and compilable."
 
                             yield sse_event("result", {
-                                "plan": f"Broad edit: applied changes to {len(broad_edits)} sections individually",
+                                "plan": plan_msg,
                                 "edits": broad_edits,
                                 "original_chunk": first_orig,
                                 "proposed_chunk": first_prop,
