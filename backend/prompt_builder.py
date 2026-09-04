@@ -808,3 +808,107 @@ def build_append_to_collection_prompt(
         f"system={len(system_content)} chars, user={len(user_content)} chars"
     )
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Anchored Relative Insertion Prompt Builder
+# ---------------------------------------------------------------------------
+
+ANCHORED_INSERT_SYSTEM_PROMPT = """You are an expert LaTeX and Beamer editing agent.
+Your task is to generate a BRAND NEW section or slide to be inserted relative to an existing anchor section in the document.
+
+CRITICAL POSITIONING & ISOLATION RULES:
+1. The anchor section's exact heading, boundaries, and preview are provided FOR POSITIONING ONLY.
+2. The model must generate ONLY the new section's content (e.g., "Future Scope", "Related Work", etc.).
+3. You must NOT reproduce, rewrite, or re-emit the anchor section's text or heading in your output at all.
+4. The existing anchor section must remain 100% byte-for-byte untouched and unchanged in the document.
+5. Generate clean, valid, compilable LaTeX code for the new section or slide.
+6. Return a valid JSON object matching this schema:
+   {
+     "action": "insert_relative",
+     "anchor_page_id": "<anchor_page_id>",
+     "position": "after" or "before",
+     "content": "<your complete new LaTeX code ONLY>",
+     "explanation": "Added <new section name> <position> <anchor title>"
+   }
+"""
+
+
+def build_anchored_insert_prompt(
+    user_request: str,
+    anchor_target: Any,
+    position: str,
+    new_content_desc: str = "",
+    conversation_context: str = "",
+    project_context: str = "",
+    attached_file_info: Optional[Dict[str, str]] = None,
+) -> List:
+    """
+    Build a specialized prompt for inserting new content relative to an anchor section
+    without reproducing or touching the anchor section itself.
+    """
+    system_parts = [ANCHORED_INSERT_SYSTEM_PROMPT]
+
+    if project_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"PROJECT CONTEXT\n"
+            f"--------------------------------\n"
+            f"{project_context[:800]}"
+        )
+
+    if conversation_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"CONVERSATION HISTORY\n"
+            f"--------------------------------\n"
+            f"{conversation_context[:800]}"
+        )
+
+    system_content = "\n".join(system_parts)
+
+    user_parts = []
+    user_parts.append(
+        f"ANCHOR SECTION: {anchor_target.title} (ID: {anchor_target.page_id})\n"
+        f"REQUESTED POSITION: {position.upper()} this anchor section\n"
+        f"ANCHOR BOUNDARIES: Character offsets {anchor_target.start_offset} to {anchor_target.end_offset}\n"
+    )
+
+    if getattr(anchor_target, "content", ""):
+        user_parts.append(
+            f"ANCHOR SECTION PREVIEW (FOR POSITIONING CONTEXT ONLY — DO NOT REPRODUCE OR INCLUDE IN OUTPUT):\n"
+            f"```latex\n{anchor_target.content.strip()[:1000]}\n```"
+        )
+
+    if attached_file_info and attached_file_info.get("content"):
+        file_name = attached_file_info.get("filename", "Uploaded File")
+        file_content = attached_file_info.get("content", "")
+        user_parts.append(
+            f"REFERENCE DOCUMENT CONTENT ({file_name}):\n"
+            f"--------------------------------\n"
+            f"{file_content[:3000]}\n"
+            f"--------------------------------\n"
+        )
+
+    user_parts.append(
+        f"USER REQUEST: {user_request}\n\n"
+        f"DIRECTIVE:\n"
+        f"- Generate ONLY the new LaTeX code for {new_content_desc or 'the new section'}.\n"
+        f"- Position: immediately {position} '{anchor_target.title}'.\n"
+        f"- DO NOT re-emit or rewrite the anchor section '{anchor_target.title}' in any way.\n"
+        f"- Return ONLY the JSON object with action='insert_relative' and content='<your LaTeX code>'."
+    )
+
+    user_content = "\n\n".join(user_parts)
+
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_content),
+    ]
+
+    logger.info(
+        f"Anchored-insert prompt: anchor='{anchor_target.title}', "
+        f"position={position}, new_content_desc='{new_content_desc}', "
+        f"system={len(system_content)} chars, user={len(user_content)} chars"
+    )
+    return messages

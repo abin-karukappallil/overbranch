@@ -1447,11 +1447,206 @@ async def agent_chat(request: Request):
                             return
                         # End of broad-edit branch — fall through to single-target
 
+                    # ── Anchored relative insertion branch (fourth intent) ───────
+                    if doc_idx.is_anchored_insert_instruction(req.user_prompt):
+                        parsed_anchor = doc_idx.parse_anchored_insert_instruction(req.user_prompt)
+                        if parsed_anchor:
+                            new_content_desc, position, anchor_desc = parsed_anchor
+                            anchor_target = doc_idx.resolve_anchor_target(
+                                document_structure, anchor_desc, req.current_code
+                            )
+                            if anchor_target:
+                                yield sse_event("progress", {
+                                    "step": "anchor",
+                                    "message": f"Inserting relative to {anchor_target.title} ({position})...",
+                                    "icon": "anchor"
+                                })
+                                logger.info(
+                                    f"Anchored relative insert matched: anchor='{anchor_target.title}' "
+                                    f"(offsets {anchor_target.start_offset}..{anchor_target.end_offset}), "
+                                    f"position={position}, content_desc='{new_content_desc}'"
+                                )
+
+                                conv_ctx = conversation_memory.get_conversation_context(req.project_id)
+                                proj_ctx = project_memory.get_project_context(req.project_id)
+                                proj_assets = get_project_assets_info(req.project_id)
+                                full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
+
+                                attached_info = None
+                                if req.attached_file and req.attached_file.content:
+                                    attached_info = {
+                                        "filename": req.attached_file.filename,
+                                        "file_type": req.attached_file.file_type or "text/plain",
+                                        "content": req.attached_file.content,
+                                    }
+
+                                anchor_messages = prompt_builder.build_anchored_insert_prompt(
+                                    user_request=req.user_prompt,
+                                    anchor_target=anchor_target,
+                                    position=position,
+                                    new_content_desc=new_content_desc,
+                                    conversation_context=conv_ctx,
+                                    project_context=full_proj_context,
+                                    attached_file_info=attached_info,
+                                )
+
+                                system_content = ""
+                                user_content = ""
+                                for m in anchor_messages:
+                                    if isinstance(m, SystemMessage):
+                                        system_content = m.content
+                                    elif isinstance(m, HumanMessage):
+                                        user_content = m.content
+
+                                raw_model = req.model or ""
+                                if " (via " in raw_model:
+                                    raw_model = raw_model.split(" (via ", 1)[0]
+                                if raw_model.lower().startswith("via "):
+                                    raw_model = ""
+                                if "(" in raw_model and raw_model.endswith(")"):
+                                    raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+                                primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+
+                                provider = provider_router.route(primary_model)
+                                yield sse_event("progress", {
+                                    "step": "llm_call",
+                                    "message": "Generating agentic edits",
+                                    "icon": "sparkles"
+                                })
+
+                                messages_list = []
+                                if system_content:
+                                    messages_list.append({"role": "system", "content": system_content})
+                                messages_list.append({"role": "user", "content": user_content})
+
+                                iter_result = None
+                                async for item in run_step_with_heartbeat(
+                                    provider.chat,
+                                    messages=messages_list,
+                                    model=primary_model,
+                                    temperature=0.1,
+                                    max_tokens=4096,
+                                    api_keys=req.api_keys,
+                                ):
+                                    if isinstance(item, str) and item.startswith(":"):
+                                        yield item
+                                    else:
+                                        iter_result = item
+
+                                response_text = iter_result.get("content", "") if iter_result else ""
+                                parsed = clean_json_response(response_text)
+
+                                new_content = ""
+                                if parsed.get("content"):
+                                    new_content = parsed["content"]
+                                elif parsed.get("proposed_chunk"):
+                                    new_content = parsed["proposed_chunk"]
+                                elif parsed.get("edits"):
+                                    new_content = parsed["edits"][0].get("proposed_chunk", "")
+                                elif parsed.get("new_code"):
+                                    new_content = parsed["new_code"]
+
+                                if not new_content:
+                                    extracted = extract_chunk_latex(response_text)
+                                    if extracted:
+                                        new_content = extracted
+
+                                if not new_content:
+                                    new_content = response_text.strip()
+
+                                new_content = sanitize_latex_code(new_content)
+                                if "\\documentclass" in new_content:
+                                    inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', new_content)
+                                    if inner_m:
+                                        new_content = inner_m.group(1).strip()
+
+                                # Compute exact insertion offset:
+                                insertion_offset = anchor_target.end_offset if position == "after" else anchor_target.start_offset
+
+                                edit_item = {
+                                    "action": "insert_relative",
+                                    "anchor_page_id": anchor_target.page_id,
+                                    "position": position,
+                                    "insertion_offset": insertion_offset,
+                                    "original_chunk": "",
+                                    "proposed_chunk": new_content.strip(),
+                                    "explanation": f"Inserted {new_content_desc or 'new section'} {position} {anchor_target.title}",
+                                }
+
+                                # Validate anchor integrity
+                                validation = edit_validator.validate_edit(
+                                    original_code=req.current_code,
+                                    proposed_edits=[edit_item],
+                                    anchor_target=anchor_target,
+                                    expected_position=position,
+                                )
+
+                                if not validation.passed:
+                                    logger.warning(
+                                        f"Anchored insert validation issues: {[i.message for i in validation.issues]}. Attempting auto-repair."
+                                    )
+                                    repaired_edits, repairs = edit_validator.auto_repair_edits(
+                                        proposed_edits=[edit_item],
+                                        original_code=req.current_code,
+                                        anchor_target=anchor_target,
+                                        expected_position=position,
+                                    )
+                                    if repaired_edits:
+                                        edit_item = repaired_edits[0]
+                                        if repairs:
+                                            logger.info(f"Auto-repaired anchored insert: {repairs}")
+                                            yield sse_event("progress", {
+                                                "step": "repair",
+                                                "message": f"Auto-fixed {len(repairs)} issue(s)",
+                                                "icon": "tool"
+                                            })
+
+                                conversation_memory.add_turn(
+                                    project_id=req.project_id,
+                                    user_prompt=req.user_prompt,
+                                    assistant_response={
+                                        "plan": f"Inserted {new_content_desc or 'new section'} {position} {anchor_target.title}.",
+                                        "edits": [edit_item],
+                                        "explanation": edit_item["explanation"],
+                                    },
+                                    file_path=req.file_path,
+                                    chunk_summaries=[],
+                                )
+
+                                yield sse_event("progress", {"step": "done", "message": f"Inserted {position} {anchor_target.title}", "icon": "check"})
+
+                                yield sse_event("result", {
+                                    "plan": f"Inserted {new_content_desc or 'new section'} {position} {anchor_target.title}.",
+                                    "edits": [edit_item],
+                                    "original_chunk": edit_item["original_chunk"],
+                                    "proposed_chunk": edit_item["proposed_chunk"],
+                                    "explanation": edit_item["explanation"],
+                                    "retrieved_chunks_count": 0,
+                                    "model_used": primary_model,
+                                    "is_fallback": False,
+                                    "is_anchored_insert": True,
+                                })
+                                return
+
                     # ── Append-to-collection branch (third intent) ───────
                     if doc_idx.is_append_to_collection_instruction(req.user_prompt):
-                        collection = doc_idx.resolve_collection(
+                        collection, is_ambiguous, candidates = doc_idx.resolve_collection_with_candidates(
                             document_structure, req.current_code, req.user_prompt
                         )
+                        if is_ambiguous and candidates:
+                            coll_names = [f"'{c.parent_title}' ({c.collection_type})" for c in candidates]
+                            yield sse_event("result", {
+                                "plan": "Clarification needed: multiple matching collections found.",
+                                "edits": [],
+                                "original_chunk": "",
+                                "proposed_chunk": "",
+                                "explanation": f"I found multiple collections where this could be added: {', '.join(coll_names)}. Please specify which collection you would like to append to.",
+                                "retrieved_chunks_count": 0,
+                                "is_fallback": False,
+                                "is_ambiguous_collection": True,
+                            })
+                            return
+
                         if collection:
                             next_ordinal, next_label = doc_idx.compute_next_ordinal(collection)
                             yield sse_event("progress", {

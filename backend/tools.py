@@ -109,7 +109,27 @@ def insert_after(collection_id: str, insertion_offset: int, content: str, ration
         "explanation": rationale,
     }
 
-AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all, insert_after]
+class InsertRelativeArgs(BaseModel):
+    anchor_page_id: str = Field(..., description="ID or title of the anchor page/section to insert relative to")
+    position: str = Field(..., description="Insertion position relative to anchor: 'after' or 'before'")
+    content: str = Field(..., description="LaTeX content to insert")
+    rationale: str = Field(..., description="Explanation")
+
+@tool("insert_relative", args_schema=InsertRelativeArgs)
+def insert_relative(anchor_page_id: str, position: str, content: str, rationale: str) -> Dict[str, Any]:
+    """Insert new content immediately before or after a specific existing section without touching that section's content."""
+    print(f"\n📍 [TOOL EXECUTION: insert_relative]\n  ► Anchor: '{anchor_page_id}'\n  ► Position: {position}\n  ► Rationale: {rationale}\n")
+    return {
+        "action": "insert_relative",
+        "anchor_page_id": anchor_page_id,
+        "position": position,
+        "content": content,
+        "original_chunk": "",
+        "proposed_chunk": content,
+        "explanation": rationale,
+    }
+
+AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all, insert_after, insert_relative]
 
 def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     print(f"\n⚙️  [TOOL PROCESSOR] Received {len(tool_calls)} raw tool call(s) from LLM:")
@@ -158,7 +178,7 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
 
         elif tool_name == "delete_chunk":
             orig = args.get("target_text", "")
-            exp = args.get("rationale", "Delete text")
+            exp = args.get("rationale", "Delete chunk")
             idx = args.get("chunk_index")
             edits.append({
                 "chunk_index": idx,
@@ -208,6 +228,22 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                 "explanation": exp,
             })
             plans.append(f"Insert new item into collection '{coll_id}' at offset {offset}.")
+
+        elif tool_name == "insert_relative":
+            anchor_id = args.get("anchor_page_id", "")
+            pos = args.get("position", "after")
+            content = args.get("content", "")
+            exp = args.get("rationale", f"Insert {pos} {anchor_id}")
+            edits.append({
+                "action": "insert_relative",
+                "anchor_page_id": anchor_id,
+                "position": pos,
+                "content": content,
+                "original_chunk": "",
+                "proposed_chunk": content,
+                "explanation": exp,
+            })
+            plans.append(f"Insert relative: add new content {pos} anchor '{anchor_id}'.")
 
     first_orig = edits[0].get("original_chunk", "") if edits else ""
     first_prop = edits[0].get("proposed_chunk", "") if edits else ""
