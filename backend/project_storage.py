@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -17,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 
 router = APIRouter()
 
-UPLOADS_BASE_DIR = Path(os.path.join(os.path.dirname(__file__), "..", "uploads", "projects")).resolve()
+UPLOADS_BASE_DIR = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
 
 
 class SaveDocumentRequest(BaseModel):
@@ -61,9 +62,14 @@ def get_project_disk_path(project_id: str, file_path: str) -> Path:
     return target_path
 
 
-import re
+_supabase_client: Optional[Client] = None
 
 def get_supabase_client() -> Client:
+    """Returns a cached Supabase client singleton to prevent socket/connection leaks."""
+    global _supabase_client
+    if _supabase_client is not None:
+        return _supabase_client
+
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -75,7 +81,14 @@ def get_supabase_client() -> Client:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Supabase credentials are not configured in environment."
         )
-    return create_client(supabase_url, supabase_key)
+    _supabase_client = create_client(supabase_url, supabase_key)
+    return _supabase_client
+
+
+def reset_supabase_client():
+    """Allows resetting the client in case of connection resets or credentials rotation."""
+    global _supabase_client
+    _supabase_client = None
 
 
 def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw_code: str):

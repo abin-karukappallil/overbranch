@@ -22,7 +22,6 @@ export function UserProfileDropdown() {
     try {
       await authClient.signOut();
     } catch {}
-    toast.info("Logged out of OverBranch session");
     router.push("/login");
   };
 

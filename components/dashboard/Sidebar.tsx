@@ -174,7 +174,6 @@ export function DashboardSidebar({
                   try {
                     await authClient.signOut();
                   } catch {}
-                  toast.info("Signed out of session");
                   router.push("/login");
                 }}
                 className={`text-xs font-mono font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer rounded-xl ${

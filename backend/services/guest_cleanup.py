@@ -17,6 +17,11 @@ from typing import Dict, Any
 
 from project_storage import UPLOADS_BASE_DIR, get_supabase_client
 
+try:
+    from synctex_service import cleanup_stale_synctex_cache
+except ImportError:
+    cleanup_stale_synctex_cache = None
+
 logger = logging.getLogger("guest_cleanup")
 
 # Concurrency lock to prevent multiple purge jobs running concurrently
@@ -85,6 +90,13 @@ def purge_expired_guest_projects() -> Dict[str, Any]:
         supabase.table("guest_sessions").delete().lt("expires_at", stale_date).execute()
     except Exception as gs_err:
         logger.warning(f"Error deleting stale guest sessions: {gs_err}")
+
+    # Clean up stale synctex build artifacts (>24h old)
+    if cleanup_stale_synctex_cache:
+        try:
+            cleanup_stale_synctex_cache(max_age_hours=24)
+        except Exception as sc_err:
+            logger.warning(f"Error during synctex cache cleanup: {sc_err}")
 
     logger.info(f"Guest cleanup complete: {len(purged_projects)} expired projects purged.")
     return {

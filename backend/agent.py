@@ -1510,7 +1510,7 @@ async def agent_chat(request: Request):
                             provider_name = provider.get_provider_name()
                             yield sse_event("progress", {
                                 "step": "llm_call",
-                                "message": f"Generating item with {provider_name} ({primary_model})...",
+                                "message": f"Generating agentic edits",
                                 "icon": "sparkles"
                             })
 
@@ -1698,8 +1698,7 @@ async def agent_chat(request: Request):
 
             if not project_memory.is_scanned(req.project_id):
                 try:
-                    from pathlib import Path
-                    uploads_base = Path(os.path.dirname(__file__)).parent / "uploads" / "projects"
+                    uploads_base = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
                     import re as _re
                     safe_project = _re.sub(r'[^a-zA-Z0-9_-]', '_', req.project_id)
                     tex_path = uploads_base / safe_project / req.file_path

@@ -48,10 +48,29 @@ app.include_router(file_analyzer.router, prefix="/api")
 app.include_router(pdf_conversion_router)
 app.include_router(guest_pdf_router)
 
+_cleanup_task: Optional[asyncio.Task] = None
+
 @app.on_event("startup")
 async def startup_event():
+    global _cleanup_task
     # Start guest project cleanup scheduler (runs every 15 mins)
-    asyncio.create_task(start_cleanup_scheduler(900))
+    _cleanup_task = asyncio.create_task(start_cleanup_scheduler(900))
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    import logging
+    logger = logging.getLogger("main")
+    logger.info("OverBranch TeX Engine API shutting down gracefully...")
+    global _cleanup_task
+    if _cleanup_task and not _cleanup_task.done():
+        _cleanup_task.cancel()
+    # Clean up Qdrant client connection if open
+    try:
+        from vector_sync import close_qdrant_client
+        close_qdrant_client()
+    except Exception:
+        pass
+    logger.info("OverBranch shutdown complete.")
 
 
 class FileAsset(BaseModel):

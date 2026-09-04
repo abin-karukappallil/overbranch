@@ -14,6 +14,7 @@ services:
     environment:
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      - WORKERS=${WORKERS:-2}
       - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://overapi.abinthomas.dev}
       - BACKEND_URL=${BACKEND_URL:-https://overapi.abinthomas.dev}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
@@ -22,3 +23,36 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./backend/templates:/app/backend/templates:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  backend:
+    image: ${BACKEND_IMAGE:-overbranch-backend:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: overbranch-backend
+    restart: always
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
+      - WORKERS=${WORKERS:-2}
+      - UPLOADS_BASE_DIR=/app/uploads/projects
+    volumes:
+      - ./uploads:/app/uploads
+      - ./backend/templates:/app/backend/templates:ro
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
