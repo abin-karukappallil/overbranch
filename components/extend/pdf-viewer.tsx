@@ -1779,6 +1779,7 @@ function PDFViewerSelectionSyncListener({
   onTextSelected?: (text: string) => void
 }) {
   const { provides: selection } = useSelectionCapability()
+  const viewportRef = useViewportRef(documentId)
   const lastNotifiedTextRef = React.useRef<string>("")
 
   React.useEffect(() => {
@@ -1788,18 +1789,38 @@ function PDFViewerSelectionSyncListener({
 
     const notifySelectedText = () => {
       setTimeout(() => {
-        // 1. Try native browser DOM selection
-        const domText = window.getSelection()?.toString()?.trim()
-        if (domText && domText.length >= 2) {
-          if (lastNotifiedTextRef.current !== domText) {
-            lastNotifiedTextRef.current = domText
-            onTextSelected(domText)
+        // 1. Try native browser DOM selection ONLY if selection is within PDF viewer
+        const sel = window.getSelection()
+        const anchorNode = sel?.anchorNode
+        const focusNode = sel?.focusNode
+        const anchorEl = anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement
+        const focusEl = focusNode instanceof Element ? focusNode : focusNode?.parentElement
+
+        const isInsidePdf = Boolean(
+          (viewportRef.current && (
+            (anchorNode && viewportRef.current.contains(anchorNode)) ||
+            (focusNode && viewportRef.current.contains(focusNode))
+          )) ||
+          anchorEl?.closest?.('[data-slot="pdf-viewer"]') ||
+          focusEl?.closest?.('[data-slot="pdf-viewer"]')
+        )
+
+        if (isInsidePdf) {
+          const domText = sel?.toString()?.trim()
+          if (domText && domText.length >= 2) {
+            if (lastNotifiedTextRef.current !== domText) {
+              lastNotifiedTextRef.current = domText
+              onTextSelected(domText)
+            }
+            return
           }
-          return
         }
 
         // 2. Try @embedpdf plugin selection
         try {
+          const selectionState = selection.getState(documentId)
+          if (!selectionState?.selection) return
+
           docSelection.getSelectedText().wait(
             (textArray) => {
               if (textArray && textArray.length > 0) {
@@ -1818,7 +1839,14 @@ function PDFViewerSelectionSyncListener({
       }, 40)
     }
 
-    const handlePointerUp = () => {
+    const handlePointerUp = (event: Event) => {
+      const target = event.target as HTMLElement | null
+      const isTargetInPdf = Boolean(
+        (viewportRef.current && viewportRef.current.contains(target)) ||
+        target?.closest?.('[data-slot="pdf-viewer"]')
+      )
+      // Only process pointer events that released inside the PDF viewer
+      if (!isTargetInPdf) return
       notifySelectedText()
     }
 
@@ -1845,7 +1873,7 @@ function PDFViewerSelectionSyncListener({
       unhookEnd?.()
       unhookChange?.()
     }
-  }, [documentId, onTextSelected, selection])
+  }, [documentId, onTextSelected, selection, viewportRef])
 
   return null
 }
