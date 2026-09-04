@@ -682,3 +682,129 @@ def build_broad_edit_prompt(
         f"{' [+attached]' if attached_file_info else ''}"
     )
     return messages
+
+
+# ============================================================================
+# APPEND TO COLLECTION PROMPT
+# ============================================================================
+
+APPEND_TO_COLLECTION_SYSTEM_PROMPT = r"""You are an expert LaTeX agent embedded inside OverBranch.
+You are appending a SINGLE NEW ITEM to an existing ordered/enumerated collection in the document.
+
+CRITICAL RULES:
+1. STRICT NUMBERING CONTINUITY:
+   - The user message specifies the EXACT item number and label to generate.
+   - You MUST use this exact label (e.g., 'Paper 8', '\bibitem{ref8}', or slide numbering) in your output.
+   - NEVER skip numbers, invent your own numbering scheme, or reset numbering to 1.
+   - The assigned number is deterministic and non-negotiable.
+
+2. STYLE & STRUCTURAL CONSISTENCY:
+   - Match the exact LaTeX environment, formatting, macro usage, and tone of the provided sample members.
+   - If existing slides use \begin{frame}{...} with specific blocks, follow that structure.
+   - If existing items are \bibitem{...} with author/title/year, follow that bibliographic format.
+   - If existing items are \item in a list, match the bullet structure.
+
+3. SINGLE ITEM ONLY:
+   - Output ONLY the newly generated item.
+   - Do NOT output existing items.
+   - Do NOT wrap your output in \documentclass, \begin{document}, or \end{document}.
+
+4. OUTPUT CONTRACT:
+   - Respond with a JSON object:
+   {
+     "plan": "Append <label> to <collection>",
+     "action": "insert_after",
+     "collection_id": "<collection_id>",
+     "insertion_offset": <insertion_offset>,
+     "content": "<exact LaTeX code of the new item>",
+     "explanation": "Added <label> to <collection>"
+   }
+"""
+
+
+def build_append_to_collection_prompt(
+    user_request: str,
+    collection_entry: Any,
+    next_ordinal: int,
+    next_label: str,
+    sample_members: List[str],
+    conversation_context: str = "",
+    project_context: str = "",
+    attached_file_info: Optional[Dict[str, str]] = None,
+) -> List:
+    """
+    Build a scoped prompt for appending a single new item to an existing collection.
+    """
+    system_parts = [APPEND_TO_COLLECTION_SYSTEM_PROMPT]
+
+    if project_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"PROJECT CONTEXT\n"
+            f"--------------------------------\n"
+            f"{project_context[:800]}"
+        )
+
+    if conversation_context:
+        system_parts.append(
+            f"\n--------------------------------\n"
+            f"CONVERSATION HISTORY\n"
+            f"--------------------------------\n"
+            f"{conversation_context[:800]}"
+        )
+
+    system_content = "\n".join(system_parts)
+
+    user_parts = []
+    user_parts.append(
+        f"TARGET COLLECTION: {collection_entry.parent_title} ({collection_entry.collection_type})\n"
+        f"COLLECTION ID: {collection_entry.collection_id}\n"
+        f"CURRENT MEMBER COUNT: {collection_entry.current_count}\n"
+        f"ASSIGNED NEXT ORDINAL: {next_ordinal}\n"
+        f"ASSIGNED NEXT LABEL/TITLE: {next_label}\n"
+        f"INSERTION OFFSET: {collection_entry.last_member_end_offset}\n"
+    )
+
+    if sample_members:
+        user_parts.append("SAMPLE EXISTING MEMBERS (Follow this exact style and structure):")
+        for i, sample in enumerate(sample_members, 1):
+            user_parts.append(f"--- Sample {i} ---\n```latex\n{sample.strip()[:1500]}\n```")
+
+    if attached_file_info and attached_file_info.get("content"):
+        file_name = attached_file_info.get("filename", "Uploaded File")
+        file_content = attached_file_info.get("content", "")
+        extracted_ref = _extract_relevant_attached_content(
+            full_content=file_content,
+            page_title=user_request or collection_entry.parent_title,
+            budget=4000,
+        )
+        if extracted_ref:
+            user_parts.append(
+                f"REFERENCE DOCUMENT CONTENT ({file_name}):\n"
+                f"--------------------------------\n"
+                f"{extracted_ref}\n"
+                f"--------------------------------\n"
+                f"Extract real facts, author names, methodology, and results from this reference."
+            )
+
+    user_parts.append(
+        f"USER REQUEST: {user_request}\n\n"
+        f"DIRECTIVE:\n"
+        f"- Generate the LaTeX code for Item #{next_ordinal} ({next_label}).\n"
+        f"- Ensure the title/header matches '{next_label}'.\n"
+        f"- Return ONLY the JSON object with action='insert_after' and content='<your LaTeX code>'."
+    )
+
+    user_content = "\n\n".join(user_parts)
+
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_content),
+    ]
+
+    logger.info(
+        f"Append-to-collection prompt: collection='{collection_entry.parent_title}', "
+        f"ordinal={next_ordinal}, label='{next_label}', "
+        f"system={len(system_content)} chars, user={len(user_content)} chars"
+    )
+    return messages
