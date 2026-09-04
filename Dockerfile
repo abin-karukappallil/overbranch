@@ -59,6 +59,10 @@ EXPOSE 8000
 
 VOLUME ["/app/uploads"]
 
+# Health check to ensure containers remain responsive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -sf http://localhost:8000/api/health || exit 1
+
 RUN chmod +x /app/entrypoint.sh
 
 ENTRYPOINT ["/app/entrypoint.sh"]
