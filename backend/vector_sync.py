@@ -31,10 +31,20 @@ class SyncFileRequest(BaseModel):
 
 _qdrant_client_instance: Optional[QdrantClient] = None
 
-def get_qdrant_client() -> QdrantClient:
+def get_qdrant_client(force_refresh: bool = False) -> QdrantClient:
     global _qdrant_client_instance
-    if _qdrant_client_instance is not None:
-        return _qdrant_client_instance
+    if _qdrant_client_instance is not None and not force_refresh:
+        try:
+            # Quick check to ensure TCP socket is alive and hasn't been killed by idle NAT/proxy
+            _qdrant_client_instance.get_collections()
+            return _qdrant_client_instance
+        except Exception as conn_err:
+            logger.warning(f"Qdrant client connection stale ({conn_err}), re-establishing...")
+            try:
+                _qdrant_client_instance.close()
+            except Exception:
+                pass
+            _qdrant_client_instance = None
 
     qdrant_url = os.getenv("QDRANT_URL")
     api_key = os.getenv("QDRANT_API_KEY")
@@ -46,6 +56,17 @@ def get_qdrant_client() -> QdrantClient:
     logger.info(f"Connected directly to Qdrant Cloud DB at {qdrant_url}")
     _qdrant_client_instance = client
     return _qdrant_client_instance
+
+
+def close_qdrant_client():
+    """Cleanly close Qdrant connection on server shutdown."""
+    global _qdrant_client_instance
+    if _qdrant_client_instance is not None:
+        try:
+            _qdrant_client_instance.close()
+        except Exception:
+            pass
+        _qdrant_client_instance = None
 
 def ensure_qdrant_collection(client: QdrantClient, vector_size: int = 2048):
     if not client.collection_exists(COLLECTION_NAME):
