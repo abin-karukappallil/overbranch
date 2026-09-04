@@ -85,8 +85,22 @@ class GeminiProvider(LLMProvider):
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,
+        api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        client = self._get_client()
+        if api_keys and api_keys.get("gemini"):
+            try:
+                from openai import OpenAI
+                user_key = api_keys["gemini"].strip()
+                # Use official Gemini OpenAI-compatible endpoint for genuine AI Studio keys
+                b_url = "https://generativelanguage.googleapis.com/v1beta/openai/" if user_key.startswith("AIza") else self.base_url
+                if not b_url:
+                    raise LLMProviderError("Gemini base URL not configured.", provider="Gemini")
+                client = OpenAI(api_key=user_key, base_url=b_url, timeout=120.0)
+            except ImportError:
+                raise LLMProviderError("The 'openai' Python package is missing.", provider="Gemini")
+        else:
+            client = self._get_client()
+
         target_model = self._validate_model(model)
 
         start_time = time.time()

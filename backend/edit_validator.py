@@ -244,6 +244,220 @@ def validate_continuous_numbering(latex: str) -> List[ValidationIssue]:
     return issues
 
 
+def validate_no_duplicate_headings(
+    original_code: str,
+    proposed_edits: List[Dict[str, Any]],
+) -> List[ValidationIssue]:
+    """
+    Check that create_content edits don't duplicate existing chapter/section headings.
+
+    When the AI uses create_content (original_chunk == "") to add content that
+    has the same heading as an existing chapter/section, this is almost always
+    a bug — the AI should have used edit_chunk instead.
+
+    Returns issues with auto_fixable=True so the caller can retry as edit_chunk.
+    """
+    issues = []
+
+    if not original_code or not proposed_edits:
+        return issues
+
+    # Extract existing headings from the original document
+    existing_headings: Dict[str, str] = {}  # normalized_title -> raw_title
+    for m in re.finditer(r"\\(?:chapter|section|subsection)\{([^}]+)\}", original_code):
+        raw_title = m.group(1).strip()
+        normalized = re.sub(r"\s+", " ", raw_title).lower().strip()
+        existing_headings[normalized] = raw_title
+
+    if not existing_headings:
+        return issues
+
+    for i, edit in enumerate(proposed_edits):
+        oc = edit.get("original_chunk", "")
+        pc = edit.get("proposed_chunk", "")
+
+        # Only check create_content edits (empty original_chunk)
+        if oc or not pc:
+            continue
+
+        # Extract headings from the proposed chunk
+        for m in re.finditer(r"\\(?:chapter|section|subsection)\{([^}]+)\}", pc):
+            proposed_title = m.group(1).strip()
+            proposed_normalized = re.sub(r"\s+", " ", proposed_title).lower().strip()
+
+            if proposed_normalized in existing_headings:
+                existing_raw = existing_headings[proposed_normalized]
+                issues.append(ValidationIssue(
+                    check="duplicate_heading_create",
+                    severity="error",
+                    message=(
+                        f"create_content edit {i} duplicates existing heading "
+                        f"'{existing_raw}' — should use edit_chunk instead"
+                    ),
+                    auto_fixable=True,
+                ))
+
+    return issues
+
+
+def validate_no_comment_overlap(latex: str) -> List[ValidationIssue]:
+    """
+    Check for comment overlap issues in LaTeX:
+    1. Unescaped % hiding code or closing braces on the same line (e.g. \\textbf{95% accuracy}).
+    2. Non-LaTeX comment syntax (<!-- ... -->, // ..., /* ... */).
+    3. Conversational commentary leaking into LaTeX output.
+    """
+    issues = []
+    if not latex or not latex.strip():
+        return issues
+
+    # 1. Non-LaTeX comment syntax
+    if re.search(r"<!--[\s\S]*?-->", latex):
+        issues.append(ValidationIssue(
+            check="comment_overlap_html",
+            severity="error",
+            message="HTML-style comments (<!-- ... -->) found in LaTeX code",
+            auto_fixable=True,
+        ))
+
+    if re.search(r"/\*[\s\S]*?\*/", latex):
+        issues.append(ValidationIssue(
+            check="comment_overlap_c_style",
+            severity="error",
+            message="C-style block comments (/* ... */) found in LaTeX code",
+            auto_fixable=True,
+        ))
+
+    lines = latex.splitlines()
+    for idx, line in enumerate(lines, start=1):
+        stripped = line.strip()
+
+        # Check for C++ style comments: // at start of line
+        if stripped.startswith("//"):
+            issues.append(ValidationIssue(
+                check="comment_overlap_slash_slash",
+                severity="error",
+                message=f"Line {idx}: C++ style '//' comment found in LaTeX code",
+                auto_fixable=True,
+            ))
+            continue
+
+        # Check for conversational leakage at start of line
+        if re.match(r"^(?:Here\s+is\s+(?:the|your)?\s*(?:updated|clean|fixed)?\s*(?:code|latex|document|section)|Note:\s+|Sure,?\s+|Below\s+is\s+the|Certainly!|I\s+have\s+(?:updated|fixed|added))\b", stripped, re.IGNORECASE):
+            issues.append(ValidationIssue(
+                check="comment_overlap_conversational_leak",
+                severity="error",
+                message=f"Line {idx}: Conversational text leaked into LaTeX code: '{stripped[:50]}...'",
+                auto_fixable=True,
+            ))
+            continue
+
+        # Check for unescaped % that swallows closing braces on the same line
+        percent_matches = list(re.finditer(r"(?<!\\)%", line))
+        if percent_matches:
+            first_pct = percent_matches[0].start()
+            prefix = line[:first_pct]
+            comment_part = line[first_pct + 1:]
+
+            open_before = len(re.findall(r"(?<!\\)\{", prefix)) - len(re.findall(r"(?<!\\)\}", prefix))
+            close_after = len(re.findall(r"(?<!\\)\}", comment_part))
+
+            if open_before > 0 and close_after > 0:
+                issues.append(ValidationIssue(
+                    check="comment_overlap_swallowed_brace",
+                    severity="error",
+                    message=(
+                        f"Line {idx}: Unescaped '%' comments out closing brace(s) on the same line: "
+                        f"'{stripped[:60]}...'"
+                    ),
+                    auto_fixable=True,
+                ))
+            elif re.search(r"\b\d+(?:\.\d+)?%", prefix + "%") and not stripped.startswith("%"):
+                issues.append(ValidationIssue(
+                    check="comment_overlap_unescaped_percent",
+                    severity="warning",
+                    message=f"Line {idx}: Unescaped '%' after number — likely intended as '\\%': '{stripped[:60]}'",
+                    auto_fixable=True,
+                ))
+
+    return issues
+
+
+def validate_no_unmatched_braces(latex: str) -> List[ValidationIssue]:
+    """
+    Check that braces { and } are balanced across the LaTeX code.
+    Strips out comments (lines or portions starting with unescaped %)
+    and escaped braces \\{ and \\} before counting.
+    """
+    issues = []
+    if not latex or not latex.strip():
+        return issues
+
+    open_braces = 0
+    close_braces = 0
+
+    for line in latex.splitlines():
+        # Strip comments
+        m = re.search(r"(?<!\\)%", line)
+        code_part = line[:m.start()] if m else line
+
+        # Strip escaped braces
+        clean_code = re.sub(r"\\\{|\\\}", "", code_part)
+
+        open_braces += clean_code.count("{")
+        close_braces += clean_code.count("}")
+
+    if open_braces != close_braces:
+        issues.append(ValidationIssue(
+            check="unmatched_braces",
+            severity="error",
+            message=f"Unmatched braces: {open_braces} open '{{' vs {close_braces} closing '}}'",
+            auto_fixable=False,
+        ))
+
+    return issues
+
+
+def validate_no_structural_regression(original: str, proposed: str) -> List[ValidationIssue]:
+    """Check that the proposed document didn't lose major sections or environments."""
+    issues = []
+    
+    if not original or not proposed:
+        return issues
+        
+    orig_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', original))
+    prop_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', proposed))
+    
+    orig_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', original))
+    prop_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', proposed))
+    
+    if orig_sections > 3 and prop_sections < orig_sections * 0.5:
+        issues.append(ValidationIssue(
+            check="structural_regression_sections",
+            severity="error",
+            message=f"Proposed document lost >50% of sections ({orig_sections} -> {prop_sections})",
+            auto_fixable=False,
+        ))
+        
+    if orig_envs > 0 and prop_envs == 0:
+        issues.append(ValidationIssue(
+            check="structural_regression_environments",
+            severity="warning",
+            message="Proposed document lost key front-matter or back-matter environments",
+            auto_fixable=False,
+        ))
+        
+    if len(original) > 1000 and len(proposed) < len(original) * 0.4:
+        issues.append(ValidationIssue(
+            check="structural_regression_length",
+            severity="warning",
+            message=f"Proposed document is < 40% of the original length ({len(original)} -> {len(proposed)} chars)",
+            auto_fixable=False,
+        ))
+
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # Auto-repair functions
 # ---------------------------------------------------------------------------
@@ -325,6 +539,151 @@ def auto_repair_structure(latex: str) -> Tuple[str, List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Collection Append Validators
+# ---------------------------------------------------------------------------
+
+def validate_insertion_position(
+    latex: str,
+    insertion_offset: int,
+    collection_entry: Any,
+) -> List[ValidationIssue]:
+    """
+    Validate that an append-to-collection insertion is positioned correctly:
+    - Offset falls within document bounds
+    - Offset falls immediately at or after the last member of the collection
+    - Offset does not precede earlier members of the collection
+    - Offset is not outside the document body (e.g. after \\end{document})
+    """
+    issues = []
+    if not latex or collection_entry is None:
+        return issues
+
+    doc_len = len(latex)
+    if insertion_offset < 0:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is negative",
+            auto_fixable=False,
+        ))
+        return issues
+
+    # Check against \end{document}
+    end_doc = latex.find("\\end{document}")
+    if end_doc != -1 and insertion_offset > end_doc:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is after \\end{{document}} ({end_doc})",
+            auto_fixable=False,
+        ))
+
+    if insertion_offset > doc_len:
+        issues.append(ValidationIssue(
+            check="insertion_position",
+            severity="error",
+            message=f"Insertion offset {insertion_offset} is outside document boundaries [0, {doc_len}]",
+            auto_fixable=False,
+        ))
+        return issues
+
+    last_offset = getattr(collection_entry, "last_member_end_offset", None)
+    if last_offset is not None:
+        if insertion_offset < last_offset - 10:
+            issues.append(ValidationIssue(
+                check="insertion_position",
+                severity="error",
+                message=f"Insertion offset {insertion_offset} precedes the last member end offset {last_offset}",
+                auto_fixable=False,
+            ))
+
+    member_offsets = getattr(collection_entry, "member_offsets", [])
+    if member_offsets:
+        first_start = member_offsets[0][0]
+        if insertion_offset < first_start:
+            issues.append(ValidationIssue(
+                check="insertion_position",
+                severity="error",
+                message=f"Insertion offset {insertion_offset} precedes the start of the collection ({first_start})",
+                auto_fixable=False,
+            ))
+
+    return issues
+
+
+def validate_numbering_continuity(
+    inserted_content: str,
+    collection_entry: Any,
+    expected_ordinal: int,
+) -> List[ValidationIssue]:
+    """
+    Validate that an inserted collection item has the correct sequential ordinal number
+    without gaps or duplicates.
+    """
+    issues = []
+    if not inserted_content or expected_ordinal is None:
+        return issues
+
+    found_ordinal = None
+
+    # Check for fraction pattern e.g. (8/8) or (8/7)
+    m_frac = re.search(r"\((\d+)\s*/\s*(\d+)\)", inserted_content)
+    if m_frac:
+        found_ordinal = int(m_frac.group(1))
+
+    # Check for "Paper 8", "Slide 8", etc.
+    if found_ordinal is None:
+        m_num = re.search(r"\b(?:Paper|Slide|Survey|Work|Item|Ref|Row)\s*#?\s*(\d+)\b", inserted_content, re.IGNORECASE)
+        if m_num:
+            found_ordinal = int(m_num.group(1))
+
+    # Check for \bibitem{...8...} or \bibitem[8]{...}
+    if found_ordinal is None and getattr(collection_entry, "collection_type", "") == "bibitem":
+        m_bib_opt = re.search(r"\\bibitem\s*\[(\d+)\]", inserted_content)
+        if m_bib_opt:
+            found_ordinal = int(m_bib_opt.group(1))
+        else:
+            m_bib_key = re.search(r"\\bibitem(?:\[[^\]]*\])?\{[^}]*?(\d+)[^}]*\}", inserted_content)
+            if m_bib_key:
+                found_ordinal = int(m_bib_key.group(1))
+
+    # Check for \item[8.]
+    if found_ordinal is None and getattr(collection_entry, "collection_type", "") in ("enumerate", "itemize"):
+        m_item_opt = re.search(r"\\item\s*\[(\d+)[\.\)]?\]", inserted_content)
+        if m_item_opt:
+            found_ordinal = int(m_item_opt.group(1))
+
+    # If title has a standalone number in frame title: \begin{frame}{... 8 ...} or \frametitle{... 8 ...}
+    if found_ordinal is None:
+        m_frame_title = re.search(r"\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]*)\}", inserted_content)
+        if not m_frame_title:
+            m_frame_title = re.search(r"\\frametitle\{([^}]*)\}", inserted_content)
+        if m_frame_title:
+            title_text = m_frame_title.group(1)
+            num_in_title = re.search(r"\b(\d+)\b", title_text)
+            if num_in_title:
+                found_ordinal = int(num_in_title.group(1))
+
+    if found_ordinal is not None:
+        if found_ordinal < expected_ordinal:
+            issues.append(ValidationIssue(
+                check="numbering_continuity",
+                severity="error",
+                message=f"Duplicate or regressive ordinal: found {found_ordinal}, expected {expected_ordinal}",
+                auto_fixable=True,
+            ))
+        elif found_ordinal > expected_ordinal:
+            issues.append(ValidationIssue(
+                check="numbering_continuity",
+                severity="error",
+                message=f"Numbering gap: found {found_ordinal}, expected {expected_ordinal}",
+                auto_fixable=True,
+            ))
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Top-level validation
 # ---------------------------------------------------------------------------
 
@@ -332,6 +691,8 @@ def validate_edit(
     original_code: str,
     proposed_edits: List[Dict[str, Any]],
     target_page_ids: Optional[Set[str]] = None,
+    collection_entry: Optional[Any] = None,
+    expected_ordinal: Optional[int] = None,
 ) -> ValidationResult:
     """
     Run all validation checks on proposed edits.
@@ -340,6 +701,8 @@ def validate_edit(
         original_code: The current document source
         proposed_edits: List of edit dicts with original_chunk/proposed_chunk
         target_page_ids: If set, only these pages should have been edited
+        collection_entry: Optional CollectionEntry if appending to a collection
+        expected_ordinal: Optional expected ordinal number for collection append
 
     Returns:
         ValidationResult with pass/fail and issue details
@@ -349,16 +712,30 @@ def validate_edit(
     if not proposed_edits:
         return result
 
+    # Insertion-specific validation for collection appends
+    for edit in proposed_edits:
+        if edit.get("action") == "insert_after":
+            off = edit.get("insertion_offset")
+            pc = edit.get("proposed_chunk", "")
+            if collection_entry is not None and off is not None:
+                result.issues.extend(validate_insertion_position(original_code, off, collection_entry))
+            if expected_ordinal is not None and pc:
+                result.issues.extend(validate_numbering_continuity(pc, collection_entry, expected_ordinal))
+
     # Build the "final" document by applying edits to see what the result looks like
     final_doc = original_code or ""
     for edit in proposed_edits:
         pc = edit.get("proposed_chunk", "")
         oc = edit.get("original_chunk", "")
-        if pc and oc and oc in final_doc:
-            final_doc = final_doc.replace(oc, pc, 1)
+        if oc and oc in final_doc:
+            final_doc = final_doc.replace(oc, pc or "", 1)
         elif pc and not oc:
-            # Insertion — just check the proposed chunk itself
-            final_doc = pc
+            if edit.get("action") == "insert_after" and edit.get("insertion_offset") is not None:
+                off = edit["insertion_offset"]
+                final_doc = final_doc[:off] + "\n\n" + pc + "\n\n" + final_doc[off:]
+            else:
+                # Insertion — just check the proposed chunk itself
+                final_doc = pc
 
     # Run all checks on the final document
     result.issues.extend(validate_no_duplicate_slide_ids(final_doc))
@@ -367,6 +744,10 @@ def validate_edit(
     result.issues.extend(validate_continuous_numbering(final_doc))
     result.issues.extend(validate_references_intact(original_code, final_doc))
     result.issues.extend(validate_scope(original_code, proposed_edits, target_page_ids))
+    result.issues.extend(validate_no_structural_regression(original_code, final_doc))
+    result.issues.extend(validate_no_duplicate_headings(original_code, proposed_edits))
+    result.issues.extend(validate_no_comment_overlap(final_doc))
+    result.issues.extend(validate_no_unmatched_braces(final_doc))
 
     # Update passed flag
     result.passed = not any(i.severity == "error" for i in result.issues)
@@ -383,6 +764,135 @@ def validate_edit(
         logger.info("Edit validation: all checks passed")
 
     return result
+
+
+def auto_repair_comment_overlap(latex: str) -> Tuple[str, List[str]]:
+    """
+    Auto-repair comment overlap issues:
+    1. Replaces unescaped % after numbers or inside macro brackets with \\%.
+    2. Strips HTML <!-- ... --> and C-style /* ... */ comments.
+    3. Converts C++ // comments at line start to % comments.
+    4. Removes or comments out conversational leakage lines.
+    """
+    repairs = []
+    if not latex or not latex.strip():
+        return latex, repairs
+
+    s = latex
+
+    # 1. Strip HTML comments
+    if "<!--" in s:
+        s = re.sub(r"<!--[\s\S]*?-->", "", s)
+        repairs.append("Stripped HTML-style comments (<!-- ... -->)")
+
+    # 2. Strip C-style block comments
+    if "/*" in s:
+        s = re.sub(r"/\*[\s\S]*?\*/", "", s)
+        repairs.append("Stripped C-style comments (/* ... */)")
+
+    cleaned_lines = []
+    for line in s.splitlines():
+        stripped = line.strip()
+
+        # Convert C++ comments
+        if stripped.startswith("//"):
+            repairs.append(f"Converted C++ comment to LaTeX: '{stripped[:40]}'")
+            cleaned_lines.append(re.sub(r"^(\s*)//", r"\1%", line))
+            continue
+
+        # Strip conversational leakage
+        if re.match(r"^(?:Here\s+is\s+(?:the|your)?\s*(?:updated|clean|fixed)?\s*(?:code|latex|document|section)|Note:\s+|Sure,?\s+|Below\s+is\s+the|Certainly!)\b", stripped, re.IGNORECASE):
+            repairs.append(f"Removed conversational leak: '{stripped[:40]}'")
+            continue
+
+        # Repair unescaped % inside macro where it comments out closing brace
+        pct_matches = list(re.finditer(r"(?<!\\)%", line))
+        if pct_matches:
+            first_pct = pct_matches[0].start()
+            prefix = line[:first_pct]
+            comment_part = line[first_pct + 1:]
+
+            open_before = len(re.findall(r"(?<!\\)\{", prefix)) - len(re.findall(r"(?<!\\)\}", prefix))
+            close_after = len(re.findall(r"(?<!\\)\}", comment_part))
+
+            if open_before > 0 and close_after > 0:
+                fixed_line = line[:first_pct] + r"\%" + line[first_pct + 1:]
+                repairs.append(f"Escaped '%' that swallowed closing brace: '{stripped[:50]}'")
+                line = fixed_line
+
+        # Repair unescaped % after numbers on non-comment lines
+        if not stripped.startswith("%") and re.search(r"(?<!\\)(\d+(?:\.\d+)?)\s*%(?![a-zA-Z%])", line):
+            new_line = re.sub(r"(?<!\\)(\d+(?:\.\d+)?)\s*%(?![a-zA-Z%])", r"\1\\%", line)
+            if new_line != line:
+                repairs.append(f"Escaped '%' in numeric percentage: '{stripped[:50]}'")
+                line = new_line
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines), repairs
+
+
+def auto_repair_duplicate_headings(
+    proposed_edits: List[Dict[str, Any]],
+    original_code: str,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Convert create_content edits that duplicate existing headings into
+    edit_chunk edits by finding the matching section text in the original.
+
+    Returns (repaired_edits, list_of_repairs_made).
+    """
+    repairs = []
+    repaired = []
+
+    if not original_code:
+        return proposed_edits, repairs
+
+    # Build a map of normalized heading -> full section text in original
+    section_map: Dict[str, str] = {}  # normalized_title -> section_content
+    section_matches = list(re.finditer(
+        r"(\\(?:chapter|section|subsection)\{([^}]+)\})", original_code
+    ))
+    for i, m in enumerate(section_matches):
+        raw_title = m.group(2).strip()
+        normalized = re.sub(r"\s+", " ", raw_title).lower().strip()
+        # Section extends from this heading to the next heading or end
+        start = m.start()
+        end = section_matches[i + 1].start() if i + 1 < len(section_matches) else len(original_code)
+        # Don't go past \end{document}
+        end_doc = original_code.find("\\end{document}", start)
+        if end_doc != -1 and end_doc < end:
+            end = end_doc
+        section_text = original_code[start:end].strip()
+        section_map[normalized] = section_text
+
+    for edit in proposed_edits:
+        oc = edit.get("original_chunk", "")
+        pc = edit.get("proposed_chunk", "")
+
+        if oc or not pc:
+            repaired.append(edit)
+            continue
+
+        # Check if proposed heading duplicates an existing one
+        heading_m = re.search(r"\\(?:chapter|section|subsection)\{([^}]+)\}", pc)
+        if heading_m:
+            proposed_title = heading_m.group(1).strip()
+            proposed_normalized = re.sub(r"\s+", " ", proposed_title).lower().strip()
+
+            if proposed_normalized in section_map:
+                # Convert create -> edit by setting original_chunk to existing section
+                new_edit = dict(edit)
+                new_edit["original_chunk"] = section_map[proposed_normalized]
+                repaired.append(new_edit)
+                repairs.append(
+                    f"Converted duplicate create '{proposed_title}' to edit_chunk"
+                )
+                continue
+
+        repaired.append(edit)
+
+    return repaired, repairs
 
 
 def auto_repair_edits(
@@ -413,8 +923,18 @@ def auto_repair_edits(
         pc, struct_repairs = auto_repair_structure(pc)
         all_repairs.extend(struct_repairs)
 
+        # Auto-repair comment overlap & unescaped %
+        pc, comment_repairs = auto_repair_comment_overlap(pc)
+        all_repairs.extend(comment_repairs)
+
         new_edit["proposed_chunk"] = pc
         repaired_edits.append(new_edit)
+
+    # Auto-repair duplicate heading creates (convert to edit_chunk)
+    repaired_edits, heading_repairs = auto_repair_duplicate_headings(
+        repaired_edits, original_code
+    )
+    all_repairs.extend(heading_repairs)
 
     if all_repairs:
         logger.info(f"Auto-repair applied {len(all_repairs)} fix(es): {all_repairs}")

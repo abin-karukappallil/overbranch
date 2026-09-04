@@ -16,7 +16,7 @@ try:
     HAS_PYPDF = True
 except ImportError:
     HAS_PYPDF = False
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import APIRouter, HTTPException, status, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -69,6 +69,7 @@ class AgentChatRequest(BaseModel):
     model: Optional[str] = Field(None, description="Primary LLM model name")
     fallback_model: Optional[str] = Field(None, description="Fallback LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'ask' (question-only) or 'edit' (agentic editing)")
+    api_keys: Optional[Dict[str, str]] = Field(None, description="User-provided API keys")
 
 
 
@@ -237,6 +238,7 @@ def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
     """
     Finds target in text. If exact match fails, tries matching with normalized
     whitespace and newlines so subtle LLM whitespace differences don't fail.
+    Also handles LaTeX macro command alignment and unique case-insensitive matches.
     Returns the exact matching slice from text, or None.
     """
     if not text or not target:
@@ -252,20 +254,103 @@ def find_verbatim_or_fuzzy(text: str, target: str) -> Optional[str]:
 
     # Token-based normalized regex match: split by whitespace, escape tokens, join with \s+
     tokens = re.split(r'\s+', clean_target)
-    if not tokens:
-        return None
+    if tokens:
+        escaped_tokens = [re.escape(t) for t in tokens if t]
+        if escaped_tokens:
+            pattern_str = r'\s+'.join(escaped_tokens)
+            try:
+                m = re.search(pattern_str, text, re.DOTALL)
+                if m:
+                    return text[m.start():m.end()]
+            except Exception:
+                pass
 
-    escaped_tokens = [re.escape(t) for t in tokens if t]
-    if not escaped_tokens:
-        return None
+    # Macro command matching (e.g. \title, \author, \date, \subtitle, \institute, \usetheme)
+    macro_m = re.match(r'^\\\\?([a-zA-Z]+)(?:\[[^\]]*\])?\{', clean_target)
+    if macro_m:
+        cmd_name = macro_m.group(1)
+        macro_pattern = r'\\\\' + re.escape(cmd_name) + r'(?:\[[^\]]*\])?\{[^}]*\}'
+        try:
+            m = re.search(macro_pattern, text)
+            if m:
+                return text[m.start():m.end()]
+        except Exception:
+            pass
 
-    pattern_str = r'\s+'.join(escaped_tokens)
+    # Case-insensitive unique match
     try:
-        m = re.search(pattern_str, text, re.DOTALL)
-        if m:
-            return text[m.start():m.end()]
+        escaped = re.escape(clean_target)
+        matches = list(re.finditer(escaped, text, re.IGNORECASE))
+        if len(matches) == 1:
+            return text[matches[0].start():matches[0].end()]
     except Exception:
         pass
+
+    return None
+
+
+def extract_direct_replacement(current_code: str, user_prompt: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Extracts explicit find-and-replace queries like:
+    - replace "Old text" with "New text"
+    - change 'Alice' to 'Bob'
+    - replace title with "My New Title"
+    - change author to "Dr. Smith"
+    - replace date with "October 2026"
+    Returns (original_chunk, proposed_chunk, explanation) or None.
+    """
+    if not current_code or not user_prompt:
+        return None
+
+    m = re.search(
+        r"(?:replace|change|substitute|swap)\s+[\"\'\`]?([^\"\'\`]+?)[\"\'\`]?\s+(?:with|to|for|by)\s+[\"\'\`]?([^\"\'\`\n\r]+)[\"\'\`]?",
+        user_prompt,
+        re.IGNORECASE
+    )
+    if not m:
+        return None
+
+    raw_orig = m.group(1).strip()
+    raw_prop = m.group(2).strip()
+    raw_orig = re.sub(r"^[\"\'\`]|[\"\'\`]$", "", raw_orig).strip()
+    raw_prop = re.sub(r"^[\"\'\`]|[\"\'\`]$", "", raw_prop).strip()
+
+    if not raw_orig or not raw_prop:
+        return None
+
+    orig_lower = raw_orig.lower()
+    if orig_lower in ("title", "the title", "presentation title", "document title"):
+        tm = re.search(r"\\\\title(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if tm:
+            return tm.group(0), f"\\title{{{raw_prop}}}", f"Replaced title with '{raw_prop}'"
+    elif orig_lower in ("author", "the author", "presenter", "authors"):
+        am = re.search(r"\\\\author(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if am:
+            return am.group(0), f"\\author{{{raw_prop}}}", f"Replaced author with '{raw_prop}'"
+    elif orig_lower in ("date", "the date"):
+        dm = re.search(r"\\\\date(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if dm:
+            return dm.group(0), f"\\date{{{raw_prop}}}", f"Replaced date with '{raw_prop}'"
+    elif orig_lower in ("subtitle", "the subtitle"):
+        sm = re.search(r"\\\\subtitle(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if sm:
+            return sm.group(0), f"\\subtitle{{{raw_prop}}}", f"Replaced subtitle with '{raw_prop}'"
+    elif orig_lower in ("institute", "the institute", "organization"):
+        im = re.search(r"\\\\institute(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if im:
+            return im.group(0), f"\\institute{{{raw_prop}}}", f"Replaced institute with '{raw_prop}'"
+    elif orig_lower in ("theme", "the theme", "beamer theme"):
+        thm = re.search(r"\\\\usetheme(?:\[[^\]]*\])?\{[^}]*\}", current_code)
+        if thm:
+            return thm.group(0), f"\\usetheme{{{raw_prop}}}", f"Replaced theme with '{raw_prop}'"
+
+    if raw_orig in current_code:
+        return raw_orig, raw_prop, f"Replaced '{raw_orig}' with '{raw_prop}'"
+
+    fuzzy_match = find_verbatim_or_fuzzy(current_code, raw_orig)
+    if fuzzy_match:
+        return fuzzy_match, raw_prop, f"Replaced '{fuzzy_match}' with '{raw_prop}'"
+
     return None
 
 
@@ -1129,6 +1214,456 @@ async def agent_chat(request: Request):
             if mode == "EDIT_DOCUMENT" and has_existing_code and req.current_code:
                 try:
                     document_structure = doc_idx.parse_document_structure(req.current_code)
+
+                    # ── Broad-edit detection ──────────────────────────────
+                    # If the instruction targets ALL chapters/sections/slides,
+                    # run a per-target iteration loop instead of a single LLM call.
+                    if doc_idx.is_broad_instruction(req.user_prompt):
+                        is_fix_all = doc_idx.is_fix_all_instruction(req.user_prompt)
+                        broad_targets = doc_idx.resolve_all_targets(
+                            document_structure,
+                            include_preamble=is_fix_all,
+                        )
+
+                        MAX_BROAD_TARGETS = 12
+                        if broad_targets and len(broad_targets) >= 2:
+                            if len(broad_targets) > MAX_BROAD_TARGETS:
+                                yield sse_event("progress", {
+                                    "step": "broad_limit",
+                                    "message": f"Too many targets ({len(broad_targets)}) — limiting to first {MAX_BROAD_TARGETS}",
+                                    "icon": "alert-triangle"
+                                })
+                                broad_targets = broad_targets[:MAX_BROAD_TARGETS]
+
+                            target_titles = [t.title for t in broad_targets]
+                            yield sse_event("progress", {
+                                "step": "broad_edit",
+                                "message": f"Found {len(broad_targets)} sections — editing each individually",
+                                "icon": "layers"
+                            })
+                            logger.info(f"Broad edit mode: {len(broad_targets)} targets: {target_titles}")
+
+                            # Load memory & project context for the loop
+                            conv_ctx = conversation_memory.get_conversation_context(req.project_id)
+                            proj_ctx = project_memory.get_project_context(req.project_id)
+                            proj_assets = get_project_assets_info(req.project_id)
+                            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
+
+                            # Load attached file for the broad-edit loop
+                            broad_attached_info = None
+                            if req.attached_file and req.attached_file.content:
+                                yield sse_event("progress", {"step": "file", "message": f"Extracting content from {req.attached_file.filename}...", "icon": "paperclip"})
+                                processed_content = process_attached_file_content(
+                                    filename=req.attached_file.filename,
+                                    content=req.attached_file.content,
+                                    file_type=req.attached_file.file_type or "text/plain",
+                                )
+                                broad_attached_info = {
+                                    "filename": req.attached_file.filename,
+                                    "file_type": req.attached_file.file_type or "text/plain",
+                                    "content": processed_content,
+                                }
+                                conversation_memory.set_attached_file(req.project_id, broad_attached_info)
+                                yield sse_event("progress", {"step": "file_done", "message": f"Attached: {req.attached_file.filename}", "icon": "check-square"})
+                            else:
+                                # Retrieve persistent attached document context from memory
+                                cached_file_info = conversation_memory.get_attached_file(req.project_id)
+                                if cached_file_info:
+                                    broad_attached_info = cached_file_info
+                                    logger.info(f"Broad-edit referencing persistent attached document: '{cached_file_info.get('filename')}'")
+                                    yield sse_event("progress", {"step": "file_cached", "message": f"Referencing document: {cached_file_info.get('filename')}", "icon": "paperclip"})
+
+                            # Resolve provider
+                            raw_model = req.model or ""
+                            if " (via " in raw_model:
+                                raw_model = raw_model.split(" (via ", 1)[0]
+                            if raw_model.lower().startswith("via "):
+                                raw_model = ""
+                            if "(" in raw_model and raw_model.endswith(")"):
+                                raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+                            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+                            provider = provider_router.route(primary_model)
+                            provider_name = provider.get_provider_name()
+
+                            broad_edits = []
+                            total_targets = len(broad_targets)
+
+                            for t_idx, target_page in enumerate(broad_targets):
+                                yield sse_event("progress", {
+                                    "step": "broad_iter",
+                                    "message": f"Editing [{t_idx + 1}/{total_targets}]: {target_page.title}",
+                                    "icon": "edit-3"
+                                })
+
+                                # Build scoped prompt for this single chapter
+                                iter_messages = prompt_builder.build_broad_edit_prompt(
+                                    user_request=req.user_prompt,
+                                    page_id=target_page.page_id,
+                                    page_title=target_page.title,
+                                    page_content=target_page.content,
+                                    page_index=t_idx,
+                                    total_targets=total_targets,
+                                    conversation_context=conv_ctx,
+                                    project_context=full_proj_context,
+                                    attached_file_info=broad_attached_info,
+                                )
+
+                                system_content = iter_messages[0].content if len(iter_messages) > 0 else ""
+                                user_content = iter_messages[1].content if len(iter_messages) > 1 else ""
+
+                                iter_messages_list = []
+                                if system_content:
+                                    iter_messages_list.append({"role": "system", "content": system_content})
+                                iter_messages_list.append({"role": "user", "content": user_content})
+
+                                # Call LLM with tight per-chapter budget
+                                try:
+                                    iter_result = None
+                                    async for item in run_step_with_heartbeat(
+                                        provider.chat,
+                                        messages=iter_messages_list,
+                                        model=primary_model,
+                                        temperature=0.1,
+                                        max_tokens=4096,
+                                        api_keys=req.api_keys,
+                                    ):
+                                        if isinstance(item, str) and item.startswith(":"):
+                                            yield item
+                                        else:
+                                            iter_result = item
+
+                                    if iter_result and iter_result.get("content"):
+                                        parsed = clean_json_response(iter_result["content"])
+                                        iter_edits = parsed.get("edits", [])
+                                        if not iter_edits:
+                                            oc = parsed.get("original_chunk", "")
+                                            pc = parsed.get("proposed_chunk", "")
+                                            if oc or pc:
+                                                iter_edits = [{"original_chunk": oc, "proposed_chunk": pc, "explanation": parsed.get("explanation", "")}]
+
+                                        # If no edits parsed, try extracting LaTeX directly
+                                        if not iter_edits:
+                                            extracted_latex = extract_chunk_latex(iter_result["content"])
+                                            if extracted_latex:
+                                                iter_edits = [{
+                                                    "original_chunk": target_page.content,
+                                                    "proposed_chunk": extracted_latex,
+                                                    "explanation": f"Edited {target_page.title}",
+                                                }]
+
+                                        for e in iter_edits:
+                                            pc = e.get("proposed_chunk", "")
+                                            oc = e.get("original_chunk", "")
+
+                                            # Sanitize proposed chunk
+                                            if pc:
+                                                e["proposed_chunk"] = sanitize_latex_code(pc)
+
+                                            # Ensure original_chunk aligns with the actual page content
+                                            if not oc or oc.strip() == "":
+                                                e["original_chunk"] = target_page.content
+                                            else:
+                                                matched = find_verbatim_or_fuzzy(req.current_code, oc)
+                                                if matched:
+                                                    e["original_chunk"] = matched
+                                                elif target_page.content in req.current_code:
+                                                    e["original_chunk"] = target_page.content
+
+                                            # Strip document-level wrappers from proposed
+                                            if "\\documentclass" in e.get("proposed_chunk", ""):
+                                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', e["proposed_chunk"])
+                                                if inner_m:
+                                                    e["proposed_chunk"] = inner_m.group(1).strip()
+
+                                            if e.get("proposed_chunk"):
+                                                # Check if this is a no-op edit (already OK / no changes needed)
+                                                if oc and e.get("proposed_chunk", "").strip() == oc.strip():
+                                                    logger.info(f"Broad edit: target '{target_page.title}' already clean/unchanged, skipping no-op edit")
+                                                    continue
+                                                broad_edits.append(e)
+
+                                except Exception as iter_err:
+                                    logger.warning(f"Broad edit iteration {t_idx + 1} failed for '{target_page.title}': {iter_err}")
+                                    yield sse_event("progress", {
+                                        "step": "broad_iter_warn",
+                                        "message": f"Failed to edit {target_page.title}: {str(iter_err)[:60]}",
+                                        "icon": "alert-triangle"
+                                    })
+
+                            # Validate and assemble broad edits
+                            if broad_edits:
+                                try:
+                                    validation = edit_validator.validate_edit(
+                                        original_code=req.current_code or "",
+                                        proposed_edits=broad_edits,
+                                    )
+                                    if not validation.passed:
+                                        broad_edits, repairs = edit_validator.auto_repair_edits(
+                                            proposed_edits=broad_edits,
+                                            original_code=req.current_code or "",
+                                        )
+                                        if repairs:
+                                            logger.info(f"Broad edit auto-repaired {len(repairs)} issues: {repairs}")
+                                            yield sse_event("progress", {
+                                                "step": "repair",
+                                                "message": f"Auto-fixed {len(repairs)} issue(s)",
+                                                "icon": "tool"
+                                            })
+                                except Exception as val_err:
+                                    logger.warning(f"Broad edit validation error: {val_err}")
+
+                            # Store in memory
+                            conversation_memory.add_turn(
+                                project_id=req.project_id,
+                                user_prompt=req.user_prompt,
+                                assistant_response={"edits": broad_edits, "plan": f"Broad edit: {len(broad_edits)} sections updated" if broad_edits else "Audit complete: all sections clean"},
+                                file_path=req.file_path,
+                                chunk_summaries=[],
+                            )
+
+                            first_orig = broad_edits[0].get("original_chunk", "") if broad_edits else ""
+                            first_prop = broad_edits[0].get("proposed_chunk", "") if broad_edits else ""
+
+                            if broad_edits:
+                                overall_exp = f"Edited {len(broad_edits)} sections individually as requested."
+                                yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} sections edited", "icon": "check"})
+                                plan_msg = f"Broad edit: applied changes to {len(broad_edits)} sections individually"
+                            else:
+                                overall_exp = "All sections verified: no broken code or comment overlap found. Code is clean and compilable."
+                                yield sse_event("progress", {"step": "done", "message": "All sections clean — no issues found", "icon": "check"})
+                                plan_msg = "Audit complete: all sections verified, code is clean and compilable."
+
+                            yield sse_event("result", {
+                                "plan": plan_msg,
+                                "edits": broad_edits,
+                                "original_chunk": first_orig,
+                                "proposed_chunk": first_prop,
+                                "explanation": overall_exp,
+                                "retrieved_chunks_count": 0,
+                                "model_used": primary_model,
+                                "is_fallback": False,
+                                "is_broad_edit": True,
+                            })
+                            return
+                        # End of broad-edit branch — fall through to single-target
+
+                    # ── Append-to-collection branch (third intent) ───────
+                    if doc_idx.is_append_to_collection_instruction(req.user_prompt):
+                        collection = doc_idx.resolve_collection(
+                            document_structure, req.current_code, req.user_prompt
+                        )
+                        if collection:
+                            next_ordinal, next_label = doc_idx.compute_next_ordinal(collection)
+                            yield sse_event("progress", {
+                                "step": "collection",
+                                "message": f"Appending to {collection.parent_title} as {next_label} (Item {next_ordinal})...",
+                                "icon": "list-plus"
+                            })
+                            logger.info(
+                                f"Append-to-collection matched: type={collection.collection_type}, "
+                                f"parent='{collection.parent_title}', count={collection.current_count}, "
+                                f"next_ordinal={next_ordinal}, next_label='{next_label}'"
+                            )
+
+                            conv_ctx = conversation_memory.get_conversation_context(req.project_id)
+                            proj_ctx = project_memory.get_project_context(req.project_id)
+                            proj_assets = get_project_assets_info(req.project_id)
+                            full_proj_context = f"{proj_ctx}\n\n{proj_assets}".strip()
+
+                            attached_info = None
+                            if req.attached_file and req.attached_file.content:
+                                attached_info = {
+                                    "filename": req.attached_file.filename,
+                                    "file_type": req.attached_file.file_type or "text/plain",
+                                    "content": req.attached_file.content,
+                                }
+
+                            append_messages = prompt_builder.build_append_to_collection_prompt(
+                                user_request=req.user_prompt,
+                                collection_entry=collection,
+                                next_ordinal=next_ordinal,
+                                next_label=next_label,
+                                sample_members=collection.sample_members,
+                                conversation_context=conv_ctx,
+                                project_context=full_proj_context,
+                                attached_file_info=attached_info,
+                            )
+
+                            system_content = ""
+                            user_content = ""
+                            for m in append_messages:
+                                if isinstance(m, SystemMessage):
+                                    system_content = m.content
+                                elif isinstance(m, HumanMessage):
+                                    user_content = m.content
+
+                            raw_model = req.model or ""
+                            if " (via " in raw_model:
+                                raw_model = raw_model.split(" (via ", 1)[0]
+                            if raw_model.lower().startswith("via "):
+                                raw_model = ""
+                            if "(" in raw_model and raw_model.endswith(")"):
+                                raw_model = raw_model.rsplit("(", 1)[-1].rstrip(")")
+                            primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
+
+                            provider = provider_router.route(primary_model)
+                            provider_name = provider.get_provider_name()
+                            yield sse_event("progress", {
+                                "step": "llm_call",
+                                "message": f"Generating item with {provider_name} ({primary_model})...",
+                                "icon": "sparkles"
+                            })
+
+                            messages_list = []
+                            if system_content:
+                                messages_list.append({"role": "system", "content": system_content})
+                            messages_list.append({"role": "user", "content": user_content})
+
+                            iter_result = None
+                            async for item in run_step_with_heartbeat(
+                                provider.chat,
+                                messages=messages_list,
+                                model=primary_model,
+                                temperature=0.1,
+                                max_tokens=4096,
+                                api_keys=req.api_keys,
+                            ):
+                                if isinstance(item, str) and item.startswith(":"):
+                                    yield item
+                                else:
+                                    iter_result = item
+
+                            response_text = iter_result.get("content", "") if iter_result else ""
+                            parsed = clean_json_response(response_text)
+
+                            new_content = ""
+                            if parsed.get("content"):
+                                new_content = parsed["content"]
+                            elif parsed.get("proposed_chunk"):
+                                new_content = parsed["proposed_chunk"]
+                            elif parsed.get("edits"):
+                                new_content = parsed["edits"][0].get("proposed_chunk", "")
+                            elif parsed.get("new_code"):
+                                new_content = parsed["new_code"]
+
+                            if not new_content:
+                                extracted = extract_chunk_latex(response_text)
+                                if extracted:
+                                    new_content = extracted
+
+                            if not new_content:
+                                new_content = response_text.strip()
+
+                            new_content = sanitize_latex_code(new_content)
+                            if "\\documentclass" in new_content:
+                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', new_content)
+                                if inner_m:
+                                    new_content = inner_m.group(1).strip()
+
+                            # Validate and fix numbering continuity deterministically
+                            continuity_issues = edit_validator.validate_numbering_continuity(
+                                new_content, collection, next_ordinal
+                            )
+                            if continuity_issues:
+                                logger.warning(
+                                    f"Numbering issue detected in LLM output: {[i.message for i in continuity_issues]}. "
+                                    f"Applying deterministic ordinal fix for {next_label}."
+                                )
+                                if collection.collection_type == "beamer_frame_group":
+                                    if re.search(r"\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]*)\}", new_content):
+                                        new_content = re.sub(
+                                            r"\\begin\{frame\}((?:\[[^\]]*\])?)\s*\{([^}]*)\}",
+                                            rf"\\begin{{frame}}\1{{{next_label}}}",
+                                            new_content,
+                                            count=1,
+                                        )
+                                    elif re.search(r"\\frametitle\{([^}]*)\}", new_content):
+                                        new_content = re.sub(
+                                            r"\\frametitle\{([^}]*)\}",
+                                            rf"\\frametitle{{{next_label}}}",
+                                            new_content,
+                                            count=1,
+                                        )
+                                elif collection.collection_type == "bibitem":
+                                    new_content = re.sub(
+                                        r"\\bibitem(?:\[[^\]]*\])?\{[^}]+\}",
+                                        next_label,
+                                        new_content,
+                                        count=1,
+                                    )
+
+                            last_member_content = ""
+                            if collection.member_offsets:
+                                last_start, last_end = collection.member_offsets[-1]
+                                last_member_content = req.current_code[last_start:last_end]
+
+                            separator = "\n\n" if collection.collection_type in ("beamer_frame_group", "table_rows") else "\n"
+
+                            if last_member_content and last_member_content in req.current_code:
+                                edit_item = {
+                                    "action": "insert_after",
+                                    "collection_id": collection.collection_id,
+                                    "insertion_offset": collection.last_member_end_offset,
+                                    "original_chunk": last_member_content,
+                                    "proposed_chunk": f"{last_member_content}{separator}{new_content.strip()}",
+                                    "explanation": f"Appended {next_label} to {collection.parent_title}",
+                                }
+                            else:
+                                edit_item = {
+                                    "action": "insert_after",
+                                    "collection_id": collection.collection_id,
+                                    "insertion_offset": collection.last_member_end_offset,
+                                    "original_chunk": "",
+                                    "proposed_chunk": new_content.strip(),
+                                    "explanation": f"Appended {next_label} to {collection.parent_title}",
+                                }
+
+                            validation = edit_validator.validate_edit(
+                                original_code=req.current_code,
+                                proposed_edits=[edit_item],
+                                collection_entry=collection,
+                                expected_ordinal=next_ordinal,
+                            )
+                            if not validation.passed:
+                                logger.warning(
+                                    f"Append validation had errors: {[i.message for i in validation.issues if i.severity == 'error']}"
+                                )
+
+                            conversation_memory.add_turn(
+                                project_id=req.project_id,
+                                user_prompt=req.user_prompt,
+                                assistant_response={
+                                    "plan": f"Appended {next_label} after existing {collection.current_count} items in {collection.parent_title}.",
+                                    "edits": [edit_item],
+                                    "explanation": edit_item["explanation"],
+                                },
+                                file_path=req.file_path,
+                                chunk_summaries=[],
+                            )
+
+                            yield sse_event("progress", {"step": "done", "message": f"Appended {next_label}", "icon": "check"})
+
+                            yield sse_event("result", {
+                                "plan": f"Appended {next_label} after existing {collection.current_count} items in {collection.parent_title}.",
+                                "edits": [edit_item],
+                                "original_chunk": edit_item["original_chunk"],
+                                "proposed_chunk": edit_item["proposed_chunk"],
+                                "explanation": f"Appended {next_label} to {collection.parent_title} directly following existing {collection.current_count} items.",
+                                "retrieved_chunks_count": 0,
+                                "model_used": primary_model,
+                                "is_fallback": False,
+                                "is_append_to_collection": True,
+                            })
+                            return
+                        else:
+                            yield sse_event("progress", {
+                                "step": "fallback_notice",
+                                "message": "No matching ordered collection found — creating as new content",
+                                "icon": "info"
+                            })
+                            logger.info("Append-to-collection instruction detected, but no collection resolved — falling through to standard creation")
+
+                    # ── Single-target resolution (existing path) ──────────
                     target_page_index = doc_idx.find_target_page(document_structure, req.user_prompt)
 
                     if target_page_index is not None:
@@ -1326,6 +1861,7 @@ async def agent_chat(request: Request):
                     model=primary_model,
                     temperature=0.1,
                     max_tokens=llm_max_tokens,
+                    api_keys=req.api_keys,
                 ):
                     if isinstance(item, str) and item.startswith(":"):
                         yield item
@@ -1428,6 +1964,7 @@ async def agent_chat(request: Request):
                         model=fallback_provider.default_model,
                         temperature=0.1,
                         max_tokens=llm_max_tokens,
+                        api_keys=req.api_keys,
                     ):
                         if isinstance(item, str) and item.startswith(":"):
                             yield item
@@ -1451,6 +1988,43 @@ async def agent_chat(request: Request):
                 except Exception as fb_err:
                     logger.warning(f"Fallback attempt failed: {fb_err}")
 
+            # Check if user requested a deletion/removal
+            is_delete_req = any(kw in req.user_prompt.lower() for kw in [
+                "delete", "remove", "drop", "erase", "omit", "get rid of", "strip", "cut"
+            ])
+
+            # Fallback creation for deletion requests if model returned explanation without JSON edits
+            if not edits and is_delete_req and has_existing_code and req.current_code:
+                try:
+                    doc_struct = locals().get("document_structure") or doc_idx.parse_document_structure(req.current_code)
+                    tgt_idx = locals().get("target_page_index")
+                    if tgt_idx is None and doc_struct:
+                        tgt_idx = doc_idx.find_target_page(doc_struct, req.user_prompt)
+                    if tgt_idx is not None and doc_struct:
+                        tp = doc_struct.get_page_by_index(tgt_idx)
+                        if tp and tp.content and tp.content in req.current_code:
+                            edits = [{
+                                "original_chunk": tp.content,
+                                "proposed_chunk": "",
+                                "explanation": f"Removed {tp.title or f'slide {tgt_idx}'} as requested."
+                            }]
+                except Exception as del_err:
+                    logger.warning(f"Fallback deletion creation error: {del_err}")
+
+            # Fallback creation for direct replacement requests if model returned explanation without JSON edits
+            if not edits and has_existing_code and req.current_code:
+                try:
+                    direct_rep = extract_direct_replacement(req.current_code, req.user_prompt)
+                    if direct_rep:
+                        d_orig, d_prop, d_exp = direct_rep
+                        edits = [{
+                            "original_chunk": d_orig,
+                            "proposed_chunk": d_prop,
+                            "explanation": d_exp
+                        }]
+                except Exception as rep_err:
+                    logger.warning(f"Direct replacement fallback error: {rep_err}")
+
             # If existing document code exists, align proposed edits
             if edits and has_existing_code and req.current_code and "\\end{document}" in req.current_code:
                 # Detect if user prompt requests replacing/customizing template or document content
@@ -1469,10 +2043,36 @@ async def agent_chat(request: Request):
                     ("\\begin{letter}" in req.current_code)
                 )
 
+                doc_struct = locals().get("document_structure")
+                if not doc_struct:
+                    try:
+                        doc_struct = doc_idx.parse_document_structure(req.current_code)
+                    except Exception:
+                        doc_struct = None
+
+                tgt_idx = locals().get("target_page_index")
+                if tgt_idx is None and doc_struct:
+                    try:
+                        tgt_idx = doc_idx.find_target_page(doc_struct, req.user_prompt)
+                    except Exception:
+                        tgt_idx = None
+
                 for e in edits:
                     oc = e.get("original_chunk", "")
                     pc = e.get("proposed_chunk", "")
-                    if not pc:
+
+                    # Handle deletion edits (where proposed_chunk is empty or user requested deletion)
+                    if not pc or pc.strip() == "" or (is_delete_req and not ("\\begin{frame}" in pc and "\\end{frame}" in pc)):
+                        matched_orig = find_verbatim_or_fuzzy(req.current_code, oc) if oc else None
+                        if matched_orig:
+                            e["original_chunk"] = matched_orig
+                        elif tgt_idx is not None and doc_struct:
+                            target_page = doc_struct.get_page_by_index(tgt_idx)
+                            if target_page and target_page.content and target_page.content in req.current_code:
+                                e["original_chunk"] = target_page.content
+                        elif oc and oc.strip() in req.current_code:
+                            e["original_chunk"] = oc.strip()
+                        e["proposed_chunk"] = ""
                         continue
 
                     if "aspectratio=160" in pc:
@@ -1482,9 +2082,40 @@ async def agent_chat(request: Request):
                     # 1. Standalone full document returned (\documentclass ... \begin{document})
                     # Keep \documentclass intact so the editor cleanly replaces the entire document
                     if "\\documentclass" in pc and "\\begin{document}" in pc:
-                        e["original_chunk"] = req.current_code
-                        e["proposed_chunk"] = pc
-                        continue
+                        # GUARD: If existing document has substantially more structure than proposed,
+                        # the LLM likely hallucinated a partial rewrite. Extract inner content instead.
+                        if has_existing_code and req.current_code:
+                            orig_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', req.current_code))
+                            prop_sections = len(re.findall(r'\\(?:chapter|section|subsection)\{', pc))
+                            orig_frames = len(re.findall(r'\\begin\{frame\}', req.current_code))
+                            prop_frames = len(re.findall(r'\\begin\{frame\}', pc))
+                            orig_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', req.current_code))
+                            prop_envs = len(re.findall(r'\\begin\{(?:titlepage|thebibliography|tabular|figure|table)\}', pc))
+                            
+                            # If proposed lost >50% of sections/frames or key environments, it's a bad rewrite
+                            lost_sections = orig_sections > 3 and prop_sections < orig_sections * 0.5
+                            lost_frames = orig_frames > 3 and prop_frames < orig_frames * 0.5
+                            lost_envs = orig_envs > 0 and prop_envs == 0
+                            
+                            if lost_sections or lost_frames or lost_envs:
+                                logger.warning(f"Prevented full doc replacement: sections {orig_sections}->{prop_sections}, frames {orig_frames}->{prop_frames}, envs {orig_envs}->{prop_envs}")
+                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', pc)
+                                if inner_m:
+                                    pc = inner_m.group(1).strip()
+                                    e["proposed_chunk"] = pc
+                                    # Fall through to the rest of the edit parsing logic
+                                else:
+                                    e["original_chunk"] = req.current_code
+                                    e["proposed_chunk"] = pc
+                                    continue
+                            else:
+                                e["original_chunk"] = req.current_code
+                                e["proposed_chunk"] = pc
+                                continue
+                        else:
+                            e["original_chunk"] = req.current_code
+                            e["proposed_chunk"] = pc
+                            continue
 
                     # 2. Check if original_chunk matches verbatim or with normalized whitespace
                     matched_orig = find_verbatim_or_fuzzy(req.current_code, oc) if oc else None
@@ -1497,15 +2128,8 @@ async def agent_chat(request: Request):
                     # so edits replace the existing slide in-place, NEVER duplicating at the document bottom!
                     if "\\begin{frame}" in pc and "\\end{frame}" in pc:
                         frame_matched = False
-                        doc_struct = locals().get("document_structure")
-                        if not doc_struct:
-                            try:
-                                doc_struct = doc_idx.parse_document_structure(req.current_code)
-                            except Exception:
-                                doc_struct = None
 
                         # Match by identified target slide index from Step 3
-                        tgt_idx = locals().get("target_page_index")
                         if tgt_idx is not None and doc_struct:
                             target_page = doc_struct.get_page_by_index(tgt_idx)
                             if target_page and target_page.content and target_page.content in req.current_code:

@@ -68,6 +68,8 @@ class FreeLLMProvider(LLMProvider):
             {"id": "auto", "label": "FreeLLM Auto Router", "default": False},
             {"id": "auto:fast", "label": "FreeLLM Auto Fast", "default": False},
             {"id": "openai/gpt-oss-120b", "label": "GPT-OSS-120B", "default": False},
+            {"id": "gemini-3.5-flash", "label": "FreeLLM 3.5 Flash", "default": False},
+            {"id": "gemini-3.6-flash", "label": "FreeLLM 3.6 Flash", "default": False},
         ]
 
     def chat(
@@ -76,8 +78,19 @@ class FreeLLMProvider(LLMProvider):
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,
+        api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        if not self.candidates:
+        runtime_candidates = []
+        if api_keys and api_keys.get("freellm"):
+            runtime_candidates.append({
+                "name": "User FreeLLM API",
+                "key": api_keys["freellm"].strip(),
+                "url": self.chat_url if self.chat_url else "https://api.groq.com/openai/v1/chat/completions",
+                "model": self.default_model
+            })
+            
+        candidates = runtime_candidates + self.candidates
+        if not candidates:
             raise LLMProviderError(
                 "No FreeLLM or Groq API keys configured.",
                 provider="FreeLLM",
@@ -99,7 +112,7 @@ class FreeLLMProvider(LLMProvider):
         # Use full max_tokens (default 4096) to ensure complete presentations without truncation
         adjusted_max_tokens = max_tokens
 
-        for idx, creds in enumerate(self.candidates):
+        for idx, creds in enumerate(candidates):
             start_time = time.time()
             req_model = target_model if creds["name"] == "FreeLLM API Router" else creds["model"]
             logger.info(f"FreeLLM Provider → Key: {creds['name']} | Endpoint: {creds['url']} | Model: {req_model}")

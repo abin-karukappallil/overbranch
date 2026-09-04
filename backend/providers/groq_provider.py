@@ -52,10 +52,17 @@ class GroqProvider(LLMProvider):
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,
+        api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        if not self.candidates:
+        runtime_candidates = []
+        if api_keys and api_keys.get("groq"):
+            runtime_candidates.append({"name": "User Groq API", "key": api_keys["groq"].strip()})
+        
+        candidates = runtime_candidates + self.candidates
+
+        if not candidates:
             raise LLMProviderError(
-                "No Groq API keys configured. Set GROQ_API_KEY in .env.",
+                "No Groq API keys configured. Provide one in settings or set GROQ_API_KEY in .env.",
                 provider="Groq",
             )
 
@@ -65,7 +72,7 @@ class GroqProvider(LLMProvider):
         # Use full max_tokens (default 4096) to ensure complete presentations without truncation
         adjusted_max_tokens = max_tokens
 
-        for idx, creds in enumerate(self.candidates):
+        for idx, creds in enumerate(candidates):
             start_time = time.time()
             logger.info(f"Groq Request → Key: {creds['name']} | Model: {target_model} | Approx Tokens: {approx_tokens}")
 

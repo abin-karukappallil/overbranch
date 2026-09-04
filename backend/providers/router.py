@@ -13,6 +13,7 @@ from .base_provider import LLMProvider, LLMProviderError
 from .freellm_provider import FreeLLMProvider
 from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
+from .openrouter_provider import OpenRouterProvider
 
 logger = logging.getLogger("provider_router")
 
@@ -29,10 +30,12 @@ class ProviderRouter:
         self.freellm = FreeLLMProvider()
         self.groq = GroqProvider()
         self.gemini = GeminiProvider()
+        self.openrouter = OpenRouterProvider()
         self._providers: Dict[str, LLMProvider] = {
             "freellm": self.freellm,
             "groq": self.groq,
             "gemini": self.gemini,
+            "openrouter": self.openrouter,
         }
 
     def route(self, model: str) -> LLMProvider:
@@ -56,6 +59,15 @@ class ProviderRouter:
         # Groq specific
         if clean_model.startswith("groq/") or clean_model.startswith("groq:"):
             return self.groq
+
+        # OpenRouter specific
+        if (
+            clean_model.startswith("nvidia/")
+            or clean_model.startswith("minimax/")
+            or clean_model.startswith("deepseek/")
+            or clean_model.startswith("openrouter/")
+        ):
+            return self.openrouter
 
         # FreeLLM Provider for all other models (has built-in Groq fallback)
         return self.freellm
@@ -87,6 +99,14 @@ class ProviderRouter:
                 "models": freellm_models,
             })
 
+        # 3. OpenRouter API third
+        openrouter_models = self.openrouter.get_available_models()
+        if openrouter_models:
+            providers_list.append({
+                "name": self.openrouter.get_provider_name(),
+                "models": openrouter_models,
+            })
+
         return {
             "providers": providers_list,
             "default_model": DEFAULT_MODEL,
@@ -98,6 +118,7 @@ class ProviderRouter:
         model: str,
         temperature: float = 0.1,
         max_tokens: int = 4096,
+        api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Convenience method: routes to the correct provider and calls chat().
@@ -109,6 +130,7 @@ class ProviderRouter:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            api_keys=api_keys,
         )
 
 
