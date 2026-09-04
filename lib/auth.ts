@@ -51,4 +51,8 @@ export const auth = new Proxy({} as ReturnType<typeof createAuth>, {
     const val = (instance as any)[prop];
     return typeof val === "function" ? val.bind(instance) : val;
   },
+  has(_target, prop) {
+    const instance = getAuth();
+    return prop in instance;
+  },
 });

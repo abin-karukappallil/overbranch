@@ -41,4 +41,8 @@ export const db = new Proxy({} as ReturnType<typeof createDbClient>, {
     const val = (d as any)[prop];
     return typeof val === 'function' ? val.bind(d) : val;
   },
+  has(_target, prop) {
+    const d = getDb();
+    return prop in d;
+  },
 });
