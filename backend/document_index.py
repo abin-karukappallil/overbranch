@@ -548,3 +548,85 @@ def get_page_window(
             window_pages = [pages[0]] + window_pages
 
     return window_pages
+
+
+# ---------------------------------------------------------------------------
+# Broad / plural instruction detection
+# ---------------------------------------------------------------------------
+
+# Patterns that indicate the user wants to edit ALL sections/chapters/slides,
+# not just a single specific one.
+_BROAD_PATTERNS = [
+    re.compile(r"\b(?:all|every|each)\s+(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
+    re.compile(r"\b(?:all|every|each)\s+(?:of\s+)?(?:the\s+)?(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
+    re.compile(r"\bthroughout\s+(?:the\s+)?(?:document|presentation|paper|report)\b", re.IGNORECASE),
+    re.compile(r"\b(?:entire|whole|full)\s+(?:document|presentation|paper|report)\b", re.IGNORECASE),
+    re.compile(r"\bevery\s+(?:single\s+)?(?:chapter|section|slide|frame|page|part)\b", re.IGNORECASE),
+    re.compile(r"\b(?:across|in)\s+all\s+(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
+    re.compile(r"\ball\s+(?:the\s+)?(?:existing\s+)?(?:chapter|section|slide|frame|page|part)s?\b", re.IGNORECASE),
+]
+
+
+def is_broad_instruction(user_instruction: str) -> bool:
+    """
+    Detect whether a user instruction targets multiple / all sections
+    rather than a single specific one.
+
+    Returns True for instructions like:
+      - "elaborate the content in all chapters"
+      - "add more detail to every section"
+      - "improve content throughout the document"
+      - "expand each slide"
+
+    Returns False for single-target instructions like:
+      - "expand the methodology section"
+      - "edit slide 3"
+      - "fix the introduction"
+    """
+    if not user_instruction:
+        return False
+
+    text = user_instruction.strip()
+    for pattern in _BROAD_PATTERNS:
+        if pattern.search(text):
+            logger.info(f"Broad instruction detected: '{text[:80]}' matched {pattern.pattern}")
+            return True
+
+    return False
+
+
+def resolve_all_targets(
+    doc_index: DocumentIndex,
+    target_type: Optional[str] = None,
+) -> List[PageEntry]:
+    """
+    Return all content PageEntry objects of the requested type.
+
+    For broad/plural instructions, this returns every chapter/section/frame
+    in the document (excluding preamble and postamble) so the caller can
+    iterate over them individually.
+
+    Args:
+        doc_index: Parsed document index.
+        target_type: Optional filter — "frame", "section", or None for all
+                     content pages.
+
+    Returns:
+        List of PageEntry objects matching the filter, in document order.
+    """
+    if not doc_index.pages:
+        return []
+
+    content_pages = [
+        p for p in doc_index.pages
+        if p.page_type not in ("preamble", "postamble")
+    ]
+
+    if target_type:
+        content_pages = [p for p in content_pages if p.page_type == target_type]
+
+    logger.info(
+        f"resolve_all_targets: {len(content_pages)} targets "
+        f"(type={target_type or 'all'}, total_pages={len(doc_index.pages)})"
+    )
+    return content_pages
