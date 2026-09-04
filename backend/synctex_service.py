@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import shutil
 import subprocess
 import logging
 from pathlib import Path
@@ -230,3 +232,30 @@ def invalidate_project_synctex_cache(project_id: Optional[str]) -> None:
     keys_to_del = [k for k in _LOOKUP_CACHE if k.startswith(prefix_bwd) or k.startswith(prefix_fwd)]
     for k in keys_to_del:
         _LOOKUP_CACHE.pop(k, None)
+
+
+def cleanup_stale_synctex_cache(max_age_hours: int = 24) -> int:
+    """
+    Remove synctex cache directories older than max_age_hours.
+    Prevents /tmp/overbranch_synctex_cache from growing unbounded and filling disk.
+    Returns number of purged directories.
+    """
+    purged = 0
+    cutoff = time.time() - (max_age_hours * 3600)
+    try:
+        if not SYNCTEX_CACHE_DIR.exists():
+            return 0
+        for entry in SYNCTEX_CACHE_DIR.iterdir():
+            if entry.is_dir():
+                try:
+                    if entry.stat().st_mtime < cutoff:
+                        shutil.rmtree(entry, ignore_errors=True)
+                        purged += 1
+                except Exception as e:
+                    logger.debug(f"Could not purge synctex cache entry {entry}: {e}")
+    except Exception as e:
+        logger.warning(f"Error scanning synctex cache directory: {e}")
+    if purged > 0:
+        logger.info(f"Purged {purged} stale synctex cache directories (> {max_age_hours}h old).")
+    return purged
+
