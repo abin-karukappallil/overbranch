@@ -141,12 +141,6 @@ async def convert_guest_pdf(request: Request):
                     "limit": 1,
                 },
             )
-                "detail": reason or "Guest conversion limit reached (1 conversion per 24 hours).",
-                "resets_at": resets_at.isoformat() if resets_at else None,
-                "conversions_used": used,
-                "limit": 1,
-            },
-        )
 
     # 3. Prevent duplicate concurrent conversions on this session
     async with _lock:
