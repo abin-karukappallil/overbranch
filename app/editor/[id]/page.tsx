@@ -2,11 +2,24 @@
 
 import React, { use } from "react";
 import Link from "next/link";
-import { EditorLayout } from "@/components/editor/EditorLayout";
+import dynamic from "next/dynamic";
 import { authClient } from "@/lib/auth-client";
 import { trpc } from "@/trpc/client";
 import { ShieldAlert, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+
+const EditorLayout = dynamic(
+  () => import("@/components/editor/EditorLayout").then((mod) => mod.EditorLayout),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-muted-foreground gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+        <span className="text-xs font-mono">Initializing editor workspace...</span>
+      </div>
+    ),
+  }
+);
 
 interface StandaloneProjectEditorPageProps {
   params: Promise<{ id: string }>;
@@ -24,7 +37,7 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     error,
   } = trpc.projects.getById.useQuery(
     { projectId },
-    { enabled: !!projectId, retry: false }
+    { enabled: !!projectId && !isSessionLoading, retry: 1 }
   );
 
   if (isSessionLoading || isProjectLoading) {
