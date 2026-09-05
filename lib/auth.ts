@@ -16,7 +16,7 @@ function createAuth() {
     };
   } else if (typeof window === "undefined") {
     console.warn(
-      "[Better-Auth] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing. Google social sign-in will be disabled until set in Cloudflare secrets."
+      "[Better-Auth] GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET is missing. Google social sign-in will be disabled until set in environment variables."
     );
   }
 

@@ -7,11 +7,11 @@ function createDbClient() {
   let connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error(
-      '[DATABASE_ERROR] DATABASE_URL is not set. Please add the DATABASE_URL secret in Cloudflare Workers.'
+      '[DATABASE_ERROR] DATABASE_URL is not set. Please configure DATABASE_URL in Vercel environment variables or .env file.'
     );
   }
 
-  // In Cloudflare Workers / Serverless, Supabase Pooler MUST use port 6543 (Transaction Mode)
+  // In Serverless Functions, Supabase Pooler MUST use port 6543 (Transaction Mode)
   // Port 5432 is Session mode, which exhausts connection slots and causes requests to hang.
   if (connectionString.includes('pooler.supabase.com:5432')) {
     connectionString = connectionString.replace('pooler.supabase.com:5432', 'pooler.supabase.com:6543');
@@ -30,7 +30,7 @@ function createDbClient() {
 
 // React cache ensures getDb() returns a memoized DB client for the duration of the
 // current request lifecycle, and is discarded when the request completes.
-// This prevents dead TCP sockets from being reused across requests in Cloudflare Workers.
+// This prevents dead TCP sockets from being reused across requests in Serverless Functions.
 export const getDb = cache(() => {
   return createDbClient();
 });

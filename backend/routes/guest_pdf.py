@@ -51,6 +51,7 @@ class GuestConvertRequest(BaseModel):
     pdf_data: str = Field(..., description="Base64-encoded PDF or data URL")
     project_name: Optional[str] = Field(None, description="Optional custom name for new project")
     model: Optional[str] = Field(None, description="Optional target LLM model")
+    user_id: Optional[str] = Field(None, description="Optional authenticated User ID")
 
 
 class GuestMigrateRequest(BaseModel):
@@ -85,8 +86,8 @@ async def convert_guest_pdf(request: Request):
     """
     Public conversion endpoint:
     1. Authenticates/establishes guest session
-    2. Enforces strict 24-hour quota (1 conversion / 24h)
-    3. Converts PDF to LaTeX project owned by guest synthetic user
+    2. Enforces strict 24-hour quota (1 conversion / 24h) for anonymous guests
+    3. Converts PDF to LaTeX project owned by guest synthetic user or authenticated user
     4. Records project in guest_projects with 24-hour expiration
     5. Sets HttpOnly cookie and streams SSE progress
     """
@@ -101,18 +102,45 @@ async def convert_guest_pdf(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
+    # Check if this request is from an authenticated user
+    auth_user_id = req.user_id or request.headers.get("x-user-id") or request.headers.get("X-User-Id")
+    if not auth_user_id:
+        auth_cookie = (
+            request.cookies.get("__Secure-better-auth.session_token")
+            or request.cookies.get("better-auth.session_token")
+            or request.cookies.get("session_token")
+        )
+        if auth_cookie:
+            try:
+                sb = get_supabase_client()
+                tok = auth_cookie.split(".")[0]
+                session_res = sb.table("session").select("user_id").eq("token", tok).limit(1).execute()
+                if session_res.data and session_res.data[0].get("user_id"):
+                    auth_user_id = session_res.data[0]["user_id"]
+                    logger.info(f"guest_pdf: resolved authenticated user '{auth_user_id}'")
+            except Exception as sess_err:
+                logger.warning(f"Could not resolve session in guest_pdf: {sess_err}")
+
     # 1. Establish guest session & fingerprint
     session, token, _ = get_or_create_guest_session(request)
     fingerprint = compute_device_fingerprint(request)
     session_id = session["id"]
     guest_user_id = f"guest_{session_id}"
+    effective_user_id = auth_user_id if auth_user_id else guest_user_id
 
-    # 2. Check quota
-    allowed, used, resets_at, reason = check_guest_conversion_quota(session, fingerprint)
-    if not allowed:
-        return JSONResponse(
-            status_code=429,
-            content={
+    # 2. Check quota only for unauthenticated guest sessions
+    if not auth_user_id:
+        allowed, used, resets_at, reason = check_guest_conversion_quota(session, fingerprint)
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": reason or "Guest conversion limit reached (1 conversion per 24 hours).",
+                    "resets_at": resets_at.isoformat() if resets_at else None,
+                    "conversions_used": used,
+                    "limit": 1,
+                },
+            )
                 "detail": reason or "Guest conversion limit reached (1 conversion per 24 hours).",
                 "resets_at": resets_at.isoformat() if resets_at else None,
                 "conversions_used": used,
@@ -183,14 +211,15 @@ async def convert_guest_pdf(request: Request):
 
             conversion_result = await conversion_task
 
-            # 4. Create new project with guest owner
-            yield format_sse("progress", {"step": "creating_project", "message": "Provisioning temporary guest workspace...", "pct": 90})
+            # 4. Create new project with owner
+            proj_msg = f"Provisioning {'authenticated' if auth_user_id else 'temporary guest'} workspace..."
+            yield format_sse("progress", {"step": "creating_project", "message": proj_msg, "pct": 90})
 
             created = await loop.run_in_executor(
                 None,
                 lambda: create_new_project_from_conversion(
                     conversion=conversion_result,
-                    user_id=guest_user_id,
+                    user_id=effective_user_id,
                     project_name=req.project_name,
                 )
             )
@@ -205,8 +234,8 @@ async def convert_guest_pdf(request: Request):
                 "id": str(uuid.uuid4()),
                 "guest_session_id": session_id,
                 "project_id": project_id,
-                "migrated_to_user_id": None,
-                "migrated_at": None,
+                "migrated_to_user_id": auth_user_id if auth_user_id else None,
+                "migrated_at": now_utc.isoformat() if auth_user_id else None,
                 "expires_at": expires_at_dt.isoformat(),
                 "created_at": now_utc.isoformat(),
             }

@@ -649,8 +649,11 @@ def build_broad_edit_prompt(
                 f"this section, keep the existing content with minimal improvements."
             )
 
-    # Append audit & repair directive when user asks to fix issues or verify code
-    is_audit = any(w in user_request.lower() for w in ["fix", "broken", "comment", "issue", "error", "clean", "repair", "all ok", "bug"])
+    is_audit = any(w in user_request.lower() for w in [
+        "fix", "broken", "comment", "issue", "error", "clean", "repair",
+        "all ok", "bug", "problem", "syntax", "compile", "compilation",
+        "warning", "debug", "audit", "correct"
+    ])
     if is_audit:
         user_parts.append(
             "AUDIT & REPAIR DIRECTIVE FOR THIS SECTION:\n"

@@ -129,7 +129,7 @@ export const projectsRouter = router({
         }
       }
 
-      // 2. Guest session check
+      // 2. Guest session check (or auto-migration for logged-in users)
       if (ctx.guestSessionId) {
         const [gp] = await db.select().from(guestProjects).where(
           and(
@@ -142,6 +142,34 @@ export const projectsRouter = router({
           const now = new Date();
           const expiresAt = new Date(gp.expiresAt);
           if (expiresAt > now) {
+            // If user is authenticated, auto-migrate this project to their account right now
+            if (ctx.session?.user) {
+              const userId = ctx.session.user.id;
+              try {
+                await db.update(projects).set({ ownerId: userId }).where(eq(projects.id, projectId));
+                await db.insert(projectMembers).values({
+                  id: crypto.randomUUID(),
+                  projectId: projectId,
+                  userId: userId,
+                  role: "Owner",
+                }).onConflictDoNothing();
+                await db.update(guestProjects).set({
+                  migratedToUserId: userId,
+                  migratedAt: new Date(),
+                }).where(eq(guestProjects.id, gp.id));
+                return {
+                  ...project,
+                  ownerId: userId,
+                  role: "Owner" as const,
+                  isOwner: true,
+                  isGuest: false,
+                  expiresAt: null,
+                };
+              } catch (migErr) {
+                console.warn("[getById] Auto-migration error:", migErr);
+              }
+            }
+
             return {
               ...project,
               role: "Viewer" as const,
@@ -150,6 +178,30 @@ export const projectsRouter = router({
               expiresAt: gp.expiresAt,
             };
           }
+        }
+      }
+
+      // 3. Fallback: If project was created under "default-user" or guest prefix and user is logged in
+      if (ctx.session?.user && (project.ownerId === "default-user" || project.ownerId.startsWith("guest-"))) {
+        const userId = ctx.session.user.id;
+        try {
+          await db.update(projects).set({ ownerId: userId }).where(eq(projects.id, projectId));
+          await db.insert(projectMembers).values({
+            id: crypto.randomUUID(),
+            projectId: projectId,
+            userId: userId,
+            role: "Owner",
+          }).onConflictDoNothing();
+          return {
+            ...project,
+            ownerId: userId,
+            role: "Owner" as const,
+            isOwner: true,
+            isGuest: false,
+            expiresAt: null,
+          };
+        } catch (claimErr) {
+          console.warn("[getById] Claim error:", claimErr);
         }
       }
 

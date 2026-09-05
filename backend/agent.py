@@ -1216,17 +1216,17 @@ async def agent_chat(request: Request):
                     document_structure = doc_idx.parse_document_structure(req.current_code)
 
                     # ── Broad-edit detection ──────────────────────────────
-                    # If the instruction targets ALL chapters/sections/slides,
+                    # If the instruction targets ALL chapters/sections/slides or asks to fix issues across the code,
                     # run a per-target iteration loop instead of a single LLM call.
-                    if doc_idx.is_broad_instruction(req.user_prompt):
+                    if doc_idx.is_broad_instruction(req.user_prompt) or doc_idx.is_fix_all_instruction(req.user_prompt):
                         is_fix_all = doc_idx.is_fix_all_instruction(req.user_prompt)
                         broad_targets = doc_idx.resolve_all_targets(
                             document_structure,
                             include_preamble=is_fix_all,
                         )
 
-                        MAX_BROAD_TARGETS = 12
-                        if broad_targets and len(broad_targets) >= 2:
+                        MAX_BROAD_TARGETS = int(os.getenv("MAX_BROAD_TARGETS", "100"))
+                        if broad_targets and len(broad_targets) >= 1:
                             if len(broad_targets) > MAX_BROAD_TARGETS:
                                 yield sse_event("progress", {
                                     "step": "broad_limit",
@@ -1236,12 +1236,13 @@ async def agent_chat(request: Request):
                                 broad_targets = broad_targets[:MAX_BROAD_TARGETS]
 
                             target_titles = [t.title for t in broad_targets]
+                            action_label = "auditing and fixing each one by one" if is_fix_all else "editing each individually"
                             yield sse_event("progress", {
                                 "step": "broad_edit",
-                                "message": f"Found {len(broad_targets)} sections — editing each individually",
-                                "icon": "layers"
+                                "message": f"Found {len(broad_targets)} section{'s' if len(broad_targets) != 1 else ''} — {action_label}",
+                                "icon": "shield-check" if is_fix_all else "layers"
                             })
-                            logger.info(f"Broad edit mode: {len(broad_targets)} targets: {target_titles}")
+                            logger.info(f"Broad edit mode ({'fix-all' if is_fix_all else 'broad'}): {len(broad_targets)} targets: {target_titles}")
 
                             # Load memory & project context for the loop
                             conv_ctx = conversation_memory.get_conversation_context(req.project_id)
@@ -1289,10 +1290,11 @@ async def agent_chat(request: Request):
                             total_targets = len(broad_targets)
 
                             for t_idx, target_page in enumerate(broad_targets):
+                                iter_action = "Auditing & fixing" if is_fix_all else "Editing"
                                 yield sse_event("progress", {
                                     "step": "broad_iter",
-                                    "message": f"Editing [{t_idx + 1}/{total_targets}]: {target_page.title}",
-                                    "icon": "edit-3"
+                                    "message": f"{iter_action} [{t_idx + 1}/{total_targets}]: {target_page.title}",
+                                    "icon": "shield-check" if is_fix_all else "edit-3"
                                 })
 
                                 # Build scoped prompt for this single chapter
@@ -1371,9 +1373,13 @@ async def agent_chat(request: Request):
 
                                             # Strip document-level wrappers from proposed
                                             if "\\documentclass" in e.get("proposed_chunk", ""):
-                                                inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', e["proposed_chunk"])
-                                                if inner_m:
-                                                    e["proposed_chunk"] = inner_m.group(1).strip()
+                                                if target_page.page_id == "preamble" or getattr(target_page, "page_type", "") == "preamble":
+                                                    if r"\begin{document}" in e["proposed_chunk"]:
+                                                        e["proposed_chunk"] = e["proposed_chunk"].split(r"\begin{document}")[0].strip()
+                                                else:
+                                                    inner_m = re.search(r'\\begin\{document\}([\s\S]*?)\\end\{document\}', e["proposed_chunk"])
+                                                    if inner_m:
+                                                        e["proposed_chunk"] = inner_m.group(1).strip()
 
                                             if e.get("proposed_chunk"):
                                                 # Check if this is a no-op edit (already OK / no changes needed)

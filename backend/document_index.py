@@ -570,14 +570,23 @@ def get_page_window(
 
 # Patterns that indicate the user wants to audit, fix, or clean up issues across the code
 _FIX_ALL_PATTERNS = [
-    re.compile(r"\b(?:fix|repair|clean\s*up|resolve|debug|check)\s+all\s+(?:the\s+)?(?:issues|errors|bugs|problems|warnings|broken\s*code)\b", re.IGNORECASE),
-    re.compile(r"\bfix\s+all\s+(?:issues|errors|bugs|problems|warnings|broken\s*code)\s+(?:in|throughout|across)\s+(?:this|the)?\s*(?:latex|code|document|paper|report|presentation|project|file)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:fix|repair|clean\s*up|resolve|debug|check)\s+(?:all\s+)?(?:the\s+)?(?:issues|errors|bugs|problems|warnings|broken\s*code)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+(?:all\s+)?(?:the\s+)?(?:issues|errors|bugs|problems|warnings|broken\s*code)\s+(?:in|throughout|across)\s+(?:this|the)?\s*(?:latex|code|document|paper|report|presentation|project|file)?\b", re.IGNORECASE),
     re.compile(r"\b(?:check|make\s*sure|ensure)\s+(?:no\s+)?(?:broken\s*code|errors|issues|comment\s*overlap)\b", re.IGNORECASE),
     re.compile(r"\bfix\s+(?:all\s+)?(?:broken\s*code|broken\s*latex|syntax\s*errors)\b", re.IGNORECASE),
     re.compile(r"\b(?:fix|correct)\s+(?:all\s+)?(?:comment\s*overlap|comment\s*issues|escaped\s*characters)\b", re.IGNORECASE),
     re.compile(r"\b(?:all\s+ok\s+if\s+any\s+changes\s+fix|if\s+any\s+issues\s+fix)\b", re.IGNORECASE),
     re.compile(r"\bfix\s+(?:all\s+)?(?:compile|compilation)\s+(?:errors|issues)\b", re.IGNORECASE),
+    re.compile(r"\b(?:fix|resolve|correct|audit|debug)\s+(?:any\s+)?(?:code\s+issues|issues\s+in\s+code|errors\s+in\s+code|code\s+errors)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+(?:issues|errors|bugs|problems)\s+(?:one\s+by\s+one|by\s+all|across\s+all)\b", re.IGNORECASE),
+    re.compile(r"\b(?:find\s+and\s+fix|check\s+and\s+fix)\s+(?:all\s+)?(?:issues|errors|bugs|problems)\b", re.IGNORECASE),
+    re.compile(r"\bfix\s+(?:the\s+)?issues\s+in\s+(?:the\s+)?(?:latex|code|project|file)\b", re.IGNORECASE),
 ]
+
+_EXPLICIT_SINGLE_TARGET_RE = re.compile(
+    r"\b(?:in|for|on)\s+(?:slide|frame|section|chapter|page|part)\s+\d+\b",
+    re.IGNORECASE
+)
 
 # Patterns that indicate the user wants to edit ALL sections/chapters/slides,
 # not just a single specific one.
@@ -601,6 +610,9 @@ def is_fix_all_instruction(user_instruction: str) -> bool:
         return False
 
     text = user_instruction.strip()
+    if _EXPLICIT_SINGLE_TARGET_RE.search(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
+        return False
+
     for pattern in _FIX_ALL_PATTERNS:
         if pattern.search(text):
             logger.info(f"Fix-all instruction detected: '{text[:80]}' matched {pattern.pattern}")
@@ -613,24 +625,14 @@ def is_broad_instruction(user_instruction: str) -> bool:
     """
     Detect whether a user instruction targets multiple / all sections
     rather than a single specific one.
-
-    Returns True for instructions like:
-      - "elaborate the content in all chapters"
-      - "add more detail to every section"
-      - "improve content throughout the document"
-      - "expand each slide"
-      - "fix all issues in this latex code"
-      - "make sure no broken code or comment overlap is there"
-
-    Returns False for single-target instructions like:
-      - "expand the methodology section"
-      - "edit slide 3"
-      - "fix the introduction"
     """
     if not user_instruction:
         return False
 
     text = user_instruction.strip()
+    if _EXPLICIT_SINGLE_TARGET_RE.search(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
+        return False
+
     for pattern in _BROAD_PATTERNS:
         if pattern.search(text):
             logger.info(f"Broad instruction detected: '{text[:80]}' matched {pattern.pattern}")
