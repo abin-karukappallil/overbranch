@@ -1215,14 +1215,26 @@ async def agent_chat(request: Request):
                 try:
                     document_structure = doc_idx.parse_document_structure(req.current_code)
 
-                    # ── Broad-edit detection ──────────────────────────────
-                    # If the instruction targets ALL chapters/sections/slides or asks to fix issues across the code,
-                    # run a per-target iteration loop instead of a single LLM call.
-                    if doc_idx.is_broad_instruction(req.user_prompt) or doc_idx.is_fix_all_instruction(req.user_prompt):
-                        is_fix_all = doc_idx.is_fix_all_instruction(req.user_prompt)
+                    # ── Section-by-Section Inspection & Broad-edit detection ──────────────
+                    # For all broad/fix instructions or general document edits where no single specific target
+                    # is explicitly named (e.g. 'slide 3'), inspect EACH section one by one with the full document
+                    # context (preamble to \end{document}) provided, and apply changes appropriately where needed.
+                    is_anchored = doc_idx.is_anchored_insert_instruction(req.user_prompt)
+                    is_append = doc_idx.is_append_to_collection_instruction(req.user_prompt)
+                    is_explicit_single = doc_idx.is_explicit_single_target(req.user_prompt)
+                    is_fix_all = doc_idx.is_fix_all_instruction(req.user_prompt) or any(w in req.user_prompt.lower() for w in [
+                        "fix", "broken", "comment", "issue", "error", "clean", "repair",
+                        "all ok", "bug", "problem", "syntax", "compile", "compilation",
+                        "warning", "debug", "audit", "correct"
+                    ])
+                    is_broad = doc_idx.is_broad_instruction(req.user_prompt)
+
+                    should_inspect_each_section = (is_broad or is_fix_all or (not is_explicit_single and not is_append)) and not is_anchored
+
+                    if should_inspect_each_section:
                         broad_targets = doc_idx.resolve_all_targets(
                             document_structure,
-                            include_preamble=is_fix_all,
+                            include_preamble=True,
                         )
 
                         MAX_BROAD_TARGETS = int(os.getenv("MAX_BROAD_TARGETS", "100"))
@@ -1236,13 +1248,13 @@ async def agent_chat(request: Request):
                                 broad_targets = broad_targets[:MAX_BROAD_TARGETS]
 
                             target_titles = [t.title for t in broad_targets]
-                            action_label = "auditing and fixing each one by one" if is_fix_all else "editing each individually"
+                            action_label = "auditing and fixing each section one by one" if is_fix_all else "inspecting each section one by one"
                             yield sse_event("progress", {
                                 "step": "broad_edit",
                                 "message": f"Found {len(broad_targets)} section{'s' if len(broad_targets) != 1 else ''} — {action_label}",
                                 "icon": "shield-check" if is_fix_all else "layers"
                             })
-                            logger.info(f"Broad edit mode ({'fix-all' if is_fix_all else 'broad'}): {len(broad_targets)} targets: {target_titles}")
+                            logger.info(f"Section inspection mode ({'fix-all' if is_fix_all else 'inspect-each'}): {len(broad_targets)} targets: {target_titles}")
 
                             # Load memory & project context for the loop
                             conv_ctx = conversation_memory.get_conversation_context(req.project_id)
@@ -1258,7 +1270,7 @@ async def agent_chat(request: Request):
                                     filename=req.attached_file.filename,
                                     content=req.attached_file.content,
                                     file_type=req.attached_file.file_type or "text/plain",
-                                )
+                                    )
                                 broad_attached_info = {
                                     "filename": req.attached_file.filename,
                                     "file_type": req.attached_file.file_type or "text/plain",
@@ -1290,14 +1302,14 @@ async def agent_chat(request: Request):
                             total_targets = len(broad_targets)
 
                             for t_idx, target_page in enumerate(broad_targets):
-                                iter_action = "Auditing & fixing" if is_fix_all else "Editing"
+                                iter_action = "Auditing & fixing" if is_fix_all else "Inspecting & editing"
                                 yield sse_event("progress", {
                                     "step": "broad_iter",
                                     "message": f"{iter_action} [{t_idx + 1}/{total_targets}]: {target_page.title}",
                                     "icon": "shield-check" if is_fix_all else "edit-3"
                                 })
 
-                                # Build scoped prompt for this single chapter
+                                # Build scoped prompt for this single chapter with full document context
                                 iter_messages = prompt_builder.build_broad_edit_prompt(
                                     user_request=req.user_prompt,
                                     page_id=target_page.page_id,
@@ -1308,6 +1320,8 @@ async def agent_chat(request: Request):
                                     conversation_context=conv_ctx,
                                     project_context=full_proj_context,
                                     attached_file_info=broad_attached_info,
+                                    full_document=req.current_code,
+                                    is_audit=is_fix_all,
                                 )
 
                                 system_content = iter_messages[0].content if len(iter_messages) > 0 else ""
@@ -1431,13 +1445,13 @@ async def agent_chat(request: Request):
                             first_prop = broad_edits[0].get("proposed_chunk", "") if broad_edits else ""
 
                             if broad_edits:
-                                overall_exp = f"Edited {len(broad_edits)} sections individually as requested."
-                                yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} sections edited", "icon": "check"})
-                                plan_msg = f"Broad edit: applied changes to {len(broad_edits)} sections individually"
+                                overall_exp = f"Inspected all {total_targets} sections with full document context and applied verified changes to {len(broad_edits)} section(s)."
+                                yield sse_event("progress", {"step": "done", "message": f"Complete — {len(broad_edits)} section(s) updated", "icon": "check"})
+                                plan_msg = f"Inspected all {total_targets} sections: applied verified changes to {len(broad_edits)} section(s)"
                             else:
-                                overall_exp = "All sections verified: no broken code or comment overlap found. Code is clean and compilable."
+                                overall_exp = f"Inspected all {total_targets} sections with full document context: no issues found. Code is clean and compilable."
                                 yield sse_event("progress", {"step": "done", "message": "All sections clean — no issues found", "icon": "check"})
-                                plan_msg = "Audit complete: all sections verified, code is clean and compilable."
+                                plan_msg = "Inspection complete: all sections verified, code is clean and compilable."
 
                             yield sse_event("result", {
                                 "plan": plan_msg,
