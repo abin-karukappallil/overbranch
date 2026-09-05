@@ -147,13 +147,26 @@ export default function ConvertPage() {
       const pdfBase64 = reader.result as string;
 
       try {
-        const response = await fetch(`${BACKEND_URL}/api/guest/pdf/convert`, {
+        let userId = authSession?.user?.id;
+        if (!userId) {
+          try {
+            const currentSession = await authClient.getSession();
+            userId = currentSession?.data?.user?.id;
+          } catch (_) {}
+        }
+
+        const endpoint = userId ? `${BACKEND_URL}/api/pdf/convert` : `${BACKEND_URL}/api/guest/pdf/convert`;
+        const response = await fetch(endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(userId ? { "X-User-Id": userId } : {}),
+          },
           credentials: "include",
           body: JSON.stringify({
             pdf_data: pdfBase64,
             project_name: projectName.trim() || undefined,
+            user_id: userId,
           }),
         });
 

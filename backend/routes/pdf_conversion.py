@@ -69,21 +69,22 @@ async def convert_pdf_to_new_project(request: Request):
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
     # Determine user_id securely: Never steal or default to another user's ID!
-    user_id = req.user_id
+    user_id = req.user_id or request.headers.get("x-user-id") or request.headers.get("X-User-Id")
     if not user_id:
         # Try resolving from better-auth session cookie
         auth_cookie = (
-            request.cookies.get("better-auth.session_token")
-            or request.cookies.get("__Secure-better-auth.session_token")
+            request.cookies.get("__Secure-better-auth.session_token")
+            or request.cookies.get("better-auth.session_token")
             or request.cookies.get("session_token")
         )
         if auth_cookie:
             try:
                 sb = get_supabase_client()
                 token = auth_cookie.split(".")[0]
-                session_res = sb.table("session").select("userId").eq("token", token).limit(1).execute()
-                if session_res.data and session_res.data[0].get("userId"):
-                    user_id = session_res.data[0]["userId"]
+                session_res = sb.table("session").select("user_id").eq("token", token).limit(1).execute()
+                if session_res.data and session_res.data[0].get("user_id"):
+                    user_id = session_res.data[0]["user_id"]
+                    logger.info(f"Resolved user_id '{user_id}' from Better-Auth session cookie")
             except Exception as sess_err:
                 logger.warning(f"Could not resolve user from session cookie: {sess_err}")
 

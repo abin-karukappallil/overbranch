@@ -265,7 +265,38 @@ def parse_llm_json_response(raw_text: str) -> Dict[str, Any]:
             "assets": []
         }
 
-    raise ValueError(f"Could not parse valid JSON or LaTeX from LLM response:\n{cleaned[:500]}...")
+def compute_typography_metrics(parse_result: PDFParseResult) -> Dict[str, Any]:
+    """Extracts average line spacing, body font size, and paragraph gaps from layout elements."""
+    line_spacings = []
+    font_sizes = []
+    par_gaps = []
+    prev_y1 = None
+
+    for page in getattr(parse_result, "pages", []):
+        layout = getattr(page, "layout_data", {}) or {}
+        elements = layout.get("elements", [])
+        for elem in elements:
+            if elem.get("line_spacing"):
+                line_spacings.append(elem["line_spacing"])
+            if elem.get("type") == "paragraph" and elem.get("font_size"):
+                font_sizes.append(elem["font_size"])
+            bbox = elem.get("bbox")
+            if bbox and prev_y1 is not None:
+                gap = bbox[1] - prev_y1
+                if 0 < gap < 50:
+                    par_gaps.append(gap)
+            if bbox:
+                prev_y1 = bbox[3]
+
+    avg_spacing = sum(line_spacings) / len(line_spacings) if line_spacings else 1.15
+    avg_font = sum(font_sizes) / len(font_sizes) if font_sizes else 11.5
+    avg_gap = sum(par_gaps) / len(par_gaps) if par_gaps else 6.0
+
+    return {
+        "line_spacing": round(avg_spacing, 2),
+        "body_font_size": round(avg_font, 1),
+        "par_gap": round(avg_gap, 1),
+    }
 
 
 def build_conversion_prompt(parse_result: PDFParseResult) -> str:

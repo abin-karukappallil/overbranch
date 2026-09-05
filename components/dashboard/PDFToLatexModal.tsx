@@ -122,8 +122,17 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
       const pdfBase64 = reader.result as string;
 
       try {
+        // Resolve authenticated user ID reliably
+        let userId = session?.user?.id;
+        if (!userId) {
+          try {
+            const currentSession = await authClient.getSession();
+            userId = currentSession?.data?.user?.id;
+          } catch (_) {}
+        }
+
         // Clean up any stale guest tokens for logged-in users so project ownership is crystal clear
-        if (session?.user?.id) {
+        if (userId) {
           try {
             localStorage.removeItem("ob_guest_token");
             document.cookie = "ob_guest_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
@@ -132,11 +141,15 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
 
         const response = await fetch(`${BACKEND_URL}/api/pdf/convert`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(userId ? { "X-User-Id": userId } : {}),
+          },
+          credentials: "include",
           body: JSON.stringify({
             pdf_data: pdfBase64,
             project_name: projectName.trim() || undefined,
-            user_id: session?.user?.id,
+            user_id: userId,
             document_type_hint: documentTypeHint !== "auto" ? documentTypeHint : undefined,
           }),
         });

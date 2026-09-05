@@ -3,10 +3,11 @@ import { auth } from '@/lib/auth';
 import superjson from 'superjson';
 import { headers, cookies } from 'next/headers';
 import { db } from '@/db';
-import { projects, projectMembers } from '@/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { projects, projectMembers, session as sessionTable, user as userTable, guestProjects } from '@/db/schema';
+import { eq, and, gt } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyGuestToken } from '@/lib/guest-token';
+import crypto from 'crypto';
 
 export const createContext = async () => {
   const reqHeaders = await headers();
@@ -29,14 +30,48 @@ export const createContext = async () => {
   }
 
   const cookieStore = await cookies();
+
+  // If auth.api.getSession failed or returned null, try direct DB lookup using session token cookie as fallback
+  if (!session?.user) {
+    const sessionCookie =
+      cookieStore.get('__Secure-better-auth.session_token')?.value ||
+      cookieStore.get('better-auth.session_token')?.value ||
+      cookieStore.get('session_token')?.value;
+
+    if (sessionCookie) {
+      const rawToken = sessionCookie.split('.')[0];
+      try {
+        const [dbSession] = await db
+          .select()
+          .from(sessionTable)
+          .where(and(eq(sessionTable.token, rawToken), gt(sessionTable.expiresAt, new Date())));
+
+        if (dbSession) {
+          const [dbUser] = await db
+            .select()
+            .from(userTable)
+            .where(eq(userTable.id, dbSession.userId));
+
+          if (dbUser) {
+            session = {
+              user: dbUser,
+              session: dbSession,
+            };
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[tRPC Context] Direct DB session fallback error:', dbErr);
+      }
+    }
+  }
+
   const rawGuestToken = cookieStore.get('ob_guest_token')?.value;
-  // If user is authenticated, strictly ignore guestToken so it never shadows the user
-  const guestToken = session?.user ? null : rawGuestToken;
-  const verifiedGuest = guestToken ? verifyGuestToken(guestToken) : null;
+  // Always verify guest token if present so guest projects can be linked/accessed/migrated
+  const verifiedGuest = rawGuestToken ? verifyGuestToken(rawGuestToken) : null;
 
   return {
     session,
-    guestToken,
+    guestToken: rawGuestToken || null,
     guestSessionId: verifiedGuest?.sessionId || null,
   };
 };
@@ -86,6 +121,63 @@ export const projectProcedure = protectedProcedure
     );
 
     if (!member) {
+      // Check if project was created in user's guest session
+      if (ctx.guestSessionId) {
+        const [gp] = await db.select().from(guestProjects).where(
+          and(
+            eq(guestProjects.projectId, projectId),
+            eq(guestProjects.guestSessionId, ctx.guestSessionId)
+          )
+        );
+        if (gp) {
+          // Auto-migrate project to authenticated user
+          try {
+            await db.update(projects).set({ ownerId: userId }).where(eq(projects.id, projectId));
+            await db.insert(projectMembers).values({
+              id: crypto.randomUUID(),
+              projectId,
+              userId,
+              role: 'Owner',
+            }).onConflictDoNothing();
+            await db.update(guestProjects).set({
+              migratedToUserId: userId,
+              migratedAt: new Date(),
+            }).where(eq(guestProjects.id, gp.id));
+            return next({
+              ctx: {
+                ...ctx,
+                project: { ...project, ownerId: userId },
+                memberRole: 'Owner',
+              },
+            });
+          } catch (migErr) {
+            console.warn('[projectProcedure] Auto-migration error:', migErr);
+          }
+        }
+      }
+
+      // Check if project was created under "default-user" or guest prefix
+      if (project.ownerId === 'default-user' || project.ownerId.startsWith('guest-')) {
+        try {
+          await db.update(projects).set({ ownerId: userId }).where(eq(projects.id, projectId));
+          await db.insert(projectMembers).values({
+            id: crypto.randomUUID(),
+            projectId,
+            userId,
+            role: 'Owner',
+          }).onConflictDoNothing();
+          return next({
+            ctx: {
+              ...ctx,
+              project: { ...project, ownerId: userId },
+              memberRole: 'Owner',
+            },
+          });
+        } catch (claimErr) {
+          console.warn('[projectProcedure] Claim error:', claimErr);
+        }
+      }
+
       throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not have access to this project' });
     }
 
@@ -110,6 +202,18 @@ export const ownerProcedure = protectedProcedure
     }
 
     if (project.ownerId !== userId) {
+      if (project.ownerId === 'default-user' || project.ownerId.startsWith('guest-')) {
+        try {
+          await db.update(projects).set({ ownerId: userId }).where(eq(projects.id, projectId));
+          return next({
+            ctx: {
+              ...ctx,
+              project: { ...project, ownerId: userId },
+              memberRole: 'Owner' as const,
+            },
+          });
+        } catch (_) {}
+      }
       throw new TRPCError({ code: 'FORBIDDEN', message: 'Only the project owner can perform this operation' });
     }
 
