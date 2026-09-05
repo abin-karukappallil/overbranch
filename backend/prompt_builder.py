@@ -283,8 +283,8 @@ def build_prompt(
             # already provides the relevant slide/page.
             doc_budget = 4000
         else:
-            # Full document for generation/conversion/full edits
-            doc_budget = 12000
+            # Full document for generation/conversion/full edits/fixes
+            doc_budget = 150000
 
         if len(doc_text) > doc_budget:
             doc_text = doc_text[:doc_budget] + f"\n...[DOCUMENT TRUNCATED FOR TOKEN BUDGET AT {doc_budget} CHARS]"
@@ -561,29 +561,18 @@ def build_broad_edit_prompt(
     conversation_context: str = "",
     project_context: str = "",
     attached_file_info: Optional[Dict[str, str]] = None,
+    full_document: Optional[str] = None,
+    is_audit: Optional[bool] = None,
 ) -> List:
     """
     Build a scoped prompt for editing a single chapter/section as part of
     a broad multi-target edit loop.
 
     This prompt gives the LLM:
-    - The exact existing content of ONE chapter/section
-    - The user's broad instruction
-    - Relevant portions of the attached reference document (if any)
-    - Strict instructions to use edit_chunk (not create_content)
-    - A tight JSON-only output contract
-
-    Args:
-        user_request: The user's original broad instruction
-        page_id: Stable ID of this target page (e.g. "sec-introduction")
-        page_title: Human-readable title (e.g. "Introduction")
-        page_content: Full existing LaTeX source of this page
-        page_index: 0-based index of this page in the document
-        total_targets: Total number of targets being edited in this batch
-        conversation_context: Recent conversation history
-        project_context: Project-level context (assets, metadata)
-        attached_file_info: Optional attached reference file dict with
-                           keys: filename, file_type, content
+    - The complete document context from preamble to \\end{document}
+    - The exact existing content of the specific chapter/section being inspected
+    - The user's instruction
+    - Strict instructions to inspect the section and change appropriately ONLY if needed
     """
     # --- System Message ---
     system_parts = [BROAD_EDIT_SYSTEM_PROMPT]
@@ -609,17 +598,34 @@ def build_broad_edit_prompt(
     # --- User Message ---
     user_parts = []
 
-    # Cap page content to prevent overly large prompts (single chapter should be <8k)
-    content_budget = 8000
+    # Feed the complete document from preamble to \end{document}
+    if full_document and full_document.strip():
+        doc_str = full_document.strip()
+        doc_budget = 150000
+        if len(doc_str) > doc_budget:
+            doc_str = doc_str[:doc_budget] + "\n...[FULL DOCUMENT TRUNCATED AT 150K CHARS]"
+        user_parts.append(
+            "====================================================================\n"
+            "COMPLETE FULL DOCUMENT (FROM PREAMBLE TO \\end{document}):\n"
+            "Reference this complete document to understand all loaded packages, macro definitions, "
+            "document class, color schemes, cross-references, and overall structure.\n"
+            "====================================================================\n"
+            f"```latex\n{doc_str}\n```\n"
+            "===================================================================="
+        )
+
+    # Cap page content to prevent overly large single section prompts
+    content_budget = 16000
     display_content = page_content.strip()
     if len(display_content) > content_budget:
         display_content = display_content[:content_budget] + "\n...[SECTION TRUNCATED FOR TOKEN BUDGET]"
 
     user_parts.append(
-        f"EDITING TARGET: Section {page_index + 1} of {total_targets}\n"
+        f"CURRENT SECTION TO INSPECT & EDIT:\n"
+        f"TARGET: Section {page_index + 1} of {total_targets}\n"
         f"PAGE ID: {page_id}\n"
         f"SECTION TITLE: {page_title}\n\n"
-        f"EXISTING SECTION CONTENT (this is your original_chunk — edit this in-place):\n"
+        f"EXISTING SECTION CONTENT (this is the specific chunk to inspect):\n"
         f"```latex\n{display_content}\n```"
     )
 
@@ -649,11 +655,13 @@ def build_broad_edit_prompt(
                 f"this section, keep the existing content with minimal improvements."
             )
 
-    is_audit = any(w in user_request.lower() for w in [
-        "fix", "broken", "comment", "issue", "error", "clean", "repair",
-        "all ok", "bug", "problem", "syntax", "compile", "compilation",
-        "warning", "debug", "audit", "correct"
-    ])
+    if is_audit is None:
+        is_audit = any(w in user_request.lower() for w in [
+            "fix", "broken", "comment", "issue", "error", "clean", "repair",
+            "all ok", "bug", "problem", "syntax", "compile", "compilation",
+            "warning", "debug", "audit", "correct"
+        ])
+
     if is_audit:
         user_parts.append(
             "AUDIT & REPAIR DIRECTIVE FOR THIS SECTION:\n"
@@ -665,10 +673,17 @@ def build_broad_edit_prompt(
 
     user_parts.append(
         f"USER REQUEST (apply to this section): {user_request}\n\n"
-        f"REMINDER: Respond with ONLY the JSON edit object. "
-        f"original_chunk = the exact existing text above. "
-        f"proposed_chunk = your improved version (or empty edits [] if All OK). "
-        f"Do NOT create new sections. Do NOT wrap in \\documentclass."
+        "SECTION INSPECTION & EDITING RULES:\n"
+        "1. Inspect this section carefully in context of the full document and user request.\n"
+        "2. If changes are NEEDED in this section (to fix errors, apply styling, update content, or fulfill the request):\n"
+        "   - original_chunk = the exact verbatim text from this section to replace.\n"
+        "   - proposed_chunk = your improved version (raw LaTeX only, no markdown wrappers).\n"
+        "   - explanation = concise summary of the change.\n"
+        "3. If NO changes are needed in this section (it is already correct, compilable, and satisfies the prompt):\n"
+        "   - return empty edits: {\"plan\": \"All OK in this section\", \"edits\": []}.\n"
+        "4. If this section is the Preamble (Section 1):\n"
+        "   - NEVER strip \\documentclass. Ensure all required packages for the whole document are retained/added.\n"
+        "5. Respond with ONLY valid JSON according to the schema."
     )
 
     user_content = "\n\n".join(user_parts)

@@ -94,7 +94,7 @@ _FRAME_END_RE = re.compile(r"\\end\{frame\}")
 _FRAMETITLE_RE = re.compile(r"\\frametitle\{([^}]*)\}")
 _FRAME_LABEL_RE = re.compile(r"\\label\{([^}]*)\}")
 
-_SECTION_RE = re.compile(r"\\section\{([^}]*)\}")
+_SECTION_RE = re.compile(r"\\(?:chapter|section)\*?\{([^}]*)\}")
 _SUBSECTION_RE = re.compile(r"\\subsection\{([^}]*)\}")
 
 
@@ -584,9 +584,22 @@ _FIX_ALL_PATTERNS = [
 ]
 
 _EXPLICIT_SINGLE_TARGET_RE = re.compile(
-    r"\b(?:in|for|on)\s+(?:slide|frame|section|chapter|page|part)\s+\d+\b",
+    r"\b(?:in|for|on|at|edit|change|update|fix|modify|delete|remove)\s+(?:slide|frame|section|chapter|page|part)\s+\d+\b",
     re.IGNORECASE
 )
+
+
+def is_explicit_single_target(user_instruction: str) -> bool:
+    """
+    Returns True if the instruction specifically names a single numeric slide/section/frame
+    (e.g. 'slide 3', 'edit section 2', 'in slide 4') and does not contain broad scope keywords.
+    """
+    if not user_instruction:
+        return False
+    text = user_instruction.strip()
+    if re.search(r"\b(?:all|every|each|entire|whole|full|throughout|across)\b", text, re.IGNORECASE):
+        return False
+    return bool(_EXPLICIT_SINGLE_TARGET_RE.search(text))
 
 # Patterns that indicate the user wants to edit ALL sections/chapters/slides,
 # not just a single specific one.
