@@ -48,7 +48,6 @@ export const metadata: Metadata = {
 };
 
 import { GuestMigrationListener } from "@/components/GuestMigrationListener";
-import { Analytics } from '@vercel/analytics/next';
 
 export default function RootLayout({
   children,
@@ -70,7 +69,6 @@ export default function RootLayout({
             <GuestMigrationListener />
             {children}
             <Toaster position="top-right" theme="dark" richColors />
-            <Analytics />
           </TRPCProvider>
         </ThemeProvider>
       </body>
