@@ -33,7 +33,9 @@ from tools import AI_TOOLS, process_tool_calls
 from providers import provider_router, LLMProviderError
 from services.pdf_parser import parse_pdf, MAX_ALLOWED_PAGES
 from services.pdf_to_latex import convert_pdf_to_latex
-from services.project_file_writer import write_project_files_and_assets
+from services.project_file_writer import write_project_files_and_assets, save_project_asset
+from services.pdf_figure_extractor import extract_figure, extract_multiple_figures, ExtractedFigure, decode_pdf_bytes
+from project_storage import UPLOADS_BASE_DIR
 import document_index as doc_idx
 import edit_validator
 
@@ -896,10 +898,14 @@ def get_project_assets_info(project_id: str) -> str:
         style_files = []
 
         for p in project_dir.rglob("*"):
+            # Never scan hidden directories (e.g. .cache, .git, etc.)
+            if any(part.startswith(".") for part in p.parts):
+                continue
             if p.is_file():
                 rel_p = str(p.relative_to(project_dir))
                 ext = p.suffix.lower()
-                if ext in img_exts:
+                # Treat standalone images as assets; never treat raw full-document PDFs as graphics
+                if ext in {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"} or (ext == ".pdf" and "assets" in p.parts):
                     asset_files.append(rel_p)
                 elif ext in {".sty", ".cls"}:
                     style_files.append(rel_p)
@@ -920,6 +926,94 @@ def get_project_assets_info(project_id: str) -> str:
     except Exception as e:
         logger.warning(f"Error scanning project assets for {project_id}: {e}")
         return ""
+
+
+def detect_figure_extraction_intent(
+    user_prompt: str,
+    has_pdf: bool = False,
+) -> Tuple[bool, str, Optional[str], str, bool]:
+    """
+    Detects whether the prompt is requesting figure extraction from an uploaded PDF.
+    Supports both singular ("Add System Architecture figure") and plural ("Add some figures to this ppt from this pdf").
+    Returns: (is_figure_intent, figure_query, anchor_section, position, is_multiple)
+    """
+    if not user_prompt:
+        return False, "", None, "after", False
+
+    text = user_prompt.strip()
+    text_lower = text.lower()
+
+    fig_keywords = [
+        r"figures?", r"figs?\.?", r"diagrams?", r"charts?", r"plots?",
+        r"architectures?", r"flowcharts?", r"images?", r"pipelines?",
+        r"illustrations?", r"schematics?"
+    ]
+    has_fig_kw = any(re.search(rf"\b{kw}\b", text_lower) for kw in fig_keywords)
+
+    action_keywords = [
+        "extract", "add", "insert", "include", "import", "grab", "pull",
+        "put", "place", "attach", "get", "use"
+    ]
+    has_action_kw = any(re.search(rf"\b{kw}\b", text_lower) for kw in action_keywords)
+
+    # Note: supports 'form this pdf' typo as well as 'from'
+    pdf_keywords = ["pdf", "document", "paper", "file", "attachment", "uploaded", "presentation", "ppt", "slides", "slide"]
+    has_pdf_kw = any(re.search(rf"\b{kw}\b", text_lower) for kw in pdf_keywords)
+
+    if not (has_fig_kw and (has_action_kw or has_pdf_kw or has_pdf)):
+        return False, "", None, "after", False
+
+    is_multiple = bool(re.search(r"\b(?:some|all|few|multiple|these|both|\d+)\s+figures?\b|\bfigures\b", text_lower))
+
+    # Check for explicit anchor (e.g. "after Methodology", "before Results", "in Section 3")
+    anchor_section = None
+    position = "after"
+
+    anchor_match = re.search(
+        r"\b(after|before|following|preceding|prior\s+to|post)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?$",
+        text,
+        re.IGNORECASE
+    )
+    if anchor_match:
+        pos_str = anchor_match.group(1).lower()
+        position = "before" if pos_str in ["before", "preceding", "prior to"] else "after"
+        anchor_section = anchor_match.group(2).strip()
+        text_for_query = text[:anchor_match.start()].strip()
+    else:
+        text_for_query = text
+
+    # Clean query text
+    q = re.sub(
+        r"^(?:please\s+)?(?:extract|add|insert|include|import|grab|pull|put|place|get|use)\s+(?:the\s+)?",
+        "",
+        text_for_query,
+        flags=re.IGNORECASE
+    )
+    # Strip PDF references, including 'form this pdf' typo
+    q = re.sub(r"\s+(?:from|form|in|of)\s+(?:this|the|attached|uploaded)?\s*(?:pdf|document|paper|file)?.*$", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"^(?:(?:from|form|in)\s+(?:this|the|attached|uploaded)?\s*(?:pdf|document|paper|file)?\s*,\s*)", "", q, flags=re.IGNORECASE)
+    # Strip presentation destination references
+    q = re.sub(r"\s+(?:to|into|in)\s+(?:this|the)?\s*(?:ppt|presentation|slides?|document|paper|latex)?.*$", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"\s+and\s+(?:place|put|insert|add)\s+it.*$", "", q, flags=re.IGNORECASE)
+    q = re.sub(r"^(?:some|all|few|several)\s+", "", q, flags=re.IGNORECASE)
+    q = q.strip()
+
+    # Clean up descriptive words while keeping figure numbers like "Figure 2"
+    if not re.match(r"^(?:figure|fig\.?)\s*\d+", q, re.IGNORECASE):
+        stripped = re.sub(
+            r"\s*\b(?:figures?|diagrams?|charts?|plots?|images?|illustrations?|flowcharts?)\b\s*",
+            " ",
+            q,
+            flags=re.IGNORECASE
+        ).strip()
+        if len(stripped) >= 2:
+            q = stripped
+
+    if not q or q.lower() in ("figure", "figures"):
+        q = "figures" if is_multiple else "figure"
+
+    return True, q, anchor_section, position, is_multiple
+
 
 
 @router.post("/api/agent/chat")
@@ -1008,6 +1102,9 @@ async def agent_chat(request: Request):
 
             is_pdf = False
             pdf_data_input = None
+            safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', req.project_id)
+            pdf_cache_dir = UPLOADS_BASE_DIR / safe_project / ".cache" / "attached_pdfs"
+
             if req.attached_file and req.attached_file.content:
                 fn = req.attached_file.filename.lower()
                 ft = (req.attached_file.file_type or "").lower()
@@ -1022,6 +1119,12 @@ async def agent_chat(request: Request):
                 ):
                     is_pdf = True
                     pdf_data_input = c
+                    try:
+                        pdf_cache_dir.mkdir(parents=True, exist_ok=True)
+                        raw_bytes = decode_pdf_bytes(c)
+                        (pdf_cache_dir / req.attached_file.filename).write_bytes(raw_bytes)
+                    except Exception as ce:
+                        logger.warning(f"Error caching attached PDF to disk: {ce}")
             else:
                 cached_file_info = conversation_memory.get_attached_file(req.project_id)
                 if cached_file_info and cached_file_info.get("content"):
@@ -1031,6 +1134,14 @@ async def agent_chat(request: Request):
                     if cfn.endswith(".pdf") or "pdf" in cft or cc.startswith("data:application/pdf") or cc.startswith("%PDF-"):
                         is_pdf = True
                         pdf_data_input = cc
+                if not pdf_data_input and pdf_cache_dir.exists():
+                    cached_pdfs = sorted(pdf_cache_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True)
+                    if cached_pdfs:
+                        try:
+                            pdf_data_input = cached_pdfs[0].read_bytes()
+                            is_pdf = True
+                        except Exception:
+                            pass
 
             # Decision: Is this a full PDF to LaTeX conversion OR an edit with a Reference PDF?
             # A full conversion (PyMuPDF layout extraction, embedded figures, creating/overwriting main.tex)
@@ -1171,6 +1282,216 @@ async def agent_chat(request: Request):
                     "is_pdf_conversion": True,
                 })
                 return
+
+            # Decision: Is this a figure extraction request from an uploaded reference PDF?
+            is_fig_intent, fig_query, anchor_sec, fig_pos, is_multiple = detect_figure_extraction_intent(
+                req.user_prompt, has_pdf=(is_pdf or pdf_data_input is not None)
+            )
+
+            if is_fig_intent and (is_pdf or pdf_data_input is not None):
+                yield sse_event("progress", {"step": "figure_detect", "message": f"Analyzing PDF for figures...", "icon": "image"})
+                loop = asyncio.get_running_loop()
+
+                cur_code = req.current_code or ""
+                doc_index = doc_idx.parse_document_structure(cur_code)
+                target_doc_class = "beamer" if doc_index.doc_type == "beamer" else "article"
+
+                extracted_figures: List[ExtractedFigure] = []
+                try:
+                    if is_multiple or fig_query in ("figures", "some figures", "all figures", "figure"):
+                        extracted_figures = await loop.run_in_executor(
+                            None,
+                            lambda: extract_multiple_figures(
+                                pdf_input=pdf_data_input,
+                                max_figures=4,
+                                document_class=target_doc_class,
+                            )
+                        )
+                    else:
+                        single_fig = await loop.run_in_executor(
+                            None,
+                            lambda: extract_figure(
+                                pdf_input=pdf_data_input,
+                                figure_query=fig_query,
+                                document_class=target_doc_class,
+                            )
+                        )
+                        if single_fig:
+                            extracted_figures = [single_fig]
+                except Exception as fig_err:
+                    logger.error(f"Figure extraction failed: {fig_err}", exc_info=True)
+                    yield sse_event("error", {"message": f"Could not extract figures from PDF: {str(fig_err)}"})
+                    return
+
+                if not extracted_figures:
+                    yield sse_event("error", {"message": "No figures or diagrams could be detected in the provided PDF."})
+                    return
+
+                yield sse_event("progress", {
+                    "step": "figure_render",
+                    "message": f"Extracted {len(extracted_figures)} high-resolution 300 DPI figure(s)",
+                    "icon": "camera"
+                })
+
+                # Save assets into project assets/ directory
+                saved_assets = []
+                for ef in extracted_figures:
+                    try:
+                        rel_p = save_project_asset(req.project_id, ef.clean_filename, ef.image_bytes)
+                    except Exception as save_err:
+                        logger.error(f"Error saving project asset: {save_err}")
+                        rel_p = f"assets/{ef.clean_filename}"
+                    ef.asset_rel_path = rel_p
+                    saved_assets.append(rel_p)
+
+                yield sse_event("progress", {"step": "asset_saved", "message": f"Saved {len(saved_assets)} figure asset(s) in assets/", "icon": "save"})
+
+                edits = []
+
+                # Ensure graphicx package is present in preamble
+                has_graphicx = bool(re.search(r"\\usepackage(?:\[[^\]]*\])?\{graphicx\}", cur_code))
+                if not has_graphicx and "\\documentclass" in cur_code:
+                    doc_m = re.search(r"(\\documentclass(?:\[[^\]]*\])?\{[^}]+\})", cur_code)
+                    if doc_m:
+                        doc_line = doc_m.group(1)
+                        edits.append({
+                            "action": "edit",
+                            "original_chunk": doc_line,
+                            "proposed_chunk": f"{doc_line}\n\\usepackage{{graphicx}}",
+                            "explanation": "Added \\usepackage{graphicx} for figure support.",
+                        })
+
+                # Check if user document already has a placeholder or broken includegraphics pointing to a .pdf file
+                broken_pdf_match = re.search(
+                    r"\\includegraphics(?:\[[^\]]*\])?\{(?:\.cache\/attached_pdfs\/[^\}]+|[^\}]+\.pdf)\}",
+                    cur_code
+                )
+                remaining_figures = list(extracted_figures)
+
+                if broken_pdf_match and remaining_figures:
+                    broken_str = broken_pdf_match.group(0)
+                    primary_fig = remaining_figures.pop(0)
+                    replacement_snippet = f"\\includegraphics[width=\\linewidth,height=0.65\\textheight,keepaspectratio]{{{primary_fig.asset_rel_path}}}"
+                    edits.append({
+                        "action": "edit",
+                        "original_chunk": broken_str,
+                        "proposed_chunk": replacement_snippet,
+                        "explanation": f"Replaced raw PDF reference with 300 DPI PNG '{primary_fig.asset_rel_path}'.",
+                    })
+
+                if target_doc_class == "beamer":
+                    # Beamer Presentation Mode
+                    new_frames = []
+                    for fig in remaining_figures:
+                        # Check if an existing frame mentions the figure or its key topic
+                        matching_frame = None
+                        fig_words = [w for w in fig.caption.lower().split() if len(w) >= 4]
+                        for p in doc_index.pages:
+                            if p.page_type == "frame" and any(w in p.title.lower() for w in fig_words):
+                                matching_frame = p
+                                break
+
+                        if matching_frame and matching_frame.content:
+                            orig_snippet = matching_frame.content.strip()
+                            edits.append({
+                                "action": "edit",
+                                "original_chunk": orig_snippet,
+                                "proposed_chunk": orig_snippet + "\n\n" + fig.latex_snippet,
+                                "explanation": f"Added figure '{fig.caption}' into frame '{matching_frame.title}'.",
+                            })
+                        else:
+                            new_frames.append(fig.latex_snippet)
+
+                    if new_frames:
+                        combined_new_frames = "\n\n".join(new_frames)
+                        end_doc = "\\end{document}"
+                        if end_doc in cur_code:
+                            edits.append({
+                                "action": "create_content",
+                                "original_chunk": end_doc,
+                                "proposed_chunk": combined_new_frames + "\n\n" + end_doc,
+                                "explanation": f"Added {len(new_frames)} new presentation slide(s) with extracted figures.",
+                            })
+                        else:
+                            edits.append({
+                                "action": "create_content",
+                                "original_chunk": "",
+                                "proposed_chunk": combined_new_frames,
+                                "explanation": f"Added {len(new_frames)} new presentation slide(s) with extracted figures.",
+                            })
+                else:
+                    # Article / Report Document Mode
+                    for fig in remaining_figures:
+                        if anchor_sec:
+                            target_page = doc_idx.resolve_anchor_target(doc_index, anchor_sec, cur_code)
+                            placement_desc = f"{fig_pos} {target_page.title if target_page else anchor_sec}"
+                        else:
+                            target_page = doc_idx.find_best_figure_section(doc_index, fig.caption, fig.clean_filename)
+                            placement_desc = f"in Section '{target_page.title}'" if target_page else "in the document"
+
+                        if target_page and target_page.content:
+                            orig_snippet = target_page.content.strip()
+                            if fig_pos == "before":
+                                prop_snippet = fig.latex_snippet + "\n\n" + orig_snippet
+                            else:
+                                prop_snippet = orig_snippet + "\n\n" + fig.latex_snippet
+
+                            edits.append({
+                                "action": "insert_relative",
+                                "anchor_page_id": target_page.page_id,
+                                "position": fig_pos,
+                                "original_chunk": orig_snippet,
+                                "proposed_chunk": prop_snippet,
+                                "explanation": f"Inserted {fig.caption} {placement_desc}.",
+                            })
+                        else:
+                            end_doc = "\\end{document}"
+                            if end_doc in cur_code:
+                                edits.append({
+                                    "action": "create_content",
+                                    "original_chunk": end_doc,
+                                    "proposed_chunk": fig.latex_snippet + "\n\n" + end_doc,
+                                    "explanation": f"Inserted {fig.caption} before \\end{{document}}.",
+                                })
+
+                first_orig = edits[0]["original_chunk"] if edits else ""
+                first_prop = edits[0]["proposed_chunk"] if edits else ""
+                plan_text = f"Extracted {len(extracted_figures)} figure(s) from PDF at 300 DPI into assets/ and inserted into presentation."
+
+                conversation_memory.add_turn(
+                    project_id=req.project_id,
+                    user_prompt=req.user_prompt,
+                    assistant_response={
+                        "plan": plan_text,
+                        "edits": edits,
+                        "explanation": f"Extracted {len(extracted_figures)} high-resolution 300 DPI figure(s) from PDF and saved to assets/. Placed into presentation slides.",
+                    },
+                    file_path=req.file_path,
+                    chunk_summaries=[],
+                )
+
+                yield sse_event("progress", {"step": "done", "message": f"Extracted and placed {len(extracted_figures)} figure(s)", "icon": "check-circle"})
+                yield sse_event("result", {
+                    "plan": plan_text,
+                    "edits": edits,
+                    "original_chunk": first_orig,
+                    "proposed_chunk": first_prop,
+                    "explanation": f"Extracted {len(extracted_figures)} high-resolution 300 DPI figure(s) from PDF into assets/. Placed into presentation slides.",
+                    "files_written": [],
+                    "assets_written": saved_assets,
+                    "extracted_figures": [
+                        {
+                            "filename": ef.asset_rel_path,
+                            "caption": ef.caption,
+                            "label": ef.label,
+                            "width": ef.width,
+                            "height": ef.height,
+                        }
+                        for ef in extracted_figures
+                    ]
+                })
+                return
+
 
             # Step 2: Vector search
             retrieved_chunks = []

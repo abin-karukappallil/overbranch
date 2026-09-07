@@ -129,7 +129,29 @@ def insert_relative(anchor_page_id: str, position: str, content: str, rationale:
         "explanation": rationale,
     }
 
-AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all, insert_after, insert_relative]
+class ExtractFigureArgs(BaseModel):
+    figure_query: str = Field(..., description="Name, title, or number of the figure to extract from the PDF (e.g. 'System Architecture', 'Figure 2')")
+    anchor_section: Optional[str] = Field(None, description="Optional target section/slide to insert the figure into or after (e.g. 'Methodology')")
+    position: str = Field("after", description="Position relative to anchor section: 'after' or 'before'")
+    caption_override: Optional[str] = Field(None, description="Optional custom caption to override original figure caption")
+    rationale: str = Field(..., description="Explanation of why this figure is being extracted and inserted")
+
+@tool("extract_figure", args_schema=ExtractFigureArgs)
+def extract_figure(figure_query: str, anchor_section: Optional[str] = None, position: str = "after", caption_override: Optional[str] = None, rationale: str = "") -> Dict[str, Any]:
+    """Extract a specific figure from the uploaded reference PDF, save it to assets/, and insert its LaTeX figure block."""
+    print(f"\n🖼️  [TOOL EXECUTION: extract_figure]\n  ► Figure Query: '{figure_query}'\n  ► Anchor: '{anchor_section}'\n  ► Position: {position}\n  ► Rationale: {rationale}\n")
+    return {
+        "action": "extract_figure",
+        "figure_query": figure_query,
+        "anchor_section": anchor_section,
+        "position": position,
+        "caption_override": caption_override,
+        "original_chunk": "",
+        "proposed_chunk": "",
+        "explanation": rationale or f"Extract figure '{figure_query}' from PDF and insert {position} {anchor_section or 'appropriate section'}.",
+    }
+
+AI_TOOLS = [search_document_chunks, edit_chunk, create_content, delete_chunk, find_and_replace_all, insert_after, insert_relative, extract_figure]
 
 def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]]) -> Dict[str, Any]:
     print(f"\n⚙️  [TOOL PROCESSOR] Received {len(tool_calls)} raw tool call(s) from LLM:")
@@ -244,6 +266,24 @@ def process_tool_calls(tool_calls: List[Dict[str, Any]], retrieved_chunks: List[
                 "explanation": exp,
             })
             plans.append(f"Insert relative: add new content {pos} anchor '{anchor_id}'.")
+
+        elif tool_name == "extract_figure":
+            fig_query = args.get("figure_query", "")
+            anchor = args.get("anchor_section")
+            pos = args.get("position", "after")
+            cap = args.get("caption_override")
+            exp = args.get("rationale", f"Extract figure '{fig_query}' from PDF")
+            edits.append({
+                "action": "extract_figure",
+                "figure_query": fig_query,
+                "anchor_section": anchor,
+                "position": pos,
+                "caption_override": cap,
+                "original_chunk": "",
+                "proposed_chunk": "",
+                "explanation": exp,
+            })
+            plans.append(f"Extract figure '{fig_query}' from PDF and insert {pos} {anchor or 'relevant section'}.")
 
     first_orig = edits[0].get("original_chunk", "") if edits else ""
     first_prop = edits[0].get("proposed_chunk", "") if edits else ""

@@ -190,3 +190,42 @@ def create_new_project_from_conversion(
         "files": write_result["files"],
         "assets": write_result["assets"],
     }
+
+
+def save_project_asset(
+    project_id: str,
+    filename: str,
+    data_bytes: bytes,
+) -> str:
+    """
+    Saves a single binary asset (such as an extracted figure PNG)
+    into the project's assets/ directory on disk and registers it in Supabase.
+    Returns the canonical relative path, e.g. 'assets/system_architecture.png'.
+    """
+    clean_fn = Path(filename.lstrip("/\\")).name
+    rel_asset_path = f"assets/{clean_fn}"
+
+    safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
+    project_dir = UPLOADS_BASE_DIR / safe_project
+    assets_dir = project_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    target_asset_path = assets_dir / clean_fn
+    target_asset_path.write_bytes(data_bytes)
+
+    # Also keep a copy in project root if bare name is referenced
+    try:
+        shutil.copy2(target_asset_path, project_dir / clean_fn)
+    except Exception:
+        pass
+
+    # Record in Supabase latex_documents
+    try:
+        supabase = get_supabase_client()
+        asset_meta = f"[Binary Asset: {clean_fn}, Size: {len(data_bytes)} bytes]"
+        upsert_latex_document(supabase, project_id, rel_asset_path, asset_meta)
+    except Exception as db_err:
+        logger.warning(f"Database asset record error for {rel_asset_path}: {db_err}")
+
+    logger.info(f"Saved project asset '{rel_asset_path}' ({len(data_bytes)} bytes) for project '{project_id}'.")
+    return rel_asset_path

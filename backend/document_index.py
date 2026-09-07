@@ -1197,14 +1197,14 @@ def resolve_collection(
 # ── Anchored relative insertion detection & resolution ─────────────────────
 
 _ANCHORED_INSERT_PATTERNS = [
-    # "after conclusion, add a future scope section"
+    # "after conclusion, add a future scope section" / "after methodology, add the system architecture figure from this pdf"
     re.compile(
-        r"^\s*(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*,\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+)\s*$",
+        r"^\s*(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*,\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+?)(?:\s+from\s+(?:this|the|attached)\s*pdf)?\s*$",
         re.IGNORECASE
     ),
-    # "add a future scope section after conclusion" / "insert related work before methodology"
+    # "add a future scope section after conclusion" / "add the system architecture figure from this pdf after methodology"
     re.compile(
-        r"^\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+?)\s+(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*$",
+        r"^\s*(?:add|insert|put|place|create|append)\s+(?:a|an|the\s+new|a\s+new|the)?\s*(.+?)(?:\s+from\s+(?:this|the|attached)\s*pdf)?\s+(?:immediately\s+)?(after|following|behind|post|before|prior\s+to|preceding)\s+(?:the\s+)?(.+?)(?:\s+section|\s+slide|\s+frame|\s+page)?\s*$",
         re.IGNORECASE
     ),
 ]
@@ -1258,6 +1258,105 @@ def parse_anchored_insert_instruction(user_prompt: str) -> Optional[Tuple[str, s
                 return (clean_content, pos, clean_anchor)
 
     return None
+
+
+def find_best_figure_section(
+    doc: DocumentIndex,
+    figure_title: str,
+    caption: str = "",
+) -> Optional[PageEntry]:
+    """
+    Intelligently locates the most appropriate section/slide for a figure
+    when the user did not specify an explicit location.
+    
+    Uses semantic category mapping and token relevance:
+    - Architecture / Pipeline / System / Model -> Methodology / Architecture / System Design
+    - Results / Evaluation / Metrics / Loss / Confusion Matrix -> Experiments / Results / Evaluation
+    - Background / Comparison -> Related Work / Background
+    - Overview / Motivation -> Introduction
+    """
+    if not doc or not doc.pages:
+        return None
+
+    # Only consider content pages (exclude preamble and postamble)
+    content_pages = [p for p in doc.pages if p.page_type not in ("preamble", "postamble")]
+    if not content_pages:
+        return None
+
+    query_text = f"{figure_title} {caption}".lower()
+
+    # Category mappings: list of (figure keywords, section keywords)
+    categories = [
+        # Architecture & Model
+        (
+            ["architecture", "framework", "pipeline", "system", "overview", "model", "workflow", "block diagram", "schematic", "design", "flowchart", "methodology"],
+            ["methodology", "method", "proposed method", "proposed system", "system architecture", "architecture", "system design", "approach", "framework", "model", "design", "implementation", "overview"]
+        ),
+        # Results & Evaluation
+        (
+            ["result", "results", "accuracy", "loss", "curve", "confusion matrix", "evaluation", "benchmark", "comparison", "performance", "ablation", "metric", "chart", "plot"],
+            ["results", "experiment", "experiments", "evaluation", "performance", "analysis", "discussion", "findings", "ablation"]
+        ),
+        # Background & Related Work
+        (
+            ["related", "literature", "prior", "survey", "taxonomy"],
+            ["related work", "literature review", "background", "prior work", "survey"]
+        ),
+        # Introduction & Motivation
+        (
+            ["motivation", "problem", "concept"],
+            ["introduction", "motivation", "background"]
+        ),
+    ]
+
+    best_page = None
+    best_score = -1.0
+
+    for page in content_pages:
+        title_lower = page.title.lower()
+        content_lower = page.content.lower()
+        score = 0.0
+
+        for fig_kws, sec_kws in categories:
+            fig_match = any(kw in query_text for kw in fig_kws)
+            if fig_match:
+                # Direct match in section title
+                if any(skw in title_lower for skw in sec_kws):
+                    score += 50.0
+                # Match in section content
+                elif any(skw in content_lower[:500] for skw in sec_kws):
+                    score += 15.0
+
+        # Exact title token overlap
+        q_tokens = set(re.findall(r"\w{3,}", query_text))
+        t_tokens = set(re.findall(r"\w{3,}", title_lower))
+        overlap = len(q_tokens & t_tokens)
+        score += overlap * 20.0
+
+        # Avoid References, Bibliography, Appendix unless specifically requested
+        if any(neg in title_lower for neg in ["reference", "bibliography", "appendix"]):
+            score -= 100.0
+
+        if score > best_score:
+            best_score = score
+            best_page = page
+
+    # If confidence score is positive, return the best match
+    if best_score > 0.0:
+        return best_page
+
+    # Fallback heuristic:
+    # Pick the primary content section (prefer Methodology/Method/Approach or Section 2, fallback to first section)
+    for page in content_pages:
+        t = page.title.lower()
+        if any(k in t for k in ["method", "proposed", "architecture", "system", "approach", "implementation"]):
+            return page
+
+    # If none found, return the second section if first is intro, otherwise first section
+    if len(content_pages) > 1 and "intro" in content_pages[0].title.lower():
+        return content_pages[1]
+    return content_pages[0]
+
 
 
 def resolve_anchor_target(
