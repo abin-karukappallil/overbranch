@@ -934,7 +934,9 @@ def detect_figure_extraction_intent(
 ) -> Tuple[bool, str, Optional[str], str, bool]:
     """
     Detects whether the prompt is requesting figure extraction from an uploaded PDF.
-    Supports both singular ("Add System Architecture figure") and plural ("Add some figures to this ppt from this pdf").
+    Supports singular ("Add System Architecture figure"), plural ("Add some figures to this ppt from this pdf"),
+    and PDF content-fill / reference requests ("add these contents in pdf", "fill using pdf", "just pdf")
+    where figure extraction and inclusion are expected.
     Returns: (is_figure_intent, figure_query, anchor_section, position, is_multiple)
     """
     if not user_prompt:
@@ -960,10 +962,41 @@ def detect_figure_extraction_intent(
     pdf_keywords = ["pdf", "document", "paper", "file", "attachment", "uploaded", "presentation", "ppt", "slides", "slide"]
     has_pdf_kw = any(re.search(rf"\b{kw}\b", text_lower) for kw in pdf_keywords)
 
-    if not (has_fig_kw and (has_action_kw or has_pdf_kw or has_pdf)):
+    # Broad patterns for requests like:
+    # "add these contents in pdf", "fill using pdf", "just pdf", "populate from pdf", etc.
+    # Requirement: if user asks "add these contents in pdf", "fill using pdf", or "just pdf",
+    # recognize that it needs image/figure extraction and image addition.
+    fill_or_content_patterns = [
+        # "add these contents/comtents in/from/form/of pdf"
+        r"\b(?:add|insert|include|put|place)\s+(?:these\s+|the\s+)?(?:comtents?|contents?|sections?|details?)\s+(?:in|from|form|of)\s+(?:this\s+)?(?:the\s+)?pdf\b",
+        # "for fill using pdf", "fill using pdf", "fill this ppt using pdf", "fill with pdf"
+        r"\b(?:for\s+)?fill\s+(?:this\s+)?(?:ppt|presentation|slides?|document|paper)?\s*(?:using|with|from|form)\s+(?:this\s+)?(?:the\s+)?pdf\b",
+        r"\b(?:for\s+)?fill\s+(?:using|with|from|form)\s+(?:this\s+)?(?:the\s+)?pdf\b",
+        # "populate using/from/with pdf"
+        r"\bpopulate\s+(?:this\s+)?(?:ppt|presentation|slides?|document)?\s*(?:using|with|from|form)\s+(?:this\s+)?(?:the\s+)?pdf\b",
+        # "just pdf", "just this pdf"
+        r"\bjust\s+(?:this\s+|the\s+)?pdf\b",
+        # "add from this pdf", "add form this pdf"
+        r"\b(?:add|insert)\s+(?:from|form|with|using)\s+(?:this\s+|the\s+)?pdf\b",
+        # "contents/comtents in/from this pdf"
+        r"\b(?:comtents?|contents?)\s+(?:in|from|form|of)\s+(?:this\s+|the\s+)?pdf\b",
+        # "image extartcion/extraction and image addition"
+        r"\b(?:image|figure)\s+(?:extartcion|extraction)\b",
+    ]
+    has_fill_or_content = any(re.search(p, text_lower) for p in fill_or_content_patterns)
+    is_just_pdf_prompt = (
+        text_lower in ("pdf", "just pdf", "use pdf", "from pdf", "this pdf", "attached pdf")
+        or text_lower.endswith("just pdf")
+    ) and (has_pdf or "pdf" in text_lower)
+
+    if not ((has_fig_kw and (has_action_kw or has_pdf_kw or has_pdf)) or has_fill_or_content or is_just_pdf_prompt):
         return False, "", None, "after", False
 
-    is_multiple = bool(re.search(r"\b(?:some|all|few|multiple|these|both|\d+)\s+figures?\b|\bfigures\b", text_lower))
+    is_multiple = bool(
+        has_fill_or_content
+        or is_just_pdf_prompt
+        or re.search(r"\b(?:some|all|few|multiple|these|both|\d+)\s+figures?\b|\bfigures\b|\bdiagrams\b|\bcharts\b|\bimages\b", text_lower)
+    )
 
     # Check for explicit anchor (e.g. "after Methodology", "before Results", "in Section 3")
     anchor_section = None
@@ -1001,7 +1034,7 @@ def detect_figure_extraction_intent(
     # Clean up descriptive words while keeping figure numbers like "Figure 2"
     if not re.match(r"^(?:figure|fig\.?)\s*\d+", q, re.IGNORECASE):
         stripped = re.sub(
-            r"\s*\b(?:figures?|diagrams?|charts?|plots?|images?|illustrations?|flowcharts?)\b\s*",
+            r"\s*\b(?:figures?|diagrams?|charts?|plots?|images?|illustrations?|flowcharts?|comtents?|contents?)\b\s*",
             " ",
             q,
             flags=re.IGNORECASE
@@ -1009,7 +1042,12 @@ def detect_figure_extraction_intent(
         if len(stripped) >= 2:
             q = stripped
 
-    if not q or q.lower() in ("figure", "figures"):
+    if (
+        has_fill_or_content
+        or is_just_pdf_prompt
+        or not q
+        or q.lower() in ("figure", "figures", "comtent", "comtents", "content", "contents", "pdf", "just pdf", "these", "this")
+    ):
         q = "figures" if is_multiple else "figure"
 
     return True, q, anchor_section, position, is_multiple
@@ -1142,6 +1180,27 @@ async def agent_chat(request: Request):
                             is_pdf = True
                         except Exception:
                             pass
+
+            # If a reference PDF is present, ensure any figures from it are extracted into assets/
+            if (is_pdf or pdf_data_input is not None) and req.project_id:
+                try:
+                    proj_assets_dir = UPLOADS_BASE_DIR / safe_project / "assets"
+                    if not proj_assets_dir.exists() or not any(proj_assets_dir.glob("*.png")):
+                        loop = asyncio.get_running_loop()
+                        auto_extracted = await loop.run_in_executor(
+                            None,
+                            lambda: extract_multiple_figures(
+                                pdf_input=pdf_data_input,
+                                max_figures=4,
+                                document_class="beamer",
+                            )
+                        )
+                        for aef in auto_extracted:
+                            save_project_asset(req.project_id, aef.clean_filename, aef.image_bytes)
+                        if auto_extracted:
+                            logger.info(f"Auto-extracted {len(auto_extracted)} figure(s) to assets/ for project {req.project_id}")
+                except Exception as auto_ex_err:
+                    logger.debug(f"Background figure pre-extraction notice: {auto_ex_err}")
 
             # Decision: Is this a full PDF to LaTeX conversion OR an edit with a Reference PDF?
             # A full conversion (PyMuPDF layout extraction, embedded figures, creating/overwriting main.tex)
@@ -1362,21 +1421,38 @@ async def agent_chat(request: Request):
                         })
 
                 # Check if user document already has a placeholder or broken includegraphics pointing to a .pdf file
-                broken_pdf_match = re.search(
-                    r"\\includegraphics(?:\[[^\]]*\])?\{(?:\.cache\/attached_pdfs\/[^\}]+|[^\}]+\.pdf)\}",
-                    cur_code
+                placeholder_re = re.compile(
+                    r"\\includegraphics(?:\[[^\]]*\])?\{(?:\.cache\/[^\}]+|[^\}]+\.pdf|example-image[^\}]*|placeholder[^\}]*|TODO[^\}]*)\}"
                 )
                 remaining_figures = list(extracted_figures)
 
-                if broken_pdf_match and remaining_figures:
-                    broken_str = broken_pdf_match.group(0)
-                    primary_fig = remaining_figures.pop(0)
-                    replacement_snippet = f"\\includegraphics[width=\\linewidth,height=0.65\\textheight,keepaspectratio]{{{primary_fig.asset_rel_path}}}"
+                for m in placeholder_re.finditer(cur_code):
+                    if not remaining_figures:
+                        break
+                    broken_str = m.group(0)
+                    start_ctx = max(0, m.start() - 200)
+                    end_ctx = min(len(cur_code), m.end() + 200)
+                    surrounding = cur_code[start_ctx:end_ctx].lower()
+
+                    best_idx = 0
+                    best_score = -1.0
+                    for f_i, rf in enumerate(remaining_figures):
+                        score = 0.0
+                        rf_words = [w for w in rf.caption.lower().split() if len(w) >= 4]
+                        for w in rf_words:
+                            if w in surrounding:
+                                score += 10.0
+                        if score > best_score:
+                            best_score = score
+                            best_idx = f_i
+
+                    matched_fig = remaining_figures.pop(best_idx)
+                    replacement_snippet = f"\\includegraphics[width=\\linewidth,height=0.65\\textheight,keepaspectratio]{{{matched_fig.asset_rel_path}}}"
                     edits.append({
                         "action": "edit",
                         "original_chunk": broken_str,
                         "proposed_chunk": replacement_snippet,
-                        "explanation": f"Replaced raw PDF reference with 300 DPI PNG '{primary_fig.asset_rel_path}'.",
+                        "explanation": f"Replaced raw PDF/placeholder reference with 300 DPI PNG '{matched_fig.asset_rel_path}'.",
                     })
 
                 if target_doc_class == "beamer":
@@ -1393,12 +1469,22 @@ async def agent_chat(request: Request):
 
                         if matching_frame and matching_frame.content:
                             orig_snippet = matching_frame.content.strip()
-                            edits.append({
-                                "action": "edit",
-                                "original_chunk": orig_snippet,
-                                "proposed_chunk": orig_snippet + "\n\n" + fig.latex_snippet,
-                                "explanation": f"Added figure '{fig.caption}' into frame '{matching_frame.title}'.",
-                            })
+                            if "\\includegraphics" not in orig_snippet and "\\end{frame}" in orig_snippet:
+                                insert_fig = (
+                                    f"    \\begin{{center}}\n"
+                                    f"        \\includegraphics[width=0.85\\linewidth,height=0.55\\textheight,keepaspectratio]{{{fig.asset_rel_path}}}\n"
+                                    f"    \\end{{center}}\n"
+                                )
+                                end_idx = orig_snippet.rfind("\\end{frame}")
+                                prop_snippet = orig_snippet[:end_idx] + insert_fig + orig_snippet[end_idx:]
+                                edits.append({
+                                    "action": "edit",
+                                    "original_chunk": orig_snippet,
+                                    "proposed_chunk": prop_snippet,
+                                    "explanation": f"Added figure '{fig.caption}' into frame '{matching_frame.title}'.",
+                                })
+                            else:
+                                new_frames.append(fig.latex_snippet)
                         else:
                             new_frames.append(fig.latex_snippet)
 

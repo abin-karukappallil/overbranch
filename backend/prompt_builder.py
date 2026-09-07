@@ -101,7 +101,8 @@ SYSTEM_PROMPT_CORE = r"""You are an expert LaTeX agent embedded inside OverBranc
 - NO DUPLICATION: Do not duplicate slides or accidentally repeat title/content blocks at the end.
 - LINE BREAKS: Use `\\` only for intentional line breaks inside text/tables. Never use a single backslash (`\`) as a line break.
 - CLEAN ENVIRONMENT NESTING: Ensure every environment (frame, itemize, enumerate, tabular, tabularx, center, block, etc.) is properly closed before opening another or ending the parent environment.
-- IMAGE REFERENCES: If using `\includegraphics`, reference only existing image filenames provided by the user; never invent placeholder files unless explicitly requested.
+- IMAGE & FIGURE EXTRACTION: If the user asks to "add these contents in pdf", "fill using pdf", "just pdf", or populate content from an attached PDF, you MUST consider both text and image/figure extraction. Always reference real image assets listed under 'Project assets available' using \includegraphics[width=\linewidth,keepaspectratio]{assets/<filename>}. NEVER insert raw multi-page .pdf files into \includegraphics (e.g. \includegraphics{... .pdf} is strictly forbidden). If a slide/section discusses an architecture, pipeline, experiment, or methodology from the PDF, include the corresponding extracted figure asset!
+- IMAGE REFERENCES: If using `\includegraphics`, reference only existing image filenames provided in 'Project assets available'; never invent placeholder files unless explicitly requested.
 - ZERO COMMENTARY: `proposed_chunk` must contain ONLY raw, compilable LaTeX. No markdown, no conversational text, no meta-comments.
 - REQUIRED PACKAGES: Use standard portable packages only (graphicx, amsmath, booktabs, tabularx, colortbl, etc.). No obscure or non-existent packages.
 - NO UNDEFINED MACROS: Never invent or use unimported macros (e.g. `\donotcoloroutermaths`). Use standard `\raisebox` and `\color`.
@@ -324,7 +325,8 @@ def build_prompt(
             f"3. Replace placeholder/template text inside each matching section with real content.\n"
             f"4. Strictly preserve ALL front-matter (title page, certificate, acknowledgement, abstract) and styling.\n"
             f"5. Preserve ALL back-matter (bibliography, appendices).\n"
-            f"6. Do NOT create new chapters/sections unless the existing document has no matching section for that content."
+            f"6. Do NOT create new chapters/sections unless the existing document has no matching section for that content.\n"
+            f"7. IMAGE & FIGURE INCLUSION: When filling or adding contents from this PDF, include relevant extracted figures from 'Project assets available' (e.g. assets/...png) using \\includegraphics. Never use raw multi-page .pdf files in \\includegraphics."
         )
 
     user_parts.append(f"USER REQUEST: {user_request}")
@@ -652,7 +654,8 @@ def build_broad_edit_prompt(
                 f"of real data, names, facts, and details to fill into this section. "
                 f"Do NOT invent or hallucinate content — use ONLY what is in the "
                 f"reference document. If the reference has no relevant content for "
-                f"this section, keep the existing content with minimal improvements."
+                f"this section, keep the existing content with minimal improvements.\n"
+                f"If this section/slide discusses architecture, pipeline, methodology, or evaluation from the PDF, include the matching extracted figure from 'Project assets available' using \\includegraphics."
             )
 
     if is_audit is None:

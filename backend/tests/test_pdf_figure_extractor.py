@@ -98,7 +98,7 @@ def test_extract_figure_beamer_format(sample_pdf_bytes):
     assert fig is not None
     assert "\\begin{frame}" in fig.latex_snippet
     assert "\\end{frame}" in fig.latex_snippet
-    assert "\\includegraphics[width=0.85\\linewidth]" in fig.latex_snippet
+    assert "\\includegraphics[width=0.85\\linewidth" in fig.latex_snippet
     assert "\\begin{figure}" not in fig.latex_snippet
 
 
@@ -230,4 +230,31 @@ def test_detect_figure_extraction_intent():
         "Can you explain the main contribution of this paper?", has_pdf=True
     )
     assert intent4 is False
+
+    # User requirement: "add these comtents in pdf for fill using pdf or just pdf think it need s a image extartcion and image addition"
+    fill_and_content_prompts = [
+        "add these comtents in pdf",
+        "add these contents in pdf",
+        "fill using pdf",
+        "for fill using pdf",
+        "just pdf",
+        "fill this ppt using pdf",
+        "fill slides using pdf",
+        "add content from this pdf",
+        "add these comtents in pdf for fill using pdf or just pdf think it need s a image extartcion and image addition",
+    ]
+    for prompt in fill_and_content_prompts:
+        intent_fc, q_fc, _, _, is_mult_fc = detect_figure_extraction_intent(prompt, has_pdf=True)
+        assert intent_fc is True, f"Failed to detect figure intent for: {prompt}"
+        assert is_mult_fc is True, f"Expected is_multiple=True for: {prompt}"
+        assert q_fc in ("figures", "figure"), f"Expected figures query for: {prompt}, got {q_fc}"
+
+
+def test_safe_latex_escape():
+    """Verifies escaping of LaTeX special characters in captions."""
+    from services.pdf_figure_extractor import safe_latex_escape
+    assert safe_latex_escape("System Architecture & Pipeline") == r"System Architecture \& Pipeline"
+    assert safe_latex_escape(r"Already \& Escaped") == r"Already \& Escaped"
+    assert safe_latex_escape("100% Accuracy with $5 cost") == r"100\% Accuracy with \$5 cost"
+    assert safe_latex_escape("Figure #1_test") == r"Figure \#1\_test"
 

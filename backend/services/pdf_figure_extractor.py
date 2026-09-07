@@ -77,6 +77,19 @@ def slugify_name(text: str) -> str:
     return s if s else "extracted_figure"
 
 
+def safe_latex_escape(text: str) -> str:
+    """Escapes special LaTeX characters for titles and captions."""
+    if not text:
+        return ""
+    t = text
+    t = re.sub(r"(?<!\\)&", r"\&", t)
+    t = re.sub(r"(?<!\\)%", r"\%", t)
+    t = re.sub(r"(?<!\\)\$", r"\$", t)
+    t = re.sub(r"(?<!\\)#", r"\#", t)
+    t = re.sub(r"(?<!\\)_", r"\_", t)
+    return t
+
+
 def decode_pdf_bytes(pdf_input: Any) -> bytes:
     """Decodes PDF input from raw bytes, base64 data URL, or plain base64 string."""
     if isinstance(pdf_input, bytes):
@@ -411,13 +424,15 @@ def extract_figure(
         if not caption_clean:
             caption_clean = best.clean_title.replace("_", " ").title()
 
+        caption_escaped = safe_latex_escape(caption_clean)
+
         # Build LaTeX snippet
         is_beamer = document_class.lower() == "beamer"
         if is_beamer:
             latex_snippet = (
-                f"\\begin{{frame}}{{{caption_clean}}}\n"
+                f"\\begin{{frame}}{{{caption_escaped}}}\n"
                 f"    \\centering\n"
-                f"    \\includegraphics[width=0.85\\linewidth]{{{asset_rel_path}}}\n"
+                f"    \\includegraphics[width=0.85\\linewidth,height=0.75\\textheight,keepaspectratio]{{{asset_rel_path}}}\n"
                 f"\\end{{frame}}"
             )
         else:
@@ -425,7 +440,7 @@ def extract_figure(
                 f"\\begin{{figure}}[htbp]\n"
                 f"    \\centering\n"
                 f"    \\includegraphics[width=\\linewidth]{{{asset_rel_path}}}\n"
-                f"    \\caption{{{caption_clean}}}\n"
+                f"    \\caption{{{caption_escaped}}}\n"
                 f"    \\label{{{label_name}}}\n"
                 f"\\end{{figure}}"
             )
@@ -517,10 +532,12 @@ def extract_multiple_figures(
                 if not caption_clean:
                     caption_clean = cand.clean_title.replace("_", " ").title()
 
+                caption_escaped = safe_latex_escape(caption_clean)
+
                 is_beamer = document_class.lower() == "beamer"
                 if is_beamer:
                     latex_snippet = (
-                        f"\\begin{{frame}}{{{caption_clean}}}\n"
+                        f"\\begin{{frame}}{{{caption_escaped}}}\n"
                         f"    \\centering\n"
                         f"    \\includegraphics[width=0.85\\linewidth,height=0.75\\textheight,keepaspectratio]{{{asset_rel_path}}}\n"
                         f"\\end{{frame}}"
@@ -530,7 +547,7 @@ def extract_multiple_figures(
                         f"\\begin{{figure}}[htbp]\n"
                         f"    \\centering\n"
                         f"    \\includegraphics[width=\\linewidth]{{{asset_rel_path}}}\n"
-                        f"    \\caption{{{caption_clean}}}\n"
+                        f"    \\caption{{{caption_escaped}}}\n"
                         f"    \\label{{{label_name}}}\n"
                         f"\\end{{figure}}"
                     )
