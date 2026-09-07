@@ -347,7 +347,9 @@ def find_target_page(
     text = user_instruction.lower().strip()
     text = re.sub(r"\blitertaure\b", "literature", text)
     text = re.sub(r"\bsldies\b|\bslidee\b|\bslid\b", "slide", text)
-    text = re.sub(r"\bconetnts\b|\bcontetns\b", "contents", text)
+    text = re.sub(r"\bconetnts\b|\bcontetns\b|\bcomtents?\b", "contents", text)
+    text = re.sub(r"\bconatining\b|\bcontainig\b|\bcontianing\b", "containing", text)
+    text = re.sub(r"\bptomp\b|\bpromt\b", "prompt", text)
     text = re.sub(r"\bbetwen\b|\bbetweeen\b", "between", text)
     text = re.sub(r"\binsertin\b|\badditionedits\b|\badditonal\b", "add", text)
 
@@ -398,9 +400,9 @@ def find_target_page(
                 f"survey {num}" in title_lower or f"({num})" in title_lower):
                 return page.page_index
 
-    # 4. Explicit slide/page/frame number references: "slide 7", "slide #7", "slide-7", "frame 3", "page 12", "7th slide"
+    # 4. Explicit slide/page/frame number references: "slide 7", "slide no 3", "slide number 3", "slide #7", "slide-7", "frame 3", "page 12", "7th slide"
     slide_num_match = re.search(
-        r"(?:slide|frame|page|section)\s*[:#\-]?\s*(\d+)", text
+        r"\b(?:slide|frame|page|section|chapter)\s*(?:no\.?|num\.?|number|#|:|-)?\s*(\d+)\b", text
     )
     if slide_num_match:
         num = int(slide_num_match.group(1))
@@ -430,34 +432,46 @@ def find_target_page(
         if num and 1 <= num <= len(content_pages):
             return content_pages[num - 1].page_index
 
-    # 5. Position references: "penultimate slide", "2nd last slide", "last slide", "final slide", "first slide"
-    if any(w in text for w in ["penultimate slide", "second to last slide", "2nd to last slide", "2nd last slide", "penultimate frame"]):
+    # 5. Position references: "penultimate slide", "2nd last slide", "last slide", "final slide", "first slide", "last page", "first page"
+    if any(re.search(rf"\b{w}\b", text) for w in [
+        "penultimate slide", "second to last slide", "2nd to last slide", "2nd last slide", "penultimate frame", "penultimate page"
+    ]):
         if len(content_pages) >= 2:
             return content_pages[-2].page_index
-    if any(w in text for w in ["last slide", "final slide", "end slide", "closing slide", "last frame", "final frame"]):
+    if any(re.search(rf"\b{w}\b", text) for w in [
+        "last slide", "final slide", "end slide", "closing slide", "last frame", "final frame", "last page", "final page", "last section"
+    ]):
         return content_pages[-1].page_index
-    if any(w in text for w in ["title page", "title slide", "first slide", "cover slide", "first frame", "cover page"]):
+    if any(re.search(rf"\b{w}\b", text) for w in [
+        "title page", "title slide", "first slide", "cover slide", "first frame", "cover page", "first page", "opening slide"
+    ]):
         return content_pages[0].page_index
     if any(w in text for w in ["outline", "agenda", "table of contents"]):
         if len(content_pages) >= 2:
             return content_pages[1].page_index
 
-    # 6. Content matching: "slide with this content", "slide containing", "slide about", or unique content query
+    # 6. Content matching: "slide with this content", "slide containing", "slide about", "slide containing this topic", or unique content query
     # Check if user instruction mentions text inside page.content
     content_query = ""
     content_phrase_m = re.search(
-        r"(?:with\s+this\s+content|with\s+content|having\s+content|slide\s+with|containing|titled|having|about|content|text)\s*[:\-]?\s*[\"']?([^\"'\n\r]+)[\"']?",
+        r"(?:with\s+this\s+content|with\s+content|having\s+content|slide\s+with|containing\s+(?:this\s+)?topic|containing|titled|having|about\s+(?:this\s+)?topic|about|content|text|topic)\s*[:\-]?[ \t]*[\"']?([^\"'\n\r]+)[\"']?",
         text,
         re.IGNORECASE
     )
     if content_phrase_m:
         extracted = content_phrase_m.group(1).strip()
         content_query = re.sub(
-            r"^(?:this\s+content|content|text|words|the|that|a|an)\s*[:\-]?\s*",
+            r"^(?:this\s+topic|the\s+topic|this\s+content|content|text|words|the|that|a|an|topic)\s*[:\-]?[ \t]*",
             "",
             extracted,
             flags=re.IGNORECASE
         ).strip().lower()
+        content_query = re.sub(
+            r"\s+\b(?:remove|delete|drop|erase|edit|change|modify|update|please|add|insert)\b.*$",
+            "",
+            content_query,
+            flags=re.IGNORECASE
+        ).strip()
 
     best_match_idx = None
     best_match_score = 0.0
@@ -583,23 +597,124 @@ _FIX_ALL_PATTERNS = [
     re.compile(r"\bfix\s+(?:the\s+)?issues\s+in\s+(?:the\s+)?(?:latex|code|project|file)\b", re.IGNORECASE),
 ]
 
-_EXPLICIT_SINGLE_TARGET_RE = re.compile(
-    r"\b(?:in|for|on|at|edit|change|update|fix|modify|delete|remove)\s+(?:slide|frame|section|chapter|page|part)\s+\d+\b",
-    re.IGNORECASE
-)
+_EXPLICIT_SINGLE_PATTERNS = [
+    # Verbs before: "remove slide 3", "edit slide no 3", "delete page 2"
+    re.compile(
+        r"\b(?:in|for|on|at|to|edit|change|update|fix|modify|delete|remove|drop|erase|cut)\s+(?:the\s+)?(?:slide|frame|section|chapter|page|part)\s*(?:no\.?|num\.?|number|#|:|-)?\s*\d+\b",
+        re.IGNORECASE,
+    ),
+    # Verbs after: "slide no 3 remove", "slide 3 delete", "page 2 remove"
+    re.compile(
+        r"\b(?:slide|frame|section|chapter|page|part)\s*(?:no\.?|num\.?|number|#|:|-)?\s*\d+\s*(?:to\s+)?(?:edit|change|update|fix|modify|delete|remove|drop|erase|cut|please)\b",
+        re.IGNORECASE,
+    ),
+    # Standalone reference: "slide 3", "slide no 3", "slide #3"
+    re.compile(
+        r"\b(?:slide|frame|section|chapter|page|part)\s*(?:no\.?|num\.?|number|#)\s*\d+\b",
+        re.IGNORECASE,
+    ),
+    # Ordinals / position: "first slide", "last slide", "remove last slide", "last slide remove", "penultimate frame", "last page"
+    re.compile(
+        r"\b(?:first|1st|second|2nd|third|3rd|[4-9]th|10th|last|final|penultimate|end|closing)\s+(?:slide|frame|page|section)\b",
+        re.IGNORECASE,
+    ),
+    # Position with verbs: "remove last slide", "delete the final slide", "last slide remove"
+    re.compile(
+        r"\b(?:delete|remove|drop|erase|edit|modify|update)\s+(?:the\s+)?(?:first|last|final|penultimate)\s+(?:slide|frame|page|section)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:first|last|final|penultimate)\s+(?:slide|frame|page|section)\s+(?:delete|remove|drop|erase|edit|modify|update)\b",
+        re.IGNORECASE,
+    ),
+    # Content-based: "slide containing ...", "slide about ...", "slide titled ...", including typos like "conatining"
+    re.compile(
+        r"\b(?:slide|frame|page|section)\s+(?:conatining|containing|about|with|having|titled)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:delete|remove|drop|erase|edit|modify|update)\s+(?:the\s+)?(?:slide|frame|page|section)\s+(?:conatining|containing|about|with|having|titled)\b",
+        re.IGNORECASE,
+    ),
+]
 
 
 def is_explicit_single_target(user_instruction: str) -> bool:
     """
-    Returns True if the instruction specifically names a single numeric slide/section/frame
-    (e.g. 'slide 3', 'edit section 2', 'in slide 4') and does not contain broad scope keywords.
+    Returns True if the instruction specifically names a single slide/section/frame
+    (e.g. 'slide 3', 'slide no 3 remove', 'last slide', 'slide containing X')
+    and does not contain broad scope keywords.
     """
     if not user_instruction:
         return False
     text = user_instruction.strip()
     if re.search(r"\b(?:all|every|each|entire|whole|full|throughout|across)\b", text, re.IGNORECASE):
         return False
-    return bool(_EXPLICIT_SINGLE_TARGET_RE.search(text))
+    return any(p.search(text) for p in _EXPLICIT_SINGLE_PATTERNS)
+
+
+def detect_full_slide_deletion(
+    user_instruction: str,
+    doc_index: DocumentIndex,
+) -> Optional[Tuple[PageEntry, str]]:
+    """
+    Detects if the user wants to remove/delete an entire slide, page, frame, or section.
+    E.g.:
+    - "slide no 3 remove", "remove slide 3", "delete slide 3"
+    - "remove last slide", "last slide remove", "delete the final slide"
+    - "slide containing this topic remove", "remove slide containing System Architecture"
+    - "page no 2 remove", "remove page 2", "delete last page"
+    Returns (target_page, explanation) or None.
+    """
+    if not user_instruction or not doc_index or not doc_index.pages:
+        return None
+
+    text = user_instruction.strip().lower()
+
+    # 1. Must contain a delete action keyword
+    delete_keywords = ["delete", "remove", "drop", "erase", "omit", "strip", "cut", "get rid of"]
+    has_delete = any(re.search(rf"\b{kw}\b", text) for kw in delete_keywords)
+    if not has_delete:
+        return None
+
+    # 2. Must NOT be targeting sub-elements within a slide
+    sub_elements = [
+        "bullet", "item", "line", "word", "text", "paragraph", "formula",
+        "equation", "image", "figure", "table", "column", "block", "box",
+        "footnote", "citation"
+    ]
+    if any(re.search(rf"\b{el}\b", text) for el in sub_elements):
+        return None
+
+    # 3. Must target slide / page / frame / section
+    target_keywords = ["slide", "frame", "page", "section", "chapter"]
+    has_target = any(re.search(rf"\b{tk}\b", text) for tk in target_keywords)
+    if not has_target:
+        return None
+
+    # 4. Resolve the target page
+    target_idx = find_target_page(doc_index, user_instruction)
+    if target_idx is None:
+        return None
+
+    page = doc_index.get_page_by_index(target_idx)
+    if not page or not page.content:
+        return None
+
+    if page.page_type in ("preamble", "postamble"):
+        return None
+
+    content_pages = [p for p in doc_index.pages if p.page_type not in ("preamble", "postamble")]
+    try:
+        slide_num = content_pages.index(page) + 1
+    except ValueError:
+        slide_num = target_idx + 1
+
+    unit_name = "slide" if doc_index.doc_type == "beamer" else "section"
+    title_str = f" '{page.title}'" if page.title and page.title not in ("Preamble", "Postamble") else ""
+    explanation = f"Removed {unit_name} {slide_num}{title_str} as requested."
+
+    return page, explanation
 
 # Patterns that indicate the user wants to edit ALL sections/chapters/slides,
 # not just a single specific one.

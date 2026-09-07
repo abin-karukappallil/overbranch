@@ -1622,6 +1622,43 @@ async def agent_chat(request: Request):
                 try:
                     document_structure = doc_idx.parse_document_structure(req.current_code)
 
+                    # ── Direct Slide / Section Deletion Handling ──────────────
+                    # If user asks to remove/delete a specific slide (e.g. "slide no 3 remove",
+                    # "remove last slide", "slide containing System Architecture remove"),
+                    # execute deletion directly and instantly without slow/error-prone LLM calls.
+                    deletion_match = doc_idx.detect_full_slide_deletion(req.user_prompt, document_structure)
+                    if deletion_match:
+                        del_page, del_explanation = deletion_match
+                        if del_page and del_page.content and del_page.content in req.current_code:
+                            del_edits = [{
+                                "action": "edit",
+                                "original_chunk": del_page.content,
+                                "proposed_chunk": "",
+                                "explanation": del_explanation,
+                            }]
+                            yield sse_event("progress", {"step": "delete_done", "message": del_explanation, "icon": "trash-2"})
+                            conversation_memory.add_turn(
+                                project_id=req.project_id,
+                                user_prompt=req.user_prompt,
+                                assistant_response={
+                                    "plan": del_explanation,
+                                    "edits": del_edits,
+                                    "explanation": del_explanation,
+                                },
+                                file_path=req.file_path,
+                                chunk_summaries=[],
+                            )
+                            yield sse_event("result", {
+                                "plan": del_explanation,
+                                "edits": del_edits,
+                                "original_chunk": del_page.content,
+                                "proposed_chunk": "",
+                                "explanation": del_explanation,
+                                "files_written": [],
+                                "assets_written": [],
+                            })
+                            return
+
                     # ── Section-by-Section Inspection & Broad-edit detection ──────────────
                     # For all broad/fix instructions or general document edits where no single specific target
                     # is explicitly named (e.g. 'slide 3'), inspect EACH section one by one with the full document

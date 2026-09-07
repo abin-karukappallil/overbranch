@@ -258,3 +258,78 @@ def test_safe_latex_escape():
     assert safe_latex_escape("100% Accuracy with $5 cost") == r"100\% Accuracy with \$5 cost"
     assert safe_latex_escape("Figure #1_test") == r"Figure \#1\_test"
 
+
+def test_slide_targeting_and_deletion():
+    """
+    Verifies targeting specific slides/pages (e.g. "slide no 3 remove", "last slide",
+    "this slide containing this topic") and direct slide deletion.
+    """
+    from document_index import parse_document_structure, find_target_page, is_explicit_single_target, detect_full_slide_deletion
+
+    beamer_code = r"""\documentclass{beamer}
+\begin{document}
+
+\begin{frame}{Title Slide}
+Welcome to the presentation.
+\end{frame}
+
+\begin{frame}{Introduction}
+Background and problem statement.
+\end{frame}
+
+\begin{frame}{System Architecture}
+Detailed pipeline and component layout.
+\end{frame}
+
+\begin{frame}{Evaluation and Results}
+Accuracy and benchmark comparisons.
+\end{frame}
+
+\begin{frame}{Conclusion}
+Final remarks and wrap up.
+\end{frame}
+
+\end{document}
+"""
+    doc_index = parse_document_structure(beamer_code)
+
+    # 1. Slide number queries ("slide no 3", "slide number 2", etc.)
+    target_no3 = find_target_page(doc_index, "slide no 3 remove")
+    assert target_no3 is not None
+    assert doc_index.get_page_by_index(target_no3).title == "System Architecture"
+
+    target_num2 = find_target_page(doc_index, "slide number 2 delete")
+    assert target_num2 is not None
+    assert doc_index.get_page_by_index(target_num2).title == "Introduction"
+
+    # 2. Position queries ("last slide remove", "remove last slide")
+    target_last = find_target_page(doc_index, "last slide remove")
+    assert target_last is not None
+    assert doc_index.get_page_by_index(target_last).title == "Conclusion"
+
+    # 3. Topic queries with typo ("to this slide conatining System Architecture remove")
+    target_topic = find_target_page(doc_index, "to this slide conatining System Architecture remove")
+    assert target_topic is not None
+    assert doc_index.get_page_by_index(target_topic).title == "System Architecture"
+
+    # 4. is_explicit_single_target
+    assert is_explicit_single_target("slide no 3 remove") is True
+    assert is_explicit_single_target("last slide remove") is True
+    assert is_explicit_single_target("to this slide containing this topic add a diagram") is True
+    assert is_explicit_single_target("fix all slides") is False
+
+    # 5. detect_full_slide_deletion
+    del_res = detect_full_slide_deletion("slide no 3 remove", doc_index)
+    assert del_res is not None
+    del_page, del_exp = del_res
+    assert del_page.title == "System Architecture"
+    assert "System Architecture" in del_exp
+
+    del_last = detect_full_slide_deletion("remove last slide", doc_index)
+    assert del_last is not None
+    assert del_last[0].title == "Conclusion"
+
+    # Sub-element deletion should NOT be detected as full slide deletion
+    del_sub = detect_full_slide_deletion("in slide 3 remove the second bullet", doc_index)
+    assert del_sub is None
+
