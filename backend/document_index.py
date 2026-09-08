@@ -60,6 +60,69 @@ class DocumentIndex:
             return self.pages[idx]
         return None
 
+    def page_for_offset(self, offset: int) -> Optional[PageEntry]:
+        """Find the PageEntry containing the given character offset."""
+        if not self.pages:
+            return None
+        for p in self.pages:
+            if p.start_offset <= offset < p.end_offset:
+                return p
+        # If between pages (e.g. boundary between preamble and first section), assign to preceding page
+        for i in range(len(self.pages) - 1):
+            if self.pages[i].start_offset <= offset < self.pages[i + 1].start_offset:
+                return self.pages[i]
+        # If offset is at or beyond the very end of the last page
+        if self.pages and offset >= self.pages[-1].start_offset:
+            return self.pages[-1]
+        # If before first page
+        if self.pages and offset < self.pages[0].start_offset:
+            return self.pages[0]
+        return None
+
+    def pages_touched_by_offsets(self, start_offset: int, end_offset: int) -> Set[str]:
+        """Return the set of page_ids overlapping with [start_offset, end_offset]."""
+        touched: Set[str] = set()
+        if not self.pages:
+            return touched
+        if start_offset == end_offset:
+            p = self.page_for_offset(start_offset)
+            if p:
+                touched.add(p.page_id)
+            return touched
+
+        min_off = min(start_offset, end_offset)
+        max_off = max(start_offset, end_offset)
+        for p in self.pages:
+            # Check interval overlap: max(min_off, p.start_offset) < min(max_off, p.end_offset)
+            if max(min_off, p.start_offset) < min(max_off, p.end_offset):
+                touched.add(p.page_id)
+        return touched
+
+    def page_for_line(self, line_number: int, full_document: Optional[str] = None) -> Optional[PageEntry]:
+        """Find the PageEntry containing a given 1-indexed LaTeX line number."""
+        if not self.pages:
+            return None
+        if line_number <= 0:
+            return self.pages[0] if self.pages else None
+
+        if full_document is not None:
+            # Compute character offset for line_number (1-indexed)
+            lines = full_document.splitlines(keepends=True)
+            if line_number <= len(lines):
+                offset = sum(len(l) for l in lines[:line_number - 1])
+                return self.page_for_offset(offset)
+            elif lines:
+                return self.pages[-1]
+
+        # Approximate via pages content line counts if full_document not supplied
+        current_line = 1
+        for p in self.pages:
+            p_lines = p.content.count("\n") + 1
+            if current_line <= line_number < current_line + p_lines:
+                return p
+            current_line += p_lines
+        return self.pages[-1] if self.pages else None
+
 
 @dataclass
 class CollectionEntry:
@@ -738,7 +801,7 @@ def is_fix_all_instruction(user_instruction: str) -> bool:
         return False
 
     text = user_instruction.strip()
-    if _EXPLICIT_SINGLE_TARGET_RE.search(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
+    if is_explicit_single_target(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
         return False
 
     for pattern in _FIX_ALL_PATTERNS:
@@ -758,7 +821,7 @@ def is_broad_instruction(user_instruction: str) -> bool:
         return False
 
     text = user_instruction.strip()
-    if _EXPLICIT_SINGLE_TARGET_RE.search(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
+    if is_explicit_single_target(text) and not re.search(r"\b(?:all|every|each)\b", text, re.IGNORECASE):
         return False
 
     for pattern in _BROAD_PATTERNS:

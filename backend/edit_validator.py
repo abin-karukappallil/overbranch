@@ -11,7 +11,15 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Set, Tuple
 
+from document_index import DocumentIndex, PageEntry, parse_document_structure
+from environment_ledger import EnvironmentLedger, get_environment_ledger
+
 logger = logging.getLogger("edit_validator")
+
+
+class ScopeViolationError(Exception):
+    """Raised when an edit illegally alters sections outside its resolved target scope."""
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -767,6 +775,175 @@ def validate_anchor_integrity(
     return issues
 
 
+def validate_environment_ledger(
+    original_code: str,
+    proposed_edits: List[Dict[str, Any]],
+    doc_idx: Optional[DocumentIndex] = None,
+    ledger: Optional[Any] = None,
+) -> List[ValidationIssue]:
+    """
+    Reject at validation time any proposed edit for a page where
+    is_page_safe_for_isolated_edit() is False AND the proposed chunk contains
+    a boundary-altering token (\end{document} or spanning env) that doesn't match expectation.
+    """
+    issues: List[ValidationIssue] = []
+    if not original_code or not proposed_edits:
+        return issues
+
+    if doc_idx is None:
+        doc_idx = parse_document_structure(original_code)
+    if ledger is None:
+        ledger = get_environment_ledger(original_code, doc_idx)
+
+    doc_span = ledger.get_document_span()
+
+    for edit in proposed_edits:
+        if edit.get("action") == "replace_all":
+            continue
+        pc = edit.get("proposed_chunk", "")
+        oc = edit.get("original_chunk", "")
+        if not pc:
+            continue
+
+        if "\\documentclass" in pc and "\\begin{document}" in pc and "\\end{document}" in pc:
+            continue
+
+        target_page_id = edit.get("target_page_id") or edit.get("anchor_page_id")
+        if not target_page_id and oc:
+            off = original_code.find(oc)
+            if off != -1:
+                p = doc_idx.page_for_offset(off)
+                if p:
+                    target_page_id = p.page_id
+
+        if target_page_id:
+            safe, reason = ledger.is_page_safe_for_isolated_edit(target_page_id)
+            if not safe:
+                is_closing_page = (doc_span and doc_span.closes_in_page_id == target_page_id)
+                # Check for premature or illegal \end{document}
+                if r"\end{document}" in pc and not is_closing_page:
+                    issues.append(ValidationIssue(
+                        check="environment_ledger_boundary_violation",
+                        severity="error",
+                        message=(
+                            f"Proposed edit for section '{target_page_id}' emitted \\end{{document}}, "
+                            f"which is forbidden. \\end{{document}} is expected only in '{doc_span.closes_in_page_id if doc_span else 'last section'}'."
+                        ),
+                        auto_fixable=False,
+                    ))
+
+                is_opening_page = (doc_span and doc_span.opens_in_page_id == target_page_id)
+                if r"\begin{document}" in pc and not is_opening_page and "\\documentclass" not in pc:
+                    issues.append(ValidationIssue(
+                        check="environment_ledger_boundary_violation",
+                        severity="error",
+                        message=(
+                            f"Proposed edit for section '{target_page_id}' emitted \\begin{{document}}, "
+                            f"which is already declared in '{doc_span.opens_in_page_id if doc_span else 'preamble'}'."
+                        ),
+                        auto_fixable=False,
+                    ))
+
+    return issues
+
+
+def allowed_dependency_pages(
+    resolved_target_page_ids: Set[str],
+    doc_idx: DocumentIndex,
+    ledger: Optional[Any] = None,
+) -> Set[str]:
+    """
+    Computes legitimate dependency pages for the resolved target page set:
+    - Shared \\ref / \\label targets between pages
+    - Spanning environment partner pages from the environment ledger
+    """
+    allowed: Set[str] = set()
+    if not doc_idx or not doc_idx.pages or not resolved_target_page_ids:
+        return allowed
+
+    target_pages = [p for p in doc_idx.pages if p.page_id in resolved_target_page_ids]
+
+    # 1. Check shared labels/refs
+    for tp in target_pages:
+        labels = re.findall(r"\\label\{([^}]+)\}", tp.content)
+        for label in labels:
+            for other_page in doc_idx.pages:
+                if other_page.page_id not in resolved_target_page_ids:
+                    if re.search(r"\\(?:ref|eqref|autoref|cref|pageref)\{" + re.escape(label) + r"\}", other_page.content):
+                        allowed.add(other_page.page_id)
+
+        refs = re.findall(r"\\(?:ref|eqref|autoref|cref|pageref)\{([^}]+)\}", tp.content)
+        for ref in refs:
+            for other_page in doc_idx.pages:
+                if other_page.page_id not in resolved_target_page_ids:
+                    if re.search(r"\\label\{" + re.escape(ref) + r"\}", other_page.content):
+                        allowed.add(other_page.page_id)
+
+    # 2. Check ledger environment spans (excluding global document environment)
+    if ledger is not None:
+        for t_id in resolved_target_page_ids:
+            for span in ledger.spans_touching_page(t_id):
+                if span.spans_multiple_sections and span.env_name != "document":
+                    if span.opens_in_page_id:
+                        allowed.add(span.opens_in_page_id)
+                    if span.closes_in_page_id:
+                        allowed.add(span.closes_in_page_id)
+
+    return allowed
+
+
+def enforce_scope_lock(
+    proposed_edit: Any,
+    resolved_target_page_ids: Set[str],
+    doc_idx: DocumentIndex,
+    ledger: Optional[Any] = None,
+) -> None:
+    """
+    Compute exactly which page_ids the proposed_edit actually touches (via offset diffing
+    against doc_idx), and reject anything outside resolved_target_page_ids UNLESS the touched
+    page is a legitimate dependency.
+    """
+    if not resolved_target_page_ids or not doc_idx or not doc_idx.pages:
+        return
+
+    touched_page_ids: Set[str] = set()
+    edits = proposed_edit if isinstance(proposed_edit, list) else [proposed_edit]
+
+    for edit in edits:
+        if isinstance(edit, dict):
+            start_off = edit.get("start_offset")
+            end_off = edit.get("end_offset")
+            if start_off is not None and end_off is not None:
+                touched_page_ids.update(doc_idx.pages_touched_by_offsets(start_off, end_off))
+            elif edit.get("insertion_offset") is not None:
+                p = doc_idx.page_for_offset(edit["insertion_offset"])
+                if p:
+                    touched_page_ids.add(p.page_id)
+            elif edit.get("target_page_id"):
+                touched_page_ids.add(edit["target_page_id"])
+            elif edit.get("original_chunk"):
+                oc = edit["original_chunk"]
+                for p in doc_idx.pages:
+                    if oc in p.content or (len(oc) > 30 and oc[:30] in p.content):
+                        touched_page_ids.add(p.page_id)
+        else:
+            start_off = getattr(edit, "start_offset", None)
+            end_off = getattr(edit, "end_offset", None)
+            if start_off is not None and end_off is not None:
+                touched_page_ids.update(doc_idx.pages_touched_by_offsets(start_off, end_off))
+            elif getattr(edit, "target_page_id", None):
+                touched_page_ids.add(getattr(edit, "target_page_id"))
+
+    allowed_deps = allowed_dependency_pages(resolved_target_page_ids, doc_idx, ledger)
+    illegal_touches = touched_page_ids - resolved_target_page_ids - allowed_deps
+
+    if illegal_touches:
+        raise ScopeViolationError(
+            f"Edit for {resolved_target_page_ids} illegally modified {illegal_touches}. "
+            f"Rejected before reaching the user."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Top-level validation
 # ---------------------------------------------------------------------------
@@ -779,6 +956,8 @@ def validate_edit(
     expected_ordinal: Optional[int] = None,
     anchor_target: Optional[Any] = None,
     expected_position: Optional[str] = None,
+    doc_idx: Optional[DocumentIndex] = None,
+    ledger: Optional[EnvironmentLedger] = None,
 ) -> ValidationResult:
     """
     Run all validation checks on proposed edits.
@@ -791,6 +970,8 @@ def validate_edit(
         expected_ordinal: Optional expected ordinal number for collection append
         anchor_target: Optional PageEntry anchor target for anchored relative insert
         expected_position: Optional 'after' or 'before' for anchored relative insert
+        doc_idx: Optional DocumentIndex
+        ledger: Optional EnvironmentLedger
 
     Returns:
         ValidationResult with pass/fail and issue details
@@ -799,6 +980,11 @@ def validate_edit(
 
     if not proposed_edits:
         return result
+
+    if original_code and doc_idx is None:
+        doc_idx = parse_document_structure(original_code)
+    if original_code and ledger is None and doc_idx is not None:
+        ledger = get_environment_ledger(original_code, doc_idx)
 
     # Insertion-specific validation for collection appends
     for edit in proposed_edits:
@@ -852,6 +1038,10 @@ def validate_edit(
     result.issues.extend(validate_no_duplicate_headings(original_code, proposed_edits))
     result.issues.extend(validate_no_comment_overlap(final_doc))
     result.issues.extend(validate_no_unmatched_braces(final_doc))
+
+    # Environment ledger boundary validation
+    if ledger is not None and doc_idx is not None:
+        result.issues.extend(validate_environment_ledger(original_code, proposed_edits, doc_idx, ledger))
 
     # Update passed flag
     result.passed = not any(i.severity == "error" for i in result.issues)

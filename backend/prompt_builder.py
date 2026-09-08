@@ -235,6 +235,7 @@ def build_prompt(
     current_code: Optional[str] = None,
     target_context: Optional[str] = None,
     is_edit_mode: bool = False,
+    ledger_facts: Optional[str] = None,
 ) -> List:
     """
     Assemble the complete LLM prompt with smart token budgeting.
@@ -245,6 +246,7 @@ def build_prompt(
                         current_code budget for minimal token usage.
         is_edit_mode: When True, injects instruction priority rules and uses
                       tighter token budgets suitable for free-tier LLM APIs.
+        ledger_facts: Computed ground-truth facts block from EnvironmentLedger.
     """
     # --- System Message ---
     system_parts = [SYSTEM_PROMPT_CORE]
@@ -273,6 +275,10 @@ def build_prompt(
 
     # --- User Message ---
     user_parts = []
+
+    # Include computed environment ledger facts if present
+    if ledger_facts:
+        user_parts.append(ledger_facts)
 
     # Include the current document — smart budgeting based on mode
     if current_code and current_code.strip():
@@ -565,6 +571,7 @@ def build_broad_edit_prompt(
     attached_file_info: Optional[Dict[str, str]] = None,
     full_document: Optional[str] = None,
     is_audit: Optional[bool] = None,
+    ledger_facts: Optional[str] = None,
 ) -> List:
     """
     Build a scoped prompt for editing a single chapter/section as part of
@@ -599,6 +606,10 @@ def build_broad_edit_prompt(
 
     # --- User Message ---
     user_parts = []
+
+    # Include computed environment ledger facts
+    if ledger_facts:
+        user_parts.append(ledger_facts)
 
     # Feed the complete document from preamble to \end{document}
     if full_document and full_document.strip():
@@ -752,6 +763,7 @@ def build_append_to_collection_prompt(
     conversation_context: str = "",
     project_context: str = "",
     attached_file_info: Optional[Dict[str, str]] = None,
+    ledger_facts: Optional[str] = None,
 ) -> List:
     """
     Build a scoped prompt for appending a single new item to an existing collection.
@@ -777,6 +789,9 @@ def build_append_to_collection_prompt(
     system_content = "\n".join(system_parts)
 
     user_parts = []
+    if ledger_facts:
+        user_parts.append(ledger_facts)
+
     user_parts.append(
         f"TARGET COLLECTION: {collection_entry.parent_title} ({collection_entry.collection_type})\n"
         f"COLLECTION ID: {collection_entry.collection_id}\n"
@@ -863,6 +878,7 @@ def build_anchored_insert_prompt(
     conversation_context: str = "",
     project_context: str = "",
     attached_file_info: Optional[Dict[str, str]] = None,
+    ledger_facts: Optional[str] = None,
 ) -> List:
     """
     Build a specialized prompt for inserting new content relative to an anchor section
@@ -889,6 +905,9 @@ def build_anchored_insert_prompt(
     system_content = "\n".join(system_parts)
 
     user_parts = []
+    if ledger_facts:
+        user_parts.append(ledger_facts)
+
     user_parts.append(
         f"ANCHOR SECTION: {anchor_target.title} (ID: {anchor_target.page_id})\n"
         f"REQUESTED POSITION: {position.upper()} this anchor section\n"
@@ -933,3 +952,113 @@ def build_anchored_insert_prompt(
         f"system={len(system_content)} chars, user={len(user_content)} chars"
     )
     return messages
+
+
+# ============================================================================
+# SELF-HEALING & REPAIR PROMPT BUILDERS (Part 4)
+# ============================================================================
+
+SELF_HEAL_SYSTEM_PROMPT = r"""You are an expert LaTeX debugging and self-healing engine embedded in OverBranch.
+A proposed LaTeX edit failed compilation or structural validation.
+Your job is to fix the specific error in the implicated section while strictly satisfying the original user instruction and maintaining valid LaTeX syntax.
+
+RULES:
+1. Fix the specific error/log reported while preserving the requested edit content.
+2. Return ONLY valid JSON with fields:
+   {
+     "action": "replace",
+     "original_chunk": "<exact verbatim code from the section to replace>",
+     "proposed_chunk": "<the corrected valid LaTeX code>",
+     "explanation": "<brief summary of what was fixed>"
+   }
+3. Do NOT emit markdown commentary outside JSON.
+4. Adhere strictly to the DOCUMENT STRUCTURE FACTS.
+"""
+
+FULL_DOC_REPAIR_SYSTEM_PROMPT = r"""You are an expert LaTeX compilation and repair engine embedded in OverBranch.
+A LaTeX document failed compilation or global validation due to cross-section or multi-environment mismatches.
+Fix the entire document to ensure clean compilation while strictly preserving the user's intended content.
+
+RULES:
+1. Return ONLY valid JSON with:
+   {
+     "action": "replace_all",
+     "proposed_chunk": "<the complete valid compilable LaTeX document>",
+     "explanation": "<brief description of structural fixes applied>"
+   }
+2. Ensure all \begin{...} and \end{...} pairs match exactly across the whole document.
+"""
+
+
+def build_self_heal_prompt(
+    page_content: str,
+    error_message: str,
+    ledger_context: Union[List[Any], str],
+    original_instruction: str,
+    page_title: str = "",
+    full_document: Optional[str] = None,
+) -> List:
+    """
+    Targeted self-test prompt scoped ONLY to the implicated section + specific error text.
+    """
+    system_parts = [SELF_HEAL_SYSTEM_PROMPT]
+    system_content = "\n".join(system_parts)
+
+    user_parts = []
+    if isinstance(ledger_context, str) and ledger_context:
+        user_parts.append(ledger_context)
+    elif isinstance(ledger_context, list) and ledger_context:
+        spans_desc = []
+        for s in ledger_context:
+            spans_desc.append(f"- \\begin{{{s.env_name}}} (opens in: {s.opens_in_page_id}, closes in: {s.closes_in_page_id or 'unclosed'})")
+        user_parts.append("[DOCUMENT STRUCTURE FACTS — ACTIVE ENVIRONMENT SPANS FOR THIS SECTION]\n" + "\n".join(spans_desc))
+
+    user_parts.append(f"ORIGINAL USER INSTRUCTION: {original_instruction}")
+    user_parts.append(f"IMPLICATED SECTION: {page_title or 'Target Section'}")
+    user_parts.append(f"SECTION CONTENT:\n```latex\n{page_content}\n```")
+    user_parts.append(f"COMPILER / VALIDATION ERROR:\n```\n{error_message}\n```")
+
+    if full_document and len(full_document) < 10000:
+        user_parts.append(f"SURROUNDING DOCUMENT PREVIEW:\n```latex\n{full_document[:4000]}\n```")
+
+    user_parts.append(
+        "DIRECTIVE: Correct the section content to fix the error above. "
+        "Return ONLY the JSON object with 'original_chunk' and 'proposed_chunk'."
+    )
+
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content="\n\n".join(user_parts)),
+    ]
+
+
+def build_full_document_repair_prompt(
+    full_document: str,
+    error_message: str,
+    ledger_summary: str,
+    original_instruction: str = "",
+) -> List:
+    """
+    Escalated repair prompt providing full-document context for non-localizable errors.
+    """
+    system_parts = [FULL_DOC_REPAIR_SYSTEM_PROMPT]
+    system_content = "\n".join(system_parts)
+
+    user_parts = []
+    if ledger_summary:
+        user_parts.append(f"[ENVIRONMENT LEDGER SUMMARY]\n{ledger_summary}")
+
+    if original_instruction:
+        user_parts.append(f"ORIGINAL USER INSTRUCTION: {original_instruction}")
+
+    user_parts.append(f"COMPILER / VALIDATION ERROR:\n```\n{error_message}\n```")
+    user_parts.append(f"FULL DOCUMENT SOURCE:\n```latex\n{full_document}\n```")
+    user_parts.append(
+        "DIRECTIVE: Fix all environment mismatches and LaTeX syntax errors across the document. "
+        "Return the repaired full document as JSON with 'proposed_chunk' and 'explanation'."
+    )
+
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content="\n\n".join(user_parts)),
+    ]

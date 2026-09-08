@@ -38,6 +38,18 @@ from services.pdf_figure_extractor import extract_figure, extract_multiple_figur
 from project_storage import UPLOADS_BASE_DIR
 import document_index as doc_idx
 import edit_validator
+from edit_validator import enforce_scope_lock, allowed_dependency_pages, ScopeViolationError
+from environment_ledger import EnvironmentLedger, get_environment_ledger, OpenEnvironmentSpan
+from provider_governor import (
+    AdaptiveProviderGovernor,
+    call_provider_governed,
+    get_governor,
+    GOVERNORS,
+    CircuitOpenError,
+    EmptyResponseError,
+)
+from compiler import test_compile, CompileTestResult
+from dataclasses import dataclass
 
 load_dotenv(override=True)
 
@@ -1053,6 +1065,183 @@ def detect_figure_extraction_intent(
     return True, q, anchor_section, position, is_multiple
 
 
+# ─── Self-Healing & Concurrency Constants (Parts 2-4) ──────────────────────────
+
+TRIAGE_SKIP_CONFIDENCE_THRESHOLD = 0.85
+MAX_SELF_HEAL_ATTEMPTS = 2
+
+
+@dataclass
+class SelfHealResult:
+    success: bool
+    final_doc: Optional[str] = None
+    error: Optional[str] = None
+    attempts: int = 1
+    edits: Optional[List[Dict[str, Any]]] = None
+
+
+def extract_line_number(error_log: str) -> Optional[int]:
+    """Extracts line number from LaTeX compiler error messages or validation reports."""
+    if not error_log:
+        return None
+    m = re.search(r"l\.(\d+)", error_log)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"line\s+(\d+)", error_log, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def apply_diff(original_code: str, proposed_edits: Any) -> str:
+    """Applies a list of edits or single edit dict to original_code."""
+    if not proposed_edits:
+        return original_code or ""
+    final_doc = original_code or ""
+    edits = proposed_edits if isinstance(proposed_edits, list) else [proposed_edits]
+
+    for edit in edits:
+        if not isinstance(edit, dict):
+            continue
+        pc = edit.get("proposed_chunk", "")
+        oc = edit.get("original_chunk", "")
+        action = edit.get("action", "replace")
+
+        if action == "replace_all" and pc:
+            return pc
+
+        if oc and oc in final_doc:
+            final_doc = final_doc.replace(oc, pc or "", 1)
+        elif pc and not oc:
+            if action in ("insert_after", "insert_relative") and edit.get("insertion_offset") is not None:
+                off = edit["insertion_offset"]
+                final_doc = final_doc[:off] + "\n\n" + pc + "\n\n" + final_doc[off:]
+            else:
+                final_doc = pc
+    return final_doc
+
+
+async def apply_edit_with_self_healing(
+    proposed_edits: List[Dict[str, Any]],
+    current_code: str,
+    doc_idx: doc_idx.DocumentIndex,
+    ledger: EnvironmentLedger,
+    user_instruction: str,
+    preferred_provider_name: str = "gemini_web2api",
+    model: Optional[str] = None,
+    api_keys: Optional[Dict[str, str]] = None,
+    project_id: Optional[str] = None,
+) -> SelfHealResult:
+    """
+    Self-healing loop: validates and test-compiles proposed edits.
+    If errors occur, feeds specific compiler/validation errors back to the model
+    with targeted scope, escalating to full document repair only when needed.
+    """
+    current_edits = list(proposed_edits)
+
+    for attempt in range(1, MAX_SELF_HEAL_ATTEMPTS + 1):
+        merged_doc = apply_diff(current_code, current_edits)
+        validation = edit_validator.validate_edit(
+            original_code=current_code,
+            proposed_edits=current_edits,
+            doc_idx=doc_idx,
+            ledger=ledger,
+        )
+
+        if validation.passed:
+            compile_res = test_compile(merged_doc, project_id=project_id)
+            if compile_res.success:
+                return SelfHealResult(
+                    success=True,
+                    final_doc=merged_doc,
+                    attempts=attempt,
+                    edits=current_edits,
+                )
+            error_log = compile_res.error_log or "LaTeX compilation failed"
+        else:
+            error_log = "; ".join(i.message for i in validation.issues if i.severity == "error") or "Structural validation failed"
+
+        logger.warning(f"Self-healing attempt {attempt}/{MAX_SELF_HEAL_ATTEMPTS} detected error: {error_log}")
+
+        if attempt >= MAX_SELF_HEAL_ATTEMPTS:
+            return SelfHealResult(
+                success=False,
+                final_doc=merged_doc,
+                error=error_log,
+                attempts=attempt,
+                edits=current_edits,
+            )
+
+        # Localize the error to a specific page_id when possible
+        error_line = extract_line_number(error_log)
+        implicated_page = doc_idx.page_for_line(error_line, full_document=merged_doc) if error_line else None
+
+        try:
+            if implicated_page and attempt < MAX_SELF_HEAL_ATTEMPTS:
+                # Targeted self-test: re-prompt scoped ONLY to the implicated section + specific error text
+                retry_messages = prompt_builder.build_self_heal_prompt(
+                    page_content=implicated_page.content,
+                    error_message=error_log,
+                    ledger_context=ledger.spans_touching_page(implicated_page.page_id),
+                    original_instruction=user_instruction,
+                    page_title=implicated_page.title,
+                    full_document=merged_doc,
+                )
+            else:
+                # Escalate to full-document inspection
+                retry_messages = prompt_builder.build_full_document_repair_prompt(
+                    full_document=merged_doc,
+                    error_message=error_log,
+                    ledger_summary=ledger.summarize(),
+                    original_instruction=user_instruction,
+                )
+
+            formatted_messages = [
+                {"role": "system", "content": retry_messages[0].content},
+                {"role": "user", "content": retry_messages[1].content},
+            ]
+
+            resp = await call_provider_governed(
+                provider_name=preferred_provider_name,
+                messages=formatted_messages,
+                model=model,
+                api_keys=api_keys,
+            )
+
+            raw_content = resp.get("content", "")
+            parsed = clean_json_response(raw_content)
+
+            if parsed.get("proposed_chunk") or parsed.get("edits"):
+                if parsed.get("action") == "replace_all":
+                    current_edits = [{
+                        "action": "replace_all",
+                        "original_chunk": current_code,
+                        "proposed_chunk": parsed["proposed_chunk"],
+                        "explanation": parsed.get("explanation", "Repaired compilation error"),
+                    }]
+                elif parsed.get("edits"):
+                    current_edits = parsed["edits"]
+                else:
+                    orig_chunk = parsed.get("original_chunk", implicated_page.content if implicated_page else "")
+                    current_edits = [{
+                        "action": "replace",
+                        "original_chunk": orig_chunk,
+                        "proposed_chunk": parsed["proposed_chunk"],
+                        "explanation": parsed.get("explanation", "Repaired syntax error"),
+                    }]
+        except Exception as retry_err:
+            logger.warning(f"Self-heal attempt {attempt} error: {retry_err}")
+            return SelfHealResult(
+                success=False,
+                final_doc=merged_doc,
+                error=f"{error_log} (Self-heal error: {str(retry_err)[:60]})",
+                attempts=attempt,
+                edits=current_edits,
+            )
+
+    return SelfHealResult(success=False, final_doc=None, error="Max attempts exhausted", attempts=MAX_SELF_HEAL_ATTEMPTS)
+
+
 
 @router.post("/api/agent/chat")
 async def agent_chat(request: Request):
@@ -1621,6 +1810,7 @@ async def agent_chat(request: Request):
             if mode == "EDIT_DOCUMENT" and has_existing_code and req.current_code:
                 try:
                     document_structure = doc_idx.parse_document_structure(req.current_code)
+                    ledger = get_environment_ledger(req.current_code, document_structure)
 
                     # ── Direct Slide / Section Deletion Handling ──────────────
                     # If user asks to remove/delete a specific slide (e.g. "slide no 3 remove",
@@ -1743,9 +1933,14 @@ async def agent_chat(request: Request):
                             provider_name = provider.get_provider_name()
 
                             broad_edits = []
-                            total_targets = len(broad_targets)
+                            # Part 3: Triage skip confidence filter — only skip when confidence of no-change is >= 0.85
+                            targets_to_process = [
+                                t for t in broad_targets
+                                if getattr(t, "needs_edit", True) or getattr(t, "confidence_no_change", 0.0) < TRIAGE_SKIP_CONFIDENCE_THRESHOLD
+                            ]
+                            total_targets = len(targets_to_process)
 
-                            for t_idx, target_page in enumerate(broad_targets):
+                            for t_idx, target_page in enumerate(targets_to_process):
                                 iter_action = "Auditing & fixing" if is_fix_all else "Inspecting & editing"
                                 yield sse_event("progress", {
                                     "step": "broad_iter",
@@ -1753,7 +1948,10 @@ async def agent_chat(request: Request):
                                     "icon": "shield-check" if is_fix_all else "edit-3"
                                 })
 
-                                # Build scoped prompt for this single chapter with full document context
+                                # Part 1: Compute ground-truth ledger facts for this section
+                                ledger_facts = ledger.generate_prompt_facts_block(target_page.page_id) if ledger else None
+
+                                # Build scoped prompt for this single chapter with full document context + computed ledger facts
                                 iter_messages = prompt_builder.build_broad_edit_prompt(
                                     user_request=req.user_prompt,
                                     page_id=target_page.page_id,
@@ -1766,6 +1964,7 @@ async def agent_chat(request: Request):
                                     attached_file_info=broad_attached_info,
                                     full_document=req.current_code,
                                     is_audit=is_fix_all,
+                                    ledger_facts=ledger_facts,
                                 )
 
                                 system_content = iter_messages[0].content if len(iter_messages) > 0 else ""
@@ -1854,27 +2053,31 @@ async def agent_chat(request: Request):
                                         "icon": "alert-triangle"
                                     })
 
-                            # Validate and assemble broad edits
+                            # Part 4: Self-healing validation loop on broad edits
                             if broad_edits:
                                 try:
-                                    validation = edit_validator.validate_edit(
-                                        original_code=req.current_code or "",
+                                    heal_result = await apply_edit_with_self_healing(
                                         proposed_edits=broad_edits,
+                                        current_code=req.current_code or "",
+                                        doc_idx=document_structure,
+                                        ledger=ledger,
+                                        user_instruction=req.user_prompt,
+                                        preferred_provider_name=provider_name,
+                                        model=primary_model,
+                                        api_keys=req.api_keys,
+                                        project_id=req.project_id,
                                     )
-                                    if not validation.passed:
-                                        broad_edits, repairs = edit_validator.auto_repair_edits(
-                                            proposed_edits=broad_edits,
-                                            original_code=req.current_code or "",
-                                        )
-                                        if repairs:
-                                            logger.info(f"Broad edit auto-repaired {len(repairs)} issues: {repairs}")
-                                            yield sse_event("progress", {
-                                                "step": "repair",
-                                                "message": f"Auto-fixed {len(repairs)} issue(s)",
-                                                "icon": "tool"
-                                            })
+                                    if heal_result.edits:
+                                        broad_edits = heal_result.edits
+                                    if heal_result.attempts > 1 and heal_result.success:
+                                        logger.info(f"Broad edit self-healed in {heal_result.attempts} attempts")
+                                        yield sse_event("progress", {
+                                            "step": "repair",
+                                            "message": f"Auto-repaired in {heal_result.attempts} attempts",
+                                            "icon": "tool"
+                                        })
                                 except Exception as val_err:
-                                    logger.warning(f"Broad edit validation error: {val_err}")
+                                    logger.warning(f"Broad edit self-healing error: {val_err}")
 
                             # Store in memory
                             conversation_memory.add_turn(
@@ -2406,6 +2609,12 @@ async def agent_chat(request: Request):
                     current_code=req.current_code,
                 )
             else:
+                ledger_facts = None
+                if locals().get("ledger") and locals().get("document_structure"):
+                    tgt_p = document_structure.get_page_by_index(target_page_index) if target_page_index is not None else None
+                    tgt_pid = tgt_p.page_id if tgt_p else (document_structure.pages[0].page_id if document_structure.pages else "main")
+                    ledger_facts = ledger.generate_prompt_facts_block(tgt_pid)
+
                 messages = prompt_builder.build_prompt(
                     user_request=req.user_prompt,
                     retrieved_context=context_str,
@@ -2415,6 +2624,7 @@ async def agent_chat(request: Request):
                     current_code=req.current_code,
                     target_context=targeted_context,
                     is_edit_mode=is_targeted_edit,
+                    ledger_facts=ledger_facts,
                 )
 
             # Step 6: Invoke LLM
@@ -3020,36 +3230,49 @@ async def agent_chat(request: Request):
                     item["explanation"] = sanitize_explanation_text(item["explanation"])
                 clean_edits.append(item)
 
-            # Step 8b: Validation & auto-repair
+            # Step 8b: Scope Lock & Self-Healing Validation
             if clean_edits and has_existing_code:
                 try:
-                    validation = edit_validator.validate_edit(
-                        original_code=req.current_code or "",
+                    doc_struct = locals().get("document_structure") or doc_idx.parse_document_structure(req.current_code)
+                    active_ledger = locals().get("ledger") or get_environment_ledger(req.current_code, doc_struct)
+
+                    # Part 5: Strict scope-lock for targeted edits
+                    if is_targeted_edit and target_page_index is not None and doc_struct:
+                        tgt_p = doc_struct.get_page_by_index(target_page_index)
+                        if tgt_p:
+                            enforce_scope_lock(
+                                proposed_edit=clean_edits,
+                                resolved_target_page_ids={tgt_p.page_id},
+                                doc_idx=doc_struct,
+                                ledger=active_ledger,
+                            )
+
+                    # Part 4: Self-healing loop
+                    heal_result = await apply_edit_with_self_healing(
                         proposed_edits=clean_edits,
+                        current_code=req.current_code or "",
+                        doc_idx=doc_struct,
+                        ledger=active_ledger,
+                        user_instruction=req.user_prompt,
+                        preferred_provider_name=provider_name,
+                        model=primary_model,
+                        api_keys=req.api_keys,
+                        project_id=req.project_id,
                     )
-                    if not validation.passed:
-                        # Attempt auto-repair for fixable issues
-                        clean_edits, repairs = edit_validator.auto_repair_edits(
-                            proposed_edits=clean_edits,
-                            original_code=req.current_code or "",
-                        )
-                        if repairs:
-                            logger.info(f"Auto-repaired {len(repairs)} issues: {repairs}")
-                            yield sse_event("progress", {
-                                "step": "repair",
-                                "message": f"Auto-fixed {len(repairs)} issue(s)",
-                                "icon": "tool"
-                            })
-                        # Re-validate after repair
-                        validation = edit_validator.validate_edit(
-                            original_code=req.current_code or "",
-                            proposed_edits=clean_edits,
-                        )
-                        if not validation.passed:
-                            error_msgs = [i.message for i in validation.issues if i.severity == "error"]
-                            logger.warning(f"Edit validation still failing after repair: {error_msgs}")
+                    if heal_result.edits:
+                        clean_edits = heal_result.edits
+                    if heal_result.attempts > 1 and heal_result.success:
+                        yield sse_event("progress", {
+                            "step": "repair",
+                            "message": f"Self-healed compilation and structure in {heal_result.attempts} attempts",
+                            "icon": "tool"
+                        })
+                except ScopeViolationError as scope_err:
+                    logger.error(f"Strict scope lock violation: {scope_err}")
+                    yield sse_event("error", {"message": str(scope_err)})
+                    return
                 except Exception as val_err:
-                    logger.warning(f"Edit validation skipped due to error: {val_err}")
+                    logger.warning(f"Self-healing validation error: {val_err}")
 
             # Update first_orig/first_prop after potential repair
             if clean_edits:

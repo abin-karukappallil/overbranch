@@ -8,6 +8,7 @@ import time
 import shutil
 import sys
 from pathlib import Path
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 from reportlab.lib.pagesizes import letter, landscape
@@ -938,4 +939,23 @@ def compile_latex(
                 "success": False,
                 "error_log": f"Compilation error: {str(fallback_err)}",
             }
+
+
+@dataclass
+class CompileTestResult:
+    success: bool
+    error_log: str = ""
+    log: str = ""
+
+
+def test_compile(latex_code: str, project_id: Optional[str] = None) -> CompileTestResult:
+    """Fast compile test checking for syntax or environment errors."""
+    res = compile_latex(latex_code, project_id=project_id)
+    success = bool(res.get("success", False))
+    error_log = res.get("error_log", "") or (res.get("log", "") if not success else "")
+    return CompileTestResult(
+        success=success,
+        error_log=error_log,
+        log=res.get("log", ""),
+    )
 
