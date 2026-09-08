@@ -55,6 +55,10 @@ class DocumentIndex:
                 return p
         return None
 
+    def get_page(self, page_id: str) -> Optional[PageEntry]:
+        """Convenience alias for get_page_by_id."""
+        return self.get_page_by_id(page_id)
+
     def get_page_by_index(self, idx: int) -> Optional[PageEntry]:
         if 0 <= idx < len(self.pages):
             return self.pages[idx]

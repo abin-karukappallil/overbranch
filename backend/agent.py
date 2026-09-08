@@ -50,6 +50,14 @@ from provider_governor import (
 )
 from compiler import test_compile, CompileTestResult
 from dataclasses import dataclass
+from content_mapper import (
+    SourceChunk,
+    MatchedInsertion,
+    chunk_source_content,
+    map_source_chunks_to_destinations,
+    execute_mapped_insertions,
+    propose_new_section_placement,
+)
 
 load_dotenv(override=True)
 
@@ -1931,6 +1939,108 @@ async def agent_chat(request: Request):
                             primary_model = raw_model.strip() if raw_model.strip() else provider_router.get_default_model()
                             provider = provider_router.route(primary_model)
                             provider_name = provider.get_provider_name()
+
+                            # ── Many-to-Many Chunk Mapping for Content Insertion ──
+                            # When source content (PDF, text, docx) is attached and user requests
+                            # content insertion/population, do NOT perform a sequential 1-of-N scan.
+                            # Instead, chunk the source content, match each source chunk independently
+                            # via batched embeddings, and dispatch all discovered destinations in parallel.
+                            is_content_insertion_request = bool(
+                                broad_attached_info
+                                and broad_attached_info.get("content")
+                                and (not is_fix_all)
+                                and any(kw in req.user_prompt.lower() for kw in [
+                                    "add", "insert", "fill", "populate", "content", "comtent", "put", "include", "using", "from", "integrate"
+                                ])
+                            )
+
+                            if is_content_insertion_request:
+                                src_text = broad_attached_info.get("content", "")
+                                source_chunks = chunk_source_content(src_text)
+
+                                if source_chunks:
+                                    qdrant = get_qdrant_client()
+                                    ensure_qdrant_collection(qdrant)
+
+                                    destination_map, unmatched_chunks = await map_source_chunks_to_destinations(
+                                        source_chunks=source_chunks,
+                                        qdrant_client=qdrant,
+                                        project_id=req.project_id,
+                                        min_similarity=0.55,
+                                        max_targets_per_chunk=2,
+                                        doc_idx=document_structure,
+                                    )
+
+                                    if destination_map:
+                                        dest_count = len(destination_map)
+                                        yield sse_event("progress", {
+                                            "step": "multi_target_insert",
+                                            "message": f"Matched incoming content to {dest_count} relevant section{'s' if dest_count != 1 else ''} (discovered via similarity, not a full scan) — inserting in parallel...",
+                                            "icon": "zap",
+                                        })
+
+                                        mapped_results = await execute_mapped_insertions(
+                                            destination_map=destination_map,
+                                            req=req,
+                                            doc_state=req,
+                                            doc_idx=document_structure,
+                                            ledger=ledger,
+                                            provider_name=provider_name,
+                                            model=primary_model,
+                                            api_keys=req.api_keys,
+                                        )
+
+                                        inserted_edits = []
+                                        for res in mapped_results:
+                                            if hasattr(res, "edits") and res.edits:
+                                                inserted_edits.extend(res.edits)
+                                            elif isinstance(res, dict) and res.get("edits"):
+                                                inserted_edits.extend(res["edits"])
+
+                                        if inserted_edits:
+                                            broad_edits = inserted_edits
+                                            plan_msg = f"Parallel content insertion: integrated content into {len(destination_map)} section(s)"
+                                            overall_exp = f"Matched incoming content to {len(destination_map)} section(s) via semantic similarity and inserted updates in parallel."
+
+                                            conversation_memory.add_turn(
+                                                project_id=req.project_id,
+                                                user_prompt=req.user_prompt,
+                                                assistant_response={"edits": broad_edits, "plan": plan_msg},
+                                                file_path=req.file_path,
+                                                chunk_summaries=[],
+                                            )
+
+                                            yield sse_event("progress", {"step": "done", "message": f"Complete — inserted into {len(destination_map)} section(s)", "icon": "check"})
+                                            yield sse_event("result", {
+                                                "plan": plan_msg,
+                                                "edits": broad_edits,
+                                                "original_chunk": broad_edits[0].get("original_chunk", ""),
+                                                "proposed_chunk": broad_edits[0].get("proposed_chunk", ""),
+                                                "explanation": overall_exp,
+                                                "retrieved_chunks_count": len(destination_map),
+                                                "model_used": primary_model,
+                                                "is_fallback": False,
+                                                "is_broad_edit": True,
+                                                "is_parallel_insertion": True,
+                                            })
+                                            return
+
+                                    if unmatched_chunks:
+                                        new_section_proposal = await propose_new_section_placement(
+                                            unmatched_chunks, document_structure, req.current_code or ""
+                                        )
+                                        proposal_msg = new_section_proposal.get("message", "Incoming content does not match existing sections.")
+                                        yield sse_event("progress", {"step": "new_section_proposal", "message": proposal_msg, "icon": "help-circle"})
+                                        yield sse_event("result", {
+                                            "plan": proposal_msg,
+                                            "edits": [],
+                                            "original_chunk": "",
+                                            "proposed_chunk": "",
+                                            "explanation": proposal_msg,
+                                            "proposal": new_section_proposal,
+                                            "unmatched_chunks_count": len(unmatched_chunks),
+                                        })
+                                        return
 
                             broad_edits = []
                             # Part 3: Triage skip confidence filter — only skip when confidence of no-change is >= 0.85

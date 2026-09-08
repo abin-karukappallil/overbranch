@@ -1062,3 +1062,101 @@ def build_full_document_repair_prompt(
         SystemMessage(content=system_content),
         HumanMessage(content="\n\n".join(user_parts)),
     ]
+
+
+INSERTION_SYSTEM_PROMPT = """You are an expert LaTeX editor specializing in precise, high-accuracy content integration.
+Your task is to integrate newly provided source content into an existing document section.
+
+CRITICAL RULES:
+1. ONLY modify the target section. Preserve all other sections of the document.
+2. Maintain identical formatting, packages, macro usage, and mathematical conventions from the surrounding document.
+3. If the target section is not the final section of the document, NEVER emit \\end{document}.
+4. Integrate the source content naturally into the flow of the section rather than dumping raw unformatted text.
+5. Return ONLY a valid JSON object with the following schema:
+{
+  "original_chunk": "<verbatim existing content of the target section>",
+  "proposed_chunk": "<updated LaTeX code for the target section incorporating the new material>",
+  "explanation": "<concise explanation of what was added or updated>"
+}
+Do not include any conversational preamble or markdown code fences around the JSON object."""
+
+
+def build_insertion_prompt(
+    source_content: str,
+    target_page: Any,
+    full_document: str,
+    ledger_context: Optional[List[Any]] = None,
+    original_instruction: str = "",
+) -> List:
+    """
+    Build a prompt for integrating matched source content into a specific target section.
+    """
+    system_parts = [INSERTION_SYSTEM_PROMPT]
+    system_content = "\n".join(system_parts)
+
+    user_parts = []
+
+    # Ledger context facts
+    if ledger_context:
+        facts = []
+        for span in ledger_context:
+            if hasattr(span, "env_name"):
+                if getattr(span, "spans_multiple_sections", False):
+                    facts.append(
+                        f"- Environment '{span.env_name}' opens in '{span.opens_in_page_id}' and closes in '{span.closes_in_page_id}'. Do not alter its boundary in this section."
+                    )
+                else:
+                    facts.append(f"- Environment '{span.env_name}' is contained within this section.")
+            else:
+                facts.append(f"- {str(span)}")
+        if facts:
+            user_parts.append(
+                "[DOCUMENT STRUCTURE FACTS — computed ground truth]\n"
+                + "\n".join(facts)
+            )
+
+    # Full document context for macro, citation, and package reference
+    if full_document and full_document.strip():
+        doc_str = full_document.strip()
+        doc_budget = 150000
+        if len(doc_str) > doc_budget:
+            doc_str = doc_str[:doc_budget] + "\n...[FULL DOCUMENT TRUNCATED AT 150K CHARS]"
+        user_parts.append(
+            "====================================================================\n"
+            "COMPLETE FULL DOCUMENT (FROM PREAMBLE TO \\end{document}):\n"
+            "Reference this complete document to understand all loaded packages, macro definitions, "
+            "document class, color schemes, cross-references, and overall structure.\n"
+            "====================================================================\n"
+            f"```latex\n{doc_str}\n```\n"
+            "===================================================================="
+        )
+
+    # Target page information
+    target_title = getattr(target_page, "title", "Target Section") if target_page else "Target Section"
+    target_id = getattr(target_page, "page_id", "target_page") if target_page else "target_page"
+    target_content = getattr(target_page, "content", "") if target_page else ""
+
+    user_parts.append(
+        f"TARGET SECTION TO EDIT:\n"
+        f"Section Title: {target_title}\n"
+        f"Section ID: {target_id}\n"
+        f"Existing Content:\n"
+        f"```latex\n{target_content}\n```"
+    )
+
+    if original_instruction:
+        user_parts.append(f"USER EDIT INSTRUCTION:\n{original_instruction}")
+
+    user_parts.append(
+        f"SOURCE CONTENT TO INTEGRATE INTO THIS SECTION:\n"
+        f"----------------------------------------\n"
+        f"{source_content}\n"
+        f"----------------------------------------\n\n"
+        f"DIRECTIVE: Integrate the source content above seamlessly into the target section '{target_title}'. "
+        f"Output the complete replacement code for this section in the required JSON format."
+    )
+
+    return [
+        SystemMessage(content=system_content),
+        HumanMessage(content="\n\n".join(user_parts)),
+    ]
