@@ -37,13 +37,18 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     error,
   } = trpc.projects.getById.useQuery(
     { projectId },
-    { enabled: !!projectId && !isSessionLoading, retry: 1 }
+    {
+      enabled: !!projectId && !isSessionLoading,
+      retry: 1,
+      staleTime: 5 * 60 * 1000,
+      placeholderData: (previousData) => previousData,
+    }
   );
 
   if (isSessionLoading || isProjectLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-muted-foreground gap-3">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0E0F12] text-[#9E9E9E] gap-3">
+        <Loader2 className="w-8 h-8 animate-spin text-[#10B981]" />
         <span className="text-xs font-mono">Verifying project access permissions...</span>
       </div>
     );
@@ -56,17 +61,17 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
 
   if (isError || !projectData || (!isOwner && !isCoAuthor && !isGuest)) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-background text-foreground p-6 text-center space-y-6 animate-fade-in">
-        <div className="p-4 rounded-3xl bg-rose-500/10 border border-rose-500/30 text-rose-400 shadow-xl">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0E0F12] text-[#E2E4E9] p-6 text-center space-y-6 animate-fade-in">
+        <div className="p-4 rounded-2xl bg-[#1A1C22] border border-[#282A30] text-rose-400">
           <ShieldAlert className="w-12 h-12" />
         </div>
         <div className="space-y-2 max-w-md">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Access Denied</h1>
-          <p className="text-sm text-muted-foreground">
+          <h1 className="text-2xl font-archivo font-bold tracking-tight text-[#E2E4E9]">Access Denied</h1>
+          <p className="text-sm text-[#9E9E9E]">
             You do not have permission to view this project or the guest session has expired.
           </p>
         </div>
-        <Button asChild size="lg" className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-medium px-6 shadow-lg shadow-indigo-500/20">
+        <Button asChild size="lg" className="bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] border border-[#282A30] rounded-xl font-archivo font-bold px-6">
           <Link href="/dashboard">Return to Dashboard</Link>
         </Button>
       </div>
