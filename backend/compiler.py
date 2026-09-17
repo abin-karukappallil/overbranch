@@ -525,6 +525,83 @@ def write_file_safely(tmpdir: Path, filename: str, data_base64: str):
     resolved_path.write_bytes(raw_bytes)
 
 
+def create_sample_image(target_path: Path, label: str):
+    """Creates a clean sample/placeholder image file so LaTeX compilation succeeds natively with the real layout."""
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        ext = target_path.suffix.lower()
+        if ext == ".pdf":
+            try:
+                from reportlab.pdfgen import canvas
+                c = canvas.Canvas(str(target_path), pagesize=(500, 350))
+                c.setFillColorRGB(0.93, 0.95, 0.98)
+                c.rect(0, 0, 500, 350, fill=1, stroke=0)
+                c.setStrokeColorRGB(0.7, 0.75, 0.85)
+                c.setLineWidth(2)
+                c.rect(10, 10, 480, 330, fill=0, stroke=1)
+                c.setFillColorRGB(0.2, 0.25, 0.35)
+                c.setFont("Helvetica-Bold", 18)
+                c.drawCentredString(250, 185, "SAMPLE IMAGE")
+                c.setFont("Helvetica", 11)
+                c.drawCentredString(250, 155, label[:40])
+                c.save()
+                return
+            except Exception:
+                pass
+
+        from PIL import Image, ImageDraw
+        width, height = 600, 400
+        img = Image.new("RGB", (width, height), color=(241, 245, 249))
+        draw = ImageDraw.Draw(img)
+        # Outer border
+        draw.rectangle([(8, 8), (width - 8, height - 8)], outline=(203, 213, 225), width=3)
+        # Diagonal accent lines
+        draw.line([(8, 8), (width - 8, height - 8)], fill=(226, 232, 240), width=2)
+        draw.line([(8, height - 8), (width - 8, 8)], fill=(226, 232, 240), width=2)
+        # Center box
+        draw.rectangle([(110, 130), (490, 270)], fill=(255, 255, 255), outline=(148, 163, 184), width=2)
+        # Text
+        draw.text((width // 2, 175), "SAMPLE IMAGE", fill=(30, 41, 59), anchor="mm")
+        draw.text((width // 2, 220), label[:45], fill=(100, 116, 139), anchor="mm")
+
+        fmt = "JPEG" if ext in [".jpg", ".jpeg"] else "PNG"
+        img.save(str(target_path), format=fmt)
+    except Exception as e:
+        logger.warning(f"Failed to create sample image at {target_path}: {e}")
+
+
+def ensure_sample_images_exist(latex_code: str, tmpdir: Path):
+    """
+    Finds all \\includegraphics{...} references in latex_code.
+    If the referenced image file does not exist on disk, creates a clean sample image at that path.
+    """
+    matches = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', latex_code)
+    for raw_path in matches:
+        clean_path = raw_path.strip().strip('"').strip("'")
+        if not clean_path:
+            continue
+
+        has_ext = bool(re.search(r'\.[a-zA-Z0-9]+$', clean_path))
+        candidates = [
+            (tmpdir / clean_path),
+            (tmpdir / "images" / clean_path),
+            (tmpdir / "assets" / clean_path),
+        ]
+
+        if not has_ext:
+            for ext in [".png", ".pdf", ".jpg", ".jpeg"]:
+                candidates.append(tmpdir / f"{clean_path}{ext}")
+                candidates.append(tmpdir / "images" / f"{clean_path}{ext}")
+                candidates.append(tmpdir / "assets" / f"{clean_path}{ext}")
+
+        exists = any(c.exists() and c.is_file() for c in candidates)
+        if not exists:
+            target = tmpdir / clean_path
+            if not has_ext:
+                target = tmpdir / f"{clean_path}.png"
+            create_sample_image(target, Path(clean_path).name)
+
+
 _TEMPLATE_ROOTS_CACHE: Optional[List[Path]] = None
 
 def get_template_roots() -> List[Path]:
@@ -683,6 +760,9 @@ def compile_latex(
                                 shutil.copy2(tmpl_file, dest_file)
                             except Exception:
                                 pass
+
+            # 5. Ensure any referenced images exist as sample images on disk if missing
+            ensure_sample_images_exist(latex_code, tmpdir)
 
             # Environment configuration
             comp_env = os.environ.copy()
@@ -923,19 +1003,15 @@ def compile_latex(
         except Exception:
             pass
 
-        # Fallback to instant clean ReportLab TeX renderer if binaries fail
-        try:
-            pdf_base64 = generate_fallback_pdf(latex_code, tmpdir=tmpdir)
-            elapsed_ms = int((time.time() - start_time) * 1000)
-            return {
-                "success": True,
-                "pdf_base64": pdf_base64,
-                "compile_time_ms": elapsed_ms,
-                "log": "Rendered via Fast TeX Engine Fallback",
-            }
-        except Exception as fallback_err:
-            return {
-                "success": False,
-                "error_log": f"Compilation error: {str(fallback_err)}",
-            }
+        # No fallback PDFs — return clean compilation error directly so user can see it and ask AI to fix it
+        clean_err = last_output.strip() if last_output else "LaTeX compilation failed."
+        # Extract the most relevant error lines (e.g. lines starting with ! or error lines)
+        error_lines = [l for l in clean_err.split("\n") if l.strip().startswith("!") or "error:" in l.lower() or "fatal error" in l.lower()]
+        summary = "\n".join(error_lines[-12:]) if error_lines else clean_err[-1500:]
+
+        return {
+            "success": False,
+            "error_log": summary,
+            "raw_log": clean_err[-4000:],
+        }
 

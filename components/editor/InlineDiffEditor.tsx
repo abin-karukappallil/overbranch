@@ -243,25 +243,25 @@ export function InlineDiffEditor({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#0d1117] border border-border/80 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-2xl font-mono text-xs">
-      <div className="px-4 py-3 border-b border-border/60 bg-[#161b22] flex items-center justify-between gap-3 shrink-0 flex-wrap">
+    <div className="w-full h-full flex flex-col bg-[#141519] border border-[#282A30] rounded-xl shadow-2xl overflow-hidden font-mono text-xs text-[#E2E4E9]">
+      <div className="px-4 py-2.5 border-b border-[#282A30] bg-[#1A1C22] flex items-center justify-between gap-3 shrink-0 flex-wrap">
         <div className="flex items-center gap-2.5">
           <div>
-            <h3 className="font-bold text-sm text-slate-100 flex items-center gap-2">
-              <span>Inline Editor Diff</span>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <h3 className="font-archivo font-bold text-xs text-[#E2E4E9] flex items-center gap-2">
+              <span>Inline Diff Review</span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#22242C] text-[#10B981] border border-[#282A30]">
                 {activeEdits.length} Proposed Change{activeEdits.length !== 1 ? "s" : ""}
               </span>
               {(diffCounts.added > 0 || diffCounts.deleted > 0 || diffCounts.modified > 0) && (
-                <span className="text-[10px] font-mono flex items-center gap-1.5 text-zinc-400">
-                  {diffCounts.added > 0 && <span className="text-emerald-400 font-bold">+{diffCounts.added}</span>}
-                  {diffCounts.deleted > 0 && <span className="text-rose-400 font-bold">-{diffCounts.deleted}</span>}
-                  {diffCounts.modified > 0 && <span className="text-amber-400 font-bold">~{diffCounts.modified}</span>}
+                <span className="text-[10px] font-mono flex items-center gap-1.5 text-[#9E9E9E]">
+                  {diffCounts.added > 0 && <span className="text-[#10B981] font-bold">+{diffCounts.added}</span>}
+                  {diffCounts.deleted > 0 && <span className="text-[#EB5757] font-bold">-{diffCounts.deleted}</span>}
+                  {diffCounts.modified > 0 && <span className="text-[#FF9900] font-bold">~{diffCounts.modified}</span>}
                 </span>
               )}
             </h3>
             {explanation && (
-              <p className="text-[11px] text-slate-400 line-clamp-1 mt-0.5">{explanation}</p>
+              <p className="text-[11px] text-[#9E9E9E] line-clamp-1 mt-0.5 font-sans">{explanation}</p>
             )}
           </div>
         </div>
@@ -271,35 +271,35 @@ export function InlineDiffEditor({
             size="sm"
             variant="outline"
             onClick={handleCopyPatch}
-            className="h-8 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border-zinc-700 font-mono text-xs px-2.5 rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer"
+            className="h-7 bg-[#1A1C22] hover:bg-[#22242C] text-[#9E9E9E] hover:text-[#E2E4E9] border-[#282A30] font-mono text-xs px-2.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
             title="Copy diff patch to clipboard"
           >
-            <Copy className="w-3.5 h-3.5 text-zinc-300" />
+            <Copy className="w-3 h-3" />
             <span className="hidden sm:inline">Copy Patch</span>
           </Button>
 
           <Button
             size="sm"
-            variant="destructive"
+            variant="outline"
             onClick={onRejectAll}
-            className="h-8 bg-rose-600/90 hover:bg-rose-600 text-white font-medium px-3 rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1.5 text-xs cursor-pointer"
+            className="h-7 bg-[#1A1C22] hover:bg-[#22242C] text-[#EB5757] hover:text-[#EB5757] border-[#282A30] font-mono text-xs px-2.5 rounded-lg flex items-center gap-1.5 cursor-pointer"
           >
-            <XCircle className="w-3.5 h-3.5" />
+            <XCircle className="w-3 h-3" />
             <span>Reject All</span>
           </Button>
 
           <Button
             size="sm"
             onClick={() => onAcceptAll(activeEdits)}
-            className="h-8 bg-emerald-600 hover:bg-emerald-500 text-white font-medium px-3 rounded-lg shadow-sm active:scale-95 transition-all flex items-center gap-1.5 text-xs cursor-pointer"
+            className="h-7 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold px-3 rounded-lg flex items-center gap-1.5 text-xs cursor-pointer shadow-sm"
           >
-            <CheckCheck className="w-3.5 h-3.5" />
+            <CheckCheck className="w-3 h-3" />
             <span>Accept All ({activeEdits.length})</span>
           </Button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto bg-[#0d1117] p-2 leading-relaxed selection:bg-indigo-500/30">
+      <div className="flex-1 overflow-auto bg-[#0E0F12] p-2 leading-relaxed selection:bg-[#22242C]">
         {computedDiffLines.map((line, idx) => {
           const isDeleted = line.type === "deleted";
           const isAdded = line.type === "added";
@@ -311,46 +311,46 @@ export function InlineDiffEditor({
               key={idx}
               className={`group relative flex items-center min-h-[22px] px-2 rounded transition-colors ${
                 isDeleted
-                  ? "bg-rose-950/40 text-rose-300 border-l-2 border-rose-500 line-through decoration-rose-500/50"
+                  ? "bg-[#EB5757]/10 text-[#FF8585] border-l-2 border-[#EB5757] line-through decoration-[#EB5757]/50"
                   : isAdded
-                  ? "bg-emerald-950/40 text-emerald-300 border-l-2 border-emerald-500 font-medium"
+                  ? "bg-[#10B981]/10 text-[#10B981] border-l-2 border-[#10B981] font-medium"
                   : isModified
-                  ? "bg-amber-950/40 text-amber-300 border-l-2 border-amber-500 font-medium"
-                  : "text-slate-300 hover:bg-slate-800/30"
+                  ? "bg-[#FF9900]/10 text-[#FFB84D] border-l-2 border-[#FF9900] font-medium"
+                  : "text-[#E2E4E9] hover:bg-[#1A1C22]/40"
               }`}
             >
-              <div className="w-16 shrink-0 flex items-center text-[10px] text-slate-500 select-none gap-2 font-mono">
+              <div className="w-16 shrink-0 flex items-center text-[10px] text-[#62666D] select-none gap-2 font-mono">
                 <span className="w-6 text-right">{line.lineNumberOld ?? ""}</span>
                 <span className="w-6 text-right">{line.lineNumberNew ?? ""}</span>
               </div>
 
               <div className="w-4 shrink-0 font-bold text-[11px] select-none">
-                {isDeleted && <span className="text-rose-400">-</span>}
-                {isAdded && <span className="text-emerald-400">+</span>}
-                {isModified && <span className="text-amber-400">~</span>}
+                {isDeleted && <span className="text-[#EB5757]">-</span>}
+                {isAdded && <span className="text-[#10B981]">+</span>}
+                {isModified && <span className="text-[#FF9900]">~</span>}
               </div>
 
-              <div className="flex-1 whitespace-pre font-mono overflow-x-auto pr-24">
+              <div className="flex-1 whitespace-pre font-mono overflow-x-auto pr-24 text-[11px]">
                 {line.text}
               </div>
 
               {(isDeleted || isAdded || isModified) && matchedEdit && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-[#161b22]/90 border border-slate-700/80 rounded-md p-0.5 shadow-xl flex items-center gap-1 backdrop-blur-md z-10">
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity bg-[#141519] border border-[#282A30] rounded-lg p-0.5 shadow-xl flex items-center gap-1 z-10">
                   <button
                     onClick={() => handleSingleAccept(matchedEdit)}
                     title="Accept this edit"
-                    className="px-2 py-0.5 rounded text-[10px] bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white border border-emerald-500/40 flex items-center gap-1 font-sans font-semibold transition-colors cursor-pointer"
+                    className="px-2 py-0.5 rounded text-[10px] bg-[#10B981] hover:bg-[#059669] text-white flex items-center gap-1 font-archivo font-bold transition-colors cursor-pointer"
                   >
-                    <Check className="w-3 h-3" />
+                    <Check className="w-2.5 h-2.5" />
                     <span>Accept</span>
                   </button>
 
                   <button
                     onClick={() => handleSingleReject(matchedEdit)}
                     title="Reject this edit"
-                    className="px-2 py-0.5 rounded text-[10px] bg-rose-600/30 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 flex items-center gap-1 font-sans font-semibold transition-colors cursor-pointer"
+                    className="px-2 py-0.5 rounded text-[10px] bg-[#1A1C22] hover:bg-[#22242C] text-[#EB5757] border border-[#282A30] flex items-center gap-1 font-mono transition-colors cursor-pointer"
                   >
-                    <X className="w-3 h-3" />
+                    <X className="w-2.5 h-2.5" />
                     <span>Reject</span>
                   </button>
                 </div>

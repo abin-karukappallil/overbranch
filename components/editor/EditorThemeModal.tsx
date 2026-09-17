@@ -26,7 +26,7 @@ export const DEFAULT_THEME_CONFIG: EditorThemeConfig = {
   lineNumbers: "on",
   cursorStyle: "line",
   customColors: {
-    commandColor: "#00CC68",
+    commandColor: "#6366f1",
     mathColor: "#38bdf8",
     commentColor: "#6b7280",
     stringColor: "#a7f3d0",
@@ -37,10 +37,10 @@ export const COLOR_SCHEMES = [
   {
     id: "emerald-dark",
     name: "Kinetic Emerald",
-    description: "Deep dark zinc with #00CC68 TeX command highlights",
+    description: "Deep dark zinc with #6366f1 TeX command highlights",
     previewBg: "bg-zinc-950",
-    previewBorder: "border-[#00CC68]",
-    previewAccent: "#00CC68",
+    previewBorder: "border-indigo-500",
+    previewAccent: "#6366f1",
     isDark: true,
   },
   {
@@ -118,7 +118,7 @@ export function EditorThemeModal({
 
     if (schemeId === "emerald-dark") {
       updatedColors = {
-        commandColor: "#00CC68",
+        commandColor: "#6366f1",
         mathColor: "#38bdf8",
         commentColor: "#6b7280",
         stringColor: "#a7f3d0",
@@ -175,62 +175,62 @@ export function EditorThemeModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in font-sans">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in font-sans">
       <div className="fixed inset-0" onClick={() => onOpenChange(false)} />
 
-      <div className="relative w-full max-w-lg rounded-3xl border border-zinc-800 bg-zinc-900 text-white shadow-2xl overflow-hidden z-10 font-mono">
+      <div className="relative w-full max-w-lg rounded-xl border border-[#282A30] bg-[#141519] text-[#E2E4E9] shadow-2xl overflow-hidden z-10 font-sans">
         {/* Modal Header */}
-        <div className="p-4 sm:p-5 border-b border-zinc-800 flex items-center justify-between bg-zinc-950">
+        <div className="p-4 border-b border-[#282A30] flex items-center justify-between bg-[#1A1C22]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-[#00CC68]/20 border border-[#00CC68]/30 flex items-center justify-center text-[#00CC68]">
+            <div className="w-7 h-7 rounded-lg bg-[#22242C] border border-[#282A30] flex items-center justify-center text-[#10B981]">
               <Palette className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-archivo font-black text-sm uppercase tracking-wider text-white">
-                Editor Color Scheme & Syntax
+              <h3 className="font-archivo font-bold text-xs tracking-tight text-[#E2E4E9]">
+                Editor Appearance & Syntax
               </h3>
-              <p className="text-[10px] text-zinc-400 font-mono">
-                Customize LaTeX syntax highlighting & display parameters
+              <p className="text-[11px] text-[#9E9E9E]">
+                Customize LaTeX syntax highlighting and typography
               </p>
             </div>
           </div>
 
           <button
             onClick={() => onOpenChange(false)}
-            className="w-7 h-7 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white flex items-center justify-center text-xs transition-colors cursor-pointer"
+            className="w-6 h-6 rounded-md hover:bg-[#22242C] text-[#9E9E9E] hover:text-[#E2E4E9] flex items-center justify-center text-xs transition-colors cursor-pointer"
           >
             ✕
           </button>
         </div>
 
         {/* Modal Navigation Tabs */}
-        <div className="flex border-b border-zinc-800 bg-zinc-950/60 p-1.5 gap-1 text-xs select-none">
+        <div className="flex border-b border-[#282A30] bg-[#0E0F12] p-1 gap-1 text-xs select-none">
           <button
             onClick={() => setActiveTab("schemes")}
-            className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-center cursor-pointer ${
+            className={`flex-1 py-1.5 rounded-lg font-archivo font-bold transition-all text-center cursor-pointer text-xs ${
               activeTab === "schemes"
-                ? "bg-[#00CC68] text-black font-archivo uppercase"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                ? "bg-[#22242C] text-[#E2E4E9] border border-[#282A30]"
+                : "text-[#9E9E9E] hover:text-[#E2E4E9] hover:bg-[#1A1C22]/50"
             }`}
           >
             Color Schemes
           </button>
           <button
             onClick={() => setActiveTab("custom")}
-            className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-center cursor-pointer ${
+            className={`flex-1 py-1.5 rounded-lg font-archivo font-bold transition-all text-center cursor-pointer text-xs ${
               activeTab === "custom"
-                ? "bg-[#00CC68] text-black font-archivo uppercase"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                ? "bg-[#22242C] text-[#E2E4E9] border border-[#282A30]"
+                : "text-[#9E9E9E] hover:text-[#E2E4E9] hover:bg-[#1A1C22]/50"
             }`}
           >
             Syntax Tokens
           </button>
           <button
             onClick={() => setActiveTab("typography")}
-            className={`flex-1 py-1.5 rounded-xl font-bold transition-all text-center cursor-pointer ${
+            className={`flex-1 py-1.5 rounded-lg font-archivo font-bold transition-all text-center cursor-pointer text-xs ${
               activeTab === "typography"
-                ? "bg-[#00CC68] text-black font-archivo uppercase"
-                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+                ? "bg-[#22242C] text-[#E2E4E9] border border-[#282A30]"
+                : "text-[#9E9E9E] hover:text-[#E2E4E9] hover:bg-[#1A1C22]/50"
             }`}
           >
             Typography
@@ -239,7 +239,7 @@ export function EditorThemeModal({
 
         {/* Tab 1: Color Schemes Grid */}
         {activeTab === "schemes" && (
-          <div className="p-4 sm:p-5 space-y-3 max-h-[380px] overflow-y-auto">
+          <div className="p-4 space-y-3 max-h-[380px] overflow-y-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               {COLOR_SCHEMES.map((scheme) => {
                 const isSelected = localConfig.themeId === scheme.id;
@@ -247,33 +247,33 @@ export function EditorThemeModal({
                   <button
                     key={scheme.id}
                     onClick={() => handleSelectScheme(scheme.id)}
-                    className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between ${
                       isSelected
-                        ? "border-[#00CC68] bg-zinc-950 ring-2 ring-[#00CC68]/30 shadow-lg"
-                        : "border-zinc-800 bg-zinc-950/40 hover:border-zinc-700 hover:bg-zinc-800/40"
+                        ? "border-[#282A30] bg-[#22242C] ring-1 ring-[#282A30]"
+                        : "border-[#282A30] bg-[#1A1C22]/40 hover:border-[#282A30] hover:bg-[#1A1C22]"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1.5">
-                      <span className="font-archivo font-bold text-xs text-white uppercase tracking-wider">
+                      <span className="font-archivo font-bold text-xs text-[#E2E4E9] tracking-tight">
                         {scheme.name}
                       </span>
                       {isSelected && (
-                        <span className="w-5 h-5 rounded-full bg-[#00CC68] text-black flex items-center justify-center">
-                          <Check className="w-3 h-3 stroke-[3]" />
+                        <span className="w-4 h-4 rounded-full bg-[#10B981] text-white flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 stroke-[3]" />
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] text-zinc-400 font-sans mb-3 line-clamp-2">
+                    <p className="text-[10px] text-[#9E9E9E] mb-2.5 line-clamp-2">
                       {scheme.description}
                     </p>
 
                     {/* Syntax Code Preview Snippet Pill */}
-                    <div className={`p-2 rounded-xl border border-zinc-800 text-[10px] font-mono leading-tight ${scheme.previewBg}`}>
+                    <div className={`p-2 rounded-lg border border-[#282A30] text-[10px] font-mono leading-tight ${scheme.previewBg}`}>
                       <span style={{ color: scheme.previewAccent }} className="font-bold">
                         \documentclass
                       </span>
-                      <span className="text-zinc-400">{`{article}`}</span>
-                      <div className="text-zinc-500 italic">% TeX comment</div>
+                      <span className="text-[#9E9E9E]">{`{article}`}</span>
+                      <div className="text-[#62666D] italic">% TeX comment</div>
                     </div>
                   </button>
                 );
@@ -284,66 +284,66 @@ export function EditorThemeModal({
 
         {/* Tab 2: Custom Syntax Token Colors */}
         {activeTab === "custom" && (
-          <div className="p-4 sm:p-5 space-y-4 max-h-[380px] overflow-y-auto font-mono text-xs">
-            <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-1">
-              <span className="text-[11px] font-bold text-[#00CC68] uppercase block">
+          <div className="p-4 space-y-3 max-h-[380px] overflow-y-auto text-xs">
+            <div className="p-3 rounded-xl bg-[#1A1C22] border border-[#282A30] space-y-1">
+              <span className="text-[11px] font-archivo font-bold text-[#10B981] block">
                 Live Syntax Token Customizer
               </span>
-              <p className="text-[10px] text-zinc-400 font-sans">
+              <p className="text-[10px] text-[#9E9E9E]">
                 Fine-tune specific LaTeX element colors across your editor.
               </p>
             </div>
 
-            <div className="space-y-3">
-              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+            <div className="space-y-2">
+              <div className="p-2.5 rounded-xl bg-[#1A1C22] border border-[#282A30] flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white block">LaTeX Commands</span>
-                  <span className="text-[10px] text-zinc-400">\documentclass, \begin, \section</span>
+                  <span className="font-archivo font-bold text-[#E2E4E9] block text-xs">LaTeX Commands</span>
+                  <span className="text-[10px] text-[#9E9E9E] font-mono">\documentclass, \begin, \section</span>
                 </div>
                 <input
                   type="color"
                   value={localConfig.customColors.commandColor}
                   onChange={(e) => handleCustomColorChange("commandColor", e.target.value)}
-                  className="w-8 h-8 rounded-lg border border-zinc-700 bg-transparent cursor-pointer"
+                  className="w-7 h-7 rounded border border-[#282A30] bg-transparent cursor-pointer"
                 />
               </div>
 
-              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-[#1A1C22] border border-[#282A30] flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white block">Math Formulas & Delimiters</span>
-                  <span className="text-[10px] text-zinc-400">$E = mc^2$, \[\int x\,dx\]</span>
+                  <span className="font-archivo font-bold text-[#E2E4E9] block text-xs">Math Formulas</span>
+                  <span className="text-[10px] text-[#9E9E9E] font-mono">$E = mc^2$, \[\int x\,dx\]</span>
                 </div>
                 <input
                   type="color"
                   value={localConfig.customColors.mathColor}
                   onChange={(e) => handleCustomColorChange("mathColor", e.target.value)}
-                  className="w-8 h-8 rounded-lg border border-zinc-700 bg-transparent cursor-pointer"
+                  className="w-7 h-7 rounded border border-[#282A30] bg-transparent cursor-pointer"
                 />
               </div>
 
-              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-[#1A1C22] border border-[#282A30] flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white block">Comments (% TeX)</span>
-                  <span className="text-[10px] text-zinc-400">% author notes and comments</span>
+                  <span className="font-archivo font-bold text-[#E2E4E9] block text-xs">Comments (% TeX)</span>
+                  <span className="text-[10px] text-[#9E9E9E] font-mono">% author notes</span>
                 </div>
                 <input
                   type="color"
                   value={localConfig.customColors.commentColor}
                   onChange={(e) => handleCustomColorChange("commentColor", e.target.value)}
-                  className="w-8 h-8 rounded-lg border border-zinc-700 bg-transparent cursor-pointer"
+                  className="w-7 h-7 rounded border border-[#282A30] bg-transparent cursor-pointer"
                 />
               </div>
 
-              <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+              <div className="p-2.5 rounded-xl bg-[#1A1C22] border border-[#282A30] flex items-center justify-between">
                 <div>
-                  <span className="font-bold text-white block">Parameters & Environments</span>
-                  <span className="text-[10px] text-zinc-400">{`{document}`}, {`{tabular}`}</span>
+                  <span className="font-archivo font-bold text-[#E2E4E9] block text-xs">Parameters & Environments</span>
+                  <span className="text-[10px] text-[#9E9E9E] font-mono">{`{document}`}, {`{tabular}`}</span>
                 </div>
                 <input
                   type="color"
                   value={localConfig.customColors.stringColor}
                   onChange={(e) => handleCustomColorChange("stringColor", e.target.value)}
-                  className="w-8 h-8 rounded-lg border border-zinc-700 bg-transparent cursor-pointer"
+                  className="w-7 h-7 rounded border border-[#282A30] bg-transparent cursor-pointer"
                 />
               </div>
             </div>
@@ -352,10 +352,10 @@ export function EditorThemeModal({
 
         {/* Tab 3: Typography & Display Controls */}
         {activeTab === "typography" && (
-          <div className="p-4 sm:p-5 space-y-4 max-h-[380px] overflow-y-auto font-mono text-xs">
+          <div className="p-4 space-y-4 max-h-[380px] overflow-y-auto text-xs">
             {/* Font Size Selector */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-zinc-300 block uppercase">Font Size</span>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-archivo font-bold text-[#9E9E9E] block">Font Size</span>
               <div className="grid grid-cols-4 gap-2">
                 {[12, 13, 14, 16].map((size) => (
                   <button
@@ -365,10 +365,10 @@ export function EditorThemeModal({
                       setLocalConfig(updated);
                       onConfigChange(updated);
                     }}
-                    className={`py-2 rounded-xl border text-center font-bold transition-all cursor-pointer ${
+                    className={`py-1.5 rounded-lg border text-center font-mono font-medium transition-all cursor-pointer text-xs ${
                       localConfig.fontSize === size
-                        ? "border-[#00CC68] bg-[#00CC68]/20 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white"
+                        ? "border-[#282A30] bg-[#22242C] text-[#10B981]"
+                        : "border-[#282A30] bg-[#1A1C22] text-[#9E9E9E] hover:text-[#E2E4E9]"
                     }`}
                   >
                     {size}px
@@ -378,8 +378,8 @@ export function EditorThemeModal({
             </div>
 
             {/* Word Wrap Selector */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-zinc-300 block uppercase">Word Wrap</span>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-archivo font-bold text-[#9E9E9E] block">Word Wrap</span>
               <div className="grid grid-cols-2 gap-2">
                 {(["on", "off"] as const).map((wrap) => (
                   <button
@@ -389,10 +389,10 @@ export function EditorThemeModal({
                       setLocalConfig(updated);
                       onConfigChange(updated);
                     }}
-                    className={`py-2 rounded-xl border text-center font-bold uppercase transition-all cursor-pointer ${
+                    className={`py-1.5 rounded-lg border text-center font-mono font-medium transition-all cursor-pointer text-xs ${
                       localConfig.wordWrap === wrap
-                        ? "border-[#00CC68] bg-[#00CC68]/20 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white"
+                        ? "border-[#282A30] bg-[#22242C] text-[#10B981]"
+                        : "border-[#282A30] bg-[#1A1C22] text-[#9E9E9E] hover:text-[#E2E4E9]"
                     }`}
                   >
                     {wrap === "on" ? "Enabled (Wrap)" : "Disabled (Scroll)"}
@@ -402,8 +402,8 @@ export function EditorThemeModal({
             </div>
 
             {/* Line Numbers Selector */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-zinc-300 block uppercase">Line Numbers</span>
+            <div className="space-y-1.5">
+              <span className="text-[11px] font-archivo font-bold text-[#9E9E9E] block">Line Numbers</span>
               <div className="grid grid-cols-2 gap-2">
                 {(["on", "off"] as const).map((nums) => (
                   <button
@@ -413,10 +413,10 @@ export function EditorThemeModal({
                       setLocalConfig(updated);
                       onConfigChange(updated);
                     }}
-                    className={`py-2 rounded-xl border text-center font-bold uppercase transition-all cursor-pointer ${
+                    className={`py-1.5 rounded-lg border text-center font-mono font-medium transition-all cursor-pointer text-xs ${
                       localConfig.lineNumbers === nums
-                        ? "border-[#00CC68] bg-[#00CC68]/20 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-950 text-zinc-400 hover:text-white"
+                        ? "border-[#282A30] bg-[#22242C] text-[#10B981]"
+                        : "border-[#282A30] bg-[#1A1C22] text-[#9E9E9E] hover:text-[#E2E4E9]"
                     }`}
                   >
                     {nums === "on" ? "Show Line Numbers" : "Hide Line Numbers"}
@@ -428,18 +428,18 @@ export function EditorThemeModal({
         )}
 
         {/* Modal Footer Controls */}
-        <div className="p-3 sm:p-4 border-t border-zinc-800 bg-zinc-950 flex items-center justify-between gap-2">
+        <div className="p-3 border-t border-[#282A30] bg-[#0E0F12] flex items-center justify-between gap-2">
           <button
             onClick={handleResetDefaults}
-            className="px-3 py-1.5 rounded-xl border border-zinc-800 text-zinc-400 hover:text-white text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-2.5 py-1 rounded-lg border border-[#282A30] text-[#9E9E9E] hover:text-[#E2E4E9] hover:bg-[#1A1C22] text-xs flex items-center gap-1.5 transition-colors cursor-pointer font-mono"
           >
-            <RefreshCw className="w-3.5 h-3.5" />
+            <RefreshCw className="w-3 h-3" />
             <span>Reset Defaults</span>
           </button>
 
           <Button
             onClick={() => onOpenChange(false)}
-            className="h-8 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] text-xs cursor-pointer"
+            className="h-8 px-4 bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] font-archivo font-bold rounded-lg border border-[#282A30] text-xs cursor-pointer"
           >
             Done
           </Button>

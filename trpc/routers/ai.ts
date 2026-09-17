@@ -31,17 +31,9 @@ const DEFAULT_PROVIDER_GROUPS: ProviderGroup[] = [
     ],
   },
   {
-    name: "FreeLLM API",
-    models: [
-      { id: "auto:smart", label: "FreeLLM Auto Smart", default: false },
-      { id: "auto", label: "FreeLLM Auto Router", default: false },
-      { id: "auto:fast", label: "FreeLLM Auto Fast", default: false },
-      { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: false },
-    ],
-  },
-  {
     name: "OpenRouter",
     models: [
+      { id: "minimax/minimax-01", label: "MiniMax M3 (Text-01)", default: false },
       { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra Free", default: false },
       { id: "minimax/minimax-m3:free", label: "Minimax 3 Free", default: false },
       { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 Flash Free", default: false },
@@ -92,7 +84,7 @@ export const aiRouter = router({
         model: z.string().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
         const buffer = Buffer.from(input.fileBase64, 'base64');
         const blob = new Blob([buffer], { type: input.mimeType || 'application/octet-stream' });
@@ -103,8 +95,13 @@ export const aiRouter = router({
         if (input.model) formData.append('model', input.model);
         formData.append('stream', 'false');
 
+        const token = (ctx.session as any)?.session?.token || (ctx.session as any)?.token || "";
         const res = await fetch(`${BACKEND_URL}/api/ai/analyze-file`, {
           method: 'POST',
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(ctx.user?.id ? { 'X-User-Id': ctx.user.id } : {}),
+          },
           body: formData,
         });
 

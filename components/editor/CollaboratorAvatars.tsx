@@ -113,7 +113,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 text-white rounded-2xl shadow-2xl overflow-hidden font-sans space-y-0 animate-in zoom-in-95 duration-150">
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950">
           <div className="flex items-center gap-2">
-            <Users className="w-4 h-4 text-[#00CC68]" />
+            <Users className="w-4 h-4 text-indigo-400" />
             <h3 className="font-archivo font-black uppercase text-sm text-white tracking-tight">Invite Co-Authors</h3>
           </div>
           <Button
@@ -138,7 +138,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                 value={inviteEmail}
                 onChange={(e) => setInviteEmail(e.target.value)}
                 required
-                className="h-9 text-xs rounded-xl bg-zinc-950 border-zinc-800 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
+                className="h-9 text-xs rounded-xl bg-zinc-950 border-zinc-800 text-white focus-visible:ring-2 focus-visible:ring-indigo-500"
               />
               <select
                 value={inviteRole}
@@ -152,7 +152,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
             <Button
               type="submit"
               disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
-              className="w-full bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-xl h-9 text-xs border border-black shadow-[3px_3px_0px_0px_#000000] cursor-pointer"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold uppercase tracking-wider rounded-xl h-9 text-xs border border-indigo-700 shadow-sm shadow-indigo-500/20 cursor-pointer"
             >
               {sendInviteMutation.isPending ? "Sending Invite..." : "Send In-App Invite"}
             </Button>
@@ -171,7 +171,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                   <div className="flex items-center gap-2">
                     <Avatar className="w-6 h-6 rounded-full border border-zinc-700">
                       <AvatarImage src={m.avatar} />
-                      <AvatarFallback className="bg-[#00CC68] text-black text-[9px] font-bold">
+                      <AvatarFallback className="bg-indigo-600 text-white text-[9px] font-bold">
                         {(m.name || 'U').slice(0, 2).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
@@ -180,7 +180,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                         {m.isOwner && <Crown className="w-3 h-3 text-amber-400 shrink-0" />}
                         <span className="truncate">{m.name || m.email}</span>
                       </p>
-                      <p className="text-[9px] text-[#00CC68] font-mono leading-none">{m.role}</p>
+                      <p className="text-[9px] text-indigo-400 font-mono leading-none">{m.role}</p>
                     </div>
                   </div>
 
@@ -214,7 +214,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
             variant="outline"
             className="w-full rounded-xl h-9 text-xs border-zinc-800 bg-zinc-950 hover:bg-zinc-800 text-white font-mono font-bold"
           >
-            <Share2 className="w-3.5 h-3.5 mr-2 text-[#00CC68]" />
+            <Share2 className="w-3.5 h-3.5 mr-2 text-indigo-400" />
             {copied ? "Project Link Copied!" : "Copy Direct Project Link"}
           </Button>
 
@@ -279,19 +279,19 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
           <div key={m.id} className="relative group">
             <Avatar className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-zinc-950 shadow-md">
               <AvatarImage src={m.avatar} alt={m.name || 'Member'} />
-              <AvatarFallback className="bg-[#00CC68] text-black text-[10px] font-bold">
+              <AvatarFallback className="bg-indigo-600 text-white text-[10px] font-bold">
                 {(m.name || 'U').slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
 
-            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-[#00CC68] border border-zinc-950" />
+            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-indigo-600 border border-zinc-950" />
 
             <div className="absolute right-0 top-10 hidden group-hover:block z-50 p-2.5 rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl text-xs whitespace-nowrap space-y-1">
               <p className="font-bold text-white flex items-center gap-1">
                 {m.isOwner && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
                 <span>{m.name || m.email}</span>
               </p>
-              <p className="text-[10px] text-[#00CC68] font-mono">Role: {m.role}</p>
+              <p className="text-[10px] text-indigo-400 font-mono">Role: {m.role}</p>
             </div>
           </div>
         ))}
@@ -303,7 +303,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
         onClick={() => setModalOpen(true)}
         className="h-8 px-3 border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white font-mono font-bold text-xs rounded-xl"
       >
-        <UserPlus className="w-3.5 h-3.5 text-[#00CC68] sm:mr-1.5" />
+        <UserPlus className="w-3.5 h-3.5 text-indigo-400 sm:mr-1.5" />
         <span className="hidden sm:inline">Invite Co-Author</span>
       </Button>
 

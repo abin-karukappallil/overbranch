@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  devIndicators: false,
   compress: true,
   poweredByHeader: false,
   allowedDevOrigins: ["20.193.136.181"],

@@ -64,9 +64,9 @@ export function OverBranchLogo({
           >
             <defs>
               <linearGradient id={gradientId} x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#00CC68" />
-                <stop offset="60%" stopColor="#00E676" />
-                <stop offset="100%" stopColor="#00B359" />
+                <stop offset="0%" stopColor="#10b981" />
+                <stop offset="60%" stopColor="#059669" />
+                <stop offset="100%" stopColor="#00CC68" />
               </linearGradient>
             </defs>
 
@@ -88,7 +88,7 @@ export function OverBranchLogo({
               strokeLinejoin="round"
             />
 
-            {/* Central Branching Nodes (OverBranch) */}
+            {/* Central Branching Nodes */}
             <path
               d="M18 27V15"
               stroke={strokeColor}
@@ -133,7 +133,7 @@ export function OverBranchLogo({
             OverBranch
           </span>
           {showBeta && (
-            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.2 rounded bg-zinc-800 text-indigo-400 border border-zinc-700 tracking-wider">
               BETA
             </span>
           )}

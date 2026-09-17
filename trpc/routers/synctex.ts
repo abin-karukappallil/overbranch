@@ -18,11 +18,16 @@ export const synctexRouter = router({
         column: z.number().int().nonnegative().optional(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
+        const token = (ctx.session as any)?.session?.token || (ctx.session as any)?.token || "";
         const res = await fetch(`${BACKEND_URL}/api/synctex/forward`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(ctx.user?.id ? { "X-User-Id": ctx.user.id } : {}),
+          },
           body: JSON.stringify({
             project_id: input.projectId || "",
             file: input.file,
@@ -64,11 +69,16 @@ export const synctexRouter = router({
         y: z.number(),
       })
     )
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       try {
+        const token = (ctx.session as any)?.session?.token || (ctx.session as any)?.token || "";
         const res = await fetch(`${BACKEND_URL}/api/synctex/backward`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(ctx.user?.id ? { "X-User-Id": ctx.user.id } : {}),
+          },
           body: JSON.stringify({
             project_id: input.projectId || "",
             page: input.page,

@@ -9,7 +9,6 @@ import {
   FileDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
 
 interface CompileToolbarProps {
   onCompile: () => void;
@@ -26,22 +25,22 @@ export function CompileToolbar({
   const handleDownloadPdf = () => {};
 
   return (
-    <div className="h-12 px-3 sm:px-4 border-b border-zinc-800 bg-zinc-950 flex items-center justify-between gap-2 text-xs font-mono text-zinc-100 overflow-x-auto shrink-0 select-none">
+    <div className="h-11 px-3 sm:px-4 border-b border-[#282A30] bg-[#141519] flex items-center justify-between gap-2 text-xs font-mono text-[#E2E4E9] overflow-x-auto shrink-0 select-none">
       <div className="flex items-center gap-2 shrink-0">
         <Button
           size="sm"
           onClick={onCompile}
           disabled={isCompiling}
-          className="h-8 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-lg border border-black shadow-[3px_3px_0px_0px_#000000] text-xs cursor-pointer transition-all"
+          className="h-7 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg border border-[#10B981]/30 shadow-sm text-xs cursor-pointer transition-all flex items-center gap-1.5"
         >
           {isCompiling ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin text-black" />
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
               <span>Compiling...</span>
             </>
           ) : (
             <>
-              <Play className="w-3.5 h-3.5 mr-1.5 fill-current text-black" />
+              <Play className="w-3.5 h-3.5 fill-current text-white" />
               <span>Compile TeX</span>
             </>
           )}
@@ -53,11 +52,11 @@ export function CompileToolbar({
           }}
           className={`hidden xs:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-colors shrink-0 cursor-pointer ${
             autoCompile
-              ? "border-[#00CC68]/30 bg-[#00CC68]/10 text-[#00CC68] font-bold"
-              : "border-zinc-800 text-zinc-400 hover:bg-zinc-900"
+              ? "border-[#282A30] bg-[#22242C] text-[#10B981] font-semibold"
+              : "border-[#282A30] text-[#9E9E9E] hover:bg-[#1A1C22] hover:text-[#E2E4E9]"
           }`}
         >
-          <span className={`w-2 h-2 rounded-full ${autoCompile ? "bg-[#00CC68] animate-pulse" : "bg-zinc-500"}`} />
+          <span className={`w-1.5 h-1.5 rounded-full ${autoCompile ? "bg-[#10B981] animate-pulse" : "bg-[#62666D]"}`} />
           <span className="hidden sm:inline">Auto-Compile</span>
           <span className="sm:hidden">Auto</span>
         </button>
@@ -65,7 +64,7 @@ export function CompileToolbar({
         <select
           value={engine}
           onChange={(e) => setEngine(e.target.value)}
-          className="h-8 px-2.5 rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-200 outline-none text-[11px] font-mono shrink-0 cursor-pointer"
+          className="h-7 px-2.5 rounded-lg border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] outline-none text-[11px] font-mono shrink-0 cursor-pointer hover:border-[#282A30] transition-colors"
         >
           <option value="pdfLaTeX">pdfLaTeX</option>
           <option value="XeLaTeX">XeLaTeX</option>
@@ -75,11 +74,13 @@ export function CompileToolbar({
 
       <div className="flex items-center gap-2 shrink-0">
         <div className="hidden md:flex items-center gap-2">
-          <span className="px-2.5 py-0.5 rounded bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 flex items-center gap-1 text-[11px] font-mono font-bold">
-            <CheckCircle2 className="w-3 h-3" /> 0 Errors
+          <span className="px-2 py-0.5 rounded-md bg-[#1A1C22] text-[#10B981] border border-[#282A30] flex items-center gap-1 text-[11px] font-mono font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+            <span>0 Errors</span>
           </span>
-          <span className="px-2.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1 text-[11px] font-mono font-bold">
-            <AlertTriangle className="w-3 h-3" /> 1 Warning
+          <span className="px-2 py-0.5 rounded-md bg-[#1A1C22] text-[#FF9900] border border-[#282A30] flex items-center gap-1 text-[11px] font-mono font-medium">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900]" />
+            <span>1 Warning</span>
           </span>
         </div>
 
@@ -87,13 +88,14 @@ export function CompileToolbar({
           variant="outline"
           size="sm"
           onClick={handleDownloadPdf}
-          className="h-8 px-3 border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white font-mono font-bold text-xs rounded-lg cursor-pointer"
+          className="h-7 px-2.5 border-[#282A30] bg-[#1A1C22] hover:bg-[#22242C] text-[#E2E4E9] font-mono font-medium text-xs rounded-lg cursor-pointer flex items-center gap-1"
           title="Download PDF"
         >
-          <FileDown className="w-3.5 h-3.5 mr-1.5 text-[#00CC68]" />
+          <FileDown className="w-3.5 h-3.5 text-[#10B981]" />
           <span>PDF</span>
         </Button>
       </div>
     </div>
   );
 }
+

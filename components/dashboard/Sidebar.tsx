@@ -15,9 +15,7 @@ import {
   Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { toast } from "sonner";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { authClient } from "@/lib/auth-client";
 
@@ -51,141 +49,164 @@ export function DashboardSidebar({
     const isCompact = !isMobile && collapsed;
 
     return (
-      <div className="flex flex-col h-full font-sans select-none relative bg-zinc-900 text-zinc-100">
-        {/* Sidebar Interior Container */}
-        <div className="flex flex-col h-full p-3 sm:p-4">
-          {/* Classic Header Bar with OverBranch Logo */}
-          <div
-            className={`h-14 pb-3 mb-2 border-b border-zinc-800 flex items-center shrink-0 ${
-              isCompact ? "justify-center px-1" : "justify-between px-2"
+      <div className="flex flex-col h-full font-sans select-none bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] transition-colors">
+        {/* Sidebar Header with Classic OverBranch Logo */}
+        <div
+          className={`h-16 px-4 border-b border-slate-200 dark:border-[#282A30] flex items-center shrink-0 ${
+            isCompact ? "justify-center" : "justify-between"
+          }`}
+        >
+          <Link
+            href="/dashboard"
+            onClick={isMobile ? onCloseMobile : undefined}
+            className="flex items-center gap-2 shrink-0 group"
+          >
+            <OverBranchLogo
+              variant={isCompact ? "icon" : "full"}
+              size={isCompact ? "sm" : "md"}
+              colored
+            />
+            {!isCompact && (
+              <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#1E2026] text-slate-700 dark:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] tracking-wider">
+                BETA
+              </span>
+            )}
+          </Link>
+
+          {!isMobile && (
+            <button
+              onClick={onToggleCollapse}
+              className="p-1.5 rounded-md text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-100 dark:hover:bg-[#1E2026] transition-colors shrink-0 cursor-pointer"
+              title={collapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+              {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
+
+        {/* Action Button & Search */}
+        <div className="p-3 space-y-2 shrink-0">
+          <Link
+            href="/projects"
+            onClick={isMobile ? onCloseMobile : undefined}
+            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] border border-emerald-600 dark:border-[#282A30] text-white dark:text-[#E2E4E9] font-archivo font-bold text-xs tracking-wide transition-colors cursor-pointer shadow-sm ${
+              isCompact ? "justify-center" : "justify-center"
             }`}
           >
-            <Link
-              href="/dashboard"
-              onClick={isMobile ? onCloseMobile : undefined}
-              className="flex items-center gap-2 shrink-0"
-            >
-              <OverBranchLogo
-                variant={isCompact ? "icon" : "full"}
-                size={isCompact ? "sm" : "md"}
-                colored
-              />
-              {!isCompact && (
-                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
-                  BETA
-                </span>
-              )}
-            </Link>
+            <Plus className="w-4 h-4 text-white dark:text-[#E2E4E9] stroke-[2.5] shrink-0" />
+            {!isCompact && <span>New Project</span>}
+          </Link>
 
-            {!isMobile && (
-              <button
-                onClick={onToggleCollapse}
-                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/40 transition-all opacity-60 hover:opacity-100 shrink-0 cursor-pointer"
-                title={collapsed ? "Expand Sidebar" : "Collapse Sidebar"}
-              >
-                {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronLeft className="w-3.5 h-3.5" />}
-              </button>
+          <button
+            onClick={() => {
+              if (isMobile && onCloseMobile) onCloseMobile();
+              onOpenCommandPalette();
+            }}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 dark:bg-[#1E2026] border border-slate-200 dark:border-[#282A30] hover:border-slate-300 dark:hover:border-[#383B46] text-xs text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors cursor-pointer ${
+              isCompact ? "justify-center" : "justify-between"
+            }`}
+            title="Search or ⌘K"
+          >
+            <div className="flex items-center gap-2 truncate">
+              <Search className="w-3.5 h-3.5 text-slate-400 dark:text-[#9E9E9E] shrink-0" />
+              {!isCompact && <span className="text-[11px] truncate font-mono">Search...</span>}
+            </div>
+            {!isCompact && (
+              <kbd className="px-1.5 py-0.5 text-[9px] font-mono bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] rounded text-slate-500 dark:text-[#9E9E9E]">
+                ⌘K
+              </kbd>
             )}
-          </div>
+          </button>
+        </div>
 
-          {/* Quick Action & Search Button */}
-          <div className="space-y-2 my-2 shrink-0">
-            <Link
-              href="/projects"
-              onClick={isMobile ? onCloseMobile : undefined}
-              className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-2xl bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold text-xs uppercase tracking-wider border border-black shadow-[3px_3px_0px_0px_#000000] transition-all cursor-pointer ${
-                isCompact ? "justify-center" : "justify-center"
-              }`}
-            >
-              <Plus className="w-4 h-4 text-black stroke-[3] shrink-0" />
-              {!isCompact && <span>New Project</span>}
-            </Link>
+        {/* Navigation Items */}
+        <div className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
+          {navItems.map((item) => {
+            const isActive = pathname === item.href;
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={isMobile ? onCloseMobile : undefined}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  isActive
+                    ? "bg-slate-100 dark:bg-[#22242C] text-emerald-700 dark:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] font-archivo font-bold"
+                    : "text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-100 dark:hover:bg-[#1E2026]"
+                } ${isCompact ? "justify-center px-0" : ""}`}
+                title={isCompact ? item.name : undefined}
+              >
+                <Icon className={`w-4 h-4 shrink-0 ${isActive ? "text-emerald-600 dark:text-[#E2E4E9]" : "text-slate-400 dark:text-[#9E9E9E]"}`} />
+                {!isCompact && <span>{item.name}</span>}
+              </Link>
+            );
+          })}
+        </div>
 
-            <button
-              onClick={() => {
-                if (isMobile && onCloseMobile) onCloseMobile();
-                onOpenCommandPalette();
-              }}
-              className={`w-full flex items-center gap-2 px-3 py-2 rounded-2xl bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-400 hover:text-white font-mono transition-colors cursor-pointer ${
-                isCompact ? "justify-center" : "justify-between"
-              }`}
-            >
-              <div className="flex items-center gap-2 truncate">
-                <Search className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
-                {!isCompact && <span className="text-[11px] truncate">Search or ⌘K</span>}
+        {/* User Profile Footer & Sponsor */}
+        <div className="p-3 pb-4 border-t border-slate-200 dark:border-[#282A30] shrink-0 space-y-2">
+          {/* UPZARE Sponsor Badge */}
+          <a
+            href="https://upzare.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`flex items-center gap-2 p-2 rounded-lg bg-slate-50 hover:bg-slate-100 dark:bg-[#1E2026] dark:hover:bg-[#282A30] border border-slate-200 dark:border-[#282A30] transition-colors group ${
+              isCompact ? "justify-center" : ""
+            }`}
+            title="Powered By UPZARE Technologies Private Limited"
+          >
+            <img
+              src="https://cdn.upzare.com/assets/logo.png"
+              alt="UPZARE Technologies Private Limited"
+              className="h-4 w-auto object-contain shrink-0"
+            />
+            {(!isCompact || isMobile) && (
+              <div className="min-w-0 truncate">
+                <span className="text-[9px] font-mono text-slate-500 dark:text-[#9E9E9E] block leading-none uppercase">
+                  Powered By
+                </span>
+                <span className="text-[11px] font-mono font-bold text-slate-800 dark:text-[#E2E4E9] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 truncate block">
+                  UPZARE Technologies
+                </span>
               </div>
-              {!isCompact && (
-                <kbd className="px-1.5 py-0.5 text-[10px] bg-zinc-900 border border-zinc-800 rounded-md text-zinc-400">
-                  ⌘K
-                </kbd>
-              )}
-            </button>
-          </div>
+            )}
+          </a>
 
-          {/* Navigation Links with Window-Blending Tab Style */}
-          <div className="flex-1 my-3 space-y-1.5 overflow-y-auto font-sans">
-            {navItems.map((item) => {
-              const isActive = pathname === item.href;
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={isMobile ? onCloseMobile : undefined}
-                  className={`flex items-center gap-3.5 px-4 py-3 rounded-2xl text-xs font-semibold transition-all duration-200 ${
-                    isActive
-                      ? "bg-zinc-950 dark:bg-zinc-950 text-white font-archivo font-black border border-zinc-800 border-r-0 shadow-lg text-[#00CC68]"
-                      : "text-zinc-400 hover:text-white hover:bg-zinc-800/60"
-                  } ${isCompact ? "justify-center px-0" : ""}`}
-                  title={isCompact ? item.name : undefined}
-                >
-                  <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? "text-[#00CC68]" : "text-zinc-400"}`} />
-                  {!isCompact && <span className="tracking-wide uppercase text-[12px]">{item.name}</span>}
-                </Link>
-              );
-            })}
-          </div>
-
-          {/* User Footer */}
-          <div className="space-y-3 pt-3 border-t border-zinc-800 shrink-0 font-mono">
-            {!isCompact && session?.user && (
-              <div className="p-2.5 rounded-2xl bg-zinc-950 border border-zinc-800 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <Avatar className="w-8 h-8 rounded-full border border-zinc-700 shrink-0">
-                    <AvatarImage src={session.user.image || ""} />
-                    <AvatarFallback className="bg-[#00CC68] text-black text-[10px] font-bold">
-                      {(session.user.name || "U").slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="min-w-0 truncate">
-                    <p className="text-xs font-bold text-white truncate">{session.user.name || "User"}</p>
-                    <p className="text-[10px] text-zinc-400 font-mono truncate">{session.user.email}</p>
-                  </div>
+          {!isCompact && session?.user && (
+            <div className="p-2 rounded-lg bg-slate-50 dark:bg-[#1E2026] border border-slate-200 dark:border-[#282A30] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Avatar className="w-7 h-7 rounded-md border border-slate-200 dark:border-[#282A30] shrink-0">
+                  <AvatarImage src={session.user.image || ""} />
+                  <AvatarFallback className="bg-emerald-600 dark:bg-[#22242C] text-white text-[10px] font-bold">
+                    {(session.user.name || "U").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 truncate">
+                  <p className="text-xs font-semibold text-slate-800 dark:text-[#E2E4E9] truncate font-sans">{session.user.name || "User"}</p>
+                  <p className="text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono truncate">{session.user.email}</p>
                 </div>
               </div>
-            )}
-
-            <div className={`flex items-center ${isCompact ? "justify-center" : "justify-[#00CC68]"}`}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={async () => {
-                  if (isMobile && onCloseMobile) onCloseMobile();
-                  try {
-                    await authClient.signOut();
-                  } catch {}
-                  router.push("/login");
-                }}
-                className={`text-xs font-mono font-bold text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 cursor-pointer rounded-xl ${
-                  isCompact ? "w-9 h-9 p-0 justify-center" : "w-full justify-start"
-                }`}
-                title="Sign Out"
-              >
-                <LogOut className="w-3.5 h-3.5 shrink-0" />
-                {(!isCompact || isMobile) && <span className="ml-1.5">Sign Out</span>}
-              </Button>
             </div>
-          </div>
+          )}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              if (isMobile && onCloseMobile) onCloseMobile();
+              try {
+                await authClient.signOut();
+              } catch {}
+              router.push("/login");
+            }}
+            className={`text-xs text-slate-600 dark:text-[#9E9E9E] hover:text-red-600 dark:hover:text-[#FF8585] hover:bg-red-50 dark:hover:bg-[#FF8585]/10 cursor-pointer rounded-lg h-8 transition-colors ${
+              isCompact ? "w-9 p-0 justify-center mx-auto flex" : "w-full justify-start"
+            }`}
+            title="Sign Out"
+          >
+            <LogOut className="w-3.5 h-3.5 shrink-0" />
+            {(!isCompact || isMobile) && <span className="ml-2 text-xs font-mono font-medium">Sign Out</span>}
+          </Button>
         </div>
       </div>
     );
@@ -193,20 +214,20 @@ export function DashboardSidebar({
 
   return (
     <>
-      {/* Floating Sidebar Capsule Structure */}
+      {/* Desktop Sidebar */}
       <aside
-        className={`hidden md:flex fixed left-3 top-3 bottom-3 z-30 flex-col rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl transition-all duration-300 overflow-hidden ${
+        className={`hidden md:flex fixed left-0 top-0 bottom-0 z-30 flex-col border-r border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] transition-all duration-300 overflow-hidden ${
           collapsed ? "w-20" : "w-64"
         }`}
       >
         {renderContent(false)}
       </aside>
 
-      {/* Mobile Sidebar Capsule */}
+      {/* Mobile Sidebar */}
       {mobileOpen && (
         <div className="md:hidden fixed inset-0 z-50 flex animate-in fade-in duration-200">
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm" onClick={onCloseMobile} />
-          <aside className="relative z-50 my-3 ml-3 w-72 max-w-[85vw] h-[calc(100vh-1.5rem)] rounded-3xl border border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col animate-in slide-in-from-left duration-300 text-zinc-100 overflow-hidden">
+          <div className="fixed inset-0 bg-black/60 dark:bg-black/80" onClick={onCloseMobile} />
+          <aside className="relative z-50 w-72 max-w-[85vw] h-full border-r border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shadow-2xl flex flex-col animate-in slide-in-from-left duration-300 text-slate-900 dark:text-[#E2E4E9] overflow-hidden">
             {renderContent(true)}
           </aside>
         </div>

@@ -215,13 +215,13 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
             variant="ghost"
             size="icon"
             onClick={() => setShowAiPanel(!showAiPanel)}
-            className="hidden md:flex h-8 w-8 text-[#00CC68] hover:bg-[#00CC68]/10"
+            className="hidden md:flex h-8 w-8 text-indigo-400 hover:bg-indigo-600/10"
             title="Toggle Agent"
           >
             <Bot className="w-4 h-4" />
           </Button>
 
-          <div className="p-1.5 rounded-lg bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 shrink-0">
+          <div className="p-1.5 rounded-lg bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 shrink-0">
             <FileCode2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </div>
           <div className="truncate">
@@ -229,7 +229,7 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
               <h1 className="font-archivo font-bold text-xs sm:text-sm text-white tracking-tight truncate">
                 {getProjectName()}
               </h1>
-              <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#00CC68]/10 text-[#00CC68] border border-[#00CC68]/20 uppercase">
+              <span className="hidden sm:inline-block px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 uppercase">
                 Active Session
               </span>
             </div>
@@ -246,40 +246,40 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
         <button
           onClick={() => setMobileMode("code")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "code" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
+            mobileMode === "code" ? "bg-indigo-600/10 text-indigo-400 font-bold border border-indigo-500/30" : "text-zinc-400"
           }`}
         >
-          <FileCode2 className="w-3.5 h-3.5 text-[#00CC68]" />
+          <FileCode2 className="w-3.5 h-3.5 text-indigo-400" />
           <span>Code</span>
         </button>
 
         <button
           onClick={() => setMobileMode("pdf")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "pdf" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
+            mobileMode === "pdf" ? "bg-indigo-600/10 text-indigo-400 font-bold border border-indigo-500/30" : "text-zinc-400"
           }`}
         >
-          <Eye className="w-3.5 h-3.5 text-[#00CC68]" />
+          <Eye className="w-3.5 h-3.5 text-indigo-400" />
           <span>PDF</span>
         </button>
 
         <button
           onClick={() => setMobileMode("ai")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "ai" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
+            mobileMode === "ai" ? "bg-indigo-600/10 text-indigo-400 font-bold border border-indigo-500/30" : "text-zinc-400"
           }`}
         >
-          <Bot className="w-3.5 h-3.5 text-[#00CC68]" />
+          <Bot className="w-3.5 h-3.5 text-indigo-400" />
           <span>Assistant</span>
         </button>
 
         <button
           onClick={() => setMobileMode("files")}
           className={`flex-1 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 ${
-            mobileMode === "files" ? "bg-[#00CC68]/10 text-[#00CC68] font-bold border border-[#00CC68]/30" : "text-zinc-400"
+            mobileMode === "files" ? "bg-indigo-600/10 text-indigo-400 font-bold border border-indigo-500/30" : "text-zinc-400"
           }`}
         >
-          <Folder className="w-3.5 h-3.5 text-[#00CC68]" />
+          <Folder className="w-3.5 h-3.5 text-indigo-400" />
           <span>Files</span>
         </button>
       </div>
@@ -321,8 +321,8 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
                   </div>
                 ))}
 
-                <div className="p-2.5 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/20 text-[#00CC68] flex items-center gap-2 text-[11px] animate-pulse font-mono font-bold">
-                  <Zap className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                <div className="p-2.5 rounded-xl bg-indigo-600/10 border border-indigo-500/20 text-indigo-400 flex items-center gap-2 text-[11px] animate-pulse font-mono font-bold">
+                  <Zap className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
                   <span>Agent ready for prompt input...</span>
                 </div>
               </div>

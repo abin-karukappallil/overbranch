@@ -171,6 +171,34 @@ def get_or_create_guest_session(request: Request) -> Tuple[Dict[str, Any], str, 
                     ensure_guest_user_row(supabase, guest_user_id)
                     return session, raw_cookie, False
 
+    # Step 1b: Check existing session by fingerprint
+    fp_res = supabase.table("guest_sessions").select("*").eq("fingerprint_hash", fingerprint).limit(1).execute()
+    if fp_res.data and len(fp_res.data) > 0:
+        session = fp_res.data[0]
+        expires_at = parse_utc_datetime(session["expires_at"])
+        if expires_at > now_utc:
+            signed_token = sign_guest_token(session["id"])
+            guest_user_id = f"guest_{session['id']}"
+            ensure_guest_user_row(supabase, guest_user_id)
+            return session, signed_token, False
+        else:
+            new_session_id = str(uuid.uuid4())
+            signed_token = sign_guest_token(new_session_id)
+            token_hash = hashlib.sha256(signed_token.encode("utf-8")).hexdigest()
+            expires_at_dt = now_utc + timedelta(seconds=SESSION_LIFETIME_SECONDS)
+            update_data = {
+                "id": new_session_id,
+                "token_hash": token_hash,
+                "conversions_used": 0,
+                "last_conversion_at": None,
+                "expires_at": expires_at_dt.isoformat(),
+            }
+            supabase.table("guest_sessions").update(update_data).eq("id", session["id"]).execute()
+            session.update(update_data)
+            guest_user_id = f"guest_{new_session_id}"
+            ensure_guest_user_row(supabase, guest_user_id)
+            return session, signed_token, True
+
     # Step 2: Create a new guest session for this browser
     new_session_id = str(uuid.uuid4())
     signed_token = sign_guest_token(new_session_id)

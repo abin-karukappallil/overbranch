@@ -194,7 +194,7 @@ function RegisterContent() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.25 }}
-          className="max-w-md w-full mx-auto my-auto p-8 sm:p-10 bg-white text-zinc-900 rounded-3xl border border-black/10 shadow-2xl space-y-5"
+          className="max-w-md w-full mx-auto my-auto p-8 sm:p-10 bg-white text-zinc-900 rounded-3xl border border-black/10 shadow-2xl space-y-5 [color-scheme:light]"
         >
           <div className="space-y-1.5">
             <span className="font-mono text-[11px] font-bold text-[#00CC68] uppercase tracking-wider block">
@@ -212,7 +212,7 @@ function RegisterContent() {
             variant="outline"
             onClick={handleGoogleSignIn}
             disabled={googleLoading}
-            className="w-full h-11 border border-zinc-200 bg-white hover:bg-zinc-50 font-sans text-xs font-semibold rounded-xl flex items-center justify-center gap-3 shadow-xs transition-colors cursor-pointer"
+            className="w-full h-11 border border-zinc-200 bg-white hover:bg-zinc-50 dark:bg-white dark:text-zinc-900 dark:border-zinc-200 dark:hover:bg-zinc-50 font-sans text-xs font-semibold rounded-xl flex items-center justify-center gap-3 shadow-xs transition-colors cursor-pointer"
           >
             {googleLoading ? (
               <Loader2 className="w-4 h-4 animate-spin text-zinc-600" />
@@ -256,7 +256,7 @@ function RegisterContent() {
                   onChange={(e) => setName(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl dark:bg-zinc-50 dark:text-zinc-900 dark:border-zinc-200 dark:placeholder:text-zinc-400 dark:focus:bg-white"
                 />
                 <User className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
@@ -270,12 +270,12 @@ function RegisterContent() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="Enter your name"
+                  placeholder="Enter your email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl dark:bg-zinc-50 dark:text-zinc-900 dark:border-zinc-200 dark:placeholder:text-zinc-400 dark:focus:bg-white"
                 />
                 <Mail className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
@@ -294,7 +294,7 @@ function RegisterContent() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 pr-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
+                  className="h-10 pl-10 pr-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl dark:bg-zinc-50 dark:text-zinc-900 dark:border-zinc-200 dark:placeholder:text-zinc-400 dark:focus:bg-white"
                 />
                 <Lock className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <button
@@ -328,7 +328,7 @@ function RegisterContent() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                   disabled={loading}
-                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl"
+                  className="h-10 pl-10 font-sans text-xs text-zinc-900 border border-zinc-200 bg-zinc-50 focus:bg-white focus:border-[#00CC68] focus:ring-2 focus:ring-[#00CC68]/20 rounded-xl dark:bg-zinc-50 dark:text-zinc-900 dark:border-zinc-200 dark:placeholder:text-zinc-400 dark:focus:bg-white"
                 />
                 <Lock className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               </div>
@@ -364,8 +364,23 @@ function RegisterContent() {
           </p>
         </motion.div>
 
-        <div className="font-mono text-xs text-center text-black/80 max-w-md mx-auto py-2">
-          100% FREE AND OPEN SOURCE
+        <div className="font-mono text-xs text-center text-black/80 max-w-md mx-auto flex items-center justify-center gap-2 flex-wrap pt-2">
+          <span>100% FREE AND OPEN SOURCE</span>
+          <span className="opacity-40">•</span>
+          <a
+            href="https://upzare.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 hover:underline font-bold text-black group"
+          >
+            <span className="text-black/70 font-normal">Powered By</span>
+            <img
+              src="https://cdn.upzare.com/assets/logo.png"
+              alt="UPZARE Technologies Private Limited"
+              className="h-4 w-auto object-contain"
+            />
+            <span className="group-hover:text-black">UPZARE Technologies Private Limited</span>
+          </a>
         </div>
       </div>
     </div>

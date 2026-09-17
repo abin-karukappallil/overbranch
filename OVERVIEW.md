@@ -1,6 +1,6 @@
 # OverBranch — Comprehensive Method, Architecture & Feature Guide
 
-> **OverBranch** is a 100% free and open-source agentic LaTeX code editor and research environment. Built for students, academics, and scientific authors, it combines lightning-fast compilation, an intelligent RAG-driven AI copilot router, bidirectional SyncTeX synchronization, PDF-to-LaTeX conversion, and multi-user collaboration.
+> **OverBranch** is a 100% free and open-source agentic LaTeX code editor and research environment. Built for students, academics, and scientific authors, it combines lightning-fast compilation, an intelligent RAG-driven AI copilot router, bidirectional SyncTeX synchronization, PDF-to-LaTeX conversion, shadow compilation with self-correction, in-memory symbol indexing, and multi-user collaboration.
 
 ---
 
@@ -9,36 +9,42 @@
 1. [High-Level Methodology & System Architecture](#1-high-level-methodology--system-architecture)
    - [Architectural Overview](#architectural-overview)
    - [Core Methodological Pipelines](#core-methodological-pipelines)
-     - [A. LaTeX Compilation & Fallback Pipeline](#a-latex-compilation--fallback-pipeline)
-     - [B. Semantic Chunking & Vector RAG Pipeline](#b-semantic-chunking--vector-rag-pipeline)
-     - [C. Structural Document Parsing & Page Indexing](#c-structural-document-parsing--page-indexing)
-     - [D. Agentic Editing, Diff Generation & Auto-Repair](#d-agentic-editing-diff-generation--auto-repair)
-     - [E. PDF-to-LaTeX Ingestion & Guest Session Lifecycle](#e-pdf-to-latex-ingestion--guest-session-lifecycle)
-     - [F. SyncTeX Bidirectional Navigation](#f-synctex-bidirectional-navigation)
+     - [A. Bounded ReAct Agent Loop & Multi-Step Reasoning](#a-bounded-react-agent-loop--multi-step-reasoning)
+     - [B. Shadow Compilation & Self-Correction Pipeline](#b-shadow-compilation--self-correction-pipeline)
+     - [C. In-Memory Symbol Indexing & Cross-Reference Validation](#c-in-memory-symbol-indexing--cross-reference-validation)
+     - [D. Fast Query Rewriting & Hybrid Vector RAG](#d-fast-query-rewriting--hybrid-vector-rag)
+     - [E. LaTeX Compilation & Resilient Fallback Pipeline](#e-latex-compilation--resilient-fallback-pipeline)
+     - [F. Structural Document Parsing & Page Indexing](#f-structural-document-parsing--page-indexing)
+     - [G. Pre-Output Validation & LIFO Auto-Repair](#g-pre-output-validation--lifo-auto-repair)
+     - [H. PDF-to-LaTeX Ingestion & Guest Migration Lifecycle](#h-pdf-to-latex-ingestion--guest-migration-lifecycle)
+     - [I. SyncTeX Bidirectional Navigation](#i-synctex-bidirectional-navigation)
 2. [Complete Repository & File Structure](#2-complete-repository--file-structure)
    - [Root Directory Layout](#root-directory-layout)
    - [Backend Architecture (`backend/`)](#backend-architecture-backend)
    - [Frontend Application (`app/`)](#frontend-application-app)
    - [UI Components (`components/`)](#ui-components-components)
-   - [Database Layer (`db/`)](#database-layer-db)
+   - [Database Layer (`db/` & `drizzle/`)](#database-layer-db--drizzle)
    - [tRPC API Layer (`trpc/` & `server/`)](#trpc-api-layer-trpc--server)
    - [Libraries & Client Utilities (`lib/`)](#libraries--client-utilities-lib)
+   - [Hooks, Providers, Types & Migrations (`hooks/`, `providers/`, `types/`, `supabase/`)](#hooks-providers-types--migrations)
 3. [Deep-Dive: How Every Feature Works](#3-deep-dive-how-every-feature-works)
    - [Feature 1: Real-Time LaTeX Compilation & ReportLab Fallback](#feature-1-real-time-latex-compilation--reportlab-fallback)
    - [Feature 2: Bidirectional SyncTeX Navigation (Forward & Backward)](#feature-2-bidirectional-synctex-navigation-forward--backward)
-   - [Feature 3: Agentic LaTeX Copilot Router & Dual Modes (`Ask` vs. `Edit`)](#feature-3-agentic-latex-copilot-router--dual-modes-ask-vs-edit)
-   - [Feature 4: Structural Document Indexing & Targeted Frame Extraction](#feature-4-structural-document-indexing--targeted-frame-extraction)
-   - [Feature 5: Semantic Chunking & Qdrant Vector Synchronization](#feature-5-semantic-chunking--qdrant-vector-synchronization)
-   - [Feature 6: Pre-Output Validation & Auto-Repair Engine](#feature-6-pre-output-validation--auto-repair-engine)
-   - [Feature 7: Multi-Provider LLM Gateway & Fallback Architecture](#feature-7-multi-provider-llm-gateway--fallback-architecture)
-   - [Feature 8: PDF to Editable LaTeX Conversion (Dashboard & In-Project)](#feature-8-pdf-to-editable-latex-conversion-dashboard--in-project)
-   - [Feature 9: Guest Conversion Session, Quota Enforcement & Auto-Migration](#feature-9-guest-conversion-session-quota-enforcement--auto-migration)
-   - [Feature 10: Multimodal AI File Analyzer](#feature-10-multimodal-ai-file-analyzer)
-   - [Feature 11: Collaborative Project Management & Role-Based Access](#feature-11-collaborative-project-management--role-based-access)
-   - [Feature 12: Inline Diff Editor & Edit History Tracking](#feature-12-inline-diff-editor--edit-history-tracking)
-   - [Feature 13: Presentation View Mode (Beamer Decks)](#feature-13-presentation-view-mode-beamer-decks)
-   - [Feature 14: LaTeX Template Gallery & Dynamic Cloning](#feature-14-latex-template-gallery--dynamic-cloning)
-   - [Feature 15: Editor Customization & Theming Engine](#feature-15-editor-customization--theming-engine)
+   - [Feature 3: Bounded ReAct Agent Loop & Dual Modes (`Ask` vs. `Edit`)](#feature-3-bounded-react-agent-loop--dual-modes-ask-vs-edit)
+   - [Feature 4: Shadow Compilation & Compiler-Feedback Self-Correction](#feature-4-shadow-compilation--compiler-feedback-self-correction)
+   - [Feature 5: In-Memory Symbol Indexing & Dangling Reference Validation](#feature-5-in-memory-symbol-indexing--dangling-reference-validation)
+   - [Feature 6: Query Rewriting, Semantic Chunking & Hybrid Vector Retrieval](#feature-6-query-rewriting-semantic-chunking--hybrid-vector-retrieval)
+   - [Feature 7: Structural Document Indexing & Targeted Frame Extraction](#feature-7-structural-document-indexing--targeted-frame-extraction)
+   - [Feature 8: Pre-Output Validation & LIFO Auto-Repair Engine](#feature-8-pre-output-validation--lifo-auto-repair-engine)
+   - [Feature 9: Multi-Provider LLM Gateway & Fallback Architecture](#feature-9-multi-provider-llm-gateway--fallback-architecture)
+   - [Feature 10: PDF to Editable LaTeX Conversion Engine (Dashboard & In-Project)](#feature-10-pdf-to-editable-latex-conversion-engine-dashboard--in-project)
+   - [Feature 11: Guest Conversion Session, Quota Enforcement & Auto-Migration](#feature-11-guest-conversion-session-quota-enforcement--auto-migration)
+   - [Feature 12: Multimodal AI File Analyzer & TikZ Synthesizer](#feature-12-multimodal-ai-file-analyzer--tikz-synthesizer)
+   - [Feature 13: Collaborative Project Management & Role-Based Access](#feature-13-collaborative-project-management--role-based-access)
+   - [Feature 14: Inline Diff Editor & Edit History Tracking](#feature-14-inline-diff-editor--edit-history-tracking)
+   - [Feature 15: Presentation View Mode (Beamer Decks)](#feature-15-presentation-view-mode-beamer-decks)
+   - [Feature 16: LaTeX Template Gallery & Dynamic Cloning](#feature-16-latex-template-gallery--dynamic-cloning)
+   - [Feature 17: Design System ("Celestial Obsidian & Luminescent Iris") & Theming Engine](#feature-17-design-system-celestial-obsidian--luminescent-iris--theming-engine)
 4. [Deployment, Infrastructure & Environment Configuration](#4-deployment-infrastructure--environment-configuration)
 
 ---
@@ -53,10 +59,11 @@ OverBranch adopts a decoupled, micro-service-inspired architecture designed for 
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        FRONTEND CLIENT (Next.js 15)                    │
 │  - App Router, React 19, TypeScript, Tailwind CSS, Lucide Icons        │
-│  - Monaco / CodeMirror LaTeX Editor with syntax tree                   │
+│  - Monaco LaTeX Editor with syntax highlighting and SyncTeX markers    │
 │  - Custom PDF Viewer (PDF.js / Iframe / SyncTeX click handlers)        │
 │  - Presentation Deck Player (Beamer slide rendering)                   │
 │  - Diff Viewer (Side-by-side & Unified diff widgets)                   │
+│  - Agent Reasoning Window (Real-time ReAct loop step visualizer)       │
 └──────────────────┬───────────────────────────────┬─────────────────────┘
                    │                               │
        tRPC / Better-Auth (Next API)        HTTP / SSE / REST
@@ -65,11 +72,13 @@ OverBranch adopts a decoupled, micro-service-inspired architecture designed for 
 │    DATABASE & AUTH SERVICE      │   │     FASTAPI PYTHON ENGINE        │
 │  - PostgreSQL via Drizzle ORM   │   │  - Port 8000                     │
 │  - Supabase Database Storage    │   │  - Uvicorn / AsyncIO             │
-│  - Better-Auth Session Tokens   │   │  - PDF compilation & Fallback    │
-│  - Project & Invitation Schema  │   │  - Qdrant Vector Sync & LangChain│
-└─────────────────────────────────┘   │  - Thin Agent Router & Evaluator │
+│  - Better-Auth Session Tokens   │   │  - ReAct Agent Loop & Router     │
+│  - Project & Invitation Schema  │   │  - Shadow Compiler & Auto-Repair │
+│  - Collaboration & Comments     │   │  - Symbol Index & Cross-Refs     │
+└─────────────────────────────────┘   │  - Qdrant Hybrid RAG & Rewriter  │
                                       │  - PDF to LaTeX OCR / Parser     │
                                       │  - Multimodal File Analyzer      │
+                                      │  - SyncTeX Forward/Backward View │
                                       └──────────────────────────────────┘
 ```
 
@@ -77,40 +86,59 @@ OverBranch adopts a decoupled, micro-service-inspired architecture designed for 
 
 ### Core Methodological Pipelines
 
-#### A. LaTeX Compilation & Fallback Pipeline
-1. **Source Bundling**: The frontend packages the active `.tex` document, referenced images (as base64 or project asset filenames), auxiliary files (e.g. `.bib`, `.sty`, `.cls`), and requested TeX engine (`latexmk`, `pdflatex`, `xelatex`, `lualatex`).
+#### A. OpenCode-Style Agentic Pipeline & Exact-Match Tool Suite
+1. **Interactive Tool Loop**: `opencode/agent_loop.py` executes an iterative ReAct cycle with dynamic adaptive step budgeting (6 to 32 steps) operating on an in-memory `ShadowWorkspace`.
+2. **Deterministic Tool Suite**:
+   - `read_file_range`: Reads exact line-numbered contents without hallucinated drift.
+   - `grep_search`: Finds structural anchors (`\chapter`, `\section`, `\begin{frame}`, `\label`, `\cite`).
+   - `str_replace`: Performs strict character-for-character replacements with zero spatial drift.
+   - `list_assets`: Discovers available images/PDFs in `assets/` for `\includegraphics`.
+   - `verify_compile`: Triggers sandboxed compilation to capture compiler diagnostics.
+   - `get_template_theme`: Retrieves curated themes (Beamer PPT themes, IEEE conference/journal papers, 5-chapter thesis reports, resumes/CVs, formal letters, lab assignments) and extracts styling preambles for non-destructive document redesigns.
+3. **SSE Event Streaming**: Streams real-time reasoning (`thought`, `tool_call`, `tool_result`, `compile_error`, `final_diff`) to `AgentReasoningWindow.tsx` and `InlineDiffEditor.tsx`.
+
+#### B. Shadow Compilation & Self-Correction Pipeline
+1. **In-Memory Shadow Sandbox**: `opencode/shadow_workspace.py` maintains an isolated buffer; edits never touch disk during reasoning.
+2. **Ephemeral Verification**: `opencode/shadow_compiler.py` runs fast compilation tests (`pdflatex`, `xelatex`, or ReportLab fallback).
+3. **Compiler Feedback**: Offending TeX macros and line numbers are fed back into the agent loop for self-correction.
+
+#### C. In-Memory Symbol Indexing & Cross-Reference Validation
+1. **AST Symbol Scraping**: `symbol_index.py` extracts all `\label`, `\ref`, `\eqref`, `\autoref`, `\cref`, `\cite`, `\bibitem`, `\newcommand`, `\def`, and section declarations into an indexed symbol table.
+2. **Instant Lookup**: Provides $O(1)$ verification for cross-reference consistency across multi-file LaTeX projects.
+3. **Dangling Reference Prevention**: Detects orphan `\ref` calls or missing bibliography keys before finalizing AI-generated code.
+
+#### D. Fast Query Rewriting & Hybrid Vector RAG
+1. **Query Expansion**: `query_rewriter.py` expands vague or conversational user prompts (e.g., *"add the baseline table"*) into 1–3 targeted technical search queries containing domain-specific LaTeX terms.
+2. **Boundary-Aware Chunking**: `chunker.py` splits documents along grammatical boundaries: `\section`, `\subsection`, `\begin{frame}`, mathematical blocks (`align`, `equation`), floating tables, and figures.
+3. **Quality Weighting**: Each chunk is assigned a categorical weight (`section: 1.0`, `frame: 0.95`, `figure: 0.88`, `paragraph: 0.6`, `preamble: 0.3`).
+4. **Vector Persistence**: Embeddings generated via `NVIDIAEmbeddings` (`NV-Embed-QA`) or OpenAI embeddings are stored in a **Qdrant** collection (`overbranch_latex_chunks`).
+5. **Hybrid Retrieval**: `retriever.py` queries Qdrant with hybrid scoring combining semantic vector similarity with chunk quality weights.
+
+#### E. LaTeX Compilation & Resilient Fallback Pipeline
+1. **Source Bundling**: The frontend packages the active `.tex` document, referenced images (as base64 or project asset filenames), auxiliary files (`.bib`, `.sty`, `.cls`), and requested TeX engine (`latexmk`, `pdflatex`, `xelatex`, `lualatex`).
 2. **Execution Isolation**: The backend spawns a secure temporary directory (`tempfile.mkdtemp()`), copies root templates and packages, decodes assets to disk, and executes the compilation command with timeouts.
 3. **Artifact Caching & SyncTeX Extraction**: If compilation succeeds, the resultant `main.pdf` and `main.synctex.gz` are stored in `/tmp/overbranch_synctex_cache/<project_id>/` for fast bidirectional lookup.
 4. **Resilient ReportLab Fallback**: If no LaTeX engine is installed on the host system (e.g. lightweight Docker deployment or developer laptop without TeXLive), `compiler.py` engages an intelligent ReportLab synthetic generator that strips TeX control sequences, identifies Beamer frames or article sections, and builds a matching PDF document.
 
-#### B. Semantic Chunking & Vector RAG Pipeline
-1. **Boundary-Aware Chunking**: Traditional RAG splits documents by fixed token counts. OverBranch's `chunker.py` analyzes TeX grammatical boundaries: `\section`, `\subsection`, `\begin{frame}`, mathematical blocks (`align`, `equation`), floating tables, and figures.
-2. **Quality Weighting**: Each chunk is assigned a categorical weight (e.g., `section: 1.0`, `frame: 0.95`, `figure: 0.88`, `paragraph: 0.6`, `preamble: 0.3`).
-3. **Vector Ingestion**: Vectors are generated via `NVIDIAEmbeddings` (`NV-Embed-QA`) or OpenAI embeddings and persisted into a local or remote **Qdrant** collection (`overbranch_latex_chunks`).
-4. **Hybrid Retrieval**: When a prompt arrives, `retriever.py` queries Qdrant with hybrid scoring, combining semantic vector similarity with chunk quality weights.
-
-#### C. Structural Document Parsing & Page Indexing
+#### F. Structural Document Parsing & Page Indexing
 1. **DocumentIndex Engine**: `document_index.py` constructs an in-memory structural representation of the document, mapping every slide or section to a stable `page_id`, offsets (`start_offset`, `end_offset`), and SHA-256 fingerprint.
 2. **Targeted Slide Retrieval**: When editing Beamer presentations, the system can isolate the exact frame being discussed by matching frame titles, labels, or ordinal slide numbers, preventing hallucinations outside the target slide.
 
-#### D. Agentic Editing, Diff Generation & Auto-Repair
-1. **Prompt Assembly**: `prompt_builder.py` bundles the user query, conversational history from `memory.py`, structural context, retrieved RAG chunks, active compiler errors (if any), and active editor code into a structured system prompt.
-2. **Tool / Mode Routing**:
-   - `ask` mode: Generates direct explanatory responses, pedagogical math explanations, or suggestions.
-   - `edit` mode: Employs tool-calling schemas (`edit_chunk`, `create_content`, `delete_chunk`, `find_replace_all`) or direct structured diff outputs.
-3. **Pre-Output Validation**: `edit_validator.py` executes AST-style regex passes to ensure:
+#### G. Pre-Output Validation & LIFO Auto-Repair
+1. **Pre-Output Validation**: `edit_validator.py` executes AST-style regex passes to ensure:
    - No duplicate slide IDs or `\label{...}` collisions.
    - Proper balance of LaTeX environments (`\begin{...}` / `\end{...}`).
    - Non-destruction of the document preamble.
-4. **LIFO Auto-Repair**: If an LLM response was truncated mid-token, `auto_repair_truncated_latex()` trims dangling commands and closes open environments in Last-In-First-Out order, guaranteeing valid syntax.
+2. **LIFO Auto-Repair**: If an LLM response was truncated mid-token, `auto_repair_truncated_latex()` trims dangling commands and closes open environments in Last-In-First-Out order, guaranteeing valid syntax.
 
-#### E. PDF-to-LaTeX Ingestion & Guest Session Lifecycle
+#### H. PDF-to-LaTeX Ingestion & Guest Migration Lifecycle
 1. **Multimodal Deconstruction**: Uploaded PDFs (academic papers, lecture slides, assignments) are parsed via `pdf_parser.py` (using `pypdf` or `PyMuPDF`) to extract text layout, tabular bounding boxes, and images.
-2. **Hierarchical Translation**: `pdf_to_latex.py` converts extracted elements into modular LaTeX code, organizing them into standard templates (e.g. `IEEEtran`, `beamer`, `article`).
-3. **Guest Session Protection**: Unauthenticated users are granted access through browser device fingerprinting and signed HMAC guest cookies (`guest_identity.py`). Quotas (e.g., 2 conversions per 24 hours) are checked against Postgres before processing.
-4. **Transparent Migration**: When a guest signs up or logs in, `GuestMigrationListener` invokes `/api/guest/migrate`, reassigning all guest projects to the authenticated user ID.
+2. **Figure Extraction**: `pdf_figure_extractor.py` extracts embedded raster/vector images directly into the project's `assets/` directory, parsing multi-line and plural captions while guarding against raw PDF path leaks in `\includegraphics{...}`.
+3. **Positional Drift Calibration**: `layout_verifier.py` measures vertical drift between original PDF pages and generated TeX rendering, calibrating `\vspace` and geometry to mirror original layout fidelity.
+4. **Guest Session Protection**: Unauthenticated users are granted access through browser device fingerprinting and signed HMAC guest cookies (`guest_identity.py`). Quotas (e.g., 2 conversions per 24 hours) are checked against Postgres before processing.
+5. **Transparent Migration**: When a guest signs up or logs in, `GuestMigrationListener` invokes `/api/guest/migrate`, reassigning all guest projects to the authenticated user ID.
 
-#### F. SyncTeX Bidirectional Navigation
+#### I. SyncTeX Bidirectional Navigation
 - **Forward Lookup**: Placing the cursor at line $L$ in `main.tex` executes `synctex view`, mapping the source code line to the exact PDF page, $x$, and $y$ coordinate, scrolling the PDF viewer automatically.
 - **Backward Lookup**: Clicking an equation or paragraph inside the PDF viewer translates the click point $(page, x, y)$ back into the corresponding source filename, line number, and column.
 
@@ -120,9 +148,9 @@ OverBranch adopts a decoupled, micro-service-inspired architecture designed for 
 
 ```
 overbranch/
-├── app/                                 # Next.js App Router (Frontend)
+├── app/                                 # Next.js 15 App Router (Frontend)
 │   ├── (dashboard)/                     # Protected Dashboard Layout Group
-│   │   ├── dashboard/page.tsx           # User Dashboard (Recent projects, statistics)
+│   │   ├── dashboard/page.tsx           # User Dashboard (Recent projects, statistics, quick actions)
 │   │   ├── layout.tsx                   # Dashboard Sidebar, Nav & Shell
 │   │   ├── profile/page.tsx             # User Profile & Preferences
 │   │   ├── projects/page.tsx            # Project Management (List, Filter, Delete, Star)
@@ -130,9 +158,11 @@ overbranch/
 │   ├── api/                             # API Routes (Next.js server-side)
 │   │   ├── auth/[...all]/route.ts       # Better-Auth authentication endpoints
 │   │   └── trpc/[trpc]/route.ts         # tRPC HTTP Handler
-│   ├── auth/                            # Auth verification & callbacks
+│   ├── auth/page.tsx                    # Auth verification & callbacks
 │   ├── convert/page.tsx                 # Standalone PDF to LaTeX Converter Page
 │   ├── editor/[id]/page.tsx             # Main Project Editor Screen (Route handler)
+│   ├── error.tsx                        # Global error boundary
+│   ├── not-found.tsx                    # Global 404 page
 │   ├── globals.css                      # Global Styles, CSS Variables & Tailwind Directives
 │   ├── layout.tsx                       # Root HTML Layout & Global Providers
 │   ├── login/page.tsx                   # Sign-in Page
@@ -140,11 +170,10 @@ overbranch/
 │   └── register/page.tsx                # Sign-up Page
 │
 ├── backend/                             # Python FastAPI Engine
-│   ├── assets/                          # Static assets and template images
+│   ├── assets/                          # Static assets and template figures
 │   ├── providers/                       # Multi-Provider LLM Gateway
 │   │   ├── __init__.py                  # Package exports
 │   │   ├── base_provider.py             # Abstract LLMProvider base class
-│   │   ├── freellm_provider.py          # Free LLM API adapter (Groq fallback)
 │   │   ├── gemini_provider.py           # Gemini Web2API / Google GenAI adapter
 │   │   ├── groq_provider.py             # High-speed Groq inference adapter
 │   │   ├── openrouter_provider.py       # OpenRouter models adapter
@@ -159,6 +188,8 @@ overbranch/
 │   │   ├── guest_identity.py            # Device fingerprinting & HMAC guest cookie tokens
 │   │   ├── guest_migrator.py            # Reassociates guest projects with user accounts
 │   │   ├── guest_quota.py               # 24-hour rate limiting & conversion tracking
+│   │   ├── layout_verifier.py           # Positional drift analysis & vertical spacing calibration
+│   │   ├── pdf_figure_extractor.py      # Embedded PDF figure extraction & caption parsing
 │   │   ├── pdf_parser.py                # PDF extraction via PyMuPDF / pypdf
 │   │   ├── pdf_to_latex.py              # LLM conversion prompts & LaTeX synthesis
 │   │   └── project_file_writer.py       # Writes generated projects to disk & Supabase
@@ -166,28 +197,69 @@ overbranch/
 │   │   ├── assignments/                 # Academic Assignment templates
 │   │   ├── papers/                      # Research Paper templates (IEEE, ACM, Springer)
 │   │   ├── ppt/                         # Beamer presentation themes
-│   │   └── reports/                     # Laboratory & Technical reports
-│   ├── agent.py                         # Thin Agent Router & orchestration endpoint
+│   │   ├── reports/                     # Laboratory & Technical reports
+│   │   ├── resume/                      # Resumes & CV templates (ModernCV, Deedy, DeveloperCV)
+│   │   └── thesis/                      # Master & PhD Thesis templates
+│   ├── tests/                           # Pytest Test Suite
+│   │   ├── test_agent_loop_and_shadow.py
+│   │   ├── test_cancellation.py
+│   │   ├── test_collections_and_anchors.py
+│   │   ├── test_guest_identity.py
+│   │   ├── test_guest_migrator.py
+│   │   ├── test_guest_quota.py
+│   │   ├── test_guest_routes.py
+│   │   ├── test_hybrid_retrieval.py
+│   │   ├── test_missing_images_and_no_fallback.py
+│   │   ├── test_pdf_figure_extractor.py
+│   │   ├── test_pdf_to_latex.py
+│   │   ├── test_smart_addition_positioning.py
+│   │   └── test_smart_targeting_and_repairs.py
+│   ├── opencode/                        # OpenCode-Style Agentic Pipeline (Exact-Match Shadow Buffer)
+│   │   ├── __init__.py                  # Package exports
+│   │   ├── agent_loop.py                # ReAct agent loop with exact-match tools
+│   │   ├── diff_generator.py            # Line-level diff generator for InlineDiffEditor
+│   │   ├── shadow_compiler.py           # Sandboxed compiler verification wrapper
+│   │   ├── shadow_workspace.py          # Thread-safe in-memory shadow buffer
+│   │   ├── tools.py                     # Tool suite (read_file_range, grep_search, str_replace, etc.)
+│   │   └── tests/                       # OpenCode pipeline unit tests
+│   ├── routes/                          # FastAPI Route modules
+│   │   ├── agent_routes.py              # OpenCode pipeline SSE endpoint (POST /api/agent/opencode)
+│   │   ├── guest_pdf.py                 # Guest PDF conversion routes
+│   │   └── pdf_conversion.py            # PDF conversion routes
+│   ├── agent.py                         # Legacy Agent Router & orchestration endpoint
+│   ├── agent_loop.py                    # Legacy Bounded ReAct Agent Loop & multi-step tool caller
+│   ├── cancellation.py                  # Thread-safe cancellation tokens & HTTP stream abort manager
 │   ├── chunker.py                       # Structural LaTeX chunker with metadata
 │   ├── compiler.py                      # TeX Engine compiler & ReportLab fallback
 │   ├── context_builder.py               # Token-budgeted context assembler
-│   ├── document_index.py                # Page/Frame parser & structural indexer
-│   ├── edit_validator.py                # Pre-output LaTeX validator & auto-repair
+│   ├── document_index.py                # Page/Frame parser, slide/topic indexer & slide deletion
+│   ├── edit_validator.py                # Pre-output LaTeX validator, AST regex rules & auto-repair
 │   ├── file_analyzer.py                 # Multimodal AI analysis for uploaded files
 │   ├── main.py                          # FastAPI entry point & CORS configuration
 │   ├── memory.py                        # Conversation & project memory (LRU store)
 │   ├── project_storage.py               # File system disk operations & Supabase storage
 │   ├── prompt_builder.py                # System prompt generator for LLMs
+│   ├── query_rewriter.py                # Fast multi-query expansion for hybrid search
 │   ├── retriever.py                     # Vector & structural retriever
+│   ├── shadow_compiler.py               # Shadow compilation & compiler-feedback self-correction
+│   ├── symbol_index.py                  # In-memory symbol indexing & cross-reference lookup
 │   ├── synctex_service.py               # Forward & backward SyncTeX locator
 │   ├── template_service.py              # Template metadata & thumbnail server
-│   ├── tools.py                         # LangChain tool definitions (edit, create, delete)
-│   └── vector_sync.py                   # Qdrant client & vector sync endpoints
+│   ├── tools.py                         # LangChain tool definitions (edit, create, delete, search)
+│   ├── vector_sync.py                   # Qdrant client & vector sync endpoints
+│   ├── Dockerfile                       # Backend standalone container build
+│   └── requirements.txt                 # Python dependencies
 │
 ├── components/                          # React Components
-│   ├── dashboard/                       # Dashboard-specific widgets (Stats, Cards, Lists)
+│   ├── dashboard/                       # Dashboard-specific widgets
+│   │   ├── NotificationsPopover.tsx     # In-app notification center & invitations
+│   │   ├── PDFToLatexModal.tsx          # In-dashboard PDF to LaTeX conversion modal
+│   │   ├── Sidebar.tsx                  # Collapsible navigation sidebar
+│   │   ├── TopNav.tsx                   # Top navigation bar & breadcrumbs
+│   │   └── UserProfileDropdown.tsx      # User menu & sign-out action
 │   ├── editor/                          # Editor Suite Components
-│   │   ├── ApiSettingsModal.tsx         # User custom API keys modal (Gemini, Groq, etc.)
+│   │   ├── AgentReasoningWindow.tsx     # Live ReAct thought / step execution & inspection monitor
+│   │   ├── ApiSettingsModal.tsx         # User custom API keys modal (Gemini, Groq, OpenRouter)
 │   │   ├── ChatMessageContent.tsx       # Markdown & LaTeX rendering for AI chat
 │   │   ├── ChatModeToggle.tsx           # Toggle between 'Ask' and 'Edit' modes
 │   │   ├── CollaboratorAvatars.tsx      # Multi-user avatars & invitation management
@@ -196,13 +268,36 @@ overbranch/
 │   │   ├── EditorThemeModal.tsx         # Theme customizer (Monaco themes, font sizes)
 │   │   ├── FileAnalyzerModal.tsx        # File inspection & AI multimodal querying
 │   │   ├── InlineDiffEditor.tsx         # Side-by-side or unified diff viewer
-│   │   ├── LatexEditorView.tsx          # Code editor wrapper with line numbers
+│   │   ├── LatexEditorView.tsx          # Code editor wrapper with line numbers and SyncTeX
 │   │   ├── ModelSelector.tsx            # Dropdown model picker with provider badges
 │   │   ├── PDFViewer.tsx                # Interactive PDF preview with SyncTeX triggers
 │   │   ├── PresentationView.tsx         # Fullscreen Beamer slide presentation view
 │   │   └── ProjectFilesPanel.tsx        # File tree explorer & asset manager
-│   ├── landing/                         # Landing page sections (Hero, Features, Pricing)
-│   ├── ui/                              # Radix UI / Shadcn base components
+│   ├── extend/                          # Extended viewer widgets
+│   │   ├── document-viewer-sidebar.tsx  # Document thumbnails & outline sidebar
+│   │   └── pdf-viewer.tsx               # Embedded PDF canvas renderer
+│   ├── landing/                         # Landing page sections
+│   │   ├── BrandMarquee.tsx             # Academic & institution marquee
+│   │   ├── CTASection.tsx               # Call-to-action banner
+│   │   ├── Features.tsx                 # Core features grid
+│   │   ├── Footer.tsx                   # Footer & copyright
+│   │   ├── FreeSection.tsx              # 100% Free & open-source badge
+│   │   ├── Header.tsx                   # Public navigation header
+│   │   ├── Hero.tsx                     # Hero header with dynamic CTA
+│   │   ├── Introduction.tsx             # Project vision & architecture intro
+│   │   ├── OpenSourceSection.tsx        # GitHub links & open source manifesto
+│   │   ├── PdfToLatexSection.tsx        # Interactive PDF to LaTeX demo preview
+│   │   ├── SelfHosting.tsx              # Docker self-hosting instructions
+│   │   ├── Showcase.tsx                 # Feature showcase tabs
+│   │   ├── TechnicalMarquee.tsx         # Tech stack badges marquee
+│   │   └── TemplatesSection.tsx         # Template gallery preview
+│   ├── ui/                              # 26 Radix UI / Shadcn base components
+│   │   ├── alert-dialog.tsx, avatar.tsx, badge-custom.tsx, badge.tsx, button.tsx
+│   │   ├── card.tsx, command-palette.tsx, dialog.tsx, dropdown-menu.tsx, empty-state.tsx
+│   │   ├── github-icon.tsx, input.tsx, label.tsx, loading-screen.tsx, OverBranchLogo.tsx
+│   │   ├── popover.tsx, progress.tsx, scroll-area.tsx, select.tsx, separator.tsx
+│   │   ├── sheet.tsx, skeleton-loader.tsx, slider.tsx, spinner.tsx, table.tsx
+│   │   ├── tabs-animated.tsx, textarea.tsx, theme-toggle.tsx, toggle.tsx, tooltip.tsx
 │   ├── DiffWidget.tsx                   # Standalone diff display with Accept/Reject buttons
 │   └── GuestMigrationListener.tsx       # Client listener to migrate guest session on login
 │
@@ -210,15 +305,33 @@ overbranch/
 │   ├── index.ts                         # Drizzle ORM client initialization
 │   └── schema.ts                        # Drizzle PostgreSQL schema definitions
 │
+├── drizzle/                             # Drizzle Migrations & Snapshots
+│   ├── 0000_condemned_the_twelve.sql    # Generated SQL schema migrations
+│   └── meta/                            # Drizzle journal and snapshot history
+│
+├── hooks/                               # Custom React Hooks
+│   └── useGuestMigration.ts             # Hook for guest session migration detection
+│
 ├── lib/                                 # Shared Library Code
-│   ├── EditHistoryStore.ts              # LocalStorage edit history & undo/redo tracking
-│   ├── IndexedDBEmbeddingCache.ts       # Client-side embedding cache
+│   ├── hooks/
+│   │   └── use-debounce.ts              # Debounce utility hook
 │   ├── ai-file-analysis.ts              # Client utilities for invoking file analyzer
 │   ├── auth-client.ts                   # Better-Auth client instance
 │   ├── auth.ts                          # Better-Auth server configuration
+│   ├── EditHistoryStore.ts              # LocalStorage edit history & undo/redo tracking
 │   ├── guest-token.ts                   # Guest token cookie management
+│   ├── IndexedDBEmbeddingCache.ts       # Client-side embedding cache
 │   ├── pdf-thumbnail-utils.ts           # PDF page canvas thumbnail rendering
 │   └── utils.ts                         # Tailwind CSS class merging utilities
+│
+├── providers/                           # React Context Providers
+│   └── ThemeProvider.tsx                # Next-themes dark/light theme wrapper
+│
+├── public/                              # Public Static Assets
+│   ├── favicon.ico, file.svg, globe.svg, icon.png, next.svg, vercel.svg, window.svg
+│
+├── scripts/                             # Maintenance & Testing Scripts
+│   └── test_file_analysis.py            # Local file analyzer sanity script
 │
 ├── server/                              # Server procedures
 │   └── trpc/
@@ -226,6 +339,10 @@ overbranch/
 │       ├── init.ts                      # tRPC router & middleware initialization
 │       └── routers/
 │           └── project.ts               # Core database-level project procedures
+│
+├── supabase/                            # Supabase Migrations
+│   └── migrations/
+│       └── 001_initial_schema.sql       # Baseline PostgreSQL database schema
 │
 ├── trpc/                                # Full Client-Server tRPC Router Collection
 │   ├── client.tsx                       # tRPC React Query Client Provider
@@ -245,13 +362,27 @@ overbranch/
 │       ├── templates.ts                 # Template fetching & instantiation
 │       └── user.ts                      # User profile operations
 │
+├── types/                               # TypeScript Type Definitions
+│   └── sync.ts                          # SyncTeX coordinate & bounding box types
+│
 ├── uploads/                             # Local disk storage for project files & assets
 │   └── projects/<project_id>/           # Safe, isolated project directories
 │
-├── docker-compose.yml                   # Docker multi-service composition file
-├── Dockerfile                           # Production Next.js & Python container build
+├── DOCKER_DEPLOYMENT.md                 # Complete Docker deployment runbook
+├── Dockerfile                           # Production Next.js & Python full-stack container
+├── Dockerfile.backend                   # Production Python FastAPI backend container
+├── docker-compose.yml                   # Docker Compose (Full stack)
+├── docker-compose.backend.yml           # Docker Compose (Backend only)
 ├── deploy.sh                            # Automated deployment script for Linux/Ubuntu
-└── drizzle.config.ts                    # Drizzle ORM configuration
+├── entrypoint.sh                        # Container startup script
+├── design.md                            # Canonical design system specification ("Celestial Obsidian")
+├── linear-design.md                     # Linear-inspired UI design guide
+├── drizzle.config.ts                    # Drizzle ORM configuration
+├── eslint.config.mjs                    # ESLint configuration
+├── next.config.ts                       # Next.js configuration
+├── package.json                         # Node dependencies & build scripts
+├── tsconfig.json                        # TypeScript configuration
+└── vercel.json                          # Vercel deployment configuration
 ```
 
 ---
@@ -278,7 +409,7 @@ overbranch/
 +--------------------------------------------------------------------------------+
 ```
 
-- **File Implementation**: [`backend/compiler.py`](file:///home/abin/overbranch/backend/compiler.py), [`backend/main.py`](file:///home/abin/overbranch/backend/main.py)
+- **File Implementation**: [`backend/compiler.py`](file:///home/abin/overbranch/backend/compiler.py), [`backend/main.py`](file:///home/abin/overbranch/backend/main.py), [`components/editor/CompileToolbar.tsx`](file:///home/abin/overbranch/components/editor/CompileToolbar.tsx)
 - **Engines Supported**: `latexmk`, `pdflatex`, `xelatex`, `lualatex`.
 - **How It Works**:
   1. The client sends a `CompileRequest` with `latex_code`, `engine`, `project_id`, and lists of `images` and `files` (with base64 payloads).
@@ -298,7 +429,7 @@ overbranch/
 
 ### Feature 2: Bidirectional SyncTeX Navigation (Forward & Backward)
 
-- **File Implementation**: [`backend/synctex_service.py`](file:///home/abin/overbranch/backend/synctex_service.py), [`components/editor/PDFViewer.tsx`](file:///home/abin/overbranch/components/editor/PDFViewer.tsx)
+- **File Implementation**: [`backend/synctex_service.py`](file:///home/abin/overbranch/backend/synctex_service.py), [`components/editor/PDFViewer.tsx`](file:///home/abin/overbranch/components/editor/PDFViewer.tsx), [`types/sync.ts`](file:///home/abin/overbranch/types/sync.ts)
 - **Backward Sync (PDF Click -> Source Line)**:
   1. In the PDF viewer, double-clicking or Cmd+Clicking on text records the click's page number and exact $(x, y)$ coordinates in 72 DPI PDF point space.
   2. Frontend fires `POST /api/synctex/backward` with `{ project_id, page, x, y }`.
@@ -316,49 +447,97 @@ overbranch/
 
 ---
 
-### Feature 3: Agentic LaTeX Copilot Router & Dual Modes (`Ask` vs. `Edit`)
+### Feature 3: Bounded ReAct Agent Loop & Dual Modes (`Ask` vs. `Edit`)
 
 ```
 +------------------------------------------------------------------------------------+
-|                                AI AGENT PIPELINE                                   |
+|                             BOUNDED REACT AGENT LOOP                               |
 |                                                                                    |
-|  User Prompt ──► [Memory Context] ──► [DocumentIndex Frame/Section]                |
-|                        │                         │                                 |
-|                        ▼                         ▼                                 |
-|                 [Vector Retrieval] ──► [Token Budget Context]                      |
-|                                                  │                                 |
-|                                                  ▼                                 |
-|             [Prompt Builder] ──► [LLM Provider] (Gemini / Groq / OpenRouter)       |
-|                                                  │                                 |
-|                                                  ▼                                 |
-|                                   [Pre-Output Edit Validator]                      |
-|                                                  │                                 |
-|                     ┌────────────────────────────┴───────────────────────────┐     |
-|                     ▼                                                        ▼     |
-|               Passed Checks                                            Auto-Repair |
-|                     │                                                        │     |
-|                     └────────────────────────────┬───────────────────────────┘     |
-|                                                  │                                 |
-|                                                  ▼                                 |
-|                                       [Return Diff or Answer]                      |
+|  User Prompt ──► [Query Rewriter] ──► [Multi-Step Reasoning Loop (Max 8 Steps)]    |
+|                                             │                                      |
+|                 ┌───────────────────────────┴──────────────────────────┐           |
+|                 ▼                                                      ▼           |
+|       [Inspection Tools]                                       [Action Tools]      |
+|       - search_document                                        - edit_chunk        |
+|       - read_chunk                                             - create_content    |
+|       - check_label_exists                                     - delete_chunk      |
+|       - get_compile_errors                                     - insert_after      |
+|       - run_validator                                          - insert_relative   |
+|                 │                                                      │           |
+|                 └───────────────────────────┬──────────────────────────┘           |
+|                                             │                                      |
+|                                             ▼                                      |
+|                             [Shadow Compile & Self-Correct]                        |
+|                                             │                                      |
+|                                             ▼                                      |
+|                             [Stream to AgentReasoningWindow]                       |
 +------------------------------------------------------------------------------------+
 ```
 
-- **File Implementation**: [`backend/agent.py`](file:///home/abin/overbranch/backend/agent.py), [`backend/prompt_builder.py`](file:///home/abin/overbranch/backend/prompt_builder.py), [`backend/memory.py`](file:///home/abin/overbranch/backend/memory.py)
-- **Endpoint**: `POST /api/agent/chat`
-- **Two Distinct Modes**:
-  1. **Ask Mode (`mode="ask"`)**:
-     - Tailored for Q&A, scientific explanations, debugging advice, or LaTeX syntax queries.
-     - System prompt instructs the model to provide educational, conversational explanations with code snippets, without generating full replacement blocks.
-  2. **Edit Mode (`mode="edit"`)**:
-     - Agentic document modification.
-     - Prompt builder provides the full document structure, retrieved chunks, and the target frame/section.
-     - The agent generates precise, targeted edits or calls LangChain tools (`edit_chunk`, `create_content`, `delete_chunk`, `find_replace_all`).
-     - Outputs a structured diff containing `original_chunk`, `proposed_chunk`, `explanation`, and full replacement code.
+- **File Implementation**:
+  - **OpenCode Pipeline (Recommended)**: [`backend/opencode/`](file:///home/abin/overbranch/backend/opencode/) (`shadow_workspace.py`, `agent_loop.py`, `tools.py`, `diff_generator.py`, `shadow_compiler.py`), [`backend/routes/agent_routes.py`](file:///home/abin/overbranch/backend/routes/agent_routes.py)
+  - **Legacy RAG Pipeline**: [`backend/agent_loop.py`](file:///home/abin/overbranch/backend/agent_loop.py), [`backend/agent.py`](file:///home/abin/overbranch/backend/agent.py)
+  - **Cancellation**: [`backend/cancellation.py`](file:///home/abin/overbranch/backend/cancellation.py)
+  - **Frontend UI**: [`components/editor/AgentReasoningWindow.tsx`](file:///home/abin/overbranch/components/editor/AgentReasoningWindow.tsx), [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx)
+- **Endpoints**:
+  - `POST /api/agent/opencode` — OpenCode Exact-Match Shadow Workspace Agent with real-time SSE streaming.
+  - `POST /api/agent/chat` — Legacy semantic chunking & RAG agent endpoint (maintained for backwards compatibility).
+- **OpenCode Agent Architecture**:
+  1. **In-Memory Shadow Workspace**: The user's `main.tex` is held in an in-memory buffer (`ShadowWorkspace`). All edits operate on this buffer without touching disk.
+  2. **Exact-Match Tool Suite**:
+     - `read_file_range`: Read line-numbered slices (`1: \documentclass...`).
+     - `grep_search`: Regex or literal pattern matching with line numbers.
+     - `str_replace`: Verbatim character-for-character replacement (strictly rejects hallucinated strings and ambiguous matches).
+     - `list_assets`: Inspect figures and images in `assets/` for `\includegraphics`.
+     - `verify_compile`: Sandboxed compilation to check for TeX errors and self-correct.
+  3. **Line-Level Diff Generation**: `diff_generator.py` uses `difflib.SequenceMatcher` to compute the `final_diff` payload and `EditItem[]` for direct consumption by the frontend `InlineDiffEditor`.
+  4. **Thread-Safe Cancellation**: Supported via `cancellation.py` (`CancellationManager` & `CancellationToken`) with active client disconnect monitoring.
 
 ---
 
-### Feature 4: Structural Document Indexing & Targeted Frame Extraction
+### Feature 4: Shadow Compilation & Compiler-Feedback Self-Correction
+
+- **File Implementation**: [`backend/shadow_compiler.py`](file:///home/abin/overbranch/backend/shadow_compiler.py)
+- **How It Works**:
+  1. **In-Memory Diff Application**: `apply_candidate_edits()` applies proposed chunks against the document in memory, producing a temporary candidate code buffer.
+  2. **Non-Blocking Compile Test**: `shadow_compile_candidate()` triggers an ephemeral compilation in a background thread.
+  3. **Log Diagnostic Parsing**: Extracts TeX error messages (e.g. `Undefined control sequence \foo`, `Missing $ inserted`) and maps them to line numbers.
+  4. **Self-Correction Retry**: If the candidate fails to compile, `self_correct_edits()` sends the compiler diagnostic back to the LLM with instructions to repair the exact syntax error (up to `SHADOW_COMPILE_MAX_RETRIES` times) before returning the diff to the client.
+
+---
+
+### Feature 5: In-Memory Symbol Indexing & Dangling Reference Validation
+
+- **File Implementation**: [`backend/symbol_index.py`](file:///home/abin/overbranch/backend/symbol_index.py)
+- **How It Works**:
+  1. **Symbol Scraping**: Scans document source code for:
+     - Labels: `\label{key}`
+     - References: `\ref{key}`, `\eqref{key}`, `\autoref{key}`, `\cref{key}`
+     - Citations: `\cite{key}`, `\citep{key}`, `\citet{key}`, `\bibitem{key}`
+     - Macros: `\newcommand{\name}`, `\def\name`
+  2. **Symbol Table Maintenance**: Constructs an in-memory `SymbolIndex` tracking definition locations, chunk indices, and line numbers.
+  3. **Dangling Detection**: `get_dangling_refs()` identifies broken references before code is compiled or saved.
+  4. **Tool Integration**: Powers the agent loop's `check_label_exists` tool so the AI never references non-existent labels.
+
+---
+
+### Feature 6: Query Rewriting, Semantic Chunking & Hybrid Vector Retrieval
+
+- **File Implementation**: [`backend/query_rewriter.py`](file:///home/abin/overbranch/backend/query_rewriter.py), [`backend/chunker.py`](file:///home/abin/overbranch/backend/chunker.py), [`backend/vector_sync.py`](file:///home/abin/overbranch/backend/vector_sync.py), [`backend/retriever.py`](file:///home/abin/overbranch/backend/retriever.py)
+- **Fast Query Rewriting**:
+  - `rewrite_query()` expands natural language prompts into 1–3 specific LaTeX search strings using ultra-fast LLM inference (Groq / Gemini) with fallback to rule-based keyword heuristics (`_heuristic_expand`).
+- **Semantic Chunking**:
+  - `chunker.py` splits documents along LaTeX boundaries: sections, frames, floating figures, tables, math environments (`align`, `equation`), and bibliographies.
+  - Generates rich metadata: `chunk_type`, `section_title`, `char_start`, `char_end`, and clean textual summaries.
+- **Qdrant Vector Storage**:
+  - Embeddings created with `NVIDIAEmbeddings` (`NV-Embed-QA`) or OpenAI embeddings.
+  - Stored in Qdrant collection `overbranch_latex_chunks` with `project_id` tenant isolation.
+- **Hybrid Retrieval**:
+  - Combines dense vector similarity with keyword BM25 filtering and categorical quality multipliers (`CHUNK_TYPE_WEIGHTS`).
+
+---
+
+### Feature 7: Structural Document Indexing & Targeted Frame Extraction
 
 - **File Implementation**: [`backend/document_index.py`](file:///home/abin/overbranch/backend/document_index.py)
 - **The Problem**: Passing a 40-page LaTeX paper or a 50-slide Beamer presentation into an LLM exceeds context limits and causes hallucinations or unwanted edits to unrelated sections.
@@ -366,35 +545,24 @@ overbranch/
   1. `document_index.py` inspects the document AST and splits it into logical `PageEntry` units:
      - For Beamer: Parses every `\begin{frame}...\end{frame}` block.
      - For Articles: Parses `\section{...}` and `\subsection{...}` hierarchies.
-  2. Assigns a stable `page_id` based on `\label{...}`, frame title slug, or sequential page index.
-  3. Computes SHA-256 hashes for each slide to detect modifications.
-  4. When a user asks: *"Change the formula on the methodology slide"*, the indexer locates the exact slide, allowing `context_builder.py` to supply only that slide and its neighboring context to the LLM.
+  2. **Multi-Criterion Targeting**:
+     - **Slide Number**: Direct targeting by slide index (e.g. Slide 3).
+     - **Position**: Relative positioning (`start`, `middle`, `end`).
+     - **Topic / Label**: Semantic matching on section headings, frame titles, and `\label{...}` entries.
+  3. **Instant Slide Operations**: Supports surgical operations such as instant slide deletion and slide movement directly in the document structural index.
+  4. Computes SHA-256 hashes for each slide to detect modifications.
+  5. When a user asks: *"Change the formula on the methodology slide"*, the indexer locates the exact slide, allowing `context_builder.py` to supply only that slide and its neighboring context to the LLM.
 
 ---
 
-### Feature 5: Semantic Chunking & Qdrant Vector Synchronization
-
-- **File Implementation**: [`backend/chunker.py`](file:///home/abin/overbranch/backend/chunker.py), [`backend/vector_sync.py`](file:///home/abin/overbranch/backend/vector_sync.py), [`backend/retriever.py`](file:///home/abin/overbranch/backend/retriever.py)
-- **Chunking Method**:
-  - Instead of naïve character counts, `chunker.py` splits documents along meaningful LaTeX blocks: sections, frames, floating figures, tables, math environments (`align`, `equation`), and bibliographies.
-  - Generates rich metadata: `chunk_type`, `section_title`, `char_start`, `char_end`, and clean textual summaries stripped of TeX commands.
-- **Vector Storage**:
-  - Chunks are converted to dense vector embeddings using `NVIDIAEmbeddings` (`NV-Embed-QA`).
-  - Stored in a local or cloud **Qdrant** collection named `overbranch_latex_chunks`.
-  - Vectors include payload filters for `project_id` and `file_path`, guaranteeing complete isolation between users and projects.
-- **Retrieval**:
-  - `retriever.py` queries Qdrant and applies chunk quality weighting multipliers (`CHUNK_TYPE_WEIGHTS`) so that high-value sections or frames score above generic preambles or comments.
-
----
-
-### Feature 6: Pre-Output Validation & Auto-Repair Engine
+### Feature 8: Pre-Output Validation & LIFO Auto-Repair Engine
 
 - **File Implementation**: [`backend/edit_validator.py`](file:///home/abin/overbranch/backend/edit_validator.py), [`backend/agent.py`](file:///home/abin/overbranch/backend/agent.py)
 - **Validation Checks**:
   1. **Duplicate Slide / Label Check**: Verifies that new or modified frames do not introduce duplicate `\label{...}` entries or identical frame titles.
-  2. **Environment Balance**: Checks that all `\begin{env}` tags have matching `\end{env}` tags.
-  3. **Preamble Protection**: Ensures modifications do not accidentally strip `\documentclass`, essential packages, or custom macro definitions.
-  4. **Scope Violation**: Flags if an edit requested for Section 2 erroneously alters Section 5.
+  2. **Environment Balance & AST Validation**: Checks that all `\begin{env}` tags have matching `\end{env}` tags.
+  3. **Preamble Protection & Scope Lock**: Ensures modifications do not accidentally strip `\documentclass`, essential packages, or custom macro definitions, locking edits strictly to requested target boundaries.
+  4. **Content-Fill Validation**: Validates insertion points and target slots before applying generated code changes.
 - **LIFO Auto-Repair**:
   - If a model reaches its token cap and cuts off mid-sentence, `auto_repair_truncated_latex()`:
     - Strips dangling fragments (e.g. trailing `\item \textbf{`).
@@ -403,21 +571,21 @@ overbranch/
 
 ---
 
-### Feature 7: Multi-Provider LLM Gateway & Fallback Architecture
+### Feature 9: Multi-Provider LLM Gateway & Fallback Architecture
 
 - **File Implementation**: [`backend/providers/`](file:///home/abin/overbranch/backend/providers/)
 - **Unified Routing (`router.py`)**:
-  - **Gemini Web2API / Google GenAI (`gemini_provider.py`)**: The primary default model (`gemini-3.7-flash`, `gemini-2.5-pro`). High throughput, extensive context window.
-  - **Groq (`groq_provider.py`)**: Ultra-low-latency generation using `llama-3.3-70b-versatile` or `mixtral-8x7b-32768`.
+  - **Gemini Web2API / Google GenAI (`gemini_provider.py`)**: The primary default model family (`gemini-3.7-flash`, `gemini-2.5-pro`). High throughput, extensive context window, and streaming support.
+  - **Groq (`groq_provider.py`)**: Ultra-low-latency generation using high-speed hardware (`llama-3.3-70b-versatile`, `mixtral-8x7b-32768`).
   - **OpenRouter (`openrouter_provider.py`)**: Access to deep reasoning models (`deepseek/deepseek-r1`, `nvidia/llama-3.1-nemotron-70b`, `minimax/minimax-01`).
-  - **FreeLLM (`freellm_provider.py`)**: Community models with built-in Groq fallback.
+  - **Cancellation Aware**: Integrates with `cancellation.py` to allow instant abort of streaming requests across all providers.
 - **Custom User API Keys**:
   - Users can input their own Groq, Gemini, or OpenRouter keys via `ApiSettingsModal.tsx`.
   - Stored locally in the user's browser and forwarded via the `api_keys` dictionary in request payloads, overriding environment defaults.
 
 ---
 
-### Feature 8: PDF to Editable LaTeX Conversion (Dashboard & In-Project)
+### Feature 10: PDF to Editable LaTeX Conversion Engine (Dashboard & In-Project)
 
 ```
 +------------------------------------------------------------------------------------+
@@ -436,23 +604,23 @@ overbranch/
 +------------------------------------------------------------------------------------+
 ```
 
-- **File Implementation**: [`backend/routes/pdf_conversion.py`](file:///home/abin/overbranch/backend/routes/pdf_conversion.py), [`backend/services/pdf_parser.py`](file:///home/abin/overbranch/backend/services/pdf_parser.py), [`backend/services/pdf_to_latex.py`](file:///home/abin/overbranch/backend/services/pdf_to_latex.py), [`app/convert/page.tsx`](file:///home/abin/overbranch/app/convert/page.tsx)
+- **File Implementation**: [`backend/routes/pdf_conversion.py`](file:///home/abin/overbranch/backend/routes/pdf_conversion.py), [`backend/services/pdf_parser.py`](file:///home/abin/overbranch/backend/services/pdf_parser.py), [`backend/services/pdf_to_latex.py`](file:///home/abin/overbranch/backend/services/pdf_to_latex.py), [`backend/services/pdf_figure_extractor.py`](file:///home/abin/overbranch/backend/services/pdf_figure_extractor.py), [`backend/services/layout_verifier.py`](file:///home/abin/overbranch/backend/services/layout_verifier.py), [`app/convert/page.tsx`](file:///home/abin/overbranch/app/convert/page.tsx), [`components/dashboard/PDFToLatexModal.tsx`](file:///home/abin/overbranch/components/dashboard/PDFToLatexModal.tsx)
 - **Endpoints**:
   - `POST /api/pdf/convert`: Converts an uploaded PDF into a brand new project and returns Server-Sent Events (SSE).
   - `POST /api/pdf/convert-in-project`: Ingests a PDF directly into an active project's `assets/` directory and updates or inserts code into `main.tex`.
 - **How It Works**:
   1. The user uploads a PDF (up to 200MB / 100 pages).
-  2. `pdf_parser.py` parses document geometry, font styles, embedded images, and math formulas.
-  3. The conversion engine analyzes document headers to classify the document type (`beamer` slide deck vs. `article` / `report`).
-  4. The document is processed in sequential chunks through the LLM using specialized LaTeX transcription prompts.
-  5. The backend emits real-time Server-Sent Events (`event: progress`, `event: page_done`, `event: complete`), allowing the frontend progress bar to update live.
-  6. Generated `.tex` files, figures, and bib files are persisted to disk and Postgres via `write_project_files_and_assets()`.
+  2. **PDF Parsing & Geometry Extraction**: `pdf_parser.py` parses document geometry, font styles, embedded images, and math formulas.
+  3. **PDF Figure Extraction**: `pdf_figure_extractor.py` extracts embedded raster/vector images directly into the project's `assets/` directory, parsing multi-line and plural captions while guarding against raw PDF path leaks in `\includegraphics{...}`.
+  4. **Hierarchical Transcription**: The conversion engine analyzes document headers to classify document type (`beamer` slide deck vs. `article` / `report`) and streams chunked LLM synthesis via Server-Sent Events (`event: progress`, `event: page_done`, `event: complete`).
+  5. **Positional Drift Calibration & Layout Verification**: `layout_verifier.py` measures vertical drift between original PDF pages and generated TeX rendering, calibrating `\vspace` and geometry to mirror original layout fidelity.
+  6. Generated `.tex` files, figure assets, and bib files are persisted to disk and Postgres via `write_project_files_and_assets()`.
 
 ---
 
-### Feature 9: Guest Conversion Session, Quota Enforcement & Auto-Migration
+### Feature 11: Guest Conversion Session, Quota Enforcement & Auto-Migration
 
-- **File Implementation**: [`backend/routes/guest_pdf.py`](file:///home/abin/overbranch/backend/routes/guest_pdf.py), [`backend/services/guest_identity.py`](file:///home/abin/overbranch/backend/services/guest_identity.py), [`backend/services/guest_quota.py`](file:///home/abin/overbranch/backend/services/guest_quota.py), [`components/GuestMigrationListener.tsx`](file:///home/abin/overbranch/components/GuestMigrationListener.tsx)
+- **File Implementation**: [`backend/routes/guest_pdf.py`](file:///home/abin/overbranch/backend/routes/guest_pdf.py), [`backend/services/guest_identity.py`](file:///home/abin/overbranch/backend/services/guest_identity.py), [`backend/services/guest_quota.py`](file:///home/abin/overbranch/backend/services/guest_quota.py), [`backend/services/guest_migrator.py`](file:///home/abin/overbranch/backend/services/guest_migrator.py), [`backend/services/guest_cleanup.py`](file:///home/abin/overbranch/backend/services/guest_cleanup.py), [`components/GuestMigrationListener.tsx`](file:///home/abin/overbranch/components/GuestMigrationListener.tsx), [`hooks/useGuestMigration.ts`](file:///home/abin/overbranch/hooks/useGuestMigration.ts)
 - **Guest Flow**:
   1. Unregistered visitors can test PDF-to-LaTeX conversion on `/convert`.
   2. `guest_identity.py` computes a SHA-256 fingerprint from the visitor's IP address, User-Agent, and browser headers, issuing an HMAC-signed JWT cookie (`ob_guest_token`).
@@ -466,9 +634,9 @@ overbranch/
 
 ---
 
-### Feature 10: Multimodal AI File Analyzer
+### Feature 12: Multimodal AI File Analyzer & TikZ Synthesizer
 
-- **File Implementation**: [`backend/file_analyzer.py`](file:///home/abin/overbranch/backend/file_analyzer.py), [`components/editor/FileAnalyzerModal.tsx`](file:///home/abin/overbranch/components/editor/FileAnalyzerModal.tsx)
+- **File Implementation**: [`backend/file_analyzer.py`](file:///home/abin/overbranch/backend/file_analyzer.py), [`components/editor/FileAnalyzerModal.tsx`](file:///home/abin/overbranch/components/editor/FileAnalyzerModal.tsx), [`lib/ai-file-analysis.ts`](file:///home/abin/overbranch/lib/ai-file-analysis.ts)
 - **Endpoint**: `POST /api/analyze-file`
 - **Supported Formats**: Images (`.png`, `.jpg`, `.webp`), Data (`.csv`, `.json`), Documents (`.pdf`, `.txt`, `.md`), Code (`.py`, `.tex`, `.ts`), Audio (`.mp3`, `.wav`).
 - **How It Works**:
@@ -480,9 +648,9 @@ overbranch/
 
 ---
 
-### Feature 11: Collaborative Project Management & Role-Based Access
+### Feature 13: Collaborative Project Management & Role-Based Access
 
-- **File Implementation**: [`db/schema.ts`](file:///home/abin/overbranch/db/schema.ts), [`trpc/routers/projects.ts`](file:///home/abin/overbranch/trpc/routers/projects.ts), [`trpc/routers/invitations.ts`](file:///home/abin/overbranch/trpc/routers/invitations.ts), [`components/editor/CollaboratorAvatars.tsx`](file:///home/abin/overbranch/components/editor/CollaboratorAvatars.tsx)
+- **File Implementation**: [`db/schema.ts`](file:///home/abin/overbranch/db/schema.ts), [`trpc/routers/projects.ts`](file:///home/abin/overbranch/trpc/routers/projects.ts), [`trpc/routers/invitations.ts`](file:///home/abin/overbranch/trpc/routers/invitations.ts), [`trpc/routers/comments.ts`](file:///home/abin/overbranch/trpc/routers/comments.ts), [`components/editor/CollaboratorAvatars.tsx`](file:///home/abin/overbranch/components/editor/CollaboratorAvatars.tsx), [`components/dashboard/NotificationsPopover.tsx`](file:///home/abin/overbranch/components/dashboard/NotificationsPopover.tsx)
 - **Roles**: `Owner`, `Editor`, `Viewer`.
 - **Workflow**:
   1. The project owner clicks the "Share" button in the editor toolbar.
@@ -494,7 +662,7 @@ overbranch/
 
 ---
 
-### Feature 12: Inline Diff Editor & Edit History Tracking
+### Feature 14: Inline Diff Editor & Edit History Tracking
 
 - **File Implementation**: [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx), [`components/DiffWidget.tsx`](file:///home/abin/overbranch/components/DiffWidget.tsx), [`lib/EditHistoryStore.ts`](file:///home/abin/overbranch/lib/EditHistoryStore.ts)
 - **How It Works**:
@@ -509,7 +677,7 @@ overbranch/
 
 ---
 
-### Feature 13: Presentation View Mode (Beamer Decks)
+### Feature 15: Presentation View Mode (Beamer Decks)
 
 - **File Implementation**: [`components/editor/PresentationView.tsx`](file:///home/abin/overbranch/components/editor/PresentationView.tsx)
 - **How It Works**:
@@ -521,25 +689,31 @@ overbranch/
 
 ---
 
-### Feature 14: LaTeX Template Gallery & Dynamic Cloning
+### Feature 16: LaTeX Template Gallery & Dynamic Cloning
 
-- **File Implementation**: [`backend/template_service.py`](file:///home/abin/overbranch/backend/template_service.py), [`app/(dashboard)/templates/page.tsx`](file:///home/abin/overbranch/app/(dashboard)/templates/page.tsx)
+- **File Implementation**: [`backend/template_service.py`](file:///home/abin/overbranch/backend/template_service.py), [`backend/templates/`](file:///home/abin/overbranch/backend/templates/), [`app/(dashboard)/templates/page.tsx`](file:///home/abin/overbranch/app/(dashboard)/templates/page.tsx), [`trpc/routers/templates.ts`](file:///home/abin/overbranch/trpc/routers/templates.ts)
 - **Categories**:
   - `papers`: IEEE Transactions, ACM Conference, Springer LNCS, arXiv preprints.
   - `ppt`: Modern Beamer presentation slide decks (Nordlight, Metropolis, Navy Gold).
+  - `resume`: ModernCV (Banking, Casual, Classic), Deedy Resume, Developer CV, Freeman CV.
+  - `thesis`: Master and PhD Thesis chapter templates.
   - `assignments`: Homework, problem sets, exam papers.
-  - `reports`: Lab reports, technical documentation, theses.
+  - `reports`: Lab reports, technical documentation, research whitepapers.
 - **Dynamic Instantiation**:
-  - Calling `POST /api/templates/{template_id}/use` copies template `.tex` sources, styles (`.cls`, `.sty`), and figures directly into a new project record, letting users begin writing immediately.
+  - Calling `POST /api/templates/{template_id}/use` copies template `.tex` sources, styles (`.cls`, `.sty`), fonts, and figures directly into a new project record, letting users begin writing immediately.
 
 ---
 
-### Feature 15: Editor Customization & Theming Engine
+### Feature 17: Design System ("Celestial Obsidian & Luminescent Iris") & Theming Engine
 
-- **File Implementation**: [`components/editor/EditorThemeModal.tsx`](file:///home/abin/overbranch/components/editor/EditorThemeModal.tsx), [`trpc/routers/preferences.ts`](file:///home/abin/overbranch/trpc/routers/preferences.ts)
+- **File Implementation**: [`design.md`](file:///home/abin/overbranch/design.md), [`linear-design.md`](file:///home/abin/overbranch/linear-design.md), [`app/globals.css`](file:///home/abin/overbranch/app/globals.css), [`components/editor/EditorThemeModal.tsx`](file:///home/abin/overbranch/components/editor/EditorThemeModal.tsx), [`trpc/routers/preferences.ts`](file:///home/abin/overbranch/trpc/routers/preferences.ts)
+- **Design System ("Celestial Obsidian & Luminescent Iris")**:
+  - **Locked Palette**: Deep Obsidian background (`oklch(0.12 0.012 260)`), Luminescent Iris primary accent (`oklch(0.65 0.22 265)`), crisp white text (`oklch(0.98 0 0)`), and strict semantic emerald/amber/rose indicators.
+  - **Typography Scale**: Display headings in **Archivo Black**, body text in **Inter**, and monospace code/editor in **Space Mono**.
+  - **CTA Voice**: Solid iris primary buttons (`bg-indigo-600 rounded-xl`), obsidian secondary containers (`bg-zinc-800/80 border-zinc-700/60`), and active nav pills (`bg-indigo-500/10 text-indigo-300`).
 - **User Configurable Parameters**:
   - **Themes**: VS Code Dark, GitHub Light, Nord, Dracula, Monokai, Cyberpunk.
-  - **Typography**: Font family (Fira Code, JetBrains Mono, Source Code Pro), font size (12px to 22px), ligatures.
+  - **Typography**: Font family (Space Mono, Fira Code, JetBrains Mono, Source Code Pro), font size (12px to 22px), ligatures.
   - **Editor Behavior**: Tab size (2 or 4 spaces), soft wrap, line numbers, auto-closing brackets, and auto-compile triggers (on save vs. keystroke debounce).
   - Preferences sync across devices via Postgres table `editor_preferences`.
 
@@ -549,12 +723,14 @@ overbranch/
 
 ### Universal Docker Deployment
 
-OverBranch is fully containerized using a multi-stage `Dockerfile` and `docker-compose.yml`:
+OverBranch is fully containerized using a multi-stage `Dockerfile`, `Dockerfile.backend`, and Compose configurations (`docker-compose.yml`, `docker-compose.backend.yml`):
 
 ```yaml
 services:
   overbranch:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"   # Next.js Frontend
       - "8000:8000"   # FastAPI Python Engine
@@ -585,3 +761,4 @@ services:
 | `GROQ_API_KEY` | Backend LLM | Groq cloud key for high-speed inference |
 | `OPENROUTER_API_KEY` | Backend LLM | OpenRouter gateway key |
 | `GUEST_TOKEN_SECRET` | Backend Guest | HMAC signing secret for 24-hour guest tokens |
+| `SHADOW_COMPILE_MAX_RETRIES` | Backend AI | Max retries for shadow compiler self-correction (Default: `2`) |

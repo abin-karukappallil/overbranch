@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { authFetch } from "@/lib/api-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -30,9 +31,7 @@ export function useGuestMigration() {
         // which has access to the HttpOnly cookie
         if (!token) {
           try {
-            const sessionRes = await fetch(`${BACKEND_URL}/api/guest/session`, {
-              credentials: "include",
-            });
+            const sessionRes = await authFetch(`${BACKEND_URL}/api/guest/session`);
             if (sessionRes.ok) {
               const sessionData = await sessionRes.json();
               if (sessionData?.token) {
@@ -45,10 +44,9 @@ export function useGuestMigration() {
         }
 
         // Call migration endpoint with user_id and guest_token
-        const res = await fetch(`${BACKEND_URL}/api/guest/migrate`, {
+        const res = await authFetch(`${BACKEND_URL}/api/guest/migrate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          credentials: "include",
           body: JSON.stringify({
             user_id: session.user.id,
             guest_token: token || undefined,

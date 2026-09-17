@@ -45,7 +45,7 @@ export function ChatMessageContent({ text }: ChatMessageContentProps) {
                   if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
                     return (
                       <div key={lIdx} className="flex items-start gap-1.5 ml-2 py-0.5">
-                        <span className="text-[#00CC68] select-none shrink-0 mt-0.5">•</span>
+                        <span className="text-indigo-400 select-none shrink-0 mt-0.5">•</span>
                         <span>{renderInlineMarkdown(trimmed.slice(2))}</span>
                       </div>
                     );
@@ -56,7 +56,7 @@ export function ChatMessageContent({ text }: ChatMessageContentProps) {
                   if (numMatch) {
                     return (
                       <div key={lIdx} className="flex items-start gap-1.5 ml-2 py-0.5">
-                        <span className="text-[#00CC68] font-mono text-[11px] select-none shrink-0">{numMatch[1]}.</span>
+                        <span className="text-indigo-400 font-mono text-[11px] select-none shrink-0">{numMatch[1]}.</span>
                         <span>{renderInlineMarkdown(numMatch[2])}</span>
                       </div>
                     );
@@ -65,7 +65,7 @@ export function ChatMessageContent({ text }: ChatMessageContentProps) {
                   // Blockquote
                   if (trimmed.startsWith("> ")) {
                     return (
-                      <div key={lIdx} className="border-l-2 border-[#00CC68]/60 pl-2.5 py-0.5 text-zinc-300 italic my-1 bg-zinc-950/40 rounded-r">
+                      <div key={lIdx} className="border-l-2 border-emerald-500/80 pl-2.5 py-0.5 text-slate-700 dark:text-zinc-300 italic my-1 bg-slate-100 dark:bg-zinc-950/40 rounded-r">
                         {renderInlineMarkdown(trimmed.slice(2))}
                       </div>
                     );
@@ -73,13 +73,13 @@ export function ChatMessageContent({ text }: ChatMessageContentProps) {
 
                   // Heading
                   if (trimmed.startsWith("### ")) {
-                    return <h4 key={lIdx} className="font-bold text-white text-xs mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(4))}</h4>;
+                    return <h4 key={lIdx} className="font-bold text-slate-900 dark:text-white text-xs mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(4))}</h4>;
                   }
                   if (trimmed.startsWith("## ")) {
-                    return <h3 key={lIdx} className="font-bold text-white text-sm mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(3))}</h3>;
+                    return <h3 key={lIdx} className="font-bold text-slate-900 dark:text-white text-sm mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(3))}</h3>;
                   }
                   if (trimmed.startsWith("# ")) {
-                    return <h2 key={lIdx} className="font-bold text-white text-sm mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(2))}</h2>;
+                    return <h2 key={lIdx} className="font-bold text-slate-900 dark:text-white text-sm mt-2 mb-1">{renderInlineMarkdown(trimmed.slice(2))}</h2>;
                   }
 
                   return (
@@ -97,7 +97,7 @@ export function ChatMessageContent({ text }: ChatMessageContentProps) {
     });
   };
 
-  return <div className="space-y-2 text-zinc-100">{renderFormatted()}</div>;
+  return <div className="space-y-2 text-slate-800 dark:text-zinc-100">{renderFormatted()}</div>;
 }
 
 function CodeBlock({ language, code }: { language: string; code: string }) {
@@ -112,19 +112,19 @@ function CodeBlock({ language, code }: { language: string; code: string }) {
   };
 
   return (
-    <div className="my-2 rounded-xl bg-zinc-950 border border-zinc-800 overflow-hidden font-mono text-xs">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 text-[10px] text-zinc-400 select-none">
-        <span className="font-bold uppercase tracking-wider text-[#00CC68]">{language || "code"}</span>
+    <div className="my-2 rounded-xl bg-slate-100 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 overflow-hidden font-mono text-xs">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-slate-200/70 dark:bg-zinc-900 border-b border-slate-200 dark:border-zinc-800 text-[10px] text-slate-600 dark:text-zinc-400 select-none">
+        <span className="font-bold uppercase tracking-wider text-emerald-600 dark:text-indigo-400">{language || "code"}</span>
         <button
           type="button"
           onClick={handleCopy}
-          className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer"
+          className="flex items-center gap-1 text-slate-600 dark:text-zinc-400 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
         >
-          {copied ? <Check className="w-3 h-3 text-[#00CC68]" /> : <Copy className="w-3 h-3" />}
+          {copied ? <Check className="w-3 h-3 text-emerald-600 dark:text-indigo-400" /> : <Copy className="w-3 h-3" />}
           <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
-      <pre className="p-3 overflow-x-auto text-[11px] leading-relaxed text-zinc-200">
+      <pre className="p-3 overflow-x-auto text-[11px] leading-relaxed text-slate-800 dark:text-zinc-200">
         <code>{code.trim()}</code>
       </pre>
     </div>
@@ -138,21 +138,21 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
   return parts.map((part, idx) => {
     if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
       return (
-        <code key={idx} className="px-1.5 py-0.5 rounded bg-zinc-950 text-[#00CC68] border border-zinc-800 font-mono text-[11px]">
+        <code key={idx} className="px-1.5 py-0.5 rounded bg-slate-200/80 dark:bg-zinc-950 text-emerald-700 dark:text-indigo-400 border border-slate-300 dark:border-zinc-800 font-mono text-[11px]">
           {part.slice(1, -1)}
         </code>
       );
     }
     if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
       return (
-        <strong key={idx} className="font-bold text-white">
+        <strong key={idx} className="font-bold text-slate-900 dark:text-white">
           {part.slice(2, -2)}
         </strong>
       );
     }
     if (part.startsWith("*") && part.endsWith("*") && part.length >= 2) {
       return (
-        <em key={idx} className="italic text-zinc-300">
+        <em key={idx} className="italic text-slate-700 dark:text-zinc-300">
           {part.slice(1, -1)}
         </em>
       );

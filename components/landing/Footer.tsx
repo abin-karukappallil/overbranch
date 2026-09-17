@@ -86,6 +86,29 @@ export function LandingFooter() {
           </div>
         </div>
       </div>
+
+      {/* Sponsor Banner */}
+      <div className="max-w-7xl mx-auto mt-12 pt-8 border-t-2 border-black/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <a
+          href="https://upzare.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-3 px-4 py-2.5 rounded-xl bg-black text-white hover:bg-zinc-900 transition-all shadow-md group border border-black"
+        >
+          <span className="text-xs font-mono font-medium text-zinc-300">Powered By</span>
+          <img
+            src="https://cdn.upzare.com/assets/logo.png"
+            alt="UPZARE Technologies Private Limited"
+            className="h-6 w-auto object-contain"
+          />
+          <span className="text-xs font-mono font-bold text-[#00CC68] group-hover:underline">
+            UPZARE Technologies Private Limited
+          </span>
+        </a>
+        <div className="text-xs text-black/80 font-mono font-bold">
+          SUPPORTING OPEN SOURCE SCIENTIFIC COMPUTING
+        </div>
+      </div>
     </footer>
   );
 }

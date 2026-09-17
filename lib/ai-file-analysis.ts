@@ -1,4 +1,5 @@
 import { trpcClient } from "@/trpc/client";
+import { authFetch } from "@/lib/api-client";
 
 export interface FileAnalysisUsage {
   promptTokens?: number;
@@ -50,7 +51,7 @@ export async function analyzeFile(options: AnalyzeFileOptions): Promise<FileAnal
     }
     formData.append("stream", "true");
 
-    const response = await fetch(`${BACKEND_URL}/api/ai/analyze-file`, {
+    const response = await authFetch(`${BACKEND_URL}/api/ai/analyze-file`, {
       method: "POST",
       body: formData,
       signal,
