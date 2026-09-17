@@ -21,6 +21,7 @@ from services.project_file_writer import (
     create_new_project_from_conversion,
 )
 from project_storage import get_supabase_client
+from auth import resolve_auth
 
 logger = logging.getLogger("pdf_conversion")
 router = APIRouter(prefix="/api/pdf", tags=["pdf_conversion"])
@@ -68,33 +69,9 @@ async def convert_pdf_to_new_project(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
-    # Determine user_id securely: Never steal or default to another user's ID!
-    user_id = req.user_id or request.headers.get("x-user-id") or request.headers.get("X-User-Id")
-    if not user_id:
-        # Try resolving from better-auth session cookie
-        auth_cookie = (
-            request.cookies.get("__Secure-better-auth.session_token")
-            or request.cookies.get("better-auth.session_token")
-            or request.cookies.get("session_token")
-        )
-        if auth_cookie:
-            try:
-                sb = get_supabase_client()
-                token = auth_cookie.split(".")[0]
-                session_res = sb.table("session").select("user_id").eq("token", token).limit(1).execute()
-                if session_res.data and session_res.data[0].get("user_id"):
-                    user_id = session_res.data[0]["user_id"]
-                    logger.info(f"Resolved user_id '{user_id}' from Better-Auth session cookie")
-            except Exception as sess_err:
-                logger.warning(f"Could not resolve user from session cookie: {sess_err}")
-
-    # Fallback to guest identity or default-user
-    if not user_id:
-        guest_tok = request.cookies.get("ob_guest_token")
-        if guest_tok:
-            user_id = f"guest-{guest_tok[:16]}"
-        else:
-            user_id = "default-user"
+    # Determine user_id securely via Bearer token, session cookie, or guest token
+    auth_info = resolve_auth(request)
+    user_id = (auth_info and auth_info.get("user_id")) or req.user_id or "default-user"
 
     # Enforce single concurrent conversion per user
     async with _lock:
@@ -175,18 +152,29 @@ async def convert_pdf_to_new_project(request: Request):
                 )
             )
 
+            # Surface visual fidelity report event
+            yield format_sse("fidelity_score", {
+                "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
+                "defects": getattr(conversion_result, "fidelity_defects", []),
+                "flagged_pages": getattr(conversion_result, "flagged_pages", []),
+                "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
+            })
+
             yield format_sse("progress", {"step": "done", "message": "Project created successfully! Opening editor...", "pct": 100})
 
             # Final payload with project info
             yield format_sse("result", {
                 "success": True,
-                "project_id": created["project_id"],
-                "name": created["name"],
-                "document_class": created["document_class"],
-                "files": created["files"],
-                "assets": created["assets"],
-                "compiled_successfully": conversion_result.compiled_successfully,
-                "compile_log": conversion_result.compile_log[:500] if conversion_result.compile_log else "",
+                "project_id": created.get("project_id"),
+                "name": created.get("name"),
+                "document_class": created.get("document_class"),
+                "files": created.get("files", []),
+                "assets": created.get("assets", []),
+                "compiled_successfully": getattr(conversion_result, "compiled_successfully", False),
+                "compile_log": conversion_result.compile_log[:500] if getattr(conversion_result, "compile_log", None) else "",
+                "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
+                "flagged_pages": getattr(conversion_result, "flagged_pages", []),
+                "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
             })
 
         except Exception as e:
@@ -225,7 +213,18 @@ async def convert_pdf_in_existing_project(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
-    user_id = req.user_id or "default-user"
+    auth_info = resolve_auth(request)
+    user_id = (auth_info and auth_info.get("user_id")) or req.user_id or "default-user"
+    is_guest = bool(auth_info and auth_info.get("is_guest"))
+
+    try:
+        sb = get_supabase_client()
+        from auth import verify_project_ownership_or_member
+        verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"detail": he.detail})
+    except Exception as e:
+        logger.warning(f"Project access check error in convert_in_project: {e}")
 
     async with _lock:
         if user_id in _active_user_conversions:
@@ -295,8 +294,13 @@ async def convert_pdf_in_existing_project(request: Request):
                 )
             )
 
-            # Find main.tex content to send back to editor
-            main_content = next((f.content for f in conversion_result.files if f.path == "main.tex"), "")
+            # Surface visual fidelity report event
+            yield format_sse("fidelity_score", {
+                "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
+                "defects": getattr(conversion_result, "fidelity_defects", []),
+                "flagged_pages": getattr(conversion_result, "flagged_pages", []),
+                "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
+            })
 
             yield format_sse("progress", {"step": "done", "message": "Project files and assets updated successfully!", "pct": 100})
 
@@ -304,11 +308,14 @@ async def convert_pdf_in_existing_project(request: Request):
                 "success": True,
                 "project_id": req.project_id,
                 "main_tex_content": main_content,
-                "document_class": conversion_result.document_class,
-                "files": written["files"],
-                "assets": written["assets"],
-                "compiled_successfully": conversion_result.compiled_successfully,
-                "compile_log": conversion_result.compile_log[:500] if conversion_result.compile_log else "",
+                "document_class": getattr(conversion_result, "document_class", "article"),
+                "files": written.get("files", []),
+                "assets": written.get("assets", []),
+                "compiled_successfully": getattr(conversion_result, "compiled_successfully", False),
+                "compile_log": conversion_result.compile_log[:500] if getattr(conversion_result, "compile_log", None) else "",
+                "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
+                "flagged_pages": getattr(conversion_result, "flagged_pages", []),
+                "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
             })
 
         except Exception as e:

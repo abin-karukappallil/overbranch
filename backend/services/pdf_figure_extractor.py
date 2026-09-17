@@ -60,6 +60,31 @@ class ExtractedFigure:
     page_number: int
     latex_snippet: str
     document_class: str = "article"
+    dimension_valid: bool = True
+    dimension_warning: str = ""
+
+
+def validate_figure_dimensions(
+    extracted_w: int,
+    extracted_h: int,
+    bbox: fitz.Rect,
+    dpi_scale: float = 300.0 / 72.0,
+) -> Tuple[bool, str]:
+    """Validates extracted image dimensions against original bounding box in PDF points."""
+    expected_w = bbox.width * dpi_scale
+    expected_h = bbox.height * dpi_scale
+
+    if extracted_w < 50 or extracted_h < 50:
+        return False, f"Extracted figure dimensions ({extracted_w}x{extracted_h}) too small"
+
+    ratio_w = extracted_w / max(1.0, expected_w)
+    ratio_h = extracted_h / max(1.0, expected_h)
+
+    # If cropped dimension deviates by more than 3x from bbox, flag warning
+    if ratio_w < 0.25 or ratio_w > 3.5 or ratio_h < 0.25 or ratio_h > 3.5:
+        return False, f"Extracted dimensions ({extracted_w}x{extracted_h}) deviate from bbox ({int(expected_w)}x{int(expected_h)})"
+
+    return True, ""
 
 
 def slugify_name(text: str) -> str:
@@ -91,24 +116,49 @@ def safe_latex_escape(text: str) -> str:
 
 
 def decode_pdf_bytes(pdf_input: Any) -> bytes:
-    """Decodes PDF input from raw bytes, base64 data URL, or plain base64 string."""
+    """Decodes PDF input from raw bytes, file path, base64 data URL, or base64 string."""
     if isinstance(pdf_input, bytes):
         return pdf_input
+    if isinstance(pdf_input, Path):
+        return pdf_input.read_bytes()
     if isinstance(pdf_input, str):
+        # 1. Check if string is a path to an existing PDF file
+        if len(pdf_input) < 1024 and "\n" not in pdf_input:
+            try:
+                p = Path(pdf_input)
+                if p.is_file():
+                    return p.read_bytes()
+            except Exception:
+                pass
+
         cleaned = pdf_input.strip()
         if cleaned.startswith("data:application/pdf;base64,"):
-            cleaned = cleaned.split("data:application/pdf;base64,", 1)[1]
-        elif "," in cleaned and ("base64" in cleaned[:50]):
-            cleaned = cleaned.split(",", 1)[1]
-        padding = len(cleaned) % 4
-        if padding:
-            cleaned += "=" * (4 - padding)
-        return base64.b64decode(cleaned)
-    raise ValueError("Invalid PDF input: expected bytes or base64 string")
+            cleaned = cleaned.split("data:application/pdf;base64,", 1)[1].strip()
+        elif "," in cleaned and ("base64" in cleaned[:60]):
+            cleaned = cleaned.split(",", 1)[1].strip()
+        elif cleaned.startswith("%PDF-"):
+            return cleaned.encode("latin-1", errors="ignore")
+
+        # Strip all whitespace from base64 candidate
+        cleaned_b64 = re.sub(r"\s+", "", cleaned)
+        # Ensure it contains ONLY valid base64 ASCII characters
+        if re.match(r"^[A-Za-z0-9+/=]+$", cleaned_b64):
+            padding = len(cleaned_b64) % 4
+            if padding:
+                cleaned_b64 += "=" * (4 - padding)
+            try:
+                decoded = base64.b64decode(cleaned_b64)
+                if decoded.startswith(b"%PDF-") or b"%PDF-" in decoded[:1024] or len(decoded) > 50:
+                    return decoded
+            except Exception:
+                pass
+
+        raise ValueError("Invalid PDF input: string does not contain valid PDF binary data or base64 stream.")
+    raise ValueError("Invalid PDF input: expected bytes, file path, or base64 string")
 
 
-def trim_whitespace(img: Image.Image, padding: int = 8) -> Image.Image:
-    """Trims solid white or near-white borders around a rendered figure."""
+def trim_whitespace(img: Image.Image, padding: int = 28) -> Image.Image:
+    """Trims solid white or near-white borders around a rendered figure with generous padding."""
     try:
         if img.mode != "RGB":
             img = img.convert("RGB")
@@ -117,11 +167,20 @@ def trim_whitespace(img: Image.Image, padding: int = 8) -> Image.Image:
         # Bounding box of non-white pixels
         bbox = diff.getbbox()
         if bbox:
-            w, h = img.size
+            orig_w, orig_h = img.size
+            crop_w = bbox[2] - bbox[0]
+            crop_h = bbox[3] - bbox[1]
+
+            # Guard against over-trimming / collapse into tiny speck:
+            # If cropped box is tiny (< 120px) but original is substantial (> 300px),
+            # add generous margin so faint diagrams / axis labels are never sliced off.
+            if (crop_w < 120 or crop_h < 80) and (orig_w > 300 or orig_h > 200):
+                padding = max(padding, 40)
+
             x0 = max(0, bbox[0] - padding)
             y0 = max(0, bbox[1] - padding)
-            x1 = min(w, bbox[2] + padding)
-            y1 = min(h, bbox[3] + padding)
+            x1 = min(orig_w, bbox[2] + padding)
+            y1 = min(orig_h, bbox[3] + padding)
             return img.crop((x0, y0, x1, y1))
     except Exception as e:
         logger.warning(f"Error trimming figure whitespace: {e}")
@@ -135,11 +194,15 @@ def find_caption_candidates(page: fitz.Page) -> List[Tuple[fitz.Rect, Optional[s
     """
     captions = []
     blocks = page.get_text("blocks")
+    if not blocks:
+        return captions
     for b in blocks:
         # b: (x0, y0, x1, y1, text, block_no, block_type)
-        if len(b) < 5 or b[6] != 0:  # b[6] == 0 means text
+        if len(b) < 7 or b[6] != 0:  # b[6] == 0 means text; require len >= 7 to avoid IndexError
             continue
-        text = b[4].strip()
+        if len(b) < 5:
+            continue
+        text = b[4].strip() if b[4] else ""
         if not text:
             continue
 
@@ -178,9 +241,19 @@ def locate_figure_graphic_region(
 
     try:
         images = page.get_images(full=True)
+        if not images:
+            images = []
         for img_info in images:
             xref = img_info[0]
-            for r in page.get_image_rects(xref):
+            try:
+                img_rects = page.get_image_rects(xref)
+            except Exception:
+                img_rects = []
+            if not img_rects:
+                continue
+            for r in img_rects:
+                if r is None or r.width < 1 or r.height < 1:
+                    continue
                 # Check if image sits above caption
                 if r.y1 <= cap_y1 + 10 and r.y1 >= cap_y0 - 500:
                     dist = abs(cap_y0 - r.y1)
@@ -201,13 +274,13 @@ def locate_figure_graphic_region(
     except Exception as img_err:
         logger.warning(f"Error inspecting page images: {img_err}")
 
-    if best_img_rect is not None and best_img_rect.width > 40 and best_img_rect.height > 40:
-        # Add 4pt safety padding
+    if best_img_rect is not None and best_img_rect.width >= 65 and best_img_rect.height >= 45 and (best_img_rect.width * best_img_rect.height >= 4500):
+        # Add 8pt safety padding so graphic labels/borders aren't cut
         pad_rect = fitz.Rect(
-            max(0, best_img_rect.x0 - 4),
-            max(0, best_img_rect.y0 - 4),
-            min(page_rect.width, best_img_rect.x1 + 4),
-            min(page_rect.height, best_img_rect.y1 + 4),
+            max(0, best_img_rect.x0 - 8),
+            max(0, best_img_rect.y0 - 8),
+            min(page_rect.width, best_img_rect.x1 + 8),
+            min(page_rect.height, best_img_rect.y1 + 8),
         )
         return pad_rect, False, best_img_xref
 
@@ -233,12 +306,12 @@ def locate_figure_graphic_region(
         vx1 = max(r.x1 for r in vector_rects)
         vy1 = max(r.y1 for r in vector_rects)
         union_rect = fitz.Rect(
-            max(0, vx0 - 6),
-            max(0, vy0 - 6),
-            min(page_rect.width, vx1 + 6),
-            min(page_rect.height, vy1 + 6),
+            max(0, vx0 - 8),
+            max(0, vy0 - 8),
+            min(page_rect.width, vx1 + 8),
+            min(page_rect.height, vy1 + 8),
         )
-        if union_rect.width > 50 and union_rect.height > 50:
+        if union_rect.width >= 70 and union_rect.height >= 50 and (union_rect.width * union_rect.height >= 5500):
             return union_rect, True, None
 
     # 3. Layout heuristic fallback:
@@ -248,7 +321,6 @@ def locate_figure_graphic_region(
     for b in blocks:
         by1 = b[3]
         if by1 < cap_y0 and by1 > top_limit:
-            # Avoid cutting into previous text block if it is further away
             if (cap_y0 - by1) >= 60:
                 top_limit = by1 + 5
 
@@ -258,11 +330,11 @@ def locate_figure_graphic_region(
         min(page_rect.width - 36, max(caption_rect.x1 + 20, caption_rect.x0 + 250)),
         cap_y0 - 2,
     )
-    if fallback_rect.height < 40:
+    if fallback_rect.height < 60:
         fallback_rect = fitz.Rect(
-            caption_rect.x0,
+            max(36, caption_rect.x0 - 15),
             max(0, cap_y0 - 180),
-            caption_rect.x1,
+            min(page_rect.width - 36, max(caption_rect.x1 + 15, caption_rect.x0 + 250)),
             cap_y0 - 2,
         )
 
@@ -334,21 +406,29 @@ def extract_all_figure_candidates(doc: fitz.Document) -> List[FigureCandidate]:
             page = doc[page_idx]
             try:
                 images = page.get_images(full=True)
+                if not images:
+                    continue
                 for idx, img_info in enumerate(images):
                     xref = img_info[0]
-                    rects = page.get_image_rects(xref)
+                    try:
+                        rects = page.get_image_rects(xref)
+                    except Exception:
+                        rects = []
+                    if not rects:
+                        continue
                     for r in rects:
-                        if r.width >= 60 and r.height >= 60:
-                            candidates.append(FigureCandidate(
-                                page_num=page_num,
-                                figure_number=str(idx + 1),
-                                caption_text=f"Figure {idx + 1} from page {page_num}",
-                                clean_title=f"figure_p{page_num}_{idx + 1}",
-                                graphic_rect=r,
-                                caption_rect=r,
-                                is_vector=False,
-                                source_image_xref=xref,
-                            ))
+                        if r is None or r.width < 60 or r.height < 60:
+                            continue
+                        candidates.append(FigureCandidate(
+                            page_num=page_num,
+                            figure_number=str(idx + 1),
+                            caption_text=f"Figure {idx + 1} from page {page_num}",
+                            clean_title=f"figure_p{page_num}_{idx + 1}",
+                            graphic_rect=r,
+                            caption_rect=r,
+                            is_vector=False,
+                            source_image_xref=xref,
+                        ))
             except Exception:
                 pass
 
@@ -445,6 +525,8 @@ def extract_figure(
                 f"\\end{{figure}}"
             )
 
+        dim_valid, dim_warn = validate_figure_dimensions(trimmed.width, trimmed.height, best.graphic_rect)
+
         return ExtractedFigure(
             clean_filename=clean_filename,
             asset_rel_path=asset_rel_path,
@@ -456,6 +538,8 @@ def extract_figure(
             page_number=best.page_num,
             latex_snippet=latex_snippet,
             document_class=document_class,
+            dimension_valid=dim_valid,
+            dimension_warning=dim_warn,
         )
     finally:
         doc.close()
@@ -480,34 +564,52 @@ def extract_multiple_figures(
         if not candidates:
             return []
 
-        # Deduplicate candidates on the same page with very close rects
+        # Deduplicate candidates across pages:
+        # 1. By image xref (identical embedded image used on multiple pages, like logos/headers)
+        # 2. By position/rect on the same page
         unique_candidates: List[FigureCandidate] = []
+        seen_xrefs = set()
         for c in candidates:
+            if c.source_image_xref and c.source_image_xref in seen_xrefs:
+                continue
             is_dup = False
             for u in unique_candidates:
                 if u.page_num == c.page_num:
-                    if abs(u.graphic_rect.y0 - c.graphic_rect.y0) < 30 and abs(u.graphic_rect.x0 - c.graphic_rect.x0) < 30:
+                    if abs(u.graphic_rect.y0 - c.graphic_rect.y0) < 35 and abs(u.graphic_rect.x0 - c.graphic_rect.x0) < 35:
                         is_dup = True
                         break
             if not is_dup:
                 unique_candidates.append(c)
+                if c.source_image_xref:
+                    seen_xrefs.add(c.source_image_xref)
 
         chosen = unique_candidates[:max_figures]
         seen_filenames = set()
+        seen_image_hashes = set()
 
         for cand in chosen:
             try:
                 page = doc[cand.page_num - 1]
                 pix = page.get_pixmap(matrix=DPI_300_MATRIX, clip=cand.graphic_rect, alpha=False)
                 img = Image.open(io.BytesIO(pix.tobytes("png")))
-                trimmed = trim_whitespace(img)
+                trimmed = trim_whitespace(img, padding=28)
 
-                if trimmed.width < 50 or trimmed.height < 50:
+                # Filter out crops that are too small (< 140x90 px or area < 16000)
+                if trimmed.width < 140 or trimmed.height < 90 or (trimmed.width * trimmed.height < 16000):
+                    logger.info(f"Skipping too-small figure crop ({trimmed.width}x{trimmed.height} px) on page {cand.page_num}")
                     continue
 
                 buf = io.BytesIO()
                 trimmed.save(buf, format="PNG", optimize=True)
                 png_bytes = buf.getvalue()
+
+                # Deduplicate by visual content hash across pages (e.g. repeated logos/diagrams)
+                import hashlib
+                img_hash = hashlib.sha256(png_bytes).hexdigest()
+                if img_hash in seen_image_hashes:
+                    logger.info(f"Skipping duplicate figure across pages (hash {img_hash[:8]})")
+                    continue
+                seen_image_hashes.add(img_hash)
 
                 raw_slug = slugify_name(cand.clean_title)
                 slug = raw_slug
@@ -552,6 +654,8 @@ def extract_multiple_figures(
                         f"\\end{{figure}}"
                     )
 
+                dim_valid, dim_warn = validate_figure_dimensions(trimmed.width, trimmed.height, cand.graphic_rect)
+
                 results.append(ExtractedFigure(
                     clean_filename=clean_filename,
                     asset_rel_path=asset_rel_path,
@@ -563,6 +667,8 @@ def extract_multiple_figures(
                     page_number=cand.page_num,
                     latex_snippet=latex_snippet,
                     document_class=document_class,
+                    dimension_valid=dim_valid,
+                    dimension_warning=dim_warn,
                 ))
             except Exception as e:
                 logger.warning(f"Error extracting figure candidate on page {cand.page_num}: {e}")
