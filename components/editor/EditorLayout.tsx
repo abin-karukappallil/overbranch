@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 
 import Editor, { OnMount } from "@monaco-editor/react";
 import { Drawer } from "vaul";
 import Link from "next/link";
 import {
+  ArrowLeft,
+  FolderGit2,
   FileCode2,
   Eye,
   Bot,
@@ -44,7 +46,10 @@ import {
   Undo2,
   Redo2,
   Maximize2,
+  Sun,
+  Moon,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -73,12 +78,12 @@ import {
 import { toast } from "sonner";
 import { trpc, trpcClient } from "@/trpc/client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
-import { FolderGit2 } from "lucide-react";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
 import { EditHistoryStore, type EditHistory } from "@/lib/EditHistoryStore";
 import { ChatMessageContent } from "@/components/editor/ChatMessageContent";
 import { AgentReasoningWindow } from "@/components/editor/AgentReasoningWindow";
 import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } from "@/lib/IndexedDBEmbeddingCache";
+import { authFetch } from "@/lib/api-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -235,8 +240,78 @@ export function EditorLayout({
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
 
+  // In-memory SWR file cache for instantaneous file switching
+  const fileContentCacheRef = useRef<Map<string, { content: string; timestamp: number }>>(new Map());
+
+  // Theme Support
+  const { theme: appTheme, setTheme: setAppTheme, resolvedTheme } = useTheme();
+  const [themeMounted, setThemeMounted] = useState(false);
+
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
+
+  const isDark = themeMounted
+    ? (resolvedTheme ? resolvedTheme === "dark" : appTheme === "dark")
+    : (typeof document !== "undefined" ? document.documentElement.classList.contains("dark") : true);
+
+  const activeMonacoTheme = isDark ? "kinetic-emerald" : "kinetic-emerald-light";
+  const monacoTheme = activeMonacoTheme;
+
+  const handleToggleTheme = useCallback(() => {
+    const nextDark = !isDark;
+    const nextTheme = nextDark ? "dark" : "light";
+    setAppTheme(nextTheme);
+
+    // Synchronously update HTML root class to eliminate any transition delay or latching
+    if (typeof document !== "undefined") {
+      if (nextDark) {
+        document.documentElement.classList.add("dark");
+      } else {
+        document.documentElement.classList.remove("dark");
+      }
+    }
+
+    const nextMonacoTheme = nextDark ? "kinetic-emerald" : "kinetic-emerald-light";
+    try {
+      if (monacoRef.current) {
+        monacoRef.current.editor.setTheme(nextMonacoTheme);
+      }
+      if (typeof window !== "undefined" && (window as any).monaco) {
+        (window as any).monaco.editor.setTheme(nextMonacoTheme);
+      }
+      if (desktopEditorRef.current) {
+        desktopEditorRef.current.updateOptions({ theme: nextMonacoTheme });
+      }
+      if (mobileEditorRef.current) {
+        mobileEditorRef.current.updateOptions({ theme: nextMonacoTheme });
+      }
+    } catch (e) {
+      console.warn("Error toggling Monaco theme:", e);
+    }
+  }, [isDark, setAppTheme]);
+
+  useEffect(() => {
+    const targetTheme = isDark ? "kinetic-emerald" : "kinetic-emerald-light";
+    try {
+      if (monacoRef.current) {
+        monacoRef.current.editor.setTheme(targetTheme);
+      }
+      if (typeof window !== "undefined" && (window as any).monaco) {
+        (window as any).monaco.editor.setTheme(targetTheme);
+      }
+      if (desktopEditorRef.current) {
+        desktopEditorRef.current.updateOptions({ theme: targetTheme });
+      }
+      if (mobileEditorRef.current) {
+        mobileEditorRef.current.updateOptions({ theme: targetTheme });
+      }
+    } catch (_) {}
+  }, [isDark]);
+
   // AI Agent Assistant & Editor Refs
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeRequestIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSelectionRef = useRef<any>(null);
   const lastPositionRef = useRef<any>(null);
@@ -252,6 +327,24 @@ export function EditorLayout({
 
   useEffect(() => {
     editHistoryStoreRef.current = new EditHistoryStore(projectId || "default");
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (activeRequestIdRef.current) {
+        try {
+          authFetch(`${BACKEND_URL}/api/agent/stop`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            keepalive: true,
+            body: JSON.stringify({
+              request_id: activeRequestIdRef.current,
+              project_id: projectId || undefined,
+            }),
+          }).catch(() => {});
+        } catch (_) {}
+      }
+    };
   }, [projectId]);
 
   const monacoRef = useRef<any>(null);
@@ -621,11 +714,30 @@ export function EditorLayout({
   };
 
   const handleStopAgentResponse = () => {
+    const reqId = activeRequestIdRef.current;
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    activeRequestIdRef.current = null;
     setIsAgentThinking(false);
+    setAgentProgressSteps([]);
+
+    // Immediately notify backend to halt AI call & release resources
+    try {
+      authFetch(`${BACKEND_URL}/api/agent/stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({
+          project_id: projectId || undefined,
+          request_id: reqId || undefined,
+        }),
+      }).catch((err) => {
+        console.warn("Stop request failed to reach backend:", err);
+      });
+    } catch (_) {}
+
     setMessages((prev) => [
       ...prev,
       {
@@ -1014,17 +1126,56 @@ export function EditorLayout({
 
   const storageKey = `overbranch_code_${projectId || 'default'}_${activeFilePath}`;
 
+  const handleSelectFile = useCallback((filePath: string) => {
+    setActiveFilePath(filePath);
+    // Instant cache lookup for 0ms transition
+    const cached = fileContentCacheRef.current.get(filePath);
+    if (cached) {
+      setCode(cached.content);
+      setSaveStatus("saved");
+    } else {
+      const savedKey = `overbranch_code_${projectId || 'default'}_${filePath}`;
+      try {
+        const saved = localStorage.getItem(savedKey);
+        if (saved !== null) {
+          setCode(saved);
+          setSaveStatus("saved");
+          fileContentCacheRef.current.set(filePath, { content: saved, timestamp: Date.now() });
+        }
+      } catch (_) {}
+    }
+  }, [projectId]);
+
   // 1. Load saved code from backend API (Supabase DB + Disk) or LocalStorage when activeFilePath or projectId changes
   useEffect(() => {
+    let isCancelled = false;
+
+    // Fast synchronous cache hit
+    const cached = fileContentCacheRef.current.get(activeFilePath);
+    if (cached) {
+      setCode(cached.content);
+      setSaveStatus("saved");
+    } else {
+      try {
+        const savedCode = localStorage.getItem(storageKey);
+        if (savedCode !== null) {
+          setCode(savedCode);
+          setSaveStatus("saved");
+          fileContentCacheRef.current.set(activeFilePath, { content: savedCode, timestamp: Date.now() });
+        }
+      } catch (e) {}
+    }
+
     const loadSavedDocument = async () => {
       try {
         const activeProj = projectId || "proj-1";
-        const res = await fetch(`${BACKEND_URL}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
-        if (res.ok) {
+        const res = await authFetch(`${BACKEND_URL}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+        if (res.ok && !isCancelled) {
           const data = await res.json();
           if (data.raw_code !== undefined) {
             setCode(data.raw_code);
             setSaveStatus("saved");
+            fileContentCacheRef.current.set(activeFilePath, { content: data.raw_code, timestamp: Date.now() });
             localStorage.setItem(storageKey, data.raw_code);
             return;
           }
@@ -1034,29 +1185,35 @@ export function EditorLayout({
       }
 
       // Fallback to LocalStorage
-      try {
-        const savedCode = localStorage.getItem(storageKey);
-        if (savedCode !== null) {
-          setCode(savedCode);
-          setSaveStatus("saved");
-        }
-      } catch (e) { }
+      if (!isCancelled) {
+        try {
+          const savedCode = localStorage.getItem(storageKey);
+          if (savedCode !== null) {
+            setCode(savedCode);
+            setSaveStatus("saved");
+          }
+        } catch (e) {}
+      }
     };
 
     loadSavedDocument();
+    return () => {
+      isCancelled = true;
+    };
   }, [projectId, activeFilePath, storageKey]);
 
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
   const saveDocument = async (newCode: string, showToast = true) => {
     setSaveStatus("saving");
     const activeProj = projectId || "proj-1";
+    fileContentCacheRef.current.set(activeFilePath, { content: newCode, timestamp: Date.now() });
 
     try {
       // Always save to LocalStorage immediately for crash protection
       localStorage.setItem(storageKey, newCode);
 
       // Save to Supabase latex_documents DB + Local Disk + Qdrant Vector Sync
-      const res = await fetch(`${BACKEND_URL}/api/projects/save-file`, {
+      const res = await authFetch(`${BACKEND_URL}/api/projects/save-file`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1083,6 +1240,7 @@ export function EditorLayout({
     const updated = newCode ?? "";
     setCode(updated);
     setSaveStatus("unsaved");
+    fileContentCacheRef.current.set(activeFilePath, { content: updated, timestamp: Date.now() });
 
     // Instantly persist in LocalStorage for crash resilience
     try {
@@ -1096,8 +1254,8 @@ export function EditorLayout({
     }, 1500);
   };
 
-  const setupDefaultLatexSyntaxAndEmeraldTheme = (monaco: any, editor: any) => {
-    if (!monaco || !editor) return;
+  const setupDefaultLatexSyntaxAndEmeraldTheme = (monaco: any, editor?: any) => {
+    if (!monaco) return;
 
     try {
       // Register custom LaTeX monarch syntax token rules with single-line TeX comment scoping
@@ -1125,7 +1283,7 @@ export function EditorLayout({
         },
       });
 
-      // Define default Kinetic Emerald Theme with high contrast & crisp comments
+      // Define default Kinetic Emerald Theme for Dark mode
       monaco.editor.defineTheme("kinetic-emerald", {
         base: "vs-dark",
         inherit: true,
@@ -1144,18 +1302,52 @@ export function EditorLayout({
           { token: "string.math.latex", foreground: "e4e4e7" },
         ],
         colors: {
-          "editor.background": "#121b17", // Kinetic emerald slightly lighter dark background
+          "editor.background": "#121b17",
           "editor.foreground": "#ffffff",
           "editor.lineHighlightBackground": "#1c2b25",
-          "editorCursor.foreground": "#00CC68",
+          "editorCursor.foreground": "#10b981",
           "editorLineNumber.foreground": "#71717a",
-          "editorLineNumber.activeForeground": "#00CC68",
+          "editorLineNumber.activeForeground": "#10b981",
           "editorIndentGuide.background": "#273e35",
-          "editorIndentGuide.activeBackground": "#00CC68",
+          "editorIndentGuide.activeBackground": "#10b981",
         },
       });
 
-      monaco.editor.setTheme("kinetic-emerald");
+      // Define Kinetic Emerald Theme for Light mode
+      monaco.editor.defineTheme("kinetic-emerald-light", {
+        base: "vs",
+        inherit: true,
+        rules: [
+          { token: "", foreground: "1e293b" },
+          { token: "keyword.latex", foreground: "047857", fontStyle: "bold" },
+          { token: "keyword", foreground: "047857", fontStyle: "bold" },
+          { token: "comment.latex", foreground: "64748b", fontStyle: "italic" },
+          { token: "comment", foreground: "64748b", fontStyle: "italic" },
+          { token: "delimiter.math.latex", foreground: "0284c7", fontStyle: "bold" },
+          { token: "keyword.math.latex", foreground: "059669", fontStyle: "bold" },
+          { token: "number.math.latex", foreground: "d97706" },
+          { token: "variable.math.latex", foreground: "1e293b" },
+          { token: "delimiter.bracket.latex", foreground: "059669", fontStyle: "bold" },
+          { token: "delimiter.square.latex", foreground: "db2777" },
+          { token: "string.math.latex", foreground: "334155" },
+        ],
+        colors: {
+          "editor.background": "#F8F9FA",
+          "editor.foreground": "#1e293b",
+          "editor.lineHighlightBackground": "#f1f5f9",
+          "editorCursor.foreground": "#059669",
+          "editorLineNumber.foreground": "#94a3b8",
+          "editorLineNumber.activeForeground": "#059669",
+          "editorIndentGuide.background": "#e2e8f0",
+          "editorIndentGuide.activeBackground": "#10b981",
+        },
+      });
+
+      const isCurrentlyDark = themeMounted
+        ? (resolvedTheme ? resolvedTheme === "dark" : appTheme === "dark")
+        : (typeof document !== "undefined" ? document.documentElement.classList.contains("dark") : true);
+
+      monaco.editor.setTheme(isCurrentlyDark ? "kinetic-emerald" : "kinetic-emerald-light");
     } catch (e) {
       console.warn("Handled LaTeX syntax initialization exception:", e);
     }
@@ -1171,6 +1363,13 @@ export function EditorLayout({
     monacoRef.current = monaco;
 
     setupDefaultLatexSyntaxAndEmeraldTheme(monaco, editor);
+
+    const isCurrentlyDark = themeMounted
+      ? (resolvedTheme ? resolvedTheme === "dark" : appTheme === "dark")
+      : (typeof document !== "undefined" ? document.documentElement.classList.contains("dark") : true);
+    try {
+      monaco.editor.setTheme(isCurrentlyDark ? "kinetic-emerald" : "kinetic-emerald-light");
+    } catch (_) {}
 
     editor.onDidChangeCursorSelection((e: any) => {
       if (e.selection) {
@@ -1275,7 +1474,7 @@ export function EditorLayout({
     setIsCompiling(true);
     setErrorLog(null);
     try {
-      const res = await fetch(`${BACKEND_URL}/api/compile`, {
+      const res = await authFetch(`${BACKEND_URL}/api/compile`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1299,11 +1498,11 @@ export function EditorLayout({
     }
   };
 
-  const handleSendPrompt = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if ((!chatInput.trim() && !attachedFile) || isAgentThinking) return;
+  const sendPromptMessage = async (customPrompt?: string) => {
+    const rawUserText = customPrompt !== undefined ? customPrompt : chatInput;
+    if ((!rawUserText.trim() && !attachedFile) || isAgentThinking) return;
 
-    const userText = chatInput.trim() || (attachedFile ? `[Uploaded file: ${attachedFile.filename}]` : "");
+    const userText = rawUserText.trim() || (attachedFile ? `[Uploaded file: ${attachedFile.filename}]` : "");
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     setMessages((prev) => [
@@ -1311,26 +1510,31 @@ export function EditorLayout({
       {
         id: `user-${Date.now()}`,
         sender: "user",
-        text: attachedFile
+        text: (customPrompt === undefined && attachedFile)
           ? `${userText}\n\n📎 Attached File: ${attachedFile.filename}`
           : userText,
         time: now,
       },
     ]);
 
-    const currentFilePayload = attachedFile;
-    setChatInput("");
-    if (typeof document !== "undefined") {
-      document.querySelectorAll<HTMLTextAreaElement>("textarea[id*='chat-input']").forEach((el) => {
-        el.style.height = "auto";
-      });
+    const currentFilePayload = customPrompt === undefined ? attachedFile : null;
+    if (customPrompt === undefined) {
+      setChatInput("");
+      if (typeof document !== "undefined") {
+        document.querySelectorAll<HTMLTextAreaElement>("textarea[id*='chat-input']").forEach((el) => {
+          el.style.height = "auto";
+        });
+      }
+      setAttachedFile(null);
     }
-    setAttachedFile(null);
     setIsAgentThinking(true);
     setFallbackModelNotice(null);
     setAgentProgressSteps([]);
 
     abortControllerRef.current = new AbortController();
+    const reqId = `chat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    activeRequestIdRef.current = reqId;
+
     // Scale timeout based on whether there's a large attached file (600s for files, 300s otherwise)
     const hasLargeFile = currentFilePayload && currentFilePayload.content && currentFilePayload.content.length > 500000;
     const timeoutMs = hasLargeFile ? 600000 : 300000;
@@ -1358,18 +1562,20 @@ export function EditorLayout({
         console.warn("Failed to parse API keys from localStorage", e);
       }
 
-      const response = await fetch(`${BACKEND_URL}/api/agent/chat`, {
+      const response = await authFetch(`${BACKEND_URL}/api/agent/opencode`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({
           project_id: projectId || "proj-default",
+          request_id: reqId,
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,
           current_code: code,
           model: activeModelName || "auto:smart",
           attached_file: filePayload,
           mode: chatMode,
+          api_keys: customApiKeys || undefined,
         }),
       });
       clearTimeout(timeoutId);
@@ -1406,8 +1612,30 @@ export function EditorLayout({
 
                 if (currentEventType === "progress") {
                   setAgentProgressSteps((prev) => [...prev, parsed]);
+                } else if (["thought", "tool_call", "tool_result", "compile_error"].includes(currentEventType)) {
+                  setAgentProgressSteps((prev) => [...prev, {
+                    step: currentEventType,
+                    message: parsed.content || parsed.message || (typeof parsed === "string" ? parsed : JSON.stringify(parsed)),
+                    icon: currentEventType === "compile_error" ? "alert" : currentEventType === "thought" ? "brain" : currentEventType === "tool_call" ? "wrench" : "check",
+                    ...parsed,
+                  }]);
+                } else if (currentEventType === "final_diff") {
+                  finalData = {
+                    ...parsed,
+                    original_chunk: parsed.original_code || parsed.original_chunk || "",
+                    proposed_chunk: parsed.proposed_code || parsed.proposed_chunk || "",
+                    explanation: parsed.explanation || "",
+                    edits: parsed.edits && parsed.edits.length > 0 ? parsed.edits : [{
+                      original_chunk: parsed.original_code || parsed.original_chunk || "",
+                      proposed_chunk: parsed.proposed_code || parsed.proposed_chunk || "",
+                      explanation: parsed.explanation || "",
+                    }],
+                  };
                 } else if (currentEventType === "result") {
                   finalData = parsed;
+                } else if (currentEventType === "cancelled") {
+                  console.log("AI Agent generation cleanly stopped by user:", parsed);
+                  return;
                 } else if (currentEventType === "error") {
                   sseError = new Error(parsed.message || "AI Agent error");
                 }
@@ -1565,7 +1793,21 @@ export function EditorLayout({
       setIsAgentThinking(false);
       setAgentProgressSteps([]);
       abortControllerRef.current = null;
+      activeRequestIdRef.current = null;
     }
+  };
+
+  const handleSendPrompt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await sendPromptMessage();
+  };
+
+  const handleAskAiToFix = (error: string) => {
+    setAiOpen(true);
+    setActiveMobileTab("ai");
+    const cleanErr = error ? error.trim() : "Compilation error";
+    const prompt = `Please fix this LaTeX compilation error:\n\n\`\`\`\n${cleanErr}\n\`\`\`\n\nPlease locate the error in the document, inspect the surrounding code, and apply the necessary in-place fix.`;
+    sendPromptMessage(prompt);
   };
 
   const replaceAllCaseInsensitive = (text: string, search: string, replacement: string): string => {
@@ -1586,6 +1828,15 @@ export function EditorLayout({
   };
 
   const insertSnippetSafely = (text: string, snippet: string): string => {
+    // If document contains bibliography, insert before bibliography rather than after it
+    const biblioIndex = text.indexOf("\\begin{thebibliography}");
+    if (biblioIndex !== -1 && !snippet.includes("\\begin{thebibliography}")) {
+      return text.slice(0, biblioIndex) + snippet + "\n\n" + text.slice(biblioIndex);
+    }
+    const bibMatch = text.match(/\\(?:bibliographystyle\{[^}]+\}\s*)?\\bibliography\{[^}]+\}/);
+    if (bibMatch && bibMatch.index !== undefined && !snippet.includes("\\bibliography")) {
+      return text.slice(0, bibMatch.index) + snippet + "\n\n" + text.slice(bibMatch.index);
+    }
     const endDocIndex = text.lastIndexOf("\\end{document}");
     if (endDocIndex !== -1) {
       return text.slice(0, endDocIndex) + "\n\n" + snippet + "\n\n" + text.slice(endDocIndex);
@@ -1709,24 +1960,39 @@ export function EditorLayout({
       }
     }
 
-    // 5. In-place Section replacement
-    if (propVal.includes("\\section{")) {
-      const secMatch = propVal.match(/\\section\{([^}]+)\}/);
-      if (secMatch) {
-        const secTitle = secMatch[1].trim();
-        const escapedSec = secTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        try {
-          const nextSecRegex = new RegExp(`\\\\section\\{${escapedSec}\\}[\\s\\S]*?(?=\\\\section\\{|\\\\end\\{document\\}|$)`, 'i');
-          if (nextSecRegex.test(currentText)) {
-            return currentText.replace(nextSecRegex, propVal + "\n\n");
-          }
-        } catch {
-          // continue
+    // 5. In-place Section / Chapter / Subsection replacement
+    const secMatch = propVal.match(/\\(chapter|section\*?|subsection|subsubsection)\{([^}]+)\}/);
+    if (secMatch) {
+      const secTitle = secMatch[2].trim();
+      const escapedTitle = secTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      try {
+        const nextSecRegex = new RegExp(
+          `\\\\(?:chapter|section\\*?|subsection|subsubsection)\\{${escapedTitle}\\}[\\s\\S]*?(?=\\\\(?:chapter|section|subsection|subsubsection|begin\\{thebibliography\\}|bibliography|end\\{document\\})|$)`,
+          'i'
+        );
+        if (nextSecRegex.test(currentText)) {
+          return currentText.replace(nextSecRegex, propVal + "\n\n");
         }
+      } catch {
+        // continue
       }
     }
 
-    // 6. Append safely before \end{document}
+    // 6. Safeguards before fallback append:
+    // Never append a duplicate \documentclass or \begin{document} into an existing document
+    if (propVal.includes("\\documentclass") || propVal.includes("\\begin{document}")) {
+      return currentText;
+    }
+
+    // If an original anchor was given but not found at all, and propVal contains a duplicate section header, do not append blindly
+    if (orig && secMatch) {
+      const secTitle = secMatch[2].trim();
+      if (currentText.toLowerCase().includes(secTitle.toLowerCase())) {
+        return currentText;
+      }
+    }
+
+    // 7. Append safely before \end{document}
     return insertSnippetSafely(currentText, propVal);
   };
 
@@ -2004,12 +2270,12 @@ export function EditorLayout({
 
     return (
       <div className="mt-2.5 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono space-y-2">
-        <div className="flex items-center justify-between font-bold text-[#00CC68]">
+        <div className="flex items-center justify-between font-bold text-indigo-400">
           <div className="flex items-center gap-1.5 text-xs">
             <span>Proposed TeX Edit ({m.edits.length})</span>
           </div>
           {m.isApplied ? (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold flex items-center gap-1">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold flex items-center gap-1">
               <Check className="w-3 h-3" /> Applied
             </span>
           ) : (
@@ -2027,7 +2293,7 @@ export function EditorLayout({
               </div>
             )}
             {firstEdit.proposed_chunk && (
-              <div className="text-[#00CC68] bg-[#00CC68]/10 px-1.5 py-0.5 rounded border-l-2 border-[#00CC68] truncate">
+              <div className="text-indigo-400 bg-indigo-600/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 truncate">
                 + {firstEdit.proposed_chunk.split("\n")[0]}
               </div>
             )}
@@ -2052,7 +2318,7 @@ export function EditorLayout({
                   setActiveMobileTab("code");
                 }
               }}
-              className="flex-1 h-7 rounded-lg bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
+              className="flex-1 h-7 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-indigo-700 shadow-sm shadow-indigo-500/20 cursor-pointer"
             >
               <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
               <span>Accept Edit</span>
@@ -2060,7 +2326,7 @@ export function EditorLayout({
           </div>
         ) : (
           <div className="pt-1.5 border-t border-zinc-800/80 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-[#00CC68]">
+            <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-indigo-400">
               <Check className="w-3.5 h-3.5" />
               <span>{m.isReverted ? "Reverted" : "Applied to TeX"}</span>
             </div>
@@ -2095,12 +2361,12 @@ export function EditorLayout({
                       disabled={!hasHistory}
                       onClick={() => handleReapplyEdit(targetId)}
                       className={`px-2 py-1 rounded-md border text-[10px] font-mono font-bold flex items-center gap-1 transition-all shadow-xs ${hasHistory
-                          ? "bg-[#00CC68]/20 hover:bg-[#00CC68]/30 text-[#00CC68] border-[#00CC68]/40 cursor-pointer active:scale-95"
+                          ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border-indigo-500/40 cursor-pointer active:scale-95"
                           : "bg-zinc-900 border-zinc-800 opacity-35 text-zinc-500 cursor-not-allowed"
                         }`}
                       title={hasHistory ? "Reapply this AI edit" : "Edit history unavailable"}
                     >
-                      <Redo2 className="w-3 h-3 text-[#00CC68]" />
+                      <Redo2 className="w-3 h-3 text-indigo-400" />
                       <span>Reapply</span>
                     </button>
                   );
@@ -2162,37 +2428,37 @@ export function EditorLayout({
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-zinc-950 text-zinc-100 overflow-hidden selection:bg-[#00CC68]/30 selection:text-[#00CC68] flex flex-col relative z-0">
+    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-[#F4F5F7] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] overflow-hidden selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-white flex flex-col relative z-0 transition-colors">
       {/* Guest Session Notification Banner */}
       {isGuestMode && (
-        <div className="bg-gradient-to-r from-amber-950/80 via-zinc-900 to-amber-950/80 border-b border-amber-500/40 px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs z-30 shrink-0 select-none shadow-md">
+        <div className="bg-amber-50 dark:bg-[#1A1C22] border-b border-amber-200 dark:border-[#282A30] px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs z-30 shrink-0 select-none">
           <div className="flex items-center gap-2.5">
             <span className="flex h-2 w-2 relative">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
             </span>
-            <span className="font-mono font-bold text-amber-400 uppercase tracking-wider text-[10px] sm:text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+            <span className="font-mono font-medium text-amber-800 dark:text-amber-400 uppercase tracking-wider text-[10px] sm:text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
               Guest Session
             </span>
-            <span className="text-zinc-200 text-xs font-mono">
-              Expires in: <strong className="text-amber-300 font-bold">{guestTimeLeft || "24:00:00"}</strong>
+            <span className="text-amber-900 dark:text-[#9E9E9E] text-xs font-mono">
+              Expires in: <strong className="text-amber-950 dark:text-amber-300 font-bold">{guestTimeLeft || "24:00:00"}</strong>
             </span>
-            <span className="text-zinc-400 text-xs hidden md:inline">
-              · Read-only preview. Sign up to save this project permanently and unlock full editing.
+            <span className="text-amber-700 dark:text-[#62666D] text-xs hidden md:inline">
+              · Read-only preview. Sign up to save this project permanently.
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 font-mono">
             <Link
               href={`/register?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
-              className="px-3 py-1 rounded-lg bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold text-xs shadow-[2px_2px_0px_0px_#000000] border border-black transition-all flex items-center gap-1.5 cursor-pointer"
+              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold text-xs border border-emerald-600 dark:border-[#282A30] transition-all flex items-center gap-1 cursor-pointer"
             >
               <span>Save Permanently</span>
               <span>→</span>
             </Link>
             <Link
               href={`/login?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
-              className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-xs border border-zinc-700 transition-colors"
+              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-700 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] text-xs border border-slate-200 dark:border-[#282A30] transition-colors"
             >
               Sign In
             </Link>
@@ -2200,255 +2466,215 @@ export function EditorLayout({
         </div>
       )}
 
-      <header className="h-14 border-b border-zinc-800 bg-zinc-950 px-3 sm:px-4 flex items-center justify-between gap-2 shrink-0 z-10 select-none">
-        <div className="flex items-center gap-2 overflow-hidden">
-          <Link href="/dashboard" className="shrink-0 hover:opacity-90 transition-opacity flex items-center gap-1.5" title="OverBranch (Beta) — Return to Dashboard">
+      {/* Main Top Navigation Header */}
+      <header className="h-12 border-b border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] px-3 sm:px-4 flex items-center justify-between gap-3 shrink-0 z-10 select-none transition-colors">
+        {/* Left Column: Integrated Back to Dashboard Brand Block & Project Title */}
+        <div className="flex items-center gap-3 overflow-hidden min-w-0">
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-2 group hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+            title="Return to Dashboard"
+          >
+            <div className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] border border-slate-200 dark:border-[#282A30] text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] transition-all">
+              <ArrowLeft className="w-3.5 h-3.5 text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] group-hover:-translate-x-0.5 transition-transform" />
+            </div>
             <OverBranchLogo size="sm" variant="icon" colored />
-            <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-900 text-[#00CC68] border border-zinc-800 tracking-wider">
-              BETA
-            </span>
           </Link>
-          <div className="w-[1px] h-4 bg-zinc-800 mx-0.5 shrink-0 hidden sm:block" />
-          <div className="truncate">
-            <h1 className="font-archivo font-bold text-xs sm:text-sm text-white tracking-tight truncate">
+
+          <div className="w-[1px] h-4 bg-slate-200 dark:bg-[#282A30] shrink-0 hidden sm:block" />
+
+          <div className="truncate min-w-0">
+            <h1 className="font-archivo font-bold text-xs sm:text-sm text-slate-900 dark:text-[#E2E4E9] tracking-tight truncate">
               {projectDetail?.name || (projectId ? `${projectId}.tex` : "main.tex")}
             </h1>
-            <p className="text-[10px] text-zinc-400 font-mono truncate">{projectDetail?.template || "LaTeX"} · main.tex</p>
+            <p className="text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono truncate">
+              {activeFilePath} · {projectDetail?.template && projectDetail.template !== "None" ? projectDetail.template : "LaTeX"}
+            </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {/* Save Status Badge & Manual Save Button */}
-          <div className="flex items-center gap-2">
-            <span className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono">
-              {saveStatus === "saved" && (
-                <>
-                  <CheckCheck className="w-3.5 h-3.5 text-[#00CC68]" />
-                  <span className="text-[#00CC68] font-bold">Saved</span>
-                </>
-              )}
-              {saveStatus === "saving" && (
-                <>
-                  <RotateCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span className="text-amber-400 font-bold">Saving...</span>
-                </>
-              )}
-              {saveStatus === "unsaved" && (
-                <>
-                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-                  <span className="text-zinc-400 font-bold">Unsaved</span>
-                </>
-              )}
-            </span>
-
-            {/* Files Panel Toggle Button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setFilesOpen(!filesOpen)}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${filesOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
-                }`}
-              title={filesOpen ? "Hide Project Files" : "Show Project Files"}
+        {/* Center Column: Layout View Switcher & Primary Fast Compile Action */}
+        <div className="hidden md:flex items-center gap-2 shrink-0">
+          {/* View Toggle */}
+          <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
+            <button
+              onClick={() => setPdfOpen(false)}
+              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+                !pdfOpen
+                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
+                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+              }`}
+              title="Code Editor View"
             >
-              <FolderGit2 className="w-3.5 h-3.5 text-[#00CC68]" />
-              <span>Files</span>
-            </Button>
-
-            {/* AI Assistant Toggle Button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={toggleAi}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${aiOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
-                }`}
-              title={aiOpen ? "Hide AI Assistant (Cmd+L)" : "Show AI Assistant (Cmd+L)"}
+              Code
+            </button>
+            <button
+              onClick={() => setPdfOpen(true)}
+              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+                pdfOpen
+                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
+                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+              }`}
+              title="Split View (Code + PDF)"
             >
-              <Bot className="w-3.5 h-3.5 text-[#00CC68]" />
-              <span>Agent <span className="text-[9px] opacity-60 ml-0.5">(Cmd+L)</span></span>
-            </Button>
-
-            {/* PDF Preview Toggle Button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={togglePdf}
-              className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 transition-colors ${pdfOpen
-                ? "bg-[#00CC68]/10 hover:bg-[#00CC68]/20 border-[#00CC68]/30 text-[#00CC68] font-bold"
-                : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300"
-                }`}
-              title={pdfOpen ? "Hide PDF Preview" : "Show PDF Preview"}
-            >
-              <Eye className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Preview</span>
-            </Button>
-
-            {/* Fullscreen Presentation Mode Button */}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsPresentationMode(true)}
-              className="h-8 px-2.5 text-xs font-mono hidden lg:flex items-center gap-1.5 transition-colors bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white cursor-pointer"
-              title="Fullscreen Presentation Mode (Ctrl+Alt+P)"
-            >
-              <Maximize2 className="w-3.5 h-3.5 text-purple-400" />
-              <span>Present</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleUndo}
-              className="h-8 px-2 bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white text-xs font-mono flex items-center gap-1 cursor-pointer"
-              title="Undo (Ctrl+Z / Cmd+Z)"
-            >
-              <Undo2 className="w-3.5 h-3.5 text-amber-400" />
-              <span className="hidden lg:inline">Undo</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRedo}
-              className="h-8 px-2 bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white text-xs font-mono flex items-center gap-1 cursor-pointer"
-              title="Redo (Ctrl+Y / Cmd+Shift+Z)"
-            >
-              <Redo2 className="w-3.5 h-3.5 text-orange-400" />
-              <span className="hidden lg:inline">Redo</span>
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => saveDocument(code, true)}
-              className="h-8 px-2.5 bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-zinc-300 hover:text-white text-xs font-mono flex items-center gap-1.5 cursor-pointer"
-              title="Save Document (Ctrl+S)"
-            >
-              <Save className="w-3.5 h-3.5 text-[#00CC68]" />
-              <span className="hidden sm:inline">Save</span>
-            </Button>
+              Split
+            </button>
           </div>
 
-          <a
-            href="https://github.com/abin-karukappallil/overbranch/issues"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hidden xl:flex items-center gap-1.5 px-2 py-1 rounded-md border border-zinc-800 bg-zinc-900/60 hover:bg-zinc-800 text-[11px] text-zinc-400 hover:text-amber-300 font-mono transition-colors"
-            title="OverBranch is in active Beta — Report any bugs on GitHub Issues"
-          >
-            <span className="text-[9px] font-mono font-bold text-amber-300 bg-amber-400/10 border border-amber-400/20 px-1 py-0.5 rounded">BETA</span>
-            <span>Report Bug</span>
-          </a>
-
           <Button
-            variant="outline"
-            size="icon"
-            onClick={() => setIsApiSettingsOpen(true)}
-            className="hidden sm:flex h-8 w-8 bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-colors cursor-pointer"
-            title="API Keys Settings"
+            size="sm"
+            onClick={() => handleCompile()}
+            disabled={isCompiling}
+            className="h-8 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm"
+            title="Compile TeX (Ctrl+Enter / Cmd+Enter)"
           >
-            <Settings2 className="w-4 h-4" />
+            {isCompiling ? (
+              <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current text-white" />
+            )}
+            <span>Compile</span>
           </Button>
+        </div>
+
+        {/* Right Column: Status & Action Toggles */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Save Status */}
+          <span className="hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono">
+            {saveStatus === "saved" && (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                <span className="text-slate-500 dark:text-[#9E9E9E]">Saved</span>
+              </>
+            )}
+            {saveStatus === "saving" && (
+              <>
+                <RotateCw className="w-3 h-3 text-[#FF9900] animate-spin" />
+                <span className="text-[#FF9900]">Saving...</span>
+              </>
+            )}
+            {saveStatus === "unsaved" && (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900] animate-pulse" />
+                <span className="text-[#FF9900]">Unsaved</span>
+              </>
+            )}
+          </span>
+
+          {/* Files Panel Toggle */}
+          <button
+            onClick={() => setFilesOpen(!filesOpen)}
+            className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer ${
+              filesOpen
+                ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
+                : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+            }`}
+            title={filesOpen ? "Hide Project Files" : "Show Project Files"}
+          >
+            <FolderGit2 className="w-3.5 h-3.5" />
+            <span>Files</span>
+          </button>
+
+          {/* AI Agent Toggle Button */}
+          <button
+            onClick={toggleAi}
+            className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer ${
+              aiOpen
+                ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
+                : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+            }`}
+            title="Toggle AI Agent (Cmd+L / Ctrl+L)"
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>Agent</span>
+          </button>
+
+
+          {/* Theme Toggle Button */}
+          <button
+            onClick={handleToggleTheme}
+            className="h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-700 dark:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] transition-colors cursor-pointer flex shrink-0"
+            title={isDark ? "Switch to Light Theme" : "Switch to Dark Theme"}
+            aria-label="Toggle Theme"
+          >
+            {themeMounted ? (
+              isDark ? (
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <Moon className="w-3.5 h-3.5 text-slate-700" />
+              )
+            ) : (
+              <div className="w-3.5 h-3.5 rounded-full border border-current opacity-30" />
+            )}
+          </button>
+
+          {/* Settings Button */}
+          <button
+            onClick={() => setIsApiSettingsOpen(true)}
+            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] transition-colors cursor-pointer"
+            title="API Keys & Settings"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+          </button>
 
           <CollaboratorAvatars projectId={projectId} />
         </div>
       </header>
 
-      {/* Desktop Main Split View */}
+      {/* Desktop Main Split Workspace */}
       <div className="hidden md:flex flex-1 overflow-hidden relative">
         <div className="w-full h-full flex overflow-hidden">
-          {/* Panel 1 (Far Left): Project Files & Image Uploads */}
+          {/* Panel 1 (Far Left): Project Files & Asset Panel */}
           <ProjectFilesPanel
             projectId={projectId || "proj-1"}
             activeFilePath={activeFilePath}
             isOpen={filesOpen}
             onClose={() => setFilesOpen(false)}
-            onSelectFile={(filePath) => setActiveFilePath(filePath)}
+            onSelectFile={(filePath) => handleSelectFile(filePath)}
             onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
             refreshTrigger={filesRefreshTrigger}
           />
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
-          <div className="flex-1 min-w-[320px] bg-background flex flex-col h-full border-r border-border/40 relative">
-            <div className="px-3 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
-              <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
+          <div className="flex-1 min-w-[320px] bg-[#F8F9FA] dark:bg-[#0E0F12] flex flex-col h-full border-r border-slate-200 dark:border-[#282A30] relative overflow-hidden">
+            {/* Minimalist Editor Tab Bar */}
+            <div className="px-3 h-9 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between font-mono text-xs shrink-0 select-none">
+              <div className="flex items-center gap-2">
+                <span className="flex items-center gap-1.5 text-xs text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold">
+                  <FileCode2 className="w-3.5 h-3.5 text-[#10B981]" />
+                  <span>{activeFilePath}</span>
+                </span>
+              </div>
 
-                <button
-                  type="button"
-                  onClick={handleSelectAll}
-                  className="px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Select All document code (Ctrl+A / Cmd+A)"
-                >
-                  <CheckSquare className="w-3 h-3 text-cyan-400" />
-                  <span>Select All</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSelectLine}
-                  className="px-2 py-0.5 rounded bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Select current cursor line"
-                >
-                  <MousePointerClick className="w-3 h-3 text-sky-400" />
-                  <span>Select Line</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCustomCopy}
-                  className="px-2 py-0.5 rounded bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 border border-indigo-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Copy selected text or full document code"
-                >
-                  <Copy className="w-3 h-3 text-indigo-400" />
-                  <span>Copy</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCustomPaste}
-                  className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Paste clipboard text at cursor position"
-                >
-                  <ClipboardPaste className="w-3 h-3 text-emerald-400" />
-                  <span>Paste</span>
-                </button>
+              {/* Subtle Undo & Redo Actions inside Code Editor Tab Bar */}
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={handleUndo}
-                  className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Undo last change (Ctrl+Z / Cmd+Z)"
+                  className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] transition-colors cursor-pointer shadow-xs"
+                  title="Undo (Ctrl+Z / Cmd+Z)"
                 >
-                  <Undo2 className="w-3 h-3 text-amber-400" />
-                  <span>Undo</span>
+                  <Undo2 className="w-3 h-3" />
                 </button>
                 <button
                   type="button"
                   onClick={handleRedo}
-                  className="px-2 py-0.5 rounded bg-orange-500/20 hover:bg-orange-500/30 text-orange-300 border border-orange-500/40 shrink-0 font-semibold flex items-center gap-1 transition-colors"
-                  title="Redo change (Ctrl+Y / Cmd+Shift+Z)"
+                  className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] transition-colors cursor-pointer shadow-xs"
+                  title="Redo (Ctrl+Y / Cmd+Shift+Z)"
                 >
-                  <Redo2 className="w-3 h-3 text-orange-400" />
-                  <span>Redo</span>
+                  <Redo2 className="w-3 h-3" />
                 </button>
-                <span className="text-[10px] text-muted-foreground uppercase font-semibold shrink-0">Quick TeX:</span>
-                {quickSymbols.map((sym) => (
-                  <button
-                    key={sym.label}
-                    onClick={() => insertSymbol(sym.insert)}
-                    className="px-2 py-0.5 rounded bg-muted/60 hover:bg-accent text-indigo-300 hover:text-white border border-border/40 shrink-0 transition-colors"
-                  >
-                    {sym.label}
-                  </button>
-                ))}
               </div>
             </div>
 
+            {/* Monaco Editor Container */}
             <div className="flex-1 overflow-hidden relative">
               <Editor
                 height="100%"
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
-                theme="vs-dark"
+                theme={monacoTheme}
                 value={code}
+                beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
                 onMount={(editor, monaco) => handleEditorMount(editor, monaco, true)}
                 onChange={handleCodeChange}
                 options={{
@@ -2470,27 +2696,27 @@ export function EditorLayout({
                 }}
               />
 
-              {/* Floating Non-Overlapping In-Editor Accept/Reject Action Bar */}
+              {/* Floating In-Editor Accept/Reject Action Bar */}
               {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
-                  <div className="flex items-center justify-between font-bold text-slate-100">
-                    <div className="flex items-center gap-1.5 text-indigo-400">
-                      <span>In-Editor Code Edit</span>
+                <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-2xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
+                  <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
+                    <div className="flex items-center gap-1.5 text-emerald-600 dark:text-[#10B981]">
+                      <span>In-Editor Diff</span>
                     </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-200 border border-indigo-500/30 font-bold font-mono">
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] font-mono">
                       {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
                     </span>
                   </div>
 
                   {/* Red / Green Line Preview */}
-                  <div className="max-h-24 overflow-y-auto bg-black/60 p-2 rounded-lg text-[10px] space-y-1 border border-border/40 font-mono">
+                  <div className="max-h-24 overflow-y-auto bg-slate-50 dark:bg-[#0E0F12] p-2 rounded-xl text-[10px] space-y-1 border border-slate-200 dark:border-[#282A30] font-mono">
                     {diffEditsList[0].original_chunk && (
-                      <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
+                      <div className="text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
                         - {diffEditsList[0].original_chunk.split("\n")[0]}
                       </div>
                     )}
                     {diffEditsList[0].proposed_chunk && (
-                      <div className="text-emerald-300 bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
+                      <div className="text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate font-semibold">
                         + {diffEditsList[0].proposed_chunk.split("\n")[0]}
                       </div>
                     )}
@@ -2508,17 +2734,17 @@ export function EditorLayout({
                         });
                         navigator.clipboard.writeText(patch.trim());
                       }}
-                      className="h-7 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                      title="Copy diff patch to clipboard"
+                      className="h-7 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] text-xs font-mono font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                      title="Copy diff patch"
                     >
-                      <Copy className="w-3 h-3 text-zinc-300" />
+                      <Copy className="w-3 h-3 text-slate-500 dark:text-[#9E9E9E]" />
                       <span>Copy</span>
                     </button>
 
                     <button
                       type="button"
                       onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                      className="flex-1 h-7 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-[#EB5757]/10 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
                     >
                       <X className="w-3.5 h-3.5" />
                       <span>Reject</span>
@@ -2527,20 +2753,52 @@ export function EditorLayout({
                     <button
                       type="button"
                       onClick={() => handleAcceptAllEdits(diffEditsList)}
-                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20 cursor-pointer"
+                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#10B981] dark:hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-emerald-600 dark:border-[#10B981]/30 shadow-sm cursor-pointer"
                     >
-                      <Check className="w-3.5 h-3.5" />
+                      <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
                       <span>Accept</span>
                     </button>
                   </div>
                 </div>
               )}
             </div>
+
+            {/* Bottom Status Bar */}
+            <div className="h-6 px-3 border-t border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-[#9E9E9E] shrink-0 select-none">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1 text-slate-800 dark:text-[#E2E4E9]">
+                  <FileCode2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981]" />
+                  <span>{activeFilePath}</span>
+                </span>
+                <span className="text-slate-300 dark:text-[#282A30]">|</span>
+                <span className="hidden sm:inline">SyncTeX Active</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span>UTF-8</span>
+                <span>{activeFilePath.endsWith(".bib") ? "BibTeX" : "LaTeX"}</span>
+                <span className="text-slate-300 dark:text-[#282A30]">|</span>
+                <a
+                  href="https://upzare.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 hover:underline text-slate-700 dark:text-[#E2E4E9] font-bold group"
+                  title="Powered By UPZARE Technologies Private Limited"
+                >
+                  <span className="text-slate-400 dark:text-[#9E9E9E] font-normal">Powered By</span>
+                  <img
+                    src="https://cdn.upzare.com/assets/logo.png"
+                    alt="UPZARE Technologies Private Limited"
+                    className="h-3 w-auto object-contain"
+                  />
+                  <span className="group-hover:text-emerald-600 dark:group-hover:text-emerald-400">UPZARE</span>
+                </a>
+              </div>
+            </div>
           </div>
 
-          {/* Panel 3 (Middle Right): PDF Viewer / Compiled Output */}
+          {/* Panel 3 (Middle Right): PDF Viewer */}
           <div
-            className={`h-full bg-muted/20 transition-all duration-300 ease-in-out overflow-hidden flex flex-col min-w-0 max-w-full ${pdfOpen ? "flex-1 min-w-[280px] border-r border-border/40" : "w-0 opacity-0 pointer-events-none border-r-0"
+            className={`h-full bg-slate-100 dark:bg-[#0E0F12] transition-all duration-300 ease-in-out overflow-hidden flex flex-col min-w-0 max-w-full ${pdfOpen ? "flex-1 min-w-[280px] border-r border-slate-200 dark:border-[#282A30]" : "w-0 opacity-0 pointer-events-none border-r-0"
               }`}
           >
             <div className="flex-1 h-full min-w-0 max-w-full w-full flex flex-col overflow-hidden">
@@ -2549,6 +2807,7 @@ export function EditorLayout({
                 pdfBase64={pdfBase64}
                 isCompiling={isCompiling}
                 onRecompile={() => handleCompile()}
+                onAskAiToFix={handleAskAiToFix}
                 errorLog={errorLog}
                 projectId={projectId}
                 onReverseSync={handleReverseSyncJump}
@@ -2558,44 +2817,44 @@ export function EditorLayout({
             </div>
           </div>
 
-          {/* Panel 4 (Far Right): Agent Experience */}
+          {/* Panel 4 (Far Right): AI Assistant Sidebar */}
           <div
-            className={`h-full border-l border-zinc-800 bg-zinc-950 transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-zinc-100 ${aiOpen ? "w-[340px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
+            className={`h-full border-l border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-slate-900 dark:text-[#E2E4E9] ${aiOpen ? "w-[350px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
               }`}
           >
-            <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[340px]">
+            <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[350px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
-                <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
+                <div className="border-b border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
                   <div className="flex items-center justify-between gap-1.5">
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {/* Bot Icon Dropdown for New Chat & Delete Chat */}
+                      {/* Chat Options Dropdown */}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             disabled={isAgentThinking}
-                            className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
-                            title="Chat options (New Chat, Delete Chat)"
+                            className="p-1 rounded-lg bg-[#1A1C22] hover:bg-[#22242C] text-[#10B981] border border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                            title="Chat options"
                           >
-                            <Bot className="w-4 h-4 text-[#00CC68]" />
+                            <Bot className="w-4 h-4 text-[#10B981]" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
+                        <DropdownMenuContent align="start" className="bg-[#141519] border-[#282A30] text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
                           <DropdownMenuItem
                             onClick={handleNewChat}
                             disabled={isAgentThinking}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-[#1A1C22] hover:text-white cursor-pointer rounded-md focus:bg-[#1A1C22]"
                           >
-                            <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                            <PlusCircle className="w-3.5 h-3.5 text-[#10B981]" />
                             <span>New Chat</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={handleClearChat}
                             disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-[#EB5757] hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-[#EB5757]/10"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete Chat</span>
+                            <span>Clear Chat</span>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -2604,7 +2863,6 @@ export function EditorLayout({
                     </div>
 
                     <div className="flex items-center gap-1.5 min-w-0">
-                      {/* Model Selector */}
                       <ModelSelector
                         activeModelName={activeModelName}
                         onSelectModel={setActiveModelName}
@@ -2627,20 +2885,21 @@ export function EditorLayout({
                   )}
                 </div>
 
+                {/* Chat Message Stream */}
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1 font-mono">
                   {messages.map((m) => (
                     <div
                       key={m.id}
                       className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                        ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                        : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                        ? "bg-emerald-50/80 dark:bg-[#18191B] border-emerald-200/80 dark:border-[#23252A] text-slate-900 dark:text-[#F7F8F8] ml-4 font-mono font-semibold shadow-2xs"
+                        : "bg-slate-100/90 dark:bg-[#141517] border-slate-200/90 dark:border-[#23252A] text-slate-800 dark:text-[#F7F8F8] mr-4 font-sans"
                         }`}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#8A8F98] font-mono">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                          <span className="font-semibold text-slate-900 dark:text-[#F7F8F8]">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                           {m.mode && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-zinc-400 bg-zinc-800/80 border border-zinc-700">
+                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-slate-600 dark:text-[#8A8F98] bg-slate-200/70 dark:bg-[#0F1011] border border-slate-300 dark:border-[#23252A]">
                               {m.mode}
                             </span>
                           )}
@@ -2650,7 +2909,7 @@ export function EditorLayout({
                       {m.sender === "assistant" ? (
                         <ChatMessageContent text={m.text} />
                       ) : (
-                        <p className="leading-relaxed whitespace-pre-wrap break-words text-xs">{m.text}</p>
+                        <p className="leading-relaxed whitespace-pre-wrap break-words text-xs text-slate-900 dark:text-[#F7F8F8]">{m.text}</p>
                       )}
                       {renderMessageEditsCard(m)}
                     </div>
@@ -2665,34 +2924,33 @@ export function EditorLayout({
                   <div ref={chatEndRef} />
                 </div>
 
-                {/* Sleek Diff Control Card directly above Chat Input */}
+                {/* Diff Control Card */}
                 {diffData && diffEditsList.length > 0 && (
-                  <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex items-center justify-between font-bold text-[#00CC68]">
+                  <div className="mb-2 p-3 rounded-2xl bg-white dark:bg-[#141517] border border-slate-200 dark:border-[#23252A] shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
+                    <div className="flex items-center justify-between font-semibold text-slate-900 dark:text-[#F7F8F8]">
                       <div className="flex items-center gap-1.5">
-                        <span>Proposed TeX Edit</span>
+                        <Zap className="w-3.5 h-3.5 text-indigo-600 dark:text-[#5E6AD2]" />
+                        <span>Proposed TeX Patch</span>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#18191B] text-slate-600 dark:text-[#8A8F98] border border-slate-200 dark:border-[#23252A] font-medium">
                         {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
                       </span>
                     </div>
 
-                    {/* Compact Line-by-line Preview */}
-                    <div className="max-h-28 overflow-y-auto bg-black/80 p-2 rounded-xl text-[10px] space-y-1 font-mono border border-zinc-800">
+                    <div className="max-h-28 overflow-y-auto bg-slate-50 dark:bg-[#08090A] p-2 rounded-xl text-[10px] space-y-1 font-mono border border-slate-200 dark:border-[#23252A]">
                       {diffEditsList[0].original_chunk && (
-                        <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
+                        <div className="text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
                           - {diffEditsList[0].original_chunk.split("\n")[0]}
                         </div>
                       )}
                       {diffEditsList[0].proposed_chunk && (
-                        <div className="text-[#00CC68] bg-[#00CC68]/10 px-1.5 py-0.5 rounded border-l-2 border-[#00CC68] truncate font-bold">
+                        <div className="text-indigo-600 dark:text-[#5E6AD2] bg-indigo-50 dark:bg-[#5E6AD2]/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 dark:border-[#5E6AD2] truncate font-semibold">
                           + {diffEditsList[0].proposed_chunk.split("\n")[0]}
                         </div>
                       )}
                     </div>
 
-                    {/* Action Buttons Directly Above Chat Input */}
-                    <div className="flex items-center gap-1.5 pt-1 font-bold">
+                    <div className="flex items-center gap-1.5 pt-1 font-semibold">
                       <button
                         type="button"
                         onClick={() => {
@@ -2703,17 +2961,17 @@ export function EditorLayout({
                           });
                           navigator.clipboard.writeText(patch.trim());
                         }}
-                        className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                        title="Copy diff patch to clipboard"
+                        className="h-8 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#18191B] dark:hover:bg-[#23252A] text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] border border-slate-200 dark:border-[#23252A] text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
+                        title="Copy diff patch"
                       >
-                        <Copy className="w-3.5 h-3.5 text-zinc-300" />
+                        <Copy className="w-3.5 h-3.5 text-slate-500 dark:text-[#8A8F98]" />
                         <span>Copy</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={handleRejectAllEdits}
-                        className="flex-1 h-8 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                        className="flex-1 h-8 rounded-xl bg-red-50 hover:bg-red-100 dark:bg-[#EB5757]/10 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       >
                         <X className="w-3.5 h-3.5" />
                         <span>Reject</span>
@@ -2722,9 +2980,9 @@ export function EditorLayout({
                       <button
                         type="button"
                         onClick={() => handleAcceptAllEdits(diffEditsList)}
-                        className="flex-1 h-8 rounded-xl bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
+                        className="flex-1 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 dark:bg-[#5E6AD2] dark:hover:bg-[#4F5BBE] text-white text-xs font-mono font-semibold flex items-center justify-center gap-1.5 transition-colors border border-indigo-600 dark:border-[#6875E5]/30 shadow-sm cursor-pointer"
                       >
-                        <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
+                        <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
                         <span>Accept All</span>
                       </button>
                     </div>
@@ -2740,46 +2998,36 @@ export function EditorLayout({
 
                 {attachedFile && (
                   <div className="space-y-1.5 mb-2">
-                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-[11px] font-mono animate-in fade-in font-bold">
+                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-100 dark:bg-[#141517] border border-slate-200 dark:border-[#23252A] text-slate-900 dark:text-[#F7F8F8] text-[11px] font-mono animate-in fade-in font-medium">
                       <div className="flex items-center gap-2 truncate">
-                        <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
+                        <Paperclip className="w-3.5 h-3.5 text-indigo-600 dark:text-[#5E6AD2] shrink-0" />
                         <span className="truncate">{attachedFile.filename}</span>
-                        <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
+                        <span className="text-[9px] text-indigo-700 dark:text-[#5E6AD2] bg-indigo-50 dark:bg-[#18191B] border border-indigo-200 dark:border-[#23252A] px-1.5 py-0.5 rounded font-mono uppercase">
                           {attachedFile.file_type || "file"}
                         </span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setAttachedFile(null)}
-                        className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
+                        className="p-1 text-slate-400 dark:text-[#8A8F98] hover:text-red-500 dark:hover:text-[#EB5757] transition-colors rounded-md cursor-pointer"
                         title="Remove attachment"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-
-                    {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
-                      <button
-                        type="button"
-                        onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
-                      >
-                        <FileText className="w-3 h-3 text-[#00CC68]" />
-                        <span> Recreate this PDF as Editable LaTeX</span>
-                      </button>
-                    )}
                   </div>
                 )}
 
-                <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2">
+                {/* Chat Input Form */}
+                <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-center gap-2 font-mono">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isAgentThinking}
-                    className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
+                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
                     title="Upload file (text, TeX, code, image)"
                   >
-                    <Paperclip className="w-4 h-4 text-[#00CC68]" />
+                    <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
                   </button>
 
                   <div className="relative flex-1 font-mono">
@@ -2802,7 +3050,7 @@ export function EditorLayout({
                           }
                         }
                       }}
-                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
                     />
                   </div>
 
@@ -2812,7 +3060,7 @@ export function EditorLayout({
                       onClick={handleStopAgentResponse}
                       size="sm"
                       variant="destructive"
-                      className="h-9 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold shrink-0 flex items-center gap-1.5 text-xs shadow-md cursor-pointer"
+                      className="h-9 px-3 rounded-xl bg-[#EB5757] hover:bg-[#D64545] text-white font-mono font-semibold shrink-0 flex items-center gap-1 text-xs shadow-md cursor-pointer border border-[#EB5757]/50"
                     >
                       <Square className="w-3.5 h-3.5 fill-current" />
                       <span>Stop</span>
@@ -2822,9 +3070,9 @@ export function EditorLayout({
                       type="submit"
                       disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                       size="sm"
-                      className="h-9 px-3.5 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center gap-1 text-xs disabled:opacity-40 cursor-pointer"
+                      className="h-9 px-3.5 bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] font-archivo font-bold rounded-xl border border-[#282A30] shrink-0 flex items-center justify-center text-xs disabled:opacity-40 cursor-pointer"
                     >
-                      <Send className="w-3.5 h-3.5 text-black stroke-[3]" />
+                      <Send className="w-3.5 h-3.5 text-[#10B981]" />
                     </Button>
                   )}
                 </form>
@@ -2834,16 +3082,16 @@ export function EditorLayout({
         </div>
       </div>
 
-      {/* Mobile Viewports - Keep components mounted with CSS toggle so editor state & sync are never lost */}
+      {/* Mobile Viewports */}
       <div className="flex md:hidden flex-1 min-h-0 overflow-hidden relative">
-        <div className={`flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
+        <div className={`flex-1 flex flex-col bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
           <ProjectFilesPanel
             projectId={projectId || "proj-1"}
             activeFilePath={activeFilePath}
             isOpen={true}
             onClose={() => setActiveMobileTab("code")}
             onSelectFile={(filePath) => {
-              setActiveFilePath(filePath);
+              handleSelectFile(filePath);
               setActiveMobileTab("code");
             }}
             onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
@@ -2851,82 +3099,20 @@ export function EditorLayout({
           />
         </div>
 
-        <div className={`flex-1 flex flex-col bg-background overflow-hidden relative min-h-0 ${activeMobileTab === "code" ? "flex" : "hidden"}`}>
-          <div className="px-2 py-1 border-b border-border/30 bg-card/40 flex items-center justify-between font-mono text-[11px] shrink-0 overflow-hidden">
-            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 shrink-0 flex-nowrap">
-              <button
-                type="button"
-                onClick={handleSelectAll}
-                className="px-2 py-1 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-              >
-                <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
-                <span>Select All</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleSelectLine}
-                className="px-2 py-1 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-              >
-                <MousePointerClick className="w-3.5 h-3.5 text-sky-400" />
-                <span>Select Line</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleCustomCopy}
-                className="px-2 py-1 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-              >
-                <Copy className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Copy</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleCustomPaste}
-                className="px-2 py-1 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-              >
-                <ClipboardPaste className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Paste</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleUndo}
-                className="px-2 py-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                title="Undo (Ctrl+Z)"
-              >
-                <Undo2 className="w-3.5 h-3.5 text-amber-400" />
-                <span>Undo</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleRedo}
-                className="px-2 py-1 rounded bg-orange-500/20 text-orange-300 border border-orange-500/40 shrink-0 text-xs font-semibold flex items-center gap-1"
-                title="Redo (Ctrl+Y)"
-              >
-                <Redo2 className="w-3.5 h-3.5 text-orange-400" />
-                <span>Redo</span>
-              </button>
-              {quickSymbols.map((sym) => (
-                <button
-                  key={sym.label}
-                  onClick={() => insertSymbol(sym.insert)}
-                  className="px-2 py-1 rounded bg-muted/60 text-indigo-300 border border-border/40 shrink-0 text-xs"
-                >
-                  {sym.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className={`flex-1 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "code" ? "flex" : "hidden"}`}>
           <div className="flex-1 min-h-0 overflow-hidden relative">
             <EditorErrorBoundary>
               <Editor
                 height="100%"
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
-                theme="vs-dark"
+                theme={monacoTheme}
                 value={code}
+                beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
                 onMount={(editor, monaco) => handleEditorMount(editor, monaco, false)}
                 onChange={handleCodeChange}
                 options={{
                   minimap: { enabled: false },
-                  fontSize: 14,
+                  fontSize: 13,
                   wordWrap: "on",
                   automaticLayout: true,
                   contextmenu: false,
@@ -2934,17 +3120,15 @@ export function EditorLayout({
               />
             </EditorErrorBoundary>
             {diffData && diffEditsList.length > 0 && (
-              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#161b22]/95 border border-indigo-500/40 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-1.5">
-                <div className="flex items-center justify-between font-bold text-slate-100">
-                  <div className="flex items-center gap-1.5 text-indigo-400">
-                    <span>Pending Edit</span>
-                  </div>
+              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#141519] border border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
+                <div className="flex items-center justify-between font-archivo font-bold text-[#E2E4E9]">
+                  <span className="text-[#10B981]">Pending Edit</span>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleRejectAllEdits}
-                    className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                    className="flex-1 h-7 rounded-lg bg-[#EB5757]/10 hover:bg-[#EB5757]/20 border border-[#EB5757]/30 text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
                   >
                     <X className="w-3.5 h-3.5" />
                     <span>Reject</span>
@@ -2952,7 +3136,7 @@ export function EditorLayout({
                   <button
                     type="button"
                     onClick={() => handleAcceptAllEdits(diffEditsList)}
-                    className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center justify-center gap-1 transition-colors shadow-md shadow-emerald-600/20"
+                    className="flex-1 h-7 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-[#10B981]/30"
                   >
                     <Check className="w-3.5 h-3.5" />
                     <span>Accept</span>
@@ -2963,12 +3147,13 @@ export function EditorLayout({
           </div>
         </div>
 
-        <div className={`flex-1 flex flex-col bg-zinc-950 overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
+        <div className={`flex-1 flex flex-col bg-[#0E0F12] overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
           <PDFViewer
             ref={pdfViewerRef}
             pdfBase64={pdfBase64}
             isCompiling={isCompiling}
             onRecompile={() => handleCompile()}
+            onAskAiToFix={handleAskAiToFix}
             errorLog={errorLog}
             projectId={projectId}
             onReverseSync={(file, line, col) => {
@@ -2982,38 +3167,37 @@ export function EditorLayout({
           />
         </div>
 
-        <div className={`flex-1 flex flex-col bg-zinc-950 overflow-hidden relative min-h-0 p-3 space-y-3 text-zinc-100 font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
-          <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
+        <div className={`flex-1 flex flex-col bg-[#141519] overflow-hidden relative min-h-0 p-3 space-y-3 text-[#E2E4E9] font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
+          <div className="border-b border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
             <div className="flex items-center justify-between gap-1.5">
               <div className="flex items-center gap-1.5 shrink-0">
-                {/* Bot Icon Dropdown for New Chat & Delete Chat */}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
                       disabled={isAgentThinking}
-                      className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
-                      title="Chat options (New Chat, Delete Chat)"
+                      className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                      title="Chat options"
                     >
-                      <Bot className="w-4 h-4 text-[#00CC68]" />
+                      <Bot className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
+                  <DropdownMenuContent align="start" className="bg-white dark:bg-[#141519] border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
                     <DropdownMenuItem
                       onClick={handleNewChat}
                       disabled={isAgentThinking}
-                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
+                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-[#1A1C22] text-slate-700 dark:text-[#E2E4E9] hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-md focus:bg-slate-100 dark:focus:bg-[#1A1C22]"
                     >
-                      <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
+                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
                       <span>New Chat</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={handleClearChat}
                       disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
+                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete Chat</span>
+                      <span>Clear Chat</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -3021,7 +3205,6 @@ export function EditorLayout({
                 <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
               </div>
               <div className="flex items-center gap-1.5 min-w-0">
-                {/* Model Selector */}
                 <ModelSelector
                   activeModelName={activeModelName}
                   onSelectModel={setActiveModelName}
@@ -3030,18 +3213,6 @@ export function EditorLayout({
                 />
               </div>
             </div>
-
-            {fallbackModelNotice && (
-              <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2 shrink-0">
-                <div className="flex items-center gap-1.5 truncate">
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span className="truncate">{fallbackModelNotice}</span>
-                </div>
-                <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5 cursor-pointer">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-3 text-xs font-mono min-h-0 pr-1">
@@ -3049,25 +3220,18 @@ export function EditorLayout({
               <div
                 key={m.id}
                 className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                  ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                  : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
+                  ? "bg-emerald-50 dark:bg-[#22242C] border-emerald-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] ml-4 font-mono font-semibold"
+                  : "bg-slate-100 dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] mr-4 font-sans"
                   }`}
               >
-                <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                  <div className="flex items-center gap-1.5">
-                    <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
-                    {m.mode && (
-                      <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-zinc-400 bg-zinc-800/80 border border-zinc-700">
-                        {m.mode}
-                      </span>
-                    )}
-                  </div>
+                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono">
+                  <span className="font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                   <span>{m.time}</span>
                 </div>
                 {m.sender === "assistant" ? (
                   <ChatMessageContent text={m.text} />
                 ) : (
-                  <p className="leading-relaxed text-xs whitespace-pre-wrap break-words">{m.text}</p>
+                  <p className="leading-relaxed text-xs whitespace-pre-wrap break-words text-slate-900 dark:text-[#E2E4E9]">{m.text}</p>
                 )}
                 {renderMessageEditsCard(m)}
               </div>
@@ -3081,101 +3245,21 @@ export function EditorLayout({
             <div ref={mobileChatEndRef} />
           </div>
 
-          {diffData && diffEditsList.length > 0 && (
-            <div className="mb-2 p-3 rounded-2xl bg-zinc-900 border border-[#00CC68]/40 shadow-xl space-y-2 font-mono text-xs shrink-0 animate-in fade-in slide-in-from-bottom-2">
-              <div className="flex items-center justify-between font-bold text-[#00CC68]">
-                <div className="flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-[#00CC68]" />
-                  <span>Proposed TeX Edit</span>
-                </div>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/30 font-bold">
-                  {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 pt-1 font-bold">
-                <button
-                  type="button"
-                  onClick={() => {
-                    let patch = "";
-                    diffEditsList.forEach((e) => {
-                      if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
-                      if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
-                    });
-                    navigator.clipboard.writeText(patch.trim());
-                  }}
-                  className="h-8 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                  title="Copy diff patch"
-                >
-                  <Copy className="w-3.5 h-3.5 text-zinc-300" />
-                  <span>Copy</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleRejectAllEdits}
-                  className="flex-1 h-8 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  <span>Reject</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAcceptAllEdits(diffEditsList)}
-                  className="flex-1 h-8 rounded-xl bg-[#00CC68] hover:bg-[#00E676] text-black text-xs font-mono font-bold flex items-center justify-center gap-1.5 transition-colors border border-black shadow-[2px_2px_0px_0px_#000000] cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
-                  <span>Accept All</span>
-                </button>
-              </div>
-            </div>
-          )}
-
-          {attachedFile && (
-            <div className="space-y-1.5 mb-2">
-              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
-                <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-3.5 h-3.5 text-[#00CC68] shrink-0" />
-                  <span className="truncate">{attachedFile.filename}</span>
-                  <span className="text-[9px] text-black bg-[#00CC68] px-1.5 py-0.5 rounded font-mono font-bold uppercase">
-                    {attachedFile.file_type || "file"}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setAttachedFile(null)}
-                  className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
-                <button
-                  type="button"
-                  onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
-                >
-                  <FileText className="w-3 h-3 text-[#00CC68]" />
-                  <span>✨ Recreate this PDF as Editable LaTeX</span>
-                </button>
-              )}
-            </div>
-          )}
-
-          <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2 font-mono">
+          <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-center gap-2 font-mono">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isAgentThinking}
-              className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 shrink-0 cursor-pointer disabled:opacity-50"
+              className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] shrink-0 cursor-pointer disabled:opacity-50"
               title="Upload file"
             >
-              <Paperclip className="w-4 h-4 text-[#00CC68]" />
+              <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
             </button>
 
             <textarea
               id="ai-chat-input-2"
               rows={1}
-              placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
+              placeholder={chatMode === "ask" ? "Ask a question..." : "Ask agent to edit LaTeX..."}
               value={chatInput}
               disabled={isAgentThinking}
               onChange={(e) => {
@@ -3191,7 +3275,7 @@ export function EditorLayout({
                   }
                 }
               }}
-              className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+              className="flex-1 min-h-[40px] max-h-40 py-2 px-3 rounded-xl border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] placeholder:text-[#62666D] text-xs outline-none focus:ring-1 focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
             />
 
             {isAgentThinking ? (
@@ -3200,7 +3284,7 @@ export function EditorLayout({
                 onClick={handleStopAgentResponse}
                 size="sm"
                 variant="destructive"
-                className="h-11 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold shrink-0 flex items-center gap-1 text-xs cursor-pointer"
+                className="h-10 px-3 rounded-xl bg-[#EB5757] hover:bg-[#D64545] text-white font-mono font-semibold shrink-0 flex items-center gap-1 text-xs cursor-pointer border border-[#EB5757]/50"
               >
                 <Square className="w-4 h-4 fill-current" />
                 <span>Stop</span>
@@ -3210,21 +3294,21 @@ export function EditorLayout({
                 type="submit"
                 disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                 size="sm"
-                className="h-11 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
+                className="h-10 px-3.5 bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] font-archivo font-bold rounded-xl border border-[#282A30] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
               >
-                <Send className="w-4 h-4 text-black stroke-[3]" />
+                <Send className="w-4 h-4 text-[#10B981]" />
               </Button>
             )}
           </form>
         </div>
       </div>
 
-      {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden border-t border-zinc-800 bg-zinc-950/95 backdrop-blur-xl shrink-0 z-40 pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="flex items-center justify-around w-full h-14 font-mono">
+      {/* Bottom Navigation for Mobile View */}
+      <nav className="md:hidden h-12 border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none">
+        <div className="flex items-center justify-around w-full h-12 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "files" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "files" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
               }`}
           >
             <FolderGit2 className="w-4 h-4" />
@@ -3233,7 +3317,7 @@ export function EditorLayout({
 
           <button
             onClick={() => setActiveMobileTab("code")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "code" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "code" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
               }`}
           >
             <FileCode2 className="w-4 h-4" />
@@ -3242,7 +3326,7 @@ export function EditorLayout({
 
           <button
             onClick={() => setActiveMobileTab("pdf")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "pdf" ? "text-cyan-400 font-bold" : "text-zinc-400"
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "pdf" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
               }`}
           >
             <Eye className="w-4 h-4" />
@@ -3253,7 +3337,7 @@ export function EditorLayout({
             onClick={() => {
               setActiveMobileTab("ai");
             }}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-[#00CC68] font-bold" : "text-zinc-400"
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
               }`}
           >
             <Bot className="w-4 h-4" />
@@ -3261,191 +3345,6 @@ export function EditorLayout({
           </button>
         </div>
       </nav>
-
-      {/* Mobile AI Assistant Drawer */}
-      <Drawer.Root open={mobileDrawerOpen} onOpenChange={setMobileDrawerOpen}>
-        <Drawer.Portal>
-          <Drawer.Overlay className="fixed inset-0 bg-black/60 z-50 backdrop-blur-sm" />
-          <Drawer.Content className="fixed inset-0 z-50 bg-zinc-950 flex flex-col p-4 space-y-3 text-zinc-100 font-sans h-[100dvh] max-h-[100dvh]">
-            <div className="w-12 h-1.5 rounded-full bg-zinc-800 mx-auto shrink-0" />
-            <div className="border-b border-zinc-800 pb-2.5 shrink-0 space-y-2 select-none">
-              <div className="flex items-center justify-between gap-1.5">
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {/* Bot Icon Dropdown for New Chat & Delete Chat */}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        type="button"
-                        disabled={isAgentThinking}
-                        className="p-1 rounded-lg bg-[#00CC68]/10 hover:bg-[#00CC68]/20 text-[#00CC68] border border-[#00CC68]/25 hover:border-[#00CC68]/40 transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
-                        title="Chat options (New Chat, Delete Chat)"
-                      >
-                        <Bot className="w-5 h-5 text-[#00CC68]" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="bg-zinc-950 border-zinc-800 text-zinc-200 min-w-[140px] p-1 font-mono z-[99999]">
-                      <DropdownMenuItem
-                        onClick={handleNewChat}
-                        disabled={isAgentThinking}
-                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-zinc-900 hover:text-[#00CC68] cursor-pointer rounded-md focus:bg-zinc-900 focus:text-[#00CC68]"
-                      >
-                        <PlusCircle className="w-3.5 h-3.5 text-[#00CC68]" />
-                        <span>New Chat</span>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={handleClearChat}
-                        disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/40 hover:text-rose-300 cursor-pointer rounded-md focus:bg-rose-950/40 focus:text-rose-300"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Delete Chat</span>
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-
-                  <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
-                </div>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {/* Model Selector */}
-                  <ModelSelector
-                    activeModelName={activeModelName}
-                    onSelectModel={setActiveModelName}
-                    availableModels={availableModels}
-                    disabled={isAgentThinking}
-                  />
-
-                  <button onClick={() => setMobileDrawerOpen(false)} className="text-zinc-400 hover:text-white p-1 cursor-pointer shrink-0">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              {fallbackModelNotice && (
-                <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2 shrink-0">
-                  <div className="flex items-center gap-1.5 truncate">
-                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                    <span className="truncate">{fallbackModelNotice}</span>
-                  </div>
-                  <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5 cursor-pointer">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-3 text-xs font-mono">
-              {messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                    ? "bg-[#00CC68]/10 border-[#00CC68]/20 text-[#00CC68] ml-4 font-mono font-bold"
-                    : "bg-zinc-900 border-zinc-800 text-zinc-100 mr-4 font-sans"
-                    }`}
-                >
-                  <div className="flex items-center justify-between text-[10px] text-zinc-400 font-mono">
-                    <span className="font-bold text-white">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
-                    <span>{m.time}</span>
-                  </div>
-                  <p className="leading-relaxed text-sm whitespace-pre-wrap break-words">{m.text}</p>
-                  {renderMessageEditsCard(m)}
-                </div>
-              ))}
-              {isAgentThinking && (
-                <AgentReasoningWindow
-                  steps={agentProgressSteps}
-                  onStop={handleStopAgentResponse}
-                />
-              )}
-              <div ref={mobileChatEndRef} />
-            </div>
-
-            {attachedFile && (
-              <div className="space-y-1.5 mb-2">
-                <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-[#00CC68]/10 border border-[#00CC68]/30 text-[#00CC68] text-xs font-mono animate-in fade-in font-bold">
-                  <div className="flex items-center gap-2 truncate">
-                    <Paperclip className="w-4 h-4 text-[#00CC68] shrink-0" />
-                    <span className="truncate">{attachedFile.filename}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAttachedFile(null)}
-                    className="p-1 text-zinc-400 hover:text-rose-400 transition-colors rounded-md cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {(attachedFile.filename.toLowerCase().endsWith(".pdf") || (attachedFile.file_type && attachedFile.file_type.includes("pdf"))) && (
-                  <button
-                    type="button"
-                    onClick={() => setChatInput("Recreate this PDF exactly as editable LaTeX.")}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#00CC68]/20 hover:bg-[#00CC68]/30 border border-[#00CC68]/40 text-[#00CC68] text-[11px] font-mono font-bold transition-all cursor-pointer shadow-sm"
-                  >
-                    <FileText className="w-3 h-3 text-[#00CC68]" />
-                    <span>✨ Recreate this PDF as Editable LaTeX</span>
-                  </button>
-                )}
-              </div>
-            )}
-
-            <form onSubmit={handleSendPrompt} className="relative pt-3 border-t border-zinc-800 shrink-0 flex items-center gap-2 font-mono">
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isAgentThinking}
-                className="p-2.5 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 shrink-0 cursor-pointer disabled:opacity-50"
-                title="Upload file"
-              >
-                <Paperclip className="w-4 h-4 text-[#00CC68]" />
-              </button>
-
-              <textarea
-                id="mobile-ai-chat-input"
-                rows={1}
-                placeholder="Ask agent to edit LaTeX..."
-                value={chatInput}
-                disabled={isAgentThinking}
-                onChange={(e) => {
-                  setChatInput(e.target.value);
-                  e.target.style.height = "auto";
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
-                      handleSendPrompt(e);
-                    }
-                  }
-                }}
-                className="flex-1 min-h-[42px] max-h-40 py-2.5 px-3 rounded-xl border border-zinc-800 bg-zinc-950 text-white placeholder:text-zinc-500 text-xs outline-none focus:ring-2 focus:ring-[#00CC68] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
-              />
-
-              {isAgentThinking ? (
-                <Button
-                  type="button"
-                  onClick={handleStopAgentResponse}
-                  size="sm"
-                  variant="destructive"
-                  className="h-11 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-mono font-bold flex items-center gap-1 text-xs shrink-0 cursor-pointer"
-                >
-                  <Square className="w-4 h-4 fill-current" />
-                  <span>Stop</span>
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
-                  size="sm"
-                  className="h-11 px-4 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl border border-black shadow-[2px_2px_0px_0px_#000000] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
-                >
-                  <Send className="w-4 h-4 text-black stroke-[3]" />
-                </Button>
-              )}
-            </form>
-          </Drawer.Content>
-        </Drawer.Portal>
-      </Drawer.Root>
 
       {/* Fullscreen Presentation Mode View */}
       {isPresentationMode && (
