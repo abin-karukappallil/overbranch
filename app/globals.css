@@ -45,101 +45,117 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
 
-  /* Hallmark Garden theme tokens */
-  --color-paper: oklch(0.985 0.006 85);
-  --color-paper-2: oklch(0.95 0.01 85);
-  --color-paper-3: oklch(0.92 0.015 85);
-  --color-ink: oklch(0.14 0.02 85);
-  --color-ink-muted: oklch(0.45 0.02 85);
-  --color-accent-emerald: oklch(0.48 0.18 145);
-  --color-accent-copper: oklch(0.55 0.16 50);
+  /* Hallmark Celestial Obsidian & Luminescent Iris theme tokens */
+  --color-paper: oklch(0.12 0.012 260);
+  --color-paper-2: oklch(0.14 0.015 260);
+  --color-paper-3: oklch(0.16 0.018 260);
+  --color-ink: oklch(0.96 0.005 260);
+  --color-ink-muted: oklch(0.70 0.01 260);
+  --color-accent-iris: oklch(0.65 0.22 265);
+  --color-accent-emerald: oklch(0.65 0.18 150);
+  --color-accent-copper: oklch(0.75 0.16 70);
+
+  /* Matte Dark Theme colors (No blue, flat matte finish) */
+  --color-void-bg: #0E0F12;
+  --color-void-surface: #141519;
+  --color-void-surface-alt: #1A1C22;
+  --color-void-surface-hover: #22242C;
+  --color-void-border: #282A30;
+  --color-void-text-primary: #E2E4E9;
+  --color-void-text-secondary: #9E9E9E;
+  --color-void-text-tertiary: #62666D;
+  --color-void-accent: #10B981;
+  --color-void-accent-hover: #059669;
+  --color-void-signal-green: #10B981;
+  --color-void-signal-orange: #FF8849;
+  --color-void-signal-cyan: #A3E635;
 }
 
 :root {
   --radius: 0.75rem;
-  --background: oklch(0.11 0.018 135);
-  --foreground: oklch(0.96 0.005 85);
-  --card: oklch(0.14 0.02 135);
-  --card-foreground: oklch(0.96 0.005 85);
-  --popover: oklch(0.14 0.02 135);
-  --popover-foreground: oklch(0.96 0.005 85);
-  --primary: oklch(0.72 0.22 145);
-  --primary-foreground: oklch(0.11 0.018 135);
-  --secondary: oklch(0.17 0.02 135);
-  --secondary-foreground: oklch(0.96 0.005 85);
-  --muted: oklch(0.17 0.02 135);
-  --muted-foreground: oklch(0.64 0.02 135);
-  --accent: oklch(0.20 0.03 145);
-  --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.65 0.22 25);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.72 0.22 145);
-  --chart-1: oklch(0.72 0.22 145);
-  --chart-2: oklch(0.78 0.17 70);
-  --chart-3: oklch(0.75 0.18 70);
-  --chart-4: oklch(0.65 0.25 300);
-  --chart-5: oklch(0.65 0.24 16);
-  --sidebar: oklch(0.12 0.018 135);
-  --sidebar-foreground: oklch(0.96 0.005 85);
-  --sidebar-primary: oklch(0.72 0.22 145);
-  --sidebar-primary-foreground: oklch(0.11 0.018 135);
-  --sidebar-accent: oklch(0.18 0.02 135);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.72 0.22 145);
+  --background: #F3F4F6;
+  --foreground: #1E293B;
+  --card: #FFFFFF;
+  --card-foreground: #1E293B;
+  --popover: #FFFFFF;
+  --popover-foreground: #1E293B;
+  --primary: #10B981;
+  --primary-foreground: #FFFFFF;
+  --secondary: #E2E8F0;
+  --secondary-foreground: #0F172A;
+  --muted: #F1F5F9;
+  --muted-foreground: #64748B;
+  --accent: #E2E8F0;
+  --accent-foreground: #0F172A;
+  --destructive: #EF4444;
+  --border: #E2E8F0;
+  --input: #E2E8F0;
+  --ring: #10B981;
+  --chart-1: #10B981;
+  --chart-2: #3B82F6;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EF4444;
+  --sidebar: #FAFAFC;
+  --sidebar-foreground: #1E293B;
+  --sidebar-primary: #10B981;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #E2E8F0;
+  --sidebar-accent-foreground: #0F172A;
+  --sidebar-border: #E2E8F0;
+  --sidebar-ring: #10B981;
 
-  /* Hallmark Garden theme tokens */
-  --color-paper: oklch(0.11 0.018 135);
-  --color-paper-2: oklch(0.14 0.02 135);
-  --color-paper-3: oklch(0.18 0.02 135);
-  --color-ink: oklch(0.96 0.005 85);
-  --color-ink-muted: oklch(0.64 0.02 135);
-  --color-accent-emerald: oklch(0.72 0.22 145);
-  --color-accent-copper: oklch(0.78 0.17 70);
+  --color-paper: #FFFFFF;
+  --color-paper-2: #F8FAFC;
+  --color-paper-3: #F1F5F9;
+  --color-ink: #1E293B;
+  --color-ink-muted: #64748B;
+  --color-accent-iris: #6366F1;
+  --color-accent-emerald: #10B981;
+  --color-accent-copper: #F59E0B;
 }
 
 .dark {
-  --background: oklch(0.11 0.018 135);
-  --foreground: oklch(0.96 0.005 85);
-  --card: oklch(0.14 0.02 135);
-  --card-foreground: oklch(0.96 0.005 85);
-  --popover: oklch(0.14 0.02 135);
-  --popover-foreground: oklch(0.96 0.005 85);
-  --primary: oklch(0.72 0.22 145);
-  --primary-foreground: oklch(0.11 0.018 135);
-  --secondary: oklch(0.17 0.02 135);
-  --secondary-foreground: oklch(0.96 0.005 85);
-  --muted: oklch(0.17 0.02 135);
-  --muted-foreground: oklch(0.64 0.02 135);
-  --accent: oklch(0.20 0.03 145);
-  --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.65 0.22 25);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.72 0.22 145);
-  --chart-1: oklch(0.72 0.22 145);
-  --chart-2: oklch(0.78 0.17 70);
-  --chart-3: oklch(0.75 0.18 70);
-  --chart-4: oklch(0.65 0.25 300);
-  --chart-5: oklch(0.65 0.24 16);
-  --sidebar: oklch(0.12 0.018 135);
-  --sidebar-foreground: oklch(0.96 0.005 85);
-  --sidebar-primary: oklch(0.72 0.22 145);
-  --sidebar-primary-foreground: oklch(0.11 0.018 135);
-  --sidebar-accent: oklch(0.18 0.02 135);
-  --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.72 0.22 145);
+  --background: #0E0F12;
+  --foreground: #E2E4E9;
+  --card: #141519;
+  --card-foreground: #E2E4E9;
+  --popover: #1A1C22;
+  --popover-foreground: #E2E4E9;
+  --primary: #10B981;
+  --primary-foreground: #FFFFFF;
+  --secondary: #1A1C22;
+  --secondary-foreground: #E2E4E9;
+  --muted: #1A1C22;
+  --muted-foreground: #9E9E9E;
+  --accent: #22242C;
+  --accent-foreground: #E2E4E9;
+  --destructive: #EF4444;
+  --border: #282A30;
+  --input: #282A30;
+  --ring: #10B981;
+  --chart-1: #10B981;
+  --chart-2: #3B82F6;
+  --chart-3: #8B5CF6;
+  --chart-4: #F59E0B;
+  --chart-5: #EF4444;
+  --sidebar: #141519;
+  --sidebar-foreground: #E2E4E9;
+  --sidebar-primary: #10B981;
+  --sidebar-primary-foreground: #FFFFFF;
+  --sidebar-accent: #1A1C22;
+  --sidebar-accent-foreground: #E2E4E9;
+  --sidebar-border: #282A30;
+  --sidebar-ring: #10B981;
 
-  /* Hallmark Garden theme tokens */
-  --color-paper: oklch(0.11 0.018 135);
-  --color-paper-2: oklch(0.14 0.02 135);
-  --color-paper-3: oklch(0.18 0.02 135);
-  --color-ink: oklch(0.96 0.005 85);
-  --color-ink-muted: oklch(0.64 0.02 135);
-  --color-accent-emerald: oklch(0.72 0.22 145);
-  --color-accent-copper: oklch(0.78 0.17 70);
+  --color-paper: #0E0F12;
+  --color-paper-2: #141519;
+  --color-paper-3: #1A1C22;
+  --color-ink: #E2E4E9;
+  --color-ink-muted: #9E9E9E;
+  --color-accent-iris: #6366F1;
+  --color-accent-emerald: #10B981;
+  --color-accent-copper: #F59E0B;
 }
 
 /* Hard responsive non-negotiables (Hallmark Gate 34) */
@@ -171,26 +187,26 @@ html, body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(16, 185, 129, 0.35);
+  background: var(--border);
   border-radius: 9999px;
   border: 1px solid transparent;
   background-clip: content-box;
   transition: background-color 0.2s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(16, 185, 129, 0.65);
+  background: var(--color-ink-muted);
 }
 
 .dark ::-webkit-scrollbar-thumb {
-  background: rgba(52, 211, 153, 0.35);
+  background: var(--border);
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(52, 211, 153, 0.7);
+  background: var(--color-ink-muted);
 }
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(52, 211, 153, 0.35) transparent;
+  scrollbar-color: var(--border) transparent;
 }
 
 /* Hairline rule panels */
@@ -347,8 +363,8 @@ html, body {
 
 /* Monaco Editor Mobile Cursor & Caret Enhancements */
 .monaco-editor .cursors-layer .cursor {
-  background-color: #00CC68 !important;
-  border-color: #00CC68 !important;
+  background-color: var(--color-accent-iris) !important;
+  border-color: var(--color-accent-iris) !important;
   width: 2.5px !important;
   opacity: 1 !important;
   visibility: visible !important;
@@ -362,12 +378,12 @@ html, body {
 
 /* Ensure editor textarea captures mobile touch events cleanly */
 .monaco-editor .inputarea.ime-input {
-  caret-color: #00CC68 !important;
+  caret-color: var(--color-accent-iris) !important;
 }
 
 /* Monaco selection visibility */
 .monaco-editor .selected-text {
-  background-color: rgba(0, 204, 104, 0.28) !important;
+  background-color: rgba(99, 102, 241, 0.28) !important;
 }
 
 /* Prevent unwanted selection flicker on mobile touches */
@@ -379,14 +395,14 @@ html, body {
 
 /* SyncTeX Reverse Navigation Line Highlight & Gutter Accent */
 .synctex-highlight-line {
-  background-color: rgba(0, 204, 104, 0.22) !important;
-  border-left: 4px solid #00CC68 !important;
+  background-color: rgba(99, 102, 241, 0.15) !important;
+  border-left: 3px solid var(--color-accent-iris) !important;
   transition: background-color 0.8s ease-out !important;
 }
 
 .synctex-gutter-marker {
-  background-color: #00CC68 !important;
-  width: 5px !important;
+  background-color: var(--color-accent-iris) !important;
+  width: 4px !important;
   height: 100% !important;
   border-radius: 2px !important;
 }

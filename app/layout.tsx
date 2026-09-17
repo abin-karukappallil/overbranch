@@ -55,20 +55,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning className="scroll-smooth dark">
+    <html lang="en" suppressHydrationWarning className="scroll-smooth">
       <body
-        className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} font-sans antialiased bg-[#00CC68] text-black min-h-screen selection:bg-black selection:text-[#00CC68]`}
+        className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
         <ThemeProvider
           attribute="class"
           defaultTheme="dark"
-          enableSystem={false}
+          enableSystem={true}
           disableTransitionOnChange
         >
           <TRPCProvider>
             <GuestMigrationListener />
             {children}
-            <Toaster position="top-right" theme="dark" richColors />
+            <Toaster position="top-right" richColors />
           </TRPCProvider>
         </ThemeProvider>
       </body>

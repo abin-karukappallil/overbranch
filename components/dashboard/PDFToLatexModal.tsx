@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { authClient } from "@/lib/auth-client";
+import { authFetch } from "@/lib/api-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -139,13 +140,12 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
           } catch (_) {}
         }
 
-        const response = await fetch(`${BACKEND_URL}/api/pdf/convert`, {
+        const response = await authFetch(`${BACKEND_URL}/api/pdf/convert`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(userId ? { "X-User-Id": userId } : {}),
           },
-          credentials: "include",
           body: JSON.stringify({
             pdf_data: pdfBase64,
             project_name: projectName.trim() || undefined,
@@ -250,24 +250,24 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in font-mono">
-      <div className="max-w-xl w-[calc(100vw-2rem)] rounded-2xl border border-zinc-800 bg-zinc-950 text-white shadow-2xl overflow-hidden flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-md animate-fade-in font-sans">
+      <div className="max-w-xl w-[calc(100vw-2rem)] rounded-xl border border-[#23252A] bg-[#0F1011] text-[#F7F8F8] shadow-2xl overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="p-5 border-b border-zinc-800/80 flex items-center justify-between bg-zinc-900/60">
+        <div className="p-5 border-b border-[#23252A] flex items-center justify-between bg-[#0F1011]">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/30 text-[#00CC68]">
-              <FileText className="w-5 h-5" />
+            <div className="p-2 rounded-lg bg-[#5E6AD2]/12 border border-[#5E6AD2]/25 text-[#5E6AD2]">
+              <FileText className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-archivo font-black uppercase text-white tracking-wide">
+                <h3 className="text-sm font-semibold uppercase text-[#F7F8F8] tracking-wide">
                   PDF to Editable LaTeX
                 </h3>
-                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+                <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-[#191A1B] text-[#5E6AD2] border border-[#23252A] tracking-wider">
                   BETA
                 </span>
               </div>
-              <p className="text-xs text-zinc-400 font-sans">
+              <p className="text-xs text-[#8A8F98]">
                 Convert any PDF paper, slides, resume, or report into compilable LaTeX with assets.
               </p>
             </div>
@@ -276,7 +276,7 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
           {!isConverting && (
             <button
               onClick={onClose}
-              className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
+              className="p-1.5 text-[#8A8F98] hover:text-[#F7F8F8] rounded-md hover:bg-[#191A1B] transition-colors cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -293,12 +293,12 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${
+                className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-all ${
                   isDragging
-                    ? "border-[#00CC68] bg-[#00CC68]/10"
+                    ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
                     : selectedFile
-                    ? "border-[#00CC68]/60 bg-zinc-900/80"
-                    : "border-zinc-800 hover:border-zinc-700 bg-zinc-900/40"
+                    ? "border-[#5E6AD2]/50 bg-[#191A1B]"
+                    : "border-[#23252A] hover:border-[#3B3D45] bg-[#191A1B]/40"
                 }`}
               >
                 <input
@@ -315,12 +315,12 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
 
                 {selectedFile ? (
                   <div className="flex items-center justify-center gap-3">
-                    <div className="p-2.5 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/40 text-[#00CC68]">
-                      <FileCheck2 className="w-6 h-6" />
+                    <div className="p-2.5 rounded-lg bg-[#5E6AD2]/15 border border-[#5E6AD2]/30 text-[#5E6AD2]">
+                      <FileCheck2 className="w-5 h-5" />
                     </div>
                     <div className="text-left truncate max-w-xs sm:max-w-sm">
-                      <div className="text-xs font-bold text-white truncate">{selectedFile.name}</div>
-                      <div className="text-[11px] text-zinc-400 font-sans">
+                      <div className="text-xs font-semibold text-[#F7F8F8] truncate">{selectedFile.name}</div>
+                      <div className="text-[11px] text-[#8A8F98]">
                         {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB • PDF Document
                       </div>
                     </div>
@@ -330,7 +330,7 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                         e.stopPropagation();
                         setSelectedFile(null);
                       }}
-                      className="ml-auto p-1.5 text-zinc-400 hover:text-rose-400 rounded-lg"
+                      className="ml-auto p-1.5 text-[#8A8F98] hover:text-rose-400 rounded-md"
                       title="Remove PDF"
                     >
                       <X className="w-4 h-4" />
@@ -338,14 +338,14 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    <div className="mx-auto w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400">
-                      <UploadCloud className="w-5 h-5 text-[#00CC68]" />
+                    <div className="mx-auto w-9 h-9 rounded-lg bg-[#191A1B] border border-[#23252A] flex items-center justify-center text-[#8A8F98]">
+                      <UploadCloud className="w-4 h-4 text-[#5E6AD2]" />
                     </div>
                     <div>
-                      <span className="text-xs text-[#00CC68] font-bold">Click to upload</span>
-                      <span className="text-xs text-zinc-400"> or drag and drop</span>
+                      <span className="text-xs text-[#5E6AD2] font-semibold">Click to upload</span>
+                      <span className="text-xs text-[#8A8F98]"> or drag and drop</span>
                     </div>
-                    <p className="text-[11px] text-zinc-500 font-sans">
+                    <p className="text-[11px] text-[#62666D]">
                       Articles, Research Papers, Beamer Slides, Resumes, or Reports (up to 50 pages)
                     </p>
                   </div>
@@ -354,31 +354,31 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
 
               {/* Project Name Input */}
               <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider flex items-center justify-between">
+                <label className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider flex items-center justify-between">
                   <span>Project Name (Optional)</span>
-                  <span className="text-[10px] text-zinc-500 font-normal">Auto-generated if blank</span>
+                  <span className="text-[10px] text-[#62666D] font-normal font-sans">Auto-generated if blank</span>
                 </label>
                 <Input
-                  placeholder=""
+                  placeholder="e.g. My Converted Paper"
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
-                  className="h-10 text-xs font-mono border-zinc-800 bg-zinc-900 text-white focus-visible:ring-2 focus-visible:ring-[#00CC68]"
+                  className="h-9 text-xs border-[#23252A] bg-[#191A1B] text-[#F7F8F8] placeholder:text-[#62666D] focus-visible:ring-1 focus-visible:ring-[#5E6AD2] rounded-md"
                 />
               </div>
 
               {/* Target Format / Document Class Selector */}
               <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400 font-bold uppercase tracking-wider">
+                <label className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider">
                   Target LaTeX Template
                 </label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   <button
                     type="button"
                     onClick={() => setDocumentTypeHint("auto")}
-                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
                       documentTypeHint === "auto"
-                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                        ? "border-[#5E6AD2]/50 bg-[#5E6AD2]/12 text-[#F7F8F8]"
+                        : "border-[#23252A] bg-[#191A1B] text-[#8A8F98] hover:text-[#F7F8F8]"
                     }`}
                   >
                     Auto-Detect
@@ -386,10 +386,10 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                   <button
                     type="button"
                     onClick={() => setDocumentTypeHint("beamer")}
-                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
                       documentTypeHint === "beamer"
-                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                        ? "border-[#5E6AD2]/50 bg-[#5E6AD2]/12 text-[#F7F8F8]"
+                        : "border-[#23252A] bg-[#191A1B] text-[#8A8F98] hover:text-[#F7F8F8]"
                     }`}
                   >
                     Slides (Beamer)
@@ -397,10 +397,10 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                   <button
                     type="button"
                     onClick={() => setDocumentTypeHint("report")}
-                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
                       documentTypeHint === "report"
-                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                        ? "border-[#5E6AD2]/50 bg-[#5E6AD2]/12 text-[#F7F8F8]"
+                        : "border-[#23252A] bg-[#191A1B] text-[#8A8F98] hover:text-[#F7F8F8]"
                     }`}
                   >
                     Report / Thesis
@@ -408,10 +408,10 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
                   <button
                     type="button"
                     onClick={() => setDocumentTypeHint("article")}
-                    className={`px-3 py-2 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer ${
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
                       documentTypeHint === "article"
-                        ? "border-[#00CC68] bg-[#00CC68]/15 text-[#00CC68]"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:text-white"
+                        ? "border-[#5E6AD2]/50 bg-[#5E6AD2]/12 text-[#F7F8F8]"
+                        : "border-[#23252A] bg-[#191A1B] text-[#8A8F98] hover:text-[#F7F8F8]"
                     }`}
                   >
                     Paper (Article)
@@ -421,121 +421,103 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
 
               {/* Error Alert if any */}
               {errorMessage && (
-                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
+                <div className="p-3 rounded-md bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs flex items-start gap-2.5">
                   <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div className="font-sans leading-relaxed">{errorMessage}</div>
+                  <div className="leading-relaxed">{errorMessage}</div>
                 </div>
               )}
 
-              {/* Beta Notice Banner */}
-              <div className="p-3 rounded-xl bg-zinc-900/70 border border-zinc-800 text-[11px] text-zinc-400 font-sans flex items-start gap-2.5">
-                <span className="text-[#00CC68] font-mono font-bold text-[9px] px-1.5 py-0.5 rounded bg-[#00CC68]/15 border border-[#00CC68]/30 shrink-0">BETA</span>
-                <div className="leading-relaxed">
-                  PDF decompilation is currently in Beta. Scanned documents or complex layouts may have formatting differences. Found any issues or bugs? Please{" "}
-                  <a
-                    href="https://github.com/abin-karukappallil/overbranch/issues"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[#00CC68] hover:underline font-bold"
-                  >
-                    report them on GitHub Issues →
-                  </a>
-                </div>
-              </div>
-
               {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-2 pt-2 text-xs font-mono font-bold">
+              <div className="flex items-center justify-end gap-2 pt-2 text-xs">
                 <Button
                   type="button"
                   variant="outline"
                   onClick={onClose}
-                  className="h-9 px-4 text-xs border-zinc-800 text-zinc-300 hover:bg-zinc-900 rounded-xl"
+                  className="h-8 px-3 text-xs border-[#23252A] bg-[#191A1B] text-[#8A8F98] hover:text-[#F7F8F8] hover:bg-[#23252A] rounded-md"
                 >
                   Cancel
                 </Button>
                 <Button
                   type="submit"
                   disabled={!selectedFile}
-                  className="h-9 px-5 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black font-bold border border-black shadow-[3px_3px_0px_0px_#000000] rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center gap-2"
+                  className="h-8 px-4 text-xs bg-[#5E6AD2] hover:bg-[#4F5BBE] text-white font-medium rounded-md cursor-pointer disabled:opacity-50 transition-colors flex items-center gap-1.5"
                 >
-                  <span>Start Conversion</span>
-                  <span className="text-[9px] bg-black text-[#00CC68] px-1.5 py-0.5 rounded font-black">BETA</span>
-                  <span>→</span>
+                  <span>Decompile PDF</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </Button>
               </div>
             </form>
           ) : (
-            /* Progress Stepper Flow */
-            <div className="space-y-6 py-2">
+            /* Conversion in progress / Finished state */
+            <div className="space-y-5 py-2">
               {/* Progress bar */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs font-mono">
-                  <span className="text-zinc-300 font-bold flex items-center gap-2">
-                    {currentStep === "done" ? (
-                      <CheckCircle2 className="w-4 h-4 text-[#00CC68]" />
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-[#F7F8F8] flex items-center gap-2">
+                    {isConverting ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#5E6AD2]" />
                     ) : (
-                      <Loader2 className="w-4 h-4 text-[#00CC68] animate-spin" />
+                      <CheckCircle2 className="w-3.5 h-3.5 text-[#00FF05]" />
                     )}
-                    <span>{statusMessage || "Processing PDF..."}</span>
+                    <span>{statusMessage || "Processing document..."}</span>
                   </span>
-                  <span className="text-[#00CC68] font-bold">{progressPct}%</span>
+                  <span className="font-mono text-xs text-[#8A8F98]">{progressPct}%</span>
                 </div>
-                <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div className="h-1.5 w-full bg-[#191A1B] rounded-full overflow-hidden border border-[#23252A]">
                   <div
-                    className="h-full bg-[#00CC68] transition-all duration-300 rounded-full shadow-[0_0_10px_#00CC68]"
+                    className="h-full bg-[#5E6AD2] transition-all duration-300 rounded-full"
                     style={{ width: `${progressPct}%` }}
                   />
                 </div>
               </div>
 
-              {/* Steps List */}
-              <div className="space-y-3 pt-2">
+              {/* Steps timeline */}
+              <div className="space-y-2">
                 {STEPS.map((step) => {
-                  const st = getStepStatus(step.key);
+                  const status = getStepStatus(step.key);
                   const Icon = step.icon;
-
                   return (
                     <div
                       key={step.key}
-                      className={`flex items-center justify-between p-3 rounded-xl border transition-all ${
-                        st === "completed"
-                          ? "border-[#00CC68]/30 bg-[#00CC68]/5 text-white"
-                          : st === "active"
-                          ? "border-[#00CC68] bg-zinc-900 text-white shadow-[0_0_12px_rgba(0,204,104,0.15)]"
-                          : "border-zinc-800/60 bg-zinc-900/30 text-zinc-500"
+                      className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                        status === "active"
+                          ? "bg-[#5E6AD2]/10 border-[#5E6AD2]/30 text-[#F7F8F8]"
+                          : status === "completed"
+                          ? "bg-[#191A1B]/60 border-[#23252A] text-[#F7F8F8]"
+                          : "bg-transparent border-[#23252A]/50 text-[#62666D]"
                       }`}
                     >
                       <div className="flex items-center gap-3">
                         <div
-                          className={`p-2 rounded-lg ${
-                            st === "completed"
-                              ? "bg-[#00CC68]/20 text-[#00CC68]"
-                              : st === "active"
-                              ? "bg-[#00CC68] text-black"
-                              : "bg-zinc-800 text-zinc-500"
+                          className={`p-1.5 rounded-md ${
+                            status === "completed"
+                              ? "bg-[#00FF05]/15 text-[#00FF05]"
+                              : status === "active"
+                              ? "bg-[#5E6AD2] text-white"
+                              : "bg-[#191A1B] text-[#62666D]"
                           }`}
                         >
-                          <Icon className="w-4 h-4" />
+                          <Icon className="w-3.5 h-3.5" />
                         </div>
                         <div>
-                          <div className="text-xs font-bold font-archivo uppercase tracking-wide">
+                          <div className="text-xs font-medium text-[#F7F8F8]">
                             {step.label}
                           </div>
-                          <div className="text-[11px] text-zinc-400 font-sans">
+                          <div className="text-[11px] text-[#8A8F98]">
                             {step.description}
                           </div>
                         </div>
                       </div>
 
                       <div>
-                        {st === "completed" && (
-                          <CheckCircle2 className="w-4 h-4 text-[#00CC68]" />
+                        {status === "completed" && (
+                          <CheckCircle2 className="w-4 h-4 text-[#00FF05]" />
                         )}
-                        {st === "active" && (
-                          <Loader2 className="w-4 h-4 text-[#00CC68] animate-spin" />
+                        {status === "active" && (
+                          <Loader2 className="w-4 h-4 text-[#5E6AD2] animate-spin" />
                         )}
-                        {st === "pending" && (
-                          <div className="w-2 h-2 rounded-full bg-zinc-700 mr-1" />
+                        {status === "pending" && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-[#23252A] mr-1" />
                         )}
                       </div>
                     </div>
@@ -566,12 +548,12 @@ export function PDFToLatexModal({ isOpen, onClose }: PDFToLatexModalProps) {
 
               {/* Ready message */}
               {convertedProject && (
-                <div className="p-3 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/40 text-[#00CC68] text-xs flex items-center justify-between font-mono font-bold">
+                <div className="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-500 text-xs flex items-center justify-between font-mono font-bold">
                   <span>Project Created! Launching editor...</span>
                   <Button
                     size="sm"
                     onClick={() => router.push(`/editor/${convertedProject.project_id}`)}
-                    className="h-7 text-xs bg-[#00CC68] text-black hover:bg-[#00E676] font-bold rounded-lg cursor-pointer"
+                    className="h-7 text-xs bg-emerald-600 text-white hover:bg-emerald-500 font-bold rounded-lg cursor-pointer"
                   >
                     <span>Open Now</span>
                     <ArrowRight className="w-3.5 h-3.5 ml-1" />

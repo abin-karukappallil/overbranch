@@ -23,9 +23,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isPending) {
     return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center gap-3 text-zinc-400 font-sans">
-        <Loader2 className="w-8 h-8 animate-spin text-[#00CC68]" />
-        <span className="text-xs font-mono font-bold tracking-wider uppercase text-zinc-400">Verifying session...</span>
+      <div className="min-h-screen bg-[#F3F4F6] dark:bg-[#0E0F12] flex flex-col items-center justify-center gap-3 text-slate-500 dark:text-[#9E9E9E] font-sans">
+        <Loader2 className="w-6 h-6 animate-spin text-emerald-500 dark:text-[#E2E4E9]" />
+        <span className="text-xs font-mono font-medium tracking-wider uppercase text-slate-500 dark:text-[#9E9E9E]">Loading workspace...</span>
       </div>
     );
   }
@@ -35,7 +35,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 relative font-sans selection:bg-[#00CC68]/30 selection:text-[#00CC68]">
+    <div className="min-h-screen bg-[#F3F4F6] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] relative font-sans selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-[#E2E4E9]">
       <DashboardSidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}
@@ -46,7 +46,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
       <div
         className={`transition-all duration-300 flex flex-col min-h-screen pl-0 ${
-          collapsed ? "md:pl-28" : "md:pl-72"
+          collapsed ? "md:pl-20" : "md:pl-64"
         }`}
       >
         <DashboardTopNav
@@ -54,7 +54,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onOpenCommandPalette={() => setCommandOpen(true)}
           onToggleMobileSidebar={() => setMobileOpen(!mobileOpen)}
         />
-        <main className="flex-1 px-4 py-5 sm:p-6 md:p-8 max-w-7xl mx-auto w-full min-w-0">
+        <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-7xl mx-auto w-full min-w-0">
           {children}
         </main>
       </div>

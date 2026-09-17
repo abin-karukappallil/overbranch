@@ -57,12 +57,12 @@ export function NotificationsPopover() {
         variant="ghost"
         size="icon"
         onClick={() => setOpen(!open)}
-        className="h-9 w-9 rounded-xl hover:bg-zinc-800 text-zinc-400 hover:text-white relative cursor-pointer"
+        className="h-8 w-8 rounded-lg hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] relative cursor-pointer"
         title="Notifications"
       >
         <Bell className="w-4 h-4" />
         {totalBadges > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-[#00CC68] text-black text-[10px] font-bold flex items-center justify-center animate-pulse">
+          <span className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-0.5 rounded-full bg-[#5E6AD2] text-white text-[9px] font-bold flex items-center justify-center">
             {totalBadges}
           </span>
         )}
@@ -71,12 +71,12 @@ export function NotificationsPopover() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="fixed top-16 left-3 right-3 sm:absolute sm:top-11 sm:left-auto sm:right-0 z-50 w-auto sm:w-96 max-h-[80vh] overflow-y-auto rounded-2xl border border-zinc-800 bg-zinc-900 text-white shadow-2xl p-3.5 sm:p-4 space-y-4 font-sans animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+          <div className="fixed top-16 left-3 right-3 sm:absolute sm:top-10 sm:left-auto sm:right-0 z-50 w-auto sm:w-80 max-h-[80vh] overflow-y-auto rounded-xl border border-[#23252A] bg-[#0F1011] text-[#F7F8F8] shadow-2xl p-3.5 space-y-3 font-sans animate-in fade-in duration-150">
+            <div className="flex items-center justify-between border-b border-[#23252A] pb-2.5">
               <div className="flex items-center gap-2">
-                <span className="font-archivo font-bold text-sm text-white uppercase tracking-wider">Notifications</span>
+                <span className="font-semibold text-xs text-[#F7F8F8] tracking-tight">Notifications</span>
                 {totalBadges > 0 && (
-                  <span className="px-2 py-0.5 text-xs rounded-full bg-[#00CC68]/20 text-[#00CC68] font-mono font-bold">
+                  <span className="px-1.5 py-0.2 text-[10px] rounded bg-[#5E6AD2]/10 text-[#5E6AD2] font-mono font-medium">
                     {totalBadges} new
                   </span>
                 )}
@@ -84,44 +84,44 @@ export function NotificationsPopover() {
               {unreadCount > 0 && (
                 <button
                   onClick={() => markAllReadMutation.mutate()}
-                  className="text-xs text-[#00CC68] hover:underline flex items-center gap-1 font-mono font-bold cursor-pointer"
+                  className="text-[11px] text-[#5E6AD2] hover:text-[#4F5BBE] flex items-center gap-1 font-medium cursor-pointer"
                 >
-                  <Check className="w-3.5 h-3.5" /> Mark all read
+                  <Check className="w-3 h-3" /> Mark read
                 </button>
               )}
             </div>
 
             {/* Pending Invitations Section */}
             {pendingInvites && pendingInvites.length > 0 && (
-              <div className="space-y-2 font-mono">
-                <span className="text-[11px] font-bold text-[#00CC68] uppercase tracking-wider block">
-                  Pending Co-Author Invitations ({pendingInvites.length})
+              <div className="space-y-2">
+                <span className="text-[10px] font-medium text-[#8A8F98] uppercase tracking-wider block">
+                  Pending Invitations ({pendingInvites.length})
                 </span>
                 {pendingInvites.map((invite) => (
                   <div
                     key={invite.id}
-                    className="p-3 rounded-xl border border-[#00CC68]/40 bg-zinc-950 space-y-2"
+                    className="p-3 rounded-lg border border-[#23252A] bg-[#141517] space-y-2"
                   >
-                    <div className="flex items-start gap-2.5">
-                      <UserPlus className="w-4 h-4 text-[#00CC68] shrink-0 mt-0.5" />
+                    <div className="flex items-start gap-2">
+                      <UserPlus className="w-3.5 h-3.5 text-[#5E6AD2] shrink-0 mt-0.5" />
                       <div className="text-xs space-y-0.5">
-                        <p className="font-bold text-white">
+                        <p className="font-medium text-[#F7F8F8]">
                           {invite.senderName || invite.senderEmail} invited you
                         </p>
-                        <p className="text-zinc-400">
-                          Project: <span className="font-mono text-[#00CC68] font-bold">{invite.projectName}</span>
+                        <p className="text-[#8A8F98] text-[11px]">
+                          Project: <span className="font-mono text-[#D0D6E0]">{invite.projectName}</span>
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 pt-1 font-bold">
+                    <div className="flex items-center gap-2 pt-1">
                       <Button
                         size="sm"
                         onClick={() => acceptInviteMutation.mutate({ invitationId: invite.id })}
                         disabled={acceptInviteMutation.isPending}
-                        className="h-7 text-xs bg-[#00CC68] hover:bg-[#00E676] text-black rounded-lg px-3 flex-1 font-mono cursor-pointer"
+                        className="h-6 text-[11px] bg-[#5E6AD2] hover:bg-[#4F5BBE] text-white rounded-md px-2.5 flex-1 cursor-pointer font-medium"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
                         Accept
                       </Button>
                       <Button
@@ -129,9 +129,9 @@ export function NotificationsPopover() {
                         variant="outline"
                         onClick={() => declineInviteMutation.mutate({ invitationId: invite.id })}
                         disabled={declineInviteMutation.isPending}
-                        className="h-7 text-xs border-zinc-800 text-zinc-300 hover:text-white rounded-lg px-3 flex-1 font-mono cursor-pointer"
+                        className="h-6 text-[11px] border-[#23252A] bg-[#0F1011] text-[#8A8F98] hover:text-[#F7F8F8] rounded-md px-2.5 flex-1 cursor-pointer"
                       >
-                        <XCircle className="w-3.5 h-3.5 mr-1" />
+                        <XCircle className="w-3 h-3 mr-1" />
                         Decline
                       </Button>
                     </div>
@@ -141,31 +141,31 @@ export function NotificationsPopover() {
             )}
 
             {/* System Notifications List */}
-            <div className="space-y-2 max-h-64 overflow-y-auto font-mono">
+            <div className="space-y-1.5 max-h-56 overflow-y-auto">
               {!notificationsList || notificationsList.length === 0 ? (
-                <div className="py-6 text-center text-xs text-zinc-500 font-mono">
+                <div className="py-6 text-center text-xs text-[#62666D]">
                   No notifications yet.
                 </div>
               ) : (
                 notificationsList.map((item) => (
                   <div
                     key={item.id}
-                    className={`p-3 rounded-xl border transition-all ${
+                    className={`p-2.5 rounded-lg border transition-all ${
                       item.isRead
-                        ? "border-zinc-800/60 bg-zinc-950/40 opacity-70"
-                        : "border-[#00CC68]/30 bg-zinc-950 shadow-xs"
+                        ? "border-[#23252A]/50 bg-[#141517]/40 opacity-70"
+                        : "border-[#23252A] bg-[#141517]"
                     }`}
                   >
-                    <div className="flex items-start gap-2.5">
-                      <Zap className="w-4 h-4 text-[#00CC68] shrink-0 mt-0.5" />
-                      <div className="space-y-1 text-xs flex-1">
-                        <div className="flex items-center justify-between font-bold text-white">
+                    <div className="flex items-start gap-2">
+                      <Zap className="w-3.5 h-3.5 text-[#5E6AD2] shrink-0 mt-0.5" />
+                      <div className="space-y-0.5 text-xs flex-1">
+                        <div className="flex items-center justify-between font-medium text-[#F7F8F8]">
                           <span>{item.title}</span>
-                          <span className="text-[10px] text-zinc-500 font-mono">
+                          <span className="text-[10px] text-[#62666D] font-mono">
                             {item.createdAtFormatted}
                           </span>
                         </div>
-                        <p className="text-zinc-400 leading-relaxed font-sans">{item.message}</p>
+                        <p className="text-[#8A8F98] leading-relaxed text-[11px]">{item.message}</p>
                       </div>
                     </div>
                   </div>

@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
+import { authFetch } from "@/lib/api-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -85,9 +86,7 @@ export default function ConvertPage() {
       return;
     }
     try {
-      const res = await fetch(`${BACKEND_URL}/api/guest/session`, {
-        credentials: "include",
-      });
+      const res = await authFetch(`${BACKEND_URL}/api/guest/session`);
       if (res.ok) {
         const data = await res.json();
         setQuotaStatus(data);
@@ -156,13 +155,12 @@ export default function ConvertPage() {
         }
 
         const endpoint = userId ? `${BACKEND_URL}/api/pdf/convert` : `${BACKEND_URL}/api/guest/pdf/convert`;
-        const response = await fetch(endpoint, {
+        const response = await authFetch(endpoint, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             ...(userId ? { "X-User-Id": userId } : {}),
           },
-          credentials: "include",
           body: JSON.stringify({
             pdf_data: pdfBase64,
             project_name: projectName.trim() || undefined,
@@ -266,7 +264,7 @@ export default function ConvertPage() {
   if (isAuthPending || authSession?.user) {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center text-zinc-400 gap-3">
-        <RotateCw className="w-6 h-6 animate-spin text-[#00CC68]" />
+        <RotateCw className="w-6 h-6 animate-spin text-indigo-400" />
         <p className="text-xs font-mono">
           {authSession?.user ? "Redirecting to Dashboard PDF Workspace..." : "Verifying session..."}
         </p>
@@ -275,7 +273,7 @@ export default function ConvertPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-[#00CC68]/30 selection:text-[#00CC68]">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col selection:bg-indigo-500/30 selection:text-indigo-400">
       {/* Top Navigation */}
       <header className="h-16 border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md px-4 sm:px-8 flex items-center justify-between sticky top-0 z-50">
         <div className="flex items-center gap-3">
@@ -304,7 +302,7 @@ export default function ConvertPage() {
           </Link>
           <Link
             href="/register"
-            className="text-xs font-mono font-bold bg-[#00CC68] hover:bg-[#00E676] text-black px-4 py-2 rounded-xl shadow-[3px_3px_0px_0px_#000000] border border-black transition-all flex items-center gap-1.5"
+            className="text-xs font-mono font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl shadow-sm shadow-indigo-500/20 border border-indigo-700 transition-all flex items-center gap-1.5"
           >
             <span>Create Account</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -317,8 +315,8 @@ export default function ConvertPage() {
         {/* Header Hero */}
         <div className="text-center space-y-3 mb-8">
           <h1 className="text-2xl sm:text-4xl font-archivo font-black uppercase tracking-tight text-white flex items-center justify-center gap-2.5 flex-wrap">
-            <span>Convert PDF Document to <span className="text-[#00CC68]">Editable LaTeX</span></span>
-            <span className="text-xs sm:text-sm font-mono font-black uppercase px-2 py-0.5 rounded bg-zinc-800 text-[#00CC68] border border-zinc-700 tracking-wider">
+            <span>Convert PDF Document to <span className="text-indigo-400">Editable LaTeX</span></span>
+            <span className="text-xs sm:text-sm font-mono font-black uppercase px-2 py-0.5 rounded bg-zinc-800 text-indigo-400 border border-zinc-700 tracking-wider">
               BETA
             </span>
           </h1>
@@ -328,13 +326,13 @@ export default function ConvertPage() {
           </p>
 
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-400">
-            <span className="text-[#00CC68] font-bold">⚠️ Beta Feature:</span>
+            <span className="text-indigo-400 font-bold">⚠️ Beta Feature:</span>
             <span>Encountering bugs or formatting issues? Please</span>
             <a
               href="https://github.com/abin-karukappallil/overbranch/issues"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#00CC68] underline font-bold"
+              className="text-indigo-400 underline font-bold"
             >
               report on GitHub Issues →
             </a>
@@ -343,13 +341,13 @@ export default function ConvertPage() {
 
         {/* Existing Active Project Banner */}
         {quotaStatus?.active_project && !isConverting && (
-          <div className="mb-6 p-4 rounded-2xl bg-zinc-900/90 border border-[#00CC68]/30 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="mb-6 p-4 rounded-2xl bg-zinc-900/90 border border-indigo-500/30 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-3 text-left">
-              <div className="p-2.5 rounded-xl bg-[#00CC68]/15 border border-[#00CC68]/30 text-[#00CC68]">
+              <div className="p-2.5 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-400">
                 <FileText className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-xs font-mono text-[#00CC68] uppercase font-bold tracking-wider">
+                <div className="text-xs font-mono text-indigo-400 uppercase font-bold tracking-wider">
                   Active Guest Project Found
                 </div>
                 <div className="text-sm font-archivo font-bold text-white">
@@ -363,7 +361,7 @@ export default function ConvertPage() {
 
             <Link
               href={`/editor/${quotaStatus.active_project.project_id}`}
-              className="w-full sm:w-auto px-4 py-2 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold text-xs rounded-xl shadow-[3px_3px_0px_0px_#000000] border border-black transition-all flex items-center justify-center gap-2"
+              className="w-full sm:w-auto px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold text-xs rounded-xl shadow-sm shadow-indigo-500/20 border border-indigo-700 transition-all flex items-center justify-center gap-2"
             >
               <span>Resume in Editor</span>
               <ExternalLink className="w-3.5 h-3.5" />
@@ -390,7 +388,7 @@ export default function ConvertPage() {
             <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
               <Link
                 href="/register"
-                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold text-xs uppercase tracking-wider shadow-[4px_4px_0px_0px_#000000] border border-black transition-all flex items-center justify-center gap-2"
+                className="w-full sm:w-auto px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold text-xs uppercase tracking-wider shadow-sm shadow-indigo-500/20 border border-indigo-700 transition-all flex items-center justify-center gap-2"
               >
                 <span>Create Free Account for Unlimited Access</span>
                 <ArrowRight className="w-4 h-4" />
@@ -420,9 +418,9 @@ export default function ConvertPage() {
                   onClick={() => fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-3 ${
                     isDragging
-                      ? "border-[#00CC68] bg-[#00CC68]/5 scale-[0.99]"
+                      ? "border-indigo-500 bg-indigo-500/5 scale-[0.99]"
                       : selectedFile
-                      ? "border-[#00CC68]/60 bg-[#00CC68]/5"
+                      ? "border-indigo-500/60 bg-indigo-500/5"
                       : "border-zinc-800 hover:border-zinc-700 bg-zinc-950/40 hover:bg-zinc-950/70"
                   }`}
                 >
@@ -436,7 +434,7 @@ export default function ConvertPage() {
 
                   {selectedFile ? (
                     <div className="space-y-2">
-                      <div className="w-12 h-12 mx-auto rounded-xl bg-[#00CC68]/20 border border-[#00CC68]/40 flex items-center justify-center text-[#00CC68]">
+                      <div className="w-12 h-12 mx-auto rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400">
                         <FileText className="w-6 h-6 stroke-[2.5]" />
                       </div>
                       <div className="font-archivo font-bold text-white text-sm sm:text-base">
@@ -445,7 +443,7 @@ export default function ConvertPage() {
                       <div className="text-xs font-mono text-zinc-400">
                         {(selectedFile.size / (1024 * 1024)).toFixed(2)} MB · Ready for conversion
                       </div>
-                      <span className="inline-block text-[11px] font-mono text-[#00CC68] hover:underline pt-1">
+                      <span className="inline-block text-[11px] font-mono text-indigo-400 hover:underline pt-1">
                         Click to choose a different PDF
                       </span>
                     </div>
@@ -458,7 +456,7 @@ export default function ConvertPage() {
                         Drop your PDF document here
                       </div>
                       <p className="text-xs text-zinc-400 font-sans">
-                        Drag and drop or <span className="text-[#00CC68] underline font-medium">browse from your device</span>
+                        Drag and drop or <span className="text-indigo-400 underline font-medium">browse from your device</span>
                       </p>
                       <p className="text-[11px] font-mono text-zinc-400">
                         Max file size: 50MB · Up to 50 pages supported
@@ -476,7 +474,7 @@ export default function ConvertPage() {
                     value={projectName}
                     onChange={(e) => setProjectName(e.target.value)}
                     placeholder="Enter a project name"
-                    className="bg-zinc-950 border-zinc-800 text-white font-mono text-xs h-11 rounded-xl focus:border-[#00CC68]"
+                    className="bg-zinc-950 border-zinc-800 text-white font-mono text-xs h-11 rounded-xl focus:border-indigo-500"
                   />
                 </div>
 
@@ -492,7 +490,7 @@ export default function ConvertPage() {
                   type="submit"
                   disabled={!selectedFile || isConverting}
                   size="lg"
-                  className="w-full h-12 bg-[#00CC68] hover:bg-[#00E676] disabled:opacity-50 text-black font-mono font-bold uppercase tracking-wider text-xs rounded-xl shadow-[4px_4px_0px_0px_#000000] border border-black transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full h-12 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-mono font-bold uppercase tracking-wider text-xs rounded-xl shadow-sm shadow-indigo-500/20 border border-indigo-700 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>Start Free PDF to LaTeX Conversion</span>
                 </Button>
@@ -501,7 +499,7 @@ export default function ConvertPage() {
               /* Progress View */
               <div className="space-y-6 py-4">
                 <div className="text-center space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#00CC68]/15 border border-[#00CC68]/30 text-xs font-mono text-[#00CC68]">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-xs font-mono text-indigo-400">
                     <RotateCw className="w-3.5 h-3.5 animate-spin" />
                     <span>Pipeline Active</span>
                   </div>
@@ -517,7 +515,7 @@ export default function ConvertPage() {
                 <div className="space-y-1.5">
                   <div className="w-full h-2.5 rounded-full bg-zinc-950 border border-zinc-800 overflow-hidden">
                     <motion.div
-                      className="h-full bg-gradient-to-r from-[#00CC68] to-[#00E676]"
+                      className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400"
                       initial={{ width: "10%" }}
                       animate={{ width: `${progressPct}%` }}
                       transition={{ duration: 0.4 }}
@@ -541,22 +539,22 @@ export default function ConvertPage() {
                         key={step.key}
                         className={`p-3 rounded-xl border flex items-center justify-between gap-3 text-xs transition-all ${
                           isPassed
-                            ? "bg-[#00CC68]/10 border-[#00CC68]/30 text-zinc-200"
+                            ? "bg-emerald-500/10 border-emerald-500/30 text-zinc-200"
                             : isCurrent
-                            ? "bg-zinc-800/80 border-[#00CC68] text-white shadow-[0_0_15px_rgba(0,204,104,0.15)]"
+                            ? "bg-zinc-800/80 border-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.15)]"
                             : "bg-zinc-950/40 border-zinc-800/60 text-zinc-400 opacity-60"
                         }`}
                       >
                         <div className="flex items-center gap-2.5">
-                          <step.icon className={`w-4 h-4 ${isPassed || isCurrent ? "text-[#00CC68]" : "text-zinc-400"}`} />
+                          <step.icon className={`w-4 h-4 ${isPassed ? "text-emerald-500" : isCurrent ? "text-indigo-400" : "text-zinc-400"}`} />
                           <span className="font-mono font-bold">{step.label}</span>
                           <span className="text-[11px] text-zinc-400 hidden sm:inline">— {step.description}</span>
                         </div>
                         <div>
                           {isPassed ? (
-                            <CheckCircle2 className="w-4 h-4 text-[#00CC68]" />
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                           ) : isCurrent ? (
-                            <RotateCw className="w-3.5 h-3.5 text-[#00CC68] animate-spin" />
+                            <RotateCw className="w-3.5 h-3.5 text-indigo-400 animate-spin" />
                           ) : (
                             <span className="text-[10px] font-mono text-zinc-400">WAITING</span>
                           )}
@@ -574,7 +572,7 @@ export default function ConvertPage() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-8">
           <div className="p-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 space-y-1.5">
             <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
-              <Zap className="w-3.5 h-3.5 text-[#00CC68]" />
+              <Zap className="w-3.5 h-3.5 text-indigo-400" />
               <span>Native AST Extraction</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
@@ -584,7 +582,7 @@ export default function ConvertPage() {
 
           <div className="p-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 space-y-1.5">
             <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
-              <ImageIcon className="w-3.5 h-3.5 text-[#00CC68]" />
+              <ImageIcon className="w-3.5 h-3.5 text-indigo-400" />
               <span>Asset Preservation</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
@@ -594,7 +592,7 @@ export default function ConvertPage() {
 
           <div className="p-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 space-y-1.5">
             <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#00CC68]" />
+              <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
               <span>Seamless Migration</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
