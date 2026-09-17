@@ -16,6 +16,7 @@ import {
   Download,
   Maximize2,
   HelpCircle,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
@@ -41,6 +42,7 @@ interface PDFViewerProps {
   pdfBase64: string | null;
   isCompiling: boolean;
   onRecompile: () => void;
+  onAskAiToFix?: (errorLog: string) => void;
   errorLog?: string | null;
   projectId?: string;
   onReverseSync?: (file: string, line: number, column: number) => void;
@@ -56,6 +58,7 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       pdfBase64,
       isCompiling,
       onRecompile,
+      onAskAiToFix,
       errorLog,
       projectId,
       onReverseSync,
@@ -244,18 +247,18 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
     );
 
     return (
-      <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-hidden relative bg-zinc-950 text-zinc-100">
+      <div className="flex flex-col h-full w-full max-w-full min-w-0 overflow-hidden relative bg-slate-100 dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] transition-colors">
         {/* PDF Header Bar */}
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-zinc-800 bg-zinc-950 shrink-0 select-none">
+        <div className="h-9 flex items-center justify-between px-3 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] shrink-0 select-none">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-mono font-bold text-white uppercase tracking-wider">
+            <span className="text-xs font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] uppercase tracking-wider">
               PDF Preview
             </span>
             <span
-              className="hidden lg:flex items-center gap-1 text-[10px] text-zinc-400 font-mono bg-zinc-900 border border-zinc-800 px-2 py-0.5 rounded-full"
+              className="hidden lg:flex items-center gap-1 text-[10px] text-slate-600 dark:text-[#9E9E9E] font-mono bg-white dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] px-2 py-0.5 rounded-full"
               title="Ctrl + Click (Cmd + Click on Mac) any text in the PDF to jump directly to its LaTeX line."
             >
-              <HelpCircle className="w-3 h-3 text-[#00CC68]" />
+              <HelpCircle className="w-3 h-3 text-[#10B981]" />
               <span>Ctrl+Click to Sync</span>
             </span>
           </div>
@@ -267,39 +270,24 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
                 size="sm"
                 variant="outline"
                 onClick={onEnterPresentation}
-                className="h-7 px-2.5 text-xs font-mono font-bold border-purple-500/40 bg-purple-950/30 hover:bg-purple-900/40 text-purple-300 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                className="h-7 px-2.5 text-xs font-mono font-medium border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-700 dark:text-[#E2E4E9] flex items-center gap-1.5 cursor-pointer shadow-xs"
                 title="Fullscreen Presentation Mode (Ctrl+Alt+P)"
               >
-                <Maximize2 className="w-3.5 h-3.5 text-purple-400" />
+                <Maximize2 className="w-3.5 h-3.5 text-[#10B981]" />
                 <span className="hidden sm:inline">Present</span>
               </Button>
             )}
 
-            {/* Recompile Button */}
-            <Button
-              size="sm"
-              onClick={onRecompile}
-              disabled={isCompiling}
-              className="h-7 px-3 bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-lg text-xs border border-black shadow-[3px_3px_0px_0px_#000000] flex items-center gap-1.5 cursor-pointer"
-              title="Compile TeX PDF"
-            >
-              {isCompiling ? (
-                <RotateCw className="w-3.5 h-3.5 animate-spin text-black" />
-              ) : (
-                <Play className="w-3.5 h-3.5 fill-current text-black" />
-              )}
-              <span>Compile</span>
-            </Button>
 
             {blobUrl && (
               <Button
                 size="sm"
                 variant="outline"
                 onClick={handleDownloadPDF}
-                className="h-7 px-2.5 text-xs font-mono font-bold border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white flex items-center gap-1.5 cursor-pointer"
+                className="h-7 px-2.5 text-xs font-mono font-medium border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-700 dark:text-[#E2E4E9] flex items-center gap-1.5 cursor-pointer shadow-xs"
                 title="Download PDF document"
               >
-                <Download className="w-3.5 h-3.5 text-[#00CC68]" />
+                <Download className="w-3.5 h-3.5 text-[#10B981]" />
                 <span className="hidden sm:inline">Download</span>
               </Button>
             )}
@@ -308,38 +296,52 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
 
         {/* Loading Overlay */}
         {isCompiling && (
-          <div className="absolute inset-0 z-20 bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center gap-3 select-none">
-            <RotateCw className="w-8 h-8 text-[#00CC68] animate-spin" />
-            <span className="text-xs font-mono text-[#00CC68] font-bold tracking-wider uppercase">
-              Compiling TeX PDF with SyncTeX...
+          <div className="absolute inset-0 z-20 bg-white/90 dark:bg-[#0E0F12]/90 flex flex-col items-center justify-center gap-3 select-none">
+            <RotateCw className="w-7 h-7 text-[#10B981] animate-spin" />
+            <span className="text-xs font-mono text-[#10B981] font-semibold tracking-wider uppercase">
+              Compiling LaTeX document...
             </span>
           </div>
         )}
 
         {/* Error Overlay */}
         {errorLog && !isCompiling && (
-          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 gap-3 bg-zinc-950/95">
-            <AlertTriangle className="w-10 h-10 text-amber-400" />
-            <span className="text-sm font-mono font-bold uppercase text-amber-400">
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-6 gap-3 bg-white/95 dark:bg-[#0E0F12]/95">
+            <AlertTriangle className="w-9 h-9 text-amber-500" />
+            <span className="text-sm font-mono font-semibold uppercase text-amber-500">
               Compilation Error
             </span>
-            <pre className="text-[11px] text-zinc-300 font-mono max-w-full overflow-auto bg-zinc-900 border border-zinc-800 rounded-xl p-3 max-h-56 whitespace-pre-wrap select-all">
+            <pre className="text-[11px] text-slate-900 dark:text-[#E2E4E9] font-mono max-w-full overflow-auto bg-slate-50 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] rounded-xl p-3.5 max-h-56 whitespace-pre-wrap select-all">
               {errorLog}
             </pre>
-            <Button
-              size="sm"
-              onClick={onRecompile}
-              className="bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold rounded-xl h-8 text-xs mt-2 border border-black shadow-[3px_3px_0px_0px_#000000]"
-            >
-              <RotateCw className="w-3.5 h-3.5 mr-1.5" />
-              Retry Compilation
-            </Button>
+            <div className="flex items-center gap-2 mt-2">
+              {onAskAiToFix && (
+                <Button
+                  size="sm"
+                  onClick={() => onAskAiToFix(errorLog)}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-archivo font-bold rounded-xl h-8 text-xs border border-emerald-600 shadow-sm cursor-pointer flex items-center gap-1.5"
+                  title="Ask AI to fix this LaTeX error"
+                >
+                  <Bot className="w-3.5 h-3.5 text-white" />
+                  <span>Ask AI to Fix</span>
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={onRecompile}
+                className="bg-white hover:bg-slate-100 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-slate-700 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl h-8 text-xs border border-slate-200 dark:border-[#282A30] cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-slate-500 dark:text-[#10B981]" />
+                <span>Retry Compilation</span>
+              </Button>
+            </div>
           </div>
         )}
 
         {/* PDF Render Block */}
         {blobUrl && !errorLog && (
-          <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-zinc-950 overflow-hidden">
+          <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-slate-100 dark:bg-[#0E0F12] overflow-hidden">
             <ExtendPDFViewer
               ref={extendViewerRef}
               src={blobUrl}
@@ -357,17 +359,17 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
 
         {/* Empty State */}
         {!blobUrl && !errorLog && !isCompiling && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-400 font-mono">
-            <Eye className="w-12 h-12 opacity-30 text-[#00CC68]" />
-            <span className="text-xs font-bold uppercase tracking-wider">
+          <div className="flex flex-col items-center justify-center h-full gap-3 text-slate-500 dark:text-[#9E9E9E] font-mono">
+            <Eye className="w-10 h-10 opacity-40 text-emerald-600 dark:text-[#10B981]" />
+            <span className="text-xs font-archivo font-bold uppercase tracking-wider text-slate-700 dark:text-[#E2E4E9]">
               No PDF compiled yet
             </span>
             <Button
               size="sm"
               onClick={onRecompile}
-              className="bg-[#00CC68] hover:bg-[#00E676] text-black font-mono font-bold uppercase tracking-wider rounded-xl h-8 text-xs border border-black shadow-[3px_3px_0px_0px_#000000] cursor-pointer"
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-archivo font-bold uppercase tracking-wider rounded-xl h-8 text-xs border border-emerald-600/30 shadow-sm cursor-pointer"
             >
-              <Play className="w-3.5 h-3.5 mr-1.5 fill-current text-black" />
+              <Play className="w-3.5 h-3.5 mr-1.5 fill-current text-white" />
               Compile PDF Now
             </Button>
           </div>
@@ -377,16 +379,17 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         <button
           onClick={onRecompile}
           disabled={isCompiling}
-          className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 w-12 h-12 rounded-full bg-[#00CC68] text-black flex items-center justify-center shadow-2xl border-2 border-black active:scale-95 transition-transform"
+          className="md:hidden fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] right-4 z-40 w-12 h-12 rounded-full bg-[#10B981] text-white flex items-center justify-center shadow-2xl border border-[#10B981]/40 active:scale-95 transition-transform"
           title="Recompile TeX"
         >
           {isCompiling ? (
-            <RotateCw className="w-5 h-5 animate-spin text-black" />
+            <RotateCw className="w-5 h-5 animate-spin text-white" />
           ) : (
-            <Play className="w-5 h-5 fill-current ml-0.5 text-black" />
+            <Play className="w-5 h-5 fill-current ml-0.5 text-white" />
           )}
         </button>
       </div>
     );
   }
 );
+

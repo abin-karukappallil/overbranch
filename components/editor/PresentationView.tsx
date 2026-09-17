@@ -361,8 +361,8 @@ export function PresentationView({
         {isLoadingSlide && !slideUrl && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-xs z-10">
             <div className="flex flex-col items-center gap-2">
-              <div className="w-8 h-8 rounded-full border-2 border-[#00CC68] border-t-transparent animate-spin" />
-              <span className="text-xs font-mono text-[#00CC68] font-bold uppercase tracking-wider">
+              <div className="w-8 h-8 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+              <span className="text-xs font-mono text-indigo-400 font-bold uppercase tracking-wider">
                 Loading Slide {currentPage}...
               </span>
             </div>
@@ -439,7 +439,7 @@ export function PresentationView({
           <button
             type="button"
             onClick={() => setZoomScale(1.0)}
-            className="px-2 py-1 rounded-lg hover:bg-zinc-800 text-[11px] font-mono font-bold text-zinc-300 hover:text-[#00CC68] transition-colors cursor-pointer"
+            className="px-2 py-1 rounded-lg hover:bg-zinc-800 text-[11px] font-mono font-bold text-zinc-300 hover:text-indigo-400 transition-colors cursor-pointer"
             title="Reset Zoom (0)"
           >
             {Math.round(zoomScale * 100)}%

@@ -37,9 +37,7 @@ export function AgentReasoningWindow({
     });
   }, []);
 
-  // Monitor user scroll inside the reasoning box:
-  // If user scrolls up to inspect previous steps, pause pinning.
-  // If user scrolls back down near the bottom (within 24px), re-enable pinning.
+  // Monitor user scroll inside the reasoning box
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -54,7 +52,6 @@ export function AgentReasoningWindow({
   // Auto-scroll when steps change or updates arrive
   useEffect(() => {
     if (isAutoScrollPinned) {
-      // Use requestAnimationFrame to ensure DOM rendering completes before scrolling
       const frameId = requestAnimationFrame(() => {
         scrollToBottom("smooth");
       });
@@ -78,16 +75,16 @@ export function AgentReasoningWindow({
 
   return (
     <div
-      className={`p-3 rounded-2xl bg-zinc-900/95 border border-[#00CC68]/30 text-zinc-100 font-mono space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1 relative ${
+      className={`p-3 rounded-2xl bg-[#141519] border border-[#282A30] text-[#E2E4E9] font-mono space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1 relative ${
         compact ? "text-[11px]" : "text-xs"
       } ${className}`}
     >
       {/* Header */}
-      <div className="flex items-center justify-between font-bold border-b border-zinc-800/80 pb-2 text-[#00CC68]">
+      <div className="flex items-center justify-between font-archivo font-bold border-b border-[#282A30] pb-2 text-[#E2E4E9]">
         <div className="flex items-center gap-2 min-w-0">
-          <Zap className="w-3.5 h-3.5 text-[#00CC68] animate-pulse shrink-0" />
-          <span className="truncate">AI Agent Reasoning</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#00CC68]/15 text-[#00CC68] border border-[#00CC68]/25 font-mono font-semibold shrink-0">
+          <Zap className="w-3.5 h-3.5 text-[#10B981] animate-pulse shrink-0" />
+          <span className="truncate">Agent Reasoning</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#22242C] text-[#9E9E9E] border border-[#282A30] font-mono font-medium shrink-0">
             Step {activeStepNumber}
           </span>
         </div>
@@ -97,10 +94,10 @@ export function AgentReasoningWindow({
             <button
               type="button"
               onClick={handleResumeAutoScroll}
-              className="px-2 py-0.5 rounded-md bg-[#00CC68]/15 hover:bg-[#00CC68]/25 text-[#00CC68] border border-[#00CC68]/30 text-[10px] font-mono font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs animate-bounce"
+              className="px-2 py-0.5 rounded-md bg-[#22242C] hover:bg-[#2A2C36] text-[#10B981] border border-[#282A30] text-[10px] font-mono font-medium flex items-center gap-1 transition-all cursor-pointer shadow-xs animate-bounce"
               title="Resume auto-scroll to latest step"
             >
-              <ArrowDown className="w-2.5 h-2.5 text-[#00CC68]" />
+              <ArrowDown className="w-2.5 h-2.5 text-[#10B981]" />
               <span>Latest</span>
             </button>
           )}
@@ -108,18 +105,18 @@ export function AgentReasoningWindow({
           <button
             type="button"
             onClick={onStop}
-            className={`px-2 py-0.5 rounded-md bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 font-mono font-bold flex items-center gap-1 transition-colors shrink-0 cursor-pointer ${
+            className={`px-2 py-0.5 rounded-md bg-[#EB5757]/10 hover:bg-[#EB5757]/20 text-[#EB5757] border border-[#EB5757]/30 font-mono font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer ${
               compact ? "text-[10px]" : "text-xs"
             }`}
             title="Stop AI agent thinking"
           >
-            <Square className="w-2.5 h-2.5 fill-current text-rose-300" />
+            <Square className="w-2.5 h-2.5 fill-current text-[#EB5757]" />
             <span>Stop</span>
           </button>
         </div>
       </div>
 
-      {/* Reasoning Steps Container with Efficient Auto-Scroll */}
+      {/* Reasoning Steps Container */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
@@ -128,13 +125,13 @@ export function AgentReasoningWindow({
         }`}
         style={{
           scrollbarWidth: "thin",
-          scrollbarColor: "#27272a transparent",
+          scrollbarColor: "#282A30 transparent",
         }}
       >
         {steps.length === 0 ? (
-          <div className="flex items-center gap-2 text-[#00CC68]/90 animate-pulse py-1 font-mono text-[11px]">
-            <Loader2 className="w-3 h-3 text-[#00CC68] animate-spin shrink-0" />
-            <span>Initializing TeX intelligence engine...</span>
+          <div className="flex items-center gap-2 text-[#9E9E9E] animate-pulse py-1 font-mono text-[11px]">
+            <Loader2 className="w-3 h-3 text-[#10B981] animate-spin shrink-0" />
+            <span>Initializing LaTeX pipeline...</span>
           </div>
         ) : (
           steps.map((s, idx) => {
@@ -146,18 +143,18 @@ export function AgentReasoningWindow({
                   compact ? "text-[10px]" : "text-[11px]"
                 } ${
                   isLatest
-                    ? "text-[#00CC68] bg-[#00CC68]/10 border border-[#00CC68]/30 font-semibold shadow-xs"
-                    : "text-zinc-400 bg-zinc-950/40 border border-zinc-800/40 font-normal hover:text-zinc-300"
+                    ? "text-[#E2E4E9] bg-[#22242C] border border-[#282A30] font-medium"
+                    : "text-[#9E9E9E] bg-[#1A1C22] border border-[#282A30]/60 font-normal hover:text-[#E2E4E9]"
                 }`}
               >
                 <div className="mt-0.5 shrink-0">
                   {isLatest ? (
                     <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00CC68] opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#00CC68]" />
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10B981]" />
                     </span>
                   ) : (
-                    <Check className="w-3 h-3 text-[#00CC68]/70" />
+                    <Check className="w-3 h-3 text-[#10B981]" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0 break-words leading-relaxed">
@@ -172,3 +169,4 @@ export function AgentReasoningWindow({
     </div>
   );
 }
+
