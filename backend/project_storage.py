@@ -3,13 +3,13 @@ import re
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from supabase import create_client, Client
-from vector_sync import sync_file, SyncFileRequest
+from auth import resolve_auth, verify_project_ownership_or_member
 
 load_dotenv()
 
@@ -28,27 +28,11 @@ class SaveDocumentRequest(BaseModel):
     user_id: Optional[str] = Field(None, description="Requesting User ID for authorization check")
 
 
-def verify_project_access(supabase: Client, project_id: str, user_id: Optional[str] = None):
+def verify_project_access(supabase: Client, project_id: str, user_id: Optional[str] = None, is_guest: bool = False):
     """Verifies that project exists and user is owner or member."""
     if not project_id or not user_id:
         return
-    try:
-        proj_res = supabase.table("projects").select("id, owner_id").eq("id", project_id).execute()
-        data = proj_res.data or []
-        if data:
-            owner_id = data[0].get("owner_id")
-            if owner_id == user_id:
-                return
-            mem_res = supabase.table("project_members").select("id").eq("project_id", project_id).eq("user_id", user_id).execute()
-            if not (mem_res.data or []):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Forbidden: Access denied for this project."
-                )
-    except HTTPException:
-        raise
-    except Exception as err:
-        logger.warning(f"Project access verification check skipped/warned: {err}")
+    verify_project_ownership_or_member(supabase, project_id, user_id, is_guest=is_guest)
 
 
 def get_project_disk_path(project_id: str, file_path: str) -> Path:
@@ -117,17 +101,19 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
 
 
 @router.post("/api/projects/save-file")
-def save_project_file(req: SaveDocumentRequest):
+def save_project_file(req: SaveDocumentRequest, request: Request):
     """
     Saves LaTeX document code:
-    1. Verifies server-side authorization access.
+    1. Verifies server-side authorization access with token or session.
     2. Writes to local system disk storage under uploads/projects/<project_id>/<file_path>.
     3. Upserts document in Supabase latex_documents database table.
-    4. Triggers Qdrant vector sync for .tex files.
     """
     try:
         supabase = get_supabase_client()
-        verify_project_access(supabase, req.project_id, req.user_id)
+        auth_info = resolve_auth(request)
+        user_id = (auth_info and auth_info.get("user_id")) or req.user_id
+        is_guest = bool(auth_info and auth_info.get("is_guest"))
+        verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
         # 1. Save to local disk
         target_path = get_project_disk_path(req.project_id, req.file_path)
@@ -141,17 +127,6 @@ def save_project_file(req: SaveDocumentRequest):
             logger.info(f"Upserted document in Supabase latex_documents for project '{req.project_id}'.")
         except Exception as db_err:
             logger.warning(f"Supabase DB save fallback warning: {db_err}")
-
-        # 3. Trigger background Qdrant vector sync if .tex file
-        if req.file_path.endswith(".tex"):
-            try:
-                sync_file(SyncFileRequest(
-                    project_id=req.project_id,
-                    file_path=req.file_path,
-                    new_code=req.raw_code
-                ))
-            except Exception as v_err:
-                logger.warning(f"Background vector sync warning: {v_err}")
 
         return {
             "success": True,
@@ -171,12 +146,19 @@ def save_project_file(req: SaveDocumentRequest):
 
 @router.post("/api/projects/upload-asset")
 async def upload_project_asset(
+    request: Request,
     project_id: str = Form(...),
     file_path: str = Form(...),
     file: UploadFile = File(...)
 ):
     """Uploads binary assets (images, PDFs, fonts, class files) to local disk & records in DB."""
     try:
+        supabase = get_supabase_client()
+        auth_info = resolve_auth(request)
+        user_id = auth_info and auth_info.get("user_id")
+        is_guest = bool(auth_info and auth_info.get("is_guest"))
+        verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+
         target_path = get_project_disk_path(project_id, file_path)
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -186,7 +168,6 @@ async def upload_project_asset(
 
         # Save metadata in Supabase latex_documents table safely
         try:
-            supabase = get_supabase_client()
             asset_meta = f"[Binary Asset: {file.filename}, Size: {len(content)} bytes]"
             upsert_latex_document(supabase, project_id, file_path, asset_meta)
         except Exception as db_err:
@@ -208,11 +189,17 @@ async def upload_project_asset(
 
 
 @router.get("/api/projects/get-file")
-def get_project_file(project_id: str, file_path: str = "main.tex"):
+def get_project_file(request: Request, project_id: str, file_path: str = "main.tex"):
     """
     Retrieves project file content from local disk or Supabase latex_documents table.
     Includes auto-creation fallback for main.tex when missing.
     """
+    supabase = get_supabase_client()
+    auth_info = resolve_auth(request)
+    user_id = auth_info and auth_info.get("user_id")
+    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+
     target_path = get_project_disk_path(project_id, file_path)
 
     # 1. Check local disk first
@@ -303,8 +290,14 @@ E = mc^2
 
 
 @router.get("/api/projects/list-files")
-def list_project_files(project_id: str):
+def list_project_files(request: Request, project_id: str):
     """Lists all files and assets for a project from disk and Supabase DB."""
+    supabase = get_supabase_client()
+    auth_info = resolve_auth(request)
+    user_id = auth_info and auth_info.get("user_id")
+    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+
     files_map: Dict[str, Dict[str, Any]] = {}
 
     # 1. Check local disk
@@ -326,7 +319,6 @@ def list_project_files(project_id: str):
 
     # 2. Query Supabase latex_documents for any DB records
     try:
-        supabase = get_supabase_client()
         res = supabase.table("latex_documents").select("file_path").eq("project_id", project_id).execute()
         for row in res.data or []:
             f_path = row.get("file_path")
@@ -365,7 +357,7 @@ class RenameFileRequest(BaseModel):
 
 
 @router.post("/api/projects/rename-file")
-def rename_project_file(req: RenameFileRequest):
+def rename_project_file(req: RenameFileRequest, request: Request):
     """
     Renames a project file/asset on local disk and in Supabase DB.
     main.tex cannot be renamed or replaced.
@@ -390,7 +382,10 @@ def rename_project_file(req: RenameFileRequest):
         )
 
     supabase = get_supabase_client()
-    verify_project_access(supabase, req.project_id, req.user_id)
+    auth_info = resolve_auth(request)
+    user_id = (auth_info and auth_info.get("user_id")) or req.user_id
+    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
     old_disk_path = get_project_disk_path(req.project_id, old_clean)
     new_disk_path = get_project_disk_path(req.project_id, new_clean)
@@ -420,14 +415,6 @@ def rename_project_file(req: RenameFileRequest):
     except Exception as e:
         logger.warning(f"Error updating file path in Supabase DB: {e}")
 
-    if old_clean.endswith(".tex") or new_clean.endswith(".tex"):
-        try:
-            if new_disk_path.exists() and new_clean.endswith(".tex"):
-                content = new_disk_path.read_text(encoding="utf-8")
-                sync_file(SyncFileRequest(project_id=req.project_id, file_path=new_clean, new_code=content))
-        except Exception as v_err:
-            logger.warning(f"Background vector sync warning on rename: {v_err}")
-
     return {
         "success": True,
         "project_id": req.project_id,
@@ -437,10 +424,16 @@ def rename_project_file(req: RenameFileRequest):
 
 
 @router.delete("/api/projects/delete-file")
-def delete_project_file(project_id: str, file_path: str):
+def delete_project_file(request: Request, project_id: str, file_path: str):
     """Deletes a file from local disk and Supabase DB."""
     if file_path.strip().lower() == "main.tex":
         raise HTTPException(status_code=400, detail="Cannot delete primary main.tex document.")
+
+    supabase = get_supabase_client()
+    auth_info = resolve_auth(request)
+    user_id = auth_info and auth_info.get("user_id")
+    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
     target_path = get_project_disk_path(project_id, file_path)
     if target_path.exists():
@@ -448,7 +441,6 @@ def delete_project_file(project_id: str, file_path: str):
         logger.info(f"Deleted file from local disk: '{target_path}'")
 
     try:
-        supabase = get_supabase_client()
         supabase.table("latex_documents").delete().eq("project_id", project_id).eq("file_path", file_path).execute()
         logger.info(f"Deleted file record from Supabase DB: '{file_path}'")
     except Exception as e:

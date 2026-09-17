@@ -47,6 +47,7 @@ class LLMProvider(ABC):
         temperature: float = 0.1,
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
+        cancel_token: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Sends a chat completion request and returns a standardized response dict.

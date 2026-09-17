@@ -6,6 +6,7 @@ import requests
 from typing import List, Dict, Any, Optional
 
 from .base_provider import LLMProvider, LLMProviderError
+from cancellation import LLMOperationCancelled
 
 logger = logging.getLogger("groq_provider")
 
@@ -53,7 +54,11 @@ class GroqProvider(LLMProvider):
         temperature: float = 0.1,
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
+        cancel_token: Optional[Any] = None,
     ) -> Dict[str, Any]:
+        if cancel_token and cancel_token.is_cancelled():
+            raise LLMOperationCancelled("Groq LLM call cancelled before execution.")
+
         runtime_candidates = []
         if api_keys and api_keys.get("groq"):
             runtime_candidates.append({"name": "User Groq API", "key": api_keys["groq"].strip()})
@@ -74,7 +79,7 @@ class GroqProvider(LLMProvider):
 
         for idx, creds in enumerate(candidates):
             start_time = time.time()
-            logger.info(f"Groq Request → Key: {creds['name']} | Model: {target_model} | Approx Tokens: {approx_tokens}")
+            logger.info(f"Groq Request → Key: {creds['name']} | Model: {target_model}")
 
             try:
                 headers = {

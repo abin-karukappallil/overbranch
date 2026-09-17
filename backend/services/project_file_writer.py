@@ -24,7 +24,6 @@ from project_storage import (
     get_supabase_client,
     upsert_latex_document,
 )
-from vector_sync import sync_file, SyncFileRequest
 
 logger = logging.getLogger("project_file_writer")
 
@@ -76,17 +75,6 @@ def write_project_files_and_assets(
             upsert_latex_document(supabase, project_id, clean_path, pfile.content)
         except Exception as db_err:
             logger.warning(f"Database upsert error for {clean_path}: {db_err}")
-
-        # Vector sync for .tex files
-        if clean_path.endswith(".tex"):
-            try:
-                sync_file(SyncFileRequest(
-                    project_id=project_id,
-                    file_path=clean_path,
-                    new_code=pfile.content,
-                ))
-            except Exception as v_err:
-                logger.warning(f"Vector sync error for {clean_path}: {v_err}")
 
     # 2. Write binary image assets
     for asset in conversion.assets:

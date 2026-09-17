@@ -18,7 +18,7 @@ import mimetypes
 import requests
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Generator, Optional, List
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
+from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -457,13 +457,13 @@ class FileAnalysisRegistry:
     def get_provider(self, name: str = "gpt-120b") -> BaseFileAnalysisProvider:
         return self._providers.get("gpt-120b")
 
-registry = FileAnalysisRegistry()
-
+from auth import resolve_auth
 
 # ─── Fast API Route Handler ───────────────────────────────────────────────────
 
 @router.post("/ai/analyze-file")
 async def analyze_file_endpoint(
+    request: Request,
     file: UploadFile = File(..., description="Uploaded original file"),
     prompt: str = Form(..., description="User prompt describing analysis instructions"),
     provider: Optional[str] = Form("gpt-120b", description="LLM provider (default: gpt-120b)"),
@@ -475,6 +475,7 @@ async def analyze_file_endpoint(
     Accepts multipart/form-data with original file and user prompt.
     Processes file via GPT-120B OSS with Groq Multi-Key failover (GROQ_API_KEY -> GROQ_API_KEY_2 -> GROQ_API_KEY_3).
     """
+    auth_info = resolve_auth(request)
     if not prompt or not prompt.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
