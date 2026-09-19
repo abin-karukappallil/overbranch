@@ -161,12 +161,12 @@ export function DashboardSidebar({
               className="h-4 w-auto object-contain shrink-0"
             />
             {(!isCompact || isMobile) && (
-              <div className="min-w-0 truncate">
+              <div className="min-w-0 gap-1 flex flex-row items-center justify-center ">
                 <span className="text-[9px] font-mono text-slate-500 dark:text-[#9E9E9E] block leading-none uppercase">
                   Powered By
                 </span>
                 <span className="text-[11px] font-mono font-bold text-slate-800 dark:text-[#E2E4E9] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 truncate block">
-                  UPZARE Technologies
+                  UPZARE 
                 </span>
               </div>
             )}
