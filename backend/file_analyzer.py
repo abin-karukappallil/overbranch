@@ -457,25 +457,31 @@ class FileAnalysisRegistry:
     def get_provider(self, name: str = "gpt-120b") -> BaseFileAnalysisProvider:
         return self._providers.get("gpt-120b")
 
-from auth import resolve_auth
+from fastapi import Depends
+from auth import get_current_user_or_guest
+from rate_limiter import RateLimiter
 
 # ─── Fast API Route Handler ───────────────────────────────────────────────────
 
-@router.post("/ai/analyze-file")
+@router.post(
+    "/ai/analyze-file",
+    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_analyze_file"))],
+)
 async def analyze_file_endpoint(
     request: Request,
     file: UploadFile = File(..., description="Uploaded original file"),
     prompt: str = Form(..., description="User prompt describing analysis instructions"),
     provider: Optional[str] = Form("gpt-120b", description="LLM provider (default: gpt-120b)"),
     model: Optional[str] = Form(None, description="Specific model override"),
-    stream: Optional[bool] = Form(False, description="Stream output via SSE")
+    stream: Optional[bool] = Form(False, description="Stream output via SSE"),
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """
     POST /api/ai/analyze-file
     Accepts multipart/form-data with original file and user prompt.
+    Requires an active Better Auth session or verified guest identity.
     Processes file via GPT-120B OSS with Groq Multi-Key failover (GROQ_API_KEY -> GROQ_API_KEY_2 -> GROQ_API_KEY_3).
     """
-    auth_info = resolve_auth(request)
     if not prompt or not prompt.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

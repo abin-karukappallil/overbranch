@@ -30,7 +30,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "Read exact line-numbered content from the LaTeX file. "
             "Returns lines in the format '<line_no>: <content>'. "
-            "Use this to inspect the document before making edits. "
+            "Use this to inspect the target section or surrounding context (up to 200-300 lines in one call). "
             "Always read the target area first to get the exact text for str_replace."
         ),
         "parameters": {
@@ -45,7 +45,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
             "end_line": {
                 "type": "integer",
-                "description": "1-indexed end line (inclusive).",
+                "description": "1-indexed end line (inclusive). Can read up to 200-300 lines in one call.",
             },
         },
         "required": ["start_line", "end_line"],
@@ -92,6 +92,25 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": ["old_str", "new_str"],
     },
     {
+        "name": "rewrite_chunk",
+        "description": (
+            "Replace an entire document chunk (chapter, section, or frame) by its chunk_id. "
+            "Uses structural byte/character offsets rather than requiring exact string matching. "
+            "This is the PREFERRED tool in FULL_DOCUMENT_REWRITE mode to guarantee full section replacement."
+        ),
+        "parameters": {
+            "chunk_id": {
+                "type": "string",
+                "description": "The ID of the chunk to replace (e.g. 'chapter_1', 'chapter_2', 'section_1', 'frame_1').",
+            },
+            "new_content": {
+                "type": "string",
+                "description": "The complete replacement LaTeX content for this entire chunk.",
+            },
+        },
+        "required": ["chunk_id", "new_content"],
+    },
+    {
         "name": "list_assets",
         "description": (
             "List all files in the project's assets/ directory. Use this to discover "
@@ -105,8 +124,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "Compile the current shadow buffer with the LaTeX engine to check for errors. "
             "Returns {success: true/false, errors: [...], stderr: '...'}. "
-            "Call this after making edits to verify they compile correctly. "
-            "If compilation fails, read the error, fix it with str_replace, and try again."
+            "Call this after applying your edits to verify the document compiles cleanly before signaling done=true. "
+            "If compilation fails, read the error, fix it with str_replace, and verify again."
         ),
         "parameters": {},
         "required": [],
@@ -187,8 +206,8 @@ def execute_tool(
             start = int(args.get("start_line", 1))
             end = int(args.get("end_line", start + 50))
             # Clamp range to prevent excessive context
-            if end - start > 200:
-                end = start + 200
+            if end - start > 300:
+                end = start + 300
             content = workspace.read_lines(start, end)
             return {
                 "content": content,
@@ -210,6 +229,12 @@ def execute_tool(
             old_str = args.get("old_str", "")
             new_str = args.get("new_str", "")
             result = workspace.str_replace(old_str, new_str)
+            return result
+
+        elif tool_name == "rewrite_chunk":
+            chunk_id = str(args.get("chunk_id", "")).strip()
+            new_content = args.get("new_content", "")
+            result = workspace.rewrite_chunk(chunk_id, new_content)
             return result
 
         elif tool_name == "list_assets":

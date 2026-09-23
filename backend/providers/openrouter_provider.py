@@ -66,6 +66,9 @@ class OpenRouterProvider(LLMProvider):
 
     def get_available_models(self) -> List[Dict[str, Any]]:
         return [
+            {"id": "meta-llama/llama-3.3-70b-instruct", "label": "Llama 3.3 70B (Fast)", "default": False},
+            {"id": "openai/gpt-4o-mini", "label": "GPT-4o Mini (Fast)", "default": False},
+            {"id": "qwen/qwen-2.5-72b-instruct", "label": "Qwen 2.5 72B", "default": False},
             {"id": "minimax/minimax-01", "label": "MiniMax M3 (Text-01)", "default": True},
             {"id": "minimax/minimax-m3:free", "label": "MiniMax 3 Free", "default": False},
             {"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra Free", "default": False},

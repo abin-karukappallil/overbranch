@@ -56,7 +56,7 @@ class GeminiProvider(LLMProvider):
                 self._client = OpenAI(
                     api_key=self.api_key,
                     base_url=self.base_url,
-                    timeout=120.0,
+                    timeout=35.0,
                 )
             except ImportError:
                 raise LLMProviderError(
@@ -89,6 +89,7 @@ class GeminiProvider(LLMProvider):
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
         cancel_token: Optional[Any] = None,
+        web_search: bool = False,
     ) -> Dict[str, Any]:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Gemini LLM call cancelled before execution.")
@@ -101,7 +102,7 @@ class GeminiProvider(LLMProvider):
                 b_url = "https://generativelanguage.googleapis.com/v1beta/openai/" if user_key.startswith("AIza") else self.base_url
                 if not b_url:
                     raise LLMProviderError("Gemini base URL not configured.", provider="Gemini")
-                client = OpenAI(api_key=user_key, base_url=b_url, timeout=120.0)
+                client = OpenAI(api_key=user_key, base_url=b_url, timeout=35.0)
             except ImportError:
                 raise LLMProviderError("The 'openai' Python package is missing.", provider="Gemini")
         else:
@@ -114,8 +115,10 @@ class GeminiProvider(LLMProvider):
 
         try:
             extra_body = {}
-            if os.getenv("GEMINI_WEB_SEARCH", "false").lower() in ("true", "1", "yes"):
-                extra_body["web_search"] = True
+            # Only enable web search if explicitly requested (never on internal agent reasoning loops)
+            if web_search or os.getenv("GEMINI_WEB_SEARCH", "false").lower() in ("true", "1", "yes"):
+                if web_search:
+                    extra_body["web_search"] = True
 
             kwargs: Dict[str, Any] = {
                 "model": target_model,

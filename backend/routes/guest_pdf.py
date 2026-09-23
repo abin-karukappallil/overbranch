@@ -16,9 +16,13 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Set, Dict, Any, Optional
 
-from fastapi import APIRouter, Request, Response, HTTPException, status
+from fastapi import APIRouter, Request, Response, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
+
+from auth import get_current_user, get_optional_user
+from models import User
+from rate_limiter import RateLimiter
 
 from services.guest_identity import (
     get_or_create_guest_session,
@@ -63,7 +67,10 @@ def format_sse(event_type: str, data: Dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
-@router.get("/session")
+@router.get(
+    "/session",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_guest_sess"))],
+)
 async def get_session_info(request: Request):
     """Returns guest quota, active project, and countdown timer for the current device."""
     try:
@@ -81,8 +88,14 @@ async def get_session_info(request: Request):
         return JSONResponse(status_code=500, content={"detail": f"Failed to retrieve guest session: {str(e)}"})
 
 
-@router.post("/pdf/convert")
-async def convert_guest_pdf(request: Request):
+@router.post(
+    "/pdf/convert",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60, key_prefix="rl_guest_convert"))],
+)
+async def convert_guest_pdf(
+    request: Request,
+    optional_user: Optional[User] = Depends(get_optional_user),
+):
     """
     Public conversion endpoint:
     1. Authenticates/establishes guest session
@@ -103,23 +116,7 @@ async def convert_guest_pdf(request: Request):
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
     # Check if this request is from an authenticated user
-    auth_user_id = req.user_id or request.headers.get("x-user-id") or request.headers.get("X-User-Id")
-    if not auth_user_id:
-        auth_cookie = (
-            request.cookies.get("__Secure-better-auth.session_token")
-            or request.cookies.get("better-auth.session_token")
-            or request.cookies.get("session_token")
-        )
-        if auth_cookie:
-            try:
-                sb = get_supabase_client()
-                tok = auth_cookie.split(".")[0]
-                session_res = sb.table("session").select("user_id").eq("token", tok).limit(1).execute()
-                if session_res.data and session_res.data[0].get("user_id"):
-                    auth_user_id = session_res.data[0]["user_id"]
-                    logger.info(f"guest_pdf: resolved authenticated user '{auth_user_id}'")
-            except Exception as sess_err:
-                logger.warning(f"Could not resolve session in guest_pdf: {sess_err}")
+    auth_user_id = (optional_user and optional_user.id) or req.user_id
 
     # 1. Establish guest session & fingerprint
     session, token, _ = get_or_create_guest_session(request)
@@ -223,19 +220,28 @@ async def convert_guest_pdf(request: Request):
             # 5. Insert into guest_projects table with 24-hour expiration
             now_utc = datetime.now(timezone.utc)
             expires_at_dt = now_utc + timedelta(hours=24)
-            supabase = get_supabase_client()
-            guest_proj_record = {
-                "id": str(uuid.uuid4()),
-                "guest_session_id": session_id,
-                "project_id": project_id,
-                "migrated_to_user_id": auth_user_id if auth_user_id else None,
-                "migrated_at": now_utc.isoformat() if auth_user_id else None,
-                "expires_at": expires_at_dt.isoformat(),
-                "created_at": now_utc.isoformat(),
-            }
-            supabase.table("guest_projects").insert(guest_proj_record).execute()
+            try:
+                supabase = get_supabase_client()
+                guest_proj_record = {
+                    "id": str(uuid.uuid4()),
+                    "guest_session_id": session_id,
+                    "project_id": project_id,
+                    "migrated_to_user_id": auth_user_id if auth_user_id else None,
+                    "migrated_at": now_utc.isoformat() if auth_user_id else None,
+                    "expires_at": expires_at_dt.isoformat(),
+                    "created_at": now_utc.isoformat(),
+                }
+                supabase.table("guest_projects").insert(guest_proj_record).execute()
+            except Exception as gp_err:
+                logger.warning(f"Error recording guest project in database: {gp_err}")
 
-            yield format_sse("progress", {"step": "done", "message": "LaTeX project created! Opening editor...", "pct": 100})
+            yield format_sse("progress", {
+                "step": "done",
+                "message": "LaTeX project created! Opening editor...",
+                "pct": 100,
+                "project_id": project_id,
+                "guest_token": token,
+            })
 
             # Final result payload
             yield format_sse("result", {
@@ -286,8 +292,15 @@ async def convert_guest_pdf(request: Request):
     )
 
 
-@router.post("/migrate")
-async def migrate_guest_session(request: Request, payload: GuestMigrateRequest):
+@router.post(
+    "/migrate",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60, key_prefix="rl_guest_migrate"))],
+)
+async def migrate_guest_session(
+    request: Request,
+    payload: GuestMigrateRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Called by frontend after user registers or logs in.
     Transfers ownership of all guest projects to the authenticated user.
@@ -320,11 +333,12 @@ async def migrate_guest_session(request: Request, payload: GuestMigrateRequest):
 
     try:
         loop = asyncio.get_running_loop()
+        target_user = current_user.id
         result = await loop.run_in_executor(
             None,
             lambda: migrate_guest_projects_to_user(
                 guest_token=token,
-                target_user_id=payload.user_id,
+                target_user_id=target_user,
             )
         )
         return JSONResponse(content=result)
