@@ -774,7 +774,7 @@ def compile_latex(
             # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled)
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"]]
+                cmd_list = [["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["xelatex", "xe"]:
                 cmd_list = [["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["lualatex", "lua"]:
@@ -785,7 +785,7 @@ def compile_latex(
                 cmd_list = [["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
             else:
                 cmd_list = [
-                    ["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "-c-style-errors", "main.tex"],
+                    ["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                     ["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                     ["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
                 ]

@@ -179,9 +179,9 @@ export default function ConvertPage() {
         const decoder = new TextDecoder();
         let buffer = "";
         let finalResult: any = null;
+        let currentEvent = "";
 
         const parseLines = (lines: string[]) => {
-          let currentEvent = "";
           for (const line of lines) {
             const trimmed = line.replace(/\r$/, "");
             if (trimmed.startsWith("event: ")) {
@@ -190,7 +190,12 @@ export default function ConvertPage() {
               const raw = trimmed.slice(6);
               try {
                 const parsed = JSON.parse(raw);
-                if (currentEvent === "progress") {
+                const projId = parsed.project_id || parsed.data?.project_id || parsed.result?.project_id;
+                if (projId) {
+                  finalResult = { ...(finalResult || {}), ...parsed, project_id: projId };
+                }
+
+                if (currentEvent === "progress" || parsed.step) {
                   if (parsed.step) {
                     if (parsed.step.includes("analyz")) setCurrentStep("analyzing");
                     else if (parsed.step.includes("asset")) setCurrentStep("extracting_assets");
@@ -200,16 +205,19 @@ export default function ConvertPage() {
                   }
                   if (parsed.message) setStatusMessage(parsed.message);
                   if (parsed.pct) setProgressPct(parsed.pct);
-                } else if (currentEvent === "result") {
-                  finalResult = parsed;
-                } else if (currentEvent === "error") {
-                  throw new Error(parsed.message || "PDF conversion failed.");
+                }
+                
+                if (currentEvent === "result" || (parsed.success && projId)) {
+                  finalResult = { ...(finalResult || {}), ...parsed, ...(projId ? { project_id: projId } : {}) };
+                } else if (currentEvent === "error" || parsed.type === "error" || (parsed.error && !parsed.step)) {
+                  throw new Error(parsed.message || parsed.error || (typeof parsed === "string" ? parsed : "PDF conversion failed."));
                 }
               } catch (parseErr: any) {
                 if (parseErr.message && !parseErr.message.includes("JSON")) {
                   throw parseErr;
                 }
               }
+            } else if (trimmed === "") {
               currentEvent = "";
             }
           }

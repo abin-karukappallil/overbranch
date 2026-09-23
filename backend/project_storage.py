@@ -3,13 +3,14 @@ import re
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File, Form, Depends
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 from supabase import create_client, Client
-from auth import resolve_auth, verify_project_ownership_or_member
+from auth import get_current_user_or_guest, verify_project_ownership_or_member
+from rate_limiter import RateLimiter
 
 load_dotenv()
 
@@ -100,8 +101,15 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
         logger.warning(f"Failed to upsert latex_document ({file_path}): {e}")
 
 
-@router.post("/api/projects/save-file")
-def save_project_file(req: SaveDocumentRequest, request: Request):
+@router.post(
+    "/api/projects/save-file",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_save_file"))],
+)
+def save_project_file(
+    req: SaveDocumentRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Saves LaTeX document code:
     1. Verifies server-side authorization access with token or session.
@@ -110,9 +118,8 @@ def save_project_file(req: SaveDocumentRequest, request: Request):
     """
     try:
         supabase = get_supabase_client()
-        auth_info = resolve_auth(request)
-        user_id = (auth_info and auth_info.get("user_id")) or req.user_id
-        is_guest = bool(auth_info and auth_info.get("is_guest"))
+        user_id = auth_info.get("user_id") or req.user_id
+        is_guest = bool(auth_info.get("is_guest"))
         verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
         # 1. Save to local disk
@@ -136,6 +143,8 @@ def save_project_file(req: SaveDocumentRequest, request: Request):
             "saved_to_db": True
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error saving project file: {str(e)}", exc_info=True)
         raise HTTPException(
@@ -144,19 +153,22 @@ def save_project_file(req: SaveDocumentRequest, request: Request):
         )
 
 
-@router.post("/api/projects/upload-asset")
+@router.post(
+    "/api/projects/upload-asset",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_upload_asset"))],
+)
 async def upload_project_asset(
     request: Request,
     project_id: str = Form(...),
     file_path: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """Uploads binary assets (images, PDFs, fonts, class files) to local disk & records in DB."""
     try:
         supabase = get_supabase_client()
-        auth_info = resolve_auth(request)
-        user_id = auth_info and auth_info.get("user_id")
-        is_guest = bool(auth_info and auth_info.get("is_guest"))
+        user_id = auth_info.get("user_id")
+        is_guest = bool(auth_info.get("is_guest"))
         verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
         target_path = get_project_disk_path(project_id, file_path)
@@ -188,16 +200,23 @@ async def upload_project_asset(
         )
 
 
-@router.get("/api/projects/get-file")
-def get_project_file(request: Request, project_id: str, file_path: str = "main.tex"):
+@router.get(
+    "/api/projects/get-file",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_get_file"))],
+)
+def get_project_file(
+    request: Request,
+    project_id: str,
+    file_path: str = "main.tex",
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Retrieves project file content from local disk or Supabase latex_documents table.
     Includes auto-creation fallback for main.tex when missing.
     """
     supabase = get_supabase_client()
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
     target_path = get_project_disk_path(project_id, file_path)
@@ -289,13 +308,19 @@ E = mc^2
     )
 
 
-@router.get("/api/projects/list-files")
-def list_project_files(request: Request, project_id: str):
+@router.get(
+    "/api/projects/list-files",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_list_files"))],
+)
+def list_project_files(
+    request: Request,
+    project_id: str,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """Lists all files and assets for a project from disk and Supabase DB."""
     supabase = get_supabase_client()
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
     files_map: Dict[str, Dict[str, Any]] = {}
@@ -356,8 +381,15 @@ class RenameFileRequest(BaseModel):
     user_id: Optional[str] = Field(None, description="Requesting User ID for authorization check")
 
 
-@router.post("/api/projects/rename-file")
-def rename_project_file(req: RenameFileRequest, request: Request):
+@router.post(
+    "/api/projects/rename-file",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_rename_file"))],
+)
+def rename_project_file(
+    req: RenameFileRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Renames a project file/asset on local disk and in Supabase DB.
     main.tex cannot be renamed or replaced.
@@ -382,9 +414,8 @@ def rename_project_file(req: RenameFileRequest, request: Request):
         )
 
     supabase = get_supabase_client()
-    auth_info = resolve_auth(request)
-    user_id = (auth_info and auth_info.get("user_id")) or req.user_id
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id") or req.user_id
+    is_guest = bool(auth_info.get("is_guest"))
     verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
     old_disk_path = get_project_disk_path(req.project_id, old_clean)
@@ -423,16 +454,23 @@ def rename_project_file(req: RenameFileRequest, request: Request):
     }
 
 
-@router.delete("/api/projects/delete-file")
-def delete_project_file(request: Request, project_id: str, file_path: str):
+@router.delete(
+    "/api/projects/delete-file",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_delete_file"))],
+)
+def delete_project_file(
+    request: Request,
+    project_id: str,
+    file_path: str,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """Deletes a file from local disk and Supabase DB."""
     if file_path.strip().lower() == "main.tex":
         raise HTTPException(status_code=400, detail="Cannot delete primary main.tex document.")
 
     supabase = get_supabase_client()
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
     target_path = get_project_disk_path(project_id, file_path)

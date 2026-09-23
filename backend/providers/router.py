@@ -82,6 +82,9 @@ class ProviderRouter:
 
         clean_model = model.strip().lower()
 
+        if clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
+            return self.gemini
+
         if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS or "gemini" in clean_model:
             return self.gemini
 
@@ -139,15 +142,47 @@ class ProviderRouter:
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        clean_model = (model or "").strip().lower()
+        if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
+            model = DEFAULT_MODEL
+
         provider = self.route(model)
         logger.info(f"Routing model '{model}' → {provider.get_provider_name()}")
-        return provider.chat(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            api_keys=api_keys,
-        )
+        try:
+            return provider.chat(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_keys=api_keys,
+            )
+        except Exception as primary_err:
+            # If user explicit cancellation was requested, re-raise immediately
+            from cancellation import LLMOperationCancelled
+            if isinstance(primary_err, LLMOperationCancelled):
+                raise
+
+            # Automatic fallback to OpenRouter if Gemini / Groq fails or times out
+            if provider != self.openrouter and (self.openrouter.candidates or (api_keys and api_keys.get("openrouter"))):
+                fallback_model = "meta-llama/llama-3.3-70b-instruct"
+                logger.warning(
+                    f"Primary provider '{provider.get_provider_name()}' failed ({primary_err}). "
+                    f"Auto-falling back to OpenRouter ({fallback_model})..."
+                )
+                try:
+                    fallback_resp = self.openrouter.chat(
+                        messages=messages,
+                        model=fallback_model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        api_keys=api_keys,
+                    )
+                    fallback_resp["is_fallback"] = True
+                    return fallback_resp
+                except Exception as fb_err:
+                    logger.error(f"Fallback to OpenRouter also failed: {fb_err}")
+
+            raise primary_err
 
     def chat_fast_tier(
         self,

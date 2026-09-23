@@ -10,7 +10,7 @@ import json
 import logging
 import asyncio
 from typing import Set, Dict, Any, Optional
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,9 @@ from services.project_file_writer import (
     create_new_project_from_conversion,
 )
 from project_storage import get_supabase_client
-from auth import resolve_auth
+from auth import get_current_user, get_current_user_or_guest, verify_project_ownership_or_member
+from models import User
+from rate_limiter import RateLimiter
 
 logger = logging.getLogger("pdf_conversion")
 router = APIRouter(prefix="/api/pdf", tags=["pdf_conversion"])
@@ -51,12 +53,19 @@ def format_sse(event_type: str, data: Dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
 
-@router.post("/convert")
-async def convert_pdf_to_new_project(request: Request):
+@router.post(
+    "/convert",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60, key_prefix="rl_pdf_convert"))],
+)
+async def convert_pdf_to_new_project(
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Dashboard Entry Point:
     Uploads a PDF, converts it into an editable LaTeX project, creates the project in Supabase,
     and streams SSE progress events.
+    Supports authenticated Better Auth user sessions and verified guest sessions.
     """
     try:
         body = await request.body()
@@ -69,9 +78,9 @@ async def convert_pdf_to_new_project(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
-    # Determine user_id securely via Bearer token, session cookie, or guest token
-    auth_info = resolve_auth(request)
-    user_id = (auth_info and auth_info.get("user_id")) or req.user_id or "default-user"
+    # Extract user ID and guest status from auth dependency
+    user_id = auth_info["user_id"]
+    is_guest = bool(auth_info.get("is_guest"))
 
     # Enforce single concurrent conversion per user
     async with _lock:
@@ -152,6 +161,33 @@ async def convert_pdf_to_new_project(request: Request):
                 )
             )
 
+            new_project_id = created.get("project_id")
+
+            # If guest, record in guest_projects table
+            guest_token = None
+            if is_guest:
+                from datetime import datetime, timedelta, timezone
+                import uuid
+                from services.guest_identity import sign_guest_token
+                session_id = auth_info.get("session_id") or user_id.replace("guest_", "")
+                guest_token = sign_guest_token(session_id)
+                now_utc = datetime.now(timezone.utc)
+                expires_at_dt = now_utc + timedelta(hours=24)
+                try:
+                    sb = get_supabase_client()
+                    guest_proj_record = {
+                        "id": str(uuid.uuid4()),
+                        "guest_session_id": session_id,
+                        "project_id": new_project_id,
+                        "migrated_to_user_id": None,
+                        "migrated_at": None,
+                        "expires_at": expires_at_dt.isoformat(),
+                        "created_at": now_utc.isoformat(),
+                    }
+                    sb.table("guest_projects").insert(guest_proj_record).execute()
+                except Exception as gp_err:
+                    logger.warning(f"Error recording guest project in database: {gp_err}")
+
             # Surface visual fidelity report event
             yield format_sse("fidelity_score", {
                 "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
@@ -160,12 +196,20 @@ async def convert_pdf_to_new_project(request: Request):
                 "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
             })
 
-            yield format_sse("progress", {"step": "done", "message": "Project created successfully! Opening editor...", "pct": 100})
+            progress_done_payload = {
+                "step": "done",
+                "message": "Project created successfully! Opening editor...",
+                "pct": 100,
+                "project_id": new_project_id,
+            }
+            if guest_token:
+                progress_done_payload["guest_token"] = guest_token
+            yield format_sse("progress", progress_done_payload)
 
             # Final payload with project info
-            yield format_sse("result", {
+            result_payload = {
                 "success": True,
-                "project_id": created.get("project_id"),
+                "project_id": new_project_id,
                 "name": created.get("name"),
                 "document_class": created.get("document_class"),
                 "files": created.get("files", []),
@@ -175,7 +219,11 @@ async def convert_pdf_to_new_project(request: Request):
                 "fidelity_score": getattr(conversion_result, "fidelity_score", 1.0),
                 "flagged_pages": getattr(conversion_result, "flagged_pages", []),
                 "page_fidelity_scores": getattr(conversion_result, "page_fidelity_scores", {}),
-            })
+                "is_guest": is_guest,
+            }
+            if guest_token:
+                result_payload["guest_token"] = guest_token
+            yield format_sse("result", result_payload)
 
         except Exception as e:
             logger.error(f"Error in PDF conversion pipeline: {e}", exc_info=True)
@@ -195,12 +243,20 @@ async def convert_pdf_to_new_project(request: Request):
     )
 
 
-@router.post("/convert-in-project")
-async def convert_pdf_in_existing_project(request: Request):
+@router.post(
+    "/convert-in-project",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60, key_prefix="rl_pdf_convert_in_proj"))],
+)
+async def convert_in_project(
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     In-Editor Entry Point:
-    Converts PDF and writes files directly into an existing project, updating main.tex,
-    creating sections/, saving extracted images to assets/, and streaming progress events.
+    Uploads a PDF from within an existing open project, converts it into LaTeX,
+    overwrites or merges main.tex, saves any extracted figures into the project's assets/ directory,
+    and streams SSE progress events.
+    Requires an active Better Auth session or verified guest identity.
     """
     try:
         body = await request.body()
@@ -213,13 +269,11 @@ async def convert_pdf_in_existing_project(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {str(e)}"})
 
-    auth_info = resolve_auth(request)
-    user_id = (auth_info and auth_info.get("user_id")) or req.user_id or "default-user"
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
 
     try:
         sb = get_supabase_client()
-        from auth import verify_project_ownership_or_member
         verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
     except HTTPException as he:
         return JSONResponse(status_code=he.status_code, content={"detail": he.detail})

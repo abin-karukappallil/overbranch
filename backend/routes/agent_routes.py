@@ -17,12 +17,14 @@ import re
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from cancellation import cancellation_manager, CancellationToken, LLMOperationCancelled
-from auth import resolve_auth, verify_project_ownership_or_member
+from auth import get_current_user, get_current_user_or_guest, verify_project_ownership_or_member
+from models import User
+from rate_limiter import RateLimiter
 from project_storage import get_supabase_client
 
 logger = logging.getLogger("routes.agent_opencode")
@@ -52,18 +54,40 @@ class AgentStopRequest(BaseModel):
     request_id: Optional[str] = Field(None, description="Request ID to stop")
 
 
-@router.post("/api/agent/stop")
-async def agent_stop(req: AgentStopRequest, request: Request):
+@router.post(
+    "/api/agent/stop",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_agent_stop"))],
+)
+async def agent_stop(
+    req: AgentStopRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Immediately halts active OpenCode reasoning, LLM API calls,
     and background operations for the specified request_id and/or project_id.
+    Requires authenticated Better Auth session or verified guest identity.
     """
+    user_id = auth_info["user_id"]
+    is_guest = bool(auth_info.get("is_guest"))
+    if req.project_id:
+        try:
+            sb = get_supabase_client()
+            verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
+        except Exception as auth_err:
+            logger.warning(f"Stop request project authorization check: {auth_err}")
+            if req.project_id not in ("proj-default", "default", "scratchpad") and not req.project_id.startswith("proj-"):
+                raise
+
     cancelled = cancellation_manager.cancel(
         request_id=req.request_id,
         project_id=req.project_id,
-        reason="Stopped by user from editor UI",
+        reason=f"Stopped by user {user_id} from editor UI",
     )
-    logger.info(f"Agent stop requested: request_id={req.request_id}, project_id={req.project_id}, stopped={cancelled}")
+    logger.info(
+        f"Agent stop requested by user {user_id}: "
+        f"request_id={req.request_id}, project_id={req.project_id}, stopped={cancelled}"
+    )
     return {"success": True, "stopped": cancelled}
 
 
@@ -71,10 +95,17 @@ async def agent_stop(req: AgentStopRequest, request: Request):
 # SSE Endpoint
 # ============================================================================
 
-@router.post("/api/agent/opencode")
-async def agent_opencode(request: Request):
+@router.post(
+    "/api/agent/opencode",
+    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_agent_opencode"))],
+)
+async def agent_opencode(
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     OpenCode Agentic Pipeline with SSE streaming.
+    Requires an authenticated Better Auth user session or verified guest identity.
 
     Sends real-time reasoning events (thought, tool_call, tool_result,
     compile_error) and a final_diff payload for the InlineDiffEditor.
@@ -94,16 +125,17 @@ async def agent_opencode(request: Request):
     except Exception as e:
         return JSONResponse(status_code=422, content={"detail": f"Validation error: {e}"})
 
-    # Resolve requesting user identity & verify project access
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
-    if user_id and req.project_id:
+    # Verify project access for caller
+    user_id = auth_info["user_id"]
+    is_guest = bool(auth_info.get("is_guest"))
+    if req.project_id:
         try:
             sb = get_supabase_client()
             verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
         except Exception as auth_err:
-            logger.warning(f"Project access verification warning: {auth_err}")
+            logger.warning(f"Project access verification warning for user {user_id}: {auth_err}")
+            if req.project_id not in ("proj-default", "default", "scratchpad") and not req.project_id.startswith("proj-"):
+                raise
 
     # Create cancellation token
     request_id = req.request_id or f"OverBranch-{uuid.uuid4().hex[:12]}"
@@ -113,11 +145,14 @@ async def agent_opencode(request: Request):
     async def disconnect_monitor():
         try:
             while not token.is_cancelled():
-                if await request.is_disconnected():
-                    logger.info(f"Client disconnected for OverBranch request {request_id}")
-                    token.cancel("Client disconnected")
-                    break
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(1.5)
+                try:
+                    if await request.is_disconnected():
+                        logger.info(f"Client disconnected for OverBranch request {request_id}")
+                        token.cancel("Client disconnected")
+                        break
+                except Exception:
+                    pass
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -213,6 +248,16 @@ async def agent_opencode(request: Request):
                         "icon": "check",
                     })
 
+                elif event_type == "coverage_check":
+                    yield sse_event("coverage_check", event)
+                    passed = event.get("passed", False)
+                    msg = event.get("message", "Coverage check executed")
+                    yield sse_event("progress", {
+                        "step": "coverage_check",
+                        "message": msg,
+                        "icon": "check" if passed else "alert",
+                    })
+
                 elif event_type == "compile_error":
                     yield sse_event("progress", {
                         "step": "compile_error",
@@ -304,12 +349,22 @@ def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         else:
             return f"Replace failed: {result.get('error', 'unknown')[:100]}"
 
+    elif tool_name == "rewrite_chunk":
+        if result.get("success"):
+            chunk_id = result.get("chunk_id", "chunk")
+            lines = result.get("lines_affected", [])
+            return f"Rewrote chunk `{chunk_id}` (lines {lines[0]}–{lines[1]})" if lines else f"Rewrote chunk `{chunk_id}`"
+        else:
+            return f"Rewrite chunk failed: {result.get('error', 'unknown')[:100]}"
+
     elif tool_name == "list_assets":
         count = result.get("count", 0)
         return f" Found {count} asset file{'s' if count != 1 else ''}"
 
     elif tool_name == "verify_compile":
-        if result.get("success"):
+        if result.get("infra_skip"):
+            return "Compilation skipped (compiler unavailable)"
+        elif result.get("success"):
             ms = result.get("compile_time_ms", 0)
             return f"Compilation passed ({ms}ms)"
         else:

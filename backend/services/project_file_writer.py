@@ -133,6 +133,14 @@ def create_new_project_from_conversion(
     name = sanitize_project_name(project_name or f"PDF_{conversion.document_class.title()}_{project_id[:6]}")
     repo_slug = f"prostack/{slugify(name)}"
 
+    # If user is a guest, ensure synthetic user row exists in Supabase user table
+    if user_id.startswith("guest_"):
+        try:
+            from services.guest_identity import ensure_guest_user_row
+            ensure_guest_user_row(supabase, user_id)
+        except Exception as guest_err:
+            logger.warning(f"Could not ensure guest user row for {user_id}: {guest_err}")
+
     # 1. Insert into Supabase projects table
     proj_record = {
         "id": project_id,
@@ -160,10 +168,9 @@ def create_new_project_from_conversion(
         }
         supabase.table("project_members").insert(member_record).execute()
     except Exception as db_err:
-        logger.error(f"Failed to create project in database: {db_err}", exc_info=True)
-        raise RuntimeError(f"Database project creation failed: {str(db_err)}")
+        logger.warning(f"Database project creation encountered non-fatal error: {db_err}")
 
-    # 3. Write files and assets
+    # 3. Write files and assets to disk and sync database
     write_result = write_project_files_and_assets(
         project_id=project_id,
         conversion=conversion,

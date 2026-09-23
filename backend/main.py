@@ -1,5 +1,14 @@
+from pathlib import Path
 from dotenv import load_dotenv
-load_dotenv(override=True)
+
+# Load workspace root .env first, then backend .env if present
+_root_env = Path(__file__).resolve().parent.parent / ".env"
+_backend_env = Path(__file__).resolve().parent / ".env"
+if _root_env.exists():
+    load_dotenv(dotenv_path=_root_env, override=False)
+if _backend_env.exists():
+    load_dotenv(dotenv_path=_backend_env, override=True)
+load_dotenv(override=False)
 
 import os
 import asyncio
@@ -37,6 +46,13 @@ async def lifespan(app: FastAPI):
     logger.info("OverBranch TeX Engine API shutting down gracefully...")
     if _cleanup_task and not _cleanup_task.done():
         _cleanup_task.cancel()
+
+    from database import close_db
+    try:
+        await close_db()
+    except Exception as e:
+        logger.warning(f"Error closing database pool: {e}")
+
     logger.info("OverBranch shutdown complete.")
 
 
@@ -97,21 +113,34 @@ def health_check():
     }
 
 
-from auth import resolve_auth, verify_project_ownership_or_member
+from fastapi import Depends
+from auth import get_current_user_or_guest, verify_project_ownership_or_member
+from rate_limiter import RateLimiter
 from project_storage import get_supabase_client
 
 
-@app.post("/api/compile")
-async def compile_endpoint(req: CompileRequest, request: Request):
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+@app.post(
+    "/api/compile",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_compile"))],
+)
+async def compile_endpoint(
+    req: CompileRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """
+    Protected TeX compilation endpoint.
+    Requires an active Better Auth session or verified guest identity.
+    """
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     if user_id and req.project_id:
         try:
             sb = get_supabase_client()
             verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
         except Exception as e:
             logger.warning(f"Project compile verification warning: {e}")
+            raise
 
     code = req.latex_code if req.latex_code.strip() else req.latex
     images_dict = [{"filename": img.filename, "data": img.data} for img in (req.images or [])]
@@ -152,18 +181,25 @@ class SyncTeXForwardRequest(BaseModel):
     project_id: Optional[str] = None
 
 
-@app.post("/api/synctex/backward")
-def synctex_backward_endpoint(req: SyncTeXBackwardRequest, request: Request):
+@app.post(
+    "/api/synctex/backward",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_synctex"))],
+)
+async def synctex_backward_endpoint(
+    req: SyncTeXBackwardRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     from synctex_service import backward_lookup
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     if user_id and req.project_id:
         try:
             sb = get_supabase_client()
             verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
         except Exception as e:
             logger.warning(f"SyncTeX backward auth check warning: {e}")
+            raise
 
     res = backward_lookup(
         project_id=req.project_id,
@@ -179,18 +215,25 @@ def synctex_backward_endpoint(req: SyncTeXBackwardRequest, request: Request):
     return res
 
 
-@app.post("/api/synctex/forward")
-def synctex_forward_endpoint(req: SyncTeXForwardRequest, request: Request):
+@app.post(
+    "/api/synctex/forward",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_synctex"))],
+)
+async def synctex_forward_endpoint(
+    req: SyncTeXForwardRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     from synctex_service import forward_lookup
-    auth_info = resolve_auth(request)
-    user_id = auth_info and auth_info.get("user_id")
-    is_guest = bool(auth_info and auth_info.get("is_guest"))
+    user_id = auth_info.get("user_id")
+    is_guest = bool(auth_info.get("is_guest"))
     if user_id and req.project_id:
         try:
             sb = get_supabase_client()
             verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
         except Exception as e:
             logger.warning(f"SyncTeX forward auth check warning: {e}")
+            raise
 
     res = forward_lookup(
         project_id=req.project_id,
@@ -209,3 +252,4 @@ def synctex_forward_endpoint(req: SyncTeXForwardRequest, request: Request):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

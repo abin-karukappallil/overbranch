@@ -1610,16 +1610,35 @@ export function EditorLayout({
               try {
                 const parsed = JSON.parse(rawData);
 
-                if (currentEventType === "progress") {
+                if (currentEventType === "coverage_check" || parsed.type === "coverage_check") {
+                  const total = parsed.total_chunks ?? 0;
+                  const edited = parsed.edited_chunks ?? 0;
+                  const missing = parsed.missing_chunk_ids || [];
+                  const msg = parsed.passed
+                    ? `✓ Coverage Verified: All ${total} chunks successfully updated.`
+                    : `Coverage Check: ${edited}/${total} chunks edited. Missing: ${missing.join(", ")}`;
+                  setAgentProgressSteps((prev) => [...prev, {
+                    step: "coverage_check",
+                    message: parsed.message || msg,
+                    icon: parsed.passed ? "check" : "alert",
+                    ...parsed,
+                  }]);
+                } else if (currentEventType === "progress") {
                   setAgentProgressSteps((prev) => [...prev, parsed]);
-                } else if (["thought", "tool_call", "tool_result", "compile_error"].includes(currentEventType)) {
+                } else if (["thought", "tool_call", "tool_result", "compile_error", "coverage_check"].includes(currentEventType)) {
                   setAgentProgressSteps((prev) => [...prev, {
                     step: currentEventType,
                     message: parsed.content || parsed.message || (typeof parsed === "string" ? parsed : JSON.stringify(parsed)),
                     icon: currentEventType === "compile_error" ? "alert" : currentEventType === "thought" ? "brain" : currentEventType === "tool_call" ? "wrench" : "check",
                     ...parsed,
                   }]);
-                } else if (currentEventType === "final_diff") {
+                } else if (
+                  currentEventType === "final_diff" ||
+                  parsed.type === "final_diff" ||
+                  parsed.proposed_code !== undefined ||
+                  parsed.proposed_chunk !== undefined ||
+                  (Array.isArray(parsed.edits) && parsed.edits.length > 0)
+                ) {
                   finalData = {
                     ...parsed,
                     original_chunk: parsed.original_code || parsed.original_chunk || "",
@@ -1636,7 +1655,7 @@ export function EditorLayout({
                 } else if (currentEventType === "cancelled") {
                   console.log("AI Agent generation cleanly stopped by user:", parsed);
                   return;
-                } else if (currentEventType === "error") {
+                } else if (currentEventType === "error" || (parsed.type === "error" && parsed.message)) {
                   sseError = new Error(parsed.message || "AI Agent error");
                 }
               } catch (parseErr: any) {
@@ -1644,7 +1663,6 @@ export function EditorLayout({
                   sseError = parseErr;
                 }
               }
-              currentEventType = "";
             } else if (trimmed === "") {
               currentEventType = "";
             }

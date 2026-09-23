@@ -6,11 +6,13 @@ import shutil
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from project_storage import UPLOADS_BASE_DIR, get_supabase_client, upsert_latex_document
+from auth import get_current_user_or_guest
+from rate_limiter import RateLimiter
 
 logger = logging.getLogger("template_service")
 logging.basicConfig(level=logging.INFO)
@@ -165,8 +167,14 @@ class UseTemplateRequest(BaseModel):
     name: Optional[str] = Field(None, description="Custom name for new project")
 
 
-@router.get("/api/templates")
-@router.get("/api/templates/ppt")
+@router.get(
+    "/api/templates",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_templates_list"))],
+)
+@router.get(
+    "/api/templates/ppt",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_templates_list"))],
+)
 def list_ppt_templates():
     """Returns list of all LaTeX presentation, resume, and letter templates discovered on disk."""
     templates = discover_ppt_templates()
@@ -183,8 +191,14 @@ def list_ppt_templates():
     ]
 
 
-@router.get("/api/templates/{template_id}/thumbnail")
-@router.get("/api/templates/ppt/{template_id}/thumbnail")
+@router.get(
+    "/api/templates/{template_id}/thumbnail",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_templates_thumb"))],
+)
+@router.get(
+    "/api/templates/ppt/{template_id}/thumbnail",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_templates_thumb"))],
+)
 def get_template_thumbnail(template_id: str):
     """Serves template thumbnail image or dynamically generated SVG preview."""
     templates = discover_ppt_templates()
@@ -203,11 +217,22 @@ def get_template_thumbnail(template_id: str):
     return Response(content=svg_content, media_type="image/svg+xml")
 
 
-@router.post("/api/templates/{template_id}/use")
-@router.post("/api/templates/ppt/{template_id}/use")
-def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequest()):
+@router.post(
+    "/api/templates/{template_id}/use",
+    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_templates_use"))],
+)
+@router.post(
+    "/api/templates/ppt/{template_id}/use",
+    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_templates_use"))],
+)
+def use_ppt_template(
+    template_id: str,
+    req: UseTemplateRequest = UseTemplateRequest(),
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
     """
     Creates a new project workspace by duplicating the entire template directory.
+    Requires an active Better Auth session or verified guest identity.
     - Preserves all .tex, .sty, .cls, images, fonts, bibliography, assets, hidden files.
     - Renames template.tex / pre.tex to main.tex.
     - Registers project and files in database.
@@ -223,15 +248,7 @@ def use_ppt_template(template_id: str, req: UseTemplateRequest = UseTemplateRequ
         raise HTTPException(status_code=404, detail="Template source directory missing.")
 
     supabase = get_supabase_client()
-    user_id = req.user_id
-
-    if not user_id:
-        try:
-            users_res = supabase.table("user").select("id").limit(1).execute()
-            if users_res.data:
-                user_id = users_res.data[0]["id"]
-        except Exception as e:
-            logger.warning(f"Could not retrieve user fallback: {e}")
+    user_id = auth_info.get("user_id") or req.user_id
 
     if not user_id:
         raise HTTPException(

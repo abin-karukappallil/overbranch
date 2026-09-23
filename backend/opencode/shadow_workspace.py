@@ -13,7 +13,9 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+from document_index import DocumentChunk, DocumentIndex
 
 
 class ShadowWorkspaceError(Exception):
@@ -44,6 +46,8 @@ class ShadowWorkspace:
         self._assets_dir: Optional[str] = assets_dir
         self._lock = threading.Lock()
         self._edit_history: List[Dict[str, Any]] = []
+        self._doc_index = DocumentIndex()
+        self._touched_chunks: Set[str] = set()
 
     # ------------------------------------------------------------------
     # Read operations
@@ -202,6 +206,12 @@ class ShadowWorkspace:
             line_start = self._buffer[:pos].count("\n") + 1
             line_end = line_start + old_str.count("\n")
 
+            # Track affected chunk IDs
+            chunks = self._doc_index.get_chunks(self._buffer)
+            for c in chunks:
+                if (pos + len(old_str) > c.start_offset) and (pos < c.end_offset):
+                    self._touched_chunks.add(c.chunk_id)
+
             self._buffer = self._buffer.replace(old_str, new_str, 1)
 
             self._edit_history.append({
@@ -214,6 +224,49 @@ class ShadowWorkspace:
                 "success": True,
                 "occurrences_found": 1,
                 "lines_affected": [line_start, line_end],
+                "new_line_count": self._buffer.count("\n") + 1,
+            }
+
+    def rewrite_chunk(self, chunk_id: str, new_content: str) -> Dict[str, Any]:
+        """
+        Replaces a chunk's full content using DocumentIndex byte/character offsets.
+        This is the preferred tool when operating in full document rewrite mode.
+        """
+        with self._lock:
+            chunks = self._doc_index.get_chunks(self._buffer)
+            target = next((c for c in chunks if c.chunk_id == chunk_id), None)
+            if not target:
+                available_ids = [c.chunk_id for c in chunks]
+                return {
+                    "success": False,
+                    "error": f"Chunk '{chunk_id}' not found in document. Available chunk IDs: {available_ids}",
+                    "available_chunks": available_ids,
+                }
+
+            updated_code, updated_chunk, delta = self._doc_index.replace_chunk(
+                latex_code=self._buffer,
+                chunk_id=chunk_id,
+                new_content=new_content,
+            )
+            self._buffer = updated_code
+            self._touched_chunks.add(chunk_id)
+
+            line_start = target.start_line
+            line_end = line_start + new_content.count("\n")
+
+            self._edit_history.append({
+                "chunk_id": chunk_id,
+                "old_str": target.content,
+                "new_str": new_content,
+                "line_range": [line_start, line_end],
+            })
+
+            return {
+                "success": True,
+                "chunk_id": chunk_id,
+                "lines_affected": [line_start, line_end],
+                "old_length": len(target.content),
+                "new_length": len(new_content),
                 "new_line_count": self._buffer.count("\n") + 1,
             }
 
@@ -262,3 +315,22 @@ class ShadowWorkspace:
     def get_edit_history(self) -> List[Dict[str, Any]]:
         """Returns the full edit history for debugging."""
         return list(self._edit_history)
+
+    def get_touched_chunks(self) -> Set[str]:
+        """Returns the set of chunk IDs modified during this session."""
+        with self._lock:
+            return set(self._touched_chunks)
+
+    def get_document_index(self) -> DocumentIndex:
+        """Returns the DocumentIndex instance."""
+        return self._doc_index
+
+    def get_all_chunks(self) -> List[DocumentChunk]:
+        """Returns all chunks in the current buffer."""
+        with self._lock:
+            return self._doc_index.get_chunks(self._buffer)
+
+    def get_content_chunks(self) -> List[DocumentChunk]:
+        """Returns all content chunks (chapters/sections/frames) in the current buffer."""
+        with self._lock:
+            return self._doc_index.get_content_chunks(self._buffer)
