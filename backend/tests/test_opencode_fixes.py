@@ -253,7 +253,7 @@ def test_build_document_outline_indexes_structure():
 
 
 def test_router_chat_fallback_on_primary_failure():
-    """Verify that ProviderRouter.chat falls back to OpenRouter when primary provider fails."""
+    """Verify that ProviderRouter.chat falls back to OpenRouter MiniMax M3 when Gemini fails/times out."""
     from providers.router import ProviderRouter
 
     router = ProviderRouter()
@@ -269,7 +269,7 @@ def test_router_chat_fallback_on_primary_failure():
     mock_openrouter.candidates = [{"name": "Server Key 1", "key": "test-key"}]
     mock_openrouter.chat.return_value = {
         "content": "{\"thought\": \"Fallback succeeded\", \"done\": true}",
-        "model_used": "meta-llama/llama-3.3-70b-instruct",
+        "model_used": "minimax/minimax-01",
         "finish_reason": "stop",
     }
 
@@ -283,5 +283,72 @@ def test_router_chat_fallback_on_primary_failure():
 
     assert resp.get("is_fallback") is True
     assert "Fallback succeeded" in resp.get("content", "")
-    mock_openrouter.chat.assert_called_once()
+    mock_openrouter.chat.assert_called_once_with(
+        messages=[{"role": "user", "content": "hi"}],
+        model="minimax/minimax-01",
+        temperature=0.1,
+        max_tokens=4096,
+        api_keys=None,
+    )
+
+
+def test_gemini_provider_5_key_rotation_on_rate_limit(monkeypatch):
+    """Verify GeminiProvider loads up to 5 server-side keys and rotates on HTTP 429."""
+    for i in range(1, 6):
+        monkeypatch.setenv(f"GEMINI_WEB2API_API_KEY_{i}", f"gemini-test-key-{i}")
+    monkeypatch.setenv("GEMINI_WEB2API_BASE_URL", "https://api.example.com/v1")
+
+    from providers.gemini_provider import GeminiProvider
+    prov = GeminiProvider()
+
+    assert len(prov.candidates) == 5
+    assert prov.candidates[0]["key"] == "gemini-test-key-1"
+    assert prov.candidates[4]["key"] == "gemini-test-key-5"
+
+
+def test_openrouter_provider_5_key_rotation_on_rate_limit(monkeypatch):
+    """Verify OpenRouterProvider loads up to 5 server-side keys and rotates on HTTP 429."""
+    for i in range(1, 6):
+        monkeypatch.setenv(f"OPENROUTER_API_KEY_{i}", f"sk-or-v1-test-key-{i}")
+
+    from providers.openrouter_provider import OpenRouterProvider
+    prov = OpenRouterProvider()
+
+    assert len(prov.candidates) == 5
+    assert prov.candidates[0]["key"] == "sk-or-v1-test-key-1"
+    assert prov.candidates[4]["key"] == "sk-or-v1-test-key-5"
+    assert prov._normalize_model_name("minimax m3") == "minimax/minimax-01"
+    assert prov._normalize_model_name("minimax-01") == "minimax/minimax-01"
+
+
+def test_groq_provider_5_key_rotation_and_fast_model_routing(monkeypatch):
+    """Verify GroqProvider loads up to 5 keys, normalizes small fast models, and routes in ProviderRouter."""
+    for i in range(1, 6):
+        monkeypatch.setenv(f"GROQ_API_KEY_{i}", f"gsk_test_key_{i}")
+
+    from providers.groq_provider import GroqProvider
+    from providers.router import ProviderRouter, TaskType
+
+    prov = GroqProvider()
+    assert len(prov.candidates) == 5
+    assert prov.candidates[0]["key"] == "gsk_test_key_1"
+    assert prov.candidates[4]["key"] == "gsk_test_key_5"
+    assert prov.default_model == "openai/gpt-oss-120b"
+
+    assert prov.normalize_model_name("gpt-oss-120b") == "openai/gpt-oss-120b"
+    assert prov.normalize_model_name("groq/gpt-oss-120b") == "openai/gpt-oss-120b"
+    assert prov.normalize_model_name("llama3-8b") == "llama-3.1-8b-instant"
+    assert prov.normalize_model_name("groq/fast") == "llama-3.1-8b-instant"
+    assert prov.normalize_model_name("groq/llama-3.3-70b") == "llama-3.3-70b-versatile"
+
+    router = ProviderRouter()
+    assert router.get_fast_model() == "llama-3.1-8b-instant"
+    assert router.get_model_for_task(TaskType.TASK_CLASSIFICATION) == "llama-3.1-8b-instant"
+    assert router.get_model_for_task(TaskType.FAST_PLAN) == "llama-3.1-8b-instant"
+    assert router.route("gpt-oss-120b") == router.groq
+    assert router.route("openai/gpt-oss-120b") == router.groq
+    assert router.route("llama-3.1-8b-instant") == router.groq
+    assert router.route("groq/fast") == router.groq
+
+
 

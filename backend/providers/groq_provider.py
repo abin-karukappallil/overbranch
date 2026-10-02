@@ -13,10 +13,36 @@ logger = logging.getLogger("groq_provider")
 GROQ_API_BASE = "https://api.groq.com/openai/v1/chat/completions"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 
+# Known Groq model IDs and aliases
+GROQ_MODEL_ALIASES = {
+    "openai/gpt-oss-120b": "openai/gpt-oss-120b",
+    "gpt-oss-120b": "openai/gpt-oss-120b",
+    "groq/gpt-oss-120b": "openai/gpt-oss-120b",
+    "gpt-120b": "openai/gpt-oss-120b",
+    "groq/gpt-120b": "openai/gpt-oss-120b",
+    "groq/llama-3.1-8b": "llama-3.1-8b-instant",
+    "groq/llama-3.1-8b-instant": "llama-3.1-8b-instant",
+    "llama-3.1-8b": "llama-3.1-8b-instant",
+    "llama3-8b": "llama-3.1-8b-instant",
+    "llama3.1-8b": "llama-3.1-8b-instant",
+    "groq/fast": "llama-3.1-8b-instant",
+    "groq-fast": "llama-3.1-8b-instant",
+    "fast": "llama-3.1-8b-instant",
+    "groq/llama-3.3-70b": "llama-3.3-70b-versatile",
+    "groq/llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
+    "llama-3.3-70b": "llama-3.3-70b-versatile",
+    "llama3-70b": "llama-3.3-70b-versatile",
+    "llama3.3-70b": "llama-3.3-70b-versatile",
+    "groq/mixtral": "mixtral-8x7b-32768",
+    "mixtral": "mixtral-8x7b-32768",
+    "groq/gemma2-9b": "gemma2-9b-it",
+    "gemma2-9b": "gemma2-9b-it",
+}
+
 
 class GroqProvider(LLMProvider):
     """
-    Groq API Provider with multi-key fallback.
+    Groq API Provider with 5-key server-side fallback rotation.
 
     Iterates through configured API keys on failure (rate limits, server errors),
     providing automatic resilience without manual intervention.
@@ -27,24 +53,44 @@ class GroqProvider(LLMProvider):
         self._build_key_candidates()
 
     def _build_key_candidates(self):
-        """Builds the ordered list of API key candidates from environment."""
+        """Builds the ordered list of up to 5 API key candidates from environment."""
         self.candidates = []
         key_vars = [
             ("GROQ_API_KEY", "Groq Primary API"),
+            ("GROQ_API_KEY_1", "Groq API 1"),
             ("GROQ_API_KEY_2", "Groq API 2"),
             ("GROQ_API_KEY_3", "Groq API 3"),
+            ("GROQ_API_KEY_4", "Groq API 4"),
+            ("GROQ_API_KEY_5", "Groq API 5"),
         ]
+        seen_keys = set()
         for env_var, label in key_vars:
             key = os.getenv(env_var)
-            if key and key.strip():
+            if key and key.strip() and key.strip() not in seen_keys:
+                seen_keys.add(key.strip())
                 self.candidates.append({"name": label, "key": key.strip()})
 
     def get_provider_name(self) -> str:
         return "Groq"
 
+    def normalize_model_name(self, model: str) -> str:
+        """Maps model aliases to supported Groq model endpoints."""
+        if not model:
+            return self.default_model
+        clean = model.strip().lower()
+        if clean.startswith("groq/"):
+            clean = clean[5:]
+        elif clean.startswith("groq:"):
+            clean = clean[5:]
+        return GROQ_MODEL_ALIASES.get(clean, GROQ_MODEL_ALIASES.get(model.strip().lower(), clean))
+
     def get_available_models(self) -> List[Dict[str, Any]]:
         return [
-            {"id": "openai/gpt-oss-120b", "label": "GPT-OSS-120B", "default": True},
+            {"id": "openai/gpt-oss-120b", "label": "GPT-OSS 120B (Default)", "default": True},
+            {"id": "llama-3.1-8b-instant", "label": "Llama 3.1 8B Instant (Ultra-Fast)"},
+            {"id": "llama-3.3-70b-versatile", "label": "Llama 3.3 70B Versatile (Fast Reasoning)"},
+            {"id": "mixtral-8x7b-32768", "label": "Mixtral 8x7B (Fast 32k)"},
+            {"id": "gemma2-9b-it", "label": "Gemma 2 9B IT"},
         ]
 
     def chat(
@@ -71,7 +117,7 @@ class GroqProvider(LLMProvider):
                 provider="Groq",
             )
 
-        target_model = model or self.default_model
+        target_model = self.normalize_model_name(model or self.default_model)
         last_error = None
 
         # Use full max_tokens (default 4096) to ensure complete presentations without truncation

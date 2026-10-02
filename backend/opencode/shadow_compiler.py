@@ -173,20 +173,30 @@ def compile_shadow_buffer(
             }
 
         if has_errors:
-            # Format errors as a readable stderr block for the agent
-            stderr_lines = ["COMPILATION ERRORS:"]
-            if errors:
-                for err in errors[:5]:  # Cap at 5 errors to avoid context overflow
-                    line_no = err.get("line", "?")
-                    error_msg = err.get("error", "Unknown error")
-                    context = err.get("context", "")
-                    stderr_lines.append(f"  Line {line_no}: {error_msg}")
-                    if context:
-                        stderr_lines.append(f"    Context: {context}")
-            else:
-                raw_summary = result.get("error_log") or log_text[-500:] or "Compilation failed"
-                stderr_lines.append(f"  {raw_summary}")
-            stderr_text = "\n".join(stderr_lines)
+            # Format errors with focused context from the document buffer
+            # instead of sending full stderr that wastes LLM context
+            try:
+                from context_strategy import extract_error_context
+                stderr_text = extract_error_context(
+                    latex_code=buffer_content,
+                    errors=errors[:5],
+                    context_radius=10,
+                )
+            except ImportError:
+                # Fallback to original formatting if context_strategy not available
+                stderr_lines = ["COMPILATION ERRORS:"]
+                if errors:
+                    for err in errors[:5]:
+                        line_no = err.get("line", "?")
+                        error_msg = err.get("error", "Unknown error")
+                        context = err.get("context", "")
+                        stderr_lines.append(f"  Line {line_no}: {error_msg}")
+                        if context:
+                            stderr_lines.append(f"    Context: {context}")
+                else:
+                    raw_summary = result.get("error_log") or log_text[-500:] or "Compilation failed"
+                    stderr_lines.append(f"  {raw_summary}")
+                stderr_text = "\n".join(stderr_lines)
         else:
             stderr_text = ""
 

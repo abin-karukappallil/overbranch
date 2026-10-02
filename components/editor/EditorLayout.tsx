@@ -1510,14 +1510,14 @@ export function EditorLayout({
       {
         id: `user-${Date.now()}`,
         sender: "user",
-        text: (customPrompt === undefined && attachedFile)
-          ? `${userText}\n\n📎 Attached File: ${attachedFile.filename}`
+        text: attachedFile && !userText.includes(attachedFile.filename)
+          ? `${userText}\n\n📎 Attached Document: ${attachedFile.filename}`
           : userText,
         time: now,
       },
     ]);
 
-    const currentFilePayload = customPrompt === undefined ? attachedFile : null;
+    const currentFilePayload = attachedFile;
     if (customPrompt === undefined) {
       setChatInput("");
       if (typeof document !== "undefined") {
@@ -1525,7 +1525,8 @@ export function EditorLayout({
           el.style.height = "auto";
         });
       }
-      setAttachedFile(null);
+      // Note: Do NOT clear attachedFile here so attached document persists across multi-turn requests!
+      // User can remove it anytime via the (x) button on the attachment badge or by clearing chat.
     }
     setIsAgentThinking(true);
     setFallbackModelNotice(null);
@@ -1541,9 +1542,7 @@ export function EditorLayout({
     const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), timeoutMs);
 
     try {
-      // Prepare the attached file payload — for very large files (>5MB content),
-      // truncate to avoid 413 errors from reverse proxies (Nginx, cloud LBs).
-      // The backend has its own PDF text extraction as fallback.
+      // Prepare the attached file payload
       let filePayload: { filename: string; content: string; file_type: string } | null = null;
       if (currentFilePayload) {
         filePayload = {
@@ -1568,6 +1567,7 @@ export function EditorLayout({
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({
           project_id: projectId || "proj-default",
+          session_id: projStorageKey || projectId || "proj-default",
           request_id: reqId,
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,

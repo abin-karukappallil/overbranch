@@ -117,20 +117,27 @@ def validate_coverage(
     missing_chunks: List[DocumentChunk] = [c for c in content_chunks if c.chunk_id not in touched_ids]
     edited_count = total_content_chunks - len(missing_chunks)
 
-    if missing_chunks and (scope == "FULL_DOCUMENT_REWRITE" or "FULL_DOCUMENT_REWRITE" in scope):
+    is_rewrite = scope == "FULL_DOCUMENT_REWRITE" or "FULL_DOCUMENT_REWRITE" in scope
+    is_expansion = scope == "FULL_DOCUMENT_EXPANSION" or "FULL_DOCUMENT_EXPANSION" in scope
+
+    if missing_chunks and (is_rewrite or is_expansion):
         missing_ids = [c.chunk_id for c in missing_chunks]
         missing_titles = [c.title for c in missing_chunks]
         chunks_bullet_list = "\n".join([f"  - `{c.chunk_id}`: {c.title}" for c in missing_chunks])
 
+        mode_name = "FULL_DOCUMENT_EXPANSION" if is_expansion else "FULL_DOCUMENT_REWRITE"
+        action_name = "expand and detail" if is_expansion else "replace"
+        tool_hint = "`insert_into_chunk(chunk_id, ...)` or `rewrite_chunk(chunk_id, ...)` or `str_replace(...)`" if is_expansion else "`rewrite_chunk(chunk_id, new_content)`"
+
         feedback = (
-            f"COVERAGE CHECK FAILED: In FULL_DOCUMENT_REWRITE mode, you must replace all content chunks.\n"
+            f"COVERAGE CHECK FAILED: In {mode_name} mode, you must {action_name} all content chunks across the document.\n"
             f"You have edited {edited_count}/{total_content_chunks} content chunks.\n"
-            f"The following {len(missing_chunks)} chunk(s) have NOT been rewritten:\n"
+            f"The following {len(missing_chunks)} chunk(s) have NOT been touched:\n"
             f"{chunks_bullet_list}\n\n"
-            f"ACTION REQUIRED: Call `rewrite_chunk(chunk_id, new_content)` for each unedited chunk before setting done=true."
+            f"ACTION REQUIRED: Use {tool_hint} for each unedited chunk before setting done=true."
         )
 
-        logger.warning(f"Coverage check failed: {len(missing_chunks)} chunks untouched: {missing_ids}")
+        logger.warning(f"Coverage check failed ({mode_name}): {len(missing_chunks)} chunks untouched: {missing_ids}")
         return CoverageValidationResult(
             passed=False,
             total_chunks=total_content_chunks,

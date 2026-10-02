@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -44,9 +44,14 @@ class OpenCodeRequest(BaseModel):
     model: Optional[str] = Field(None, description="LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'edit' (default) or 'ask'")
     attached_file: Optional[Dict[str, Any]] = Field(None, description="Attached PDF/text document reference")
+    attached_files: Optional[List[Dict[str, Any]]] = Field(None, description="List of attached documents")
     api_keys: Optional[Dict[str, str]] = Field(None, description="User-provided API keys")
     request_id: Optional[str] = Field(None, description="Unique client request ID for cancellation")
+    session_id: Optional[str] = Field(None, description="Client session ID for cross-turn context persistence")
     max_steps: Optional[int] = Field(None, description="Max agent reasoning steps (default: 12)")
+
+
+OpenCodeRequest.model_rebuild()
 
 
 class AgentStopRequest(BaseModel):
@@ -195,10 +200,12 @@ async def agent_opencode(
                         model=model,
                         mode=req.mode or "edit",
                         attached_file=req.attached_file,
+                        attached_files=req.attached_files,
                         api_keys=req.api_keys,
                         max_steps=max_steps,
                         cancel_token=token,
                         assets_dir=assets_dir,
+                        session_id=req.session_id or req.project_id,
                     ):
                         if token.is_cancelled():
                             break

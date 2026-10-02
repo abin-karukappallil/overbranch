@@ -23,6 +23,13 @@ from providers.router import provider_router
 from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
 from document_index import DocumentIndex, DocumentChunk
 from edit_validator import validate_coverage, CoverageValidationResult
+from attached_context import attached_context_store
+from trace import trace_manager, AgentTrace
+from document_analyzer import analyze_document, generate_compact_summary, generate_preservation_map, build_task_state
+from context_strategy import (
+    resolve_context_strategy, build_initial_context, compute_step_max_tokens,
+    ContextStrategy, ContextDecision, extract_error_context,
+)
 
 from .shadow_workspace import ShadowWorkspace
 from .tools import TOOL_DEFINITIONS, execute_tool, get_tools_prompt_block
@@ -43,35 +50,48 @@ All documents, code listings, benchmarks, and discussions (including scientific,
 
 You operate on an IN-MEMORY SHADOW BUFFER of the user's LaTeX file. You NEVER write directly to the user's file on disk. All your edits happen in a safe sandbox.
 
-YOUR WORKFLOW:
-1. When doing a FULL DOCUMENT REWRITE / TOPIC OVERHAUL, use `rewrite_chunk(chunk_id, new_content)` to replace each chapter/section's entire content cleanly by chunk ID.
-2. For TARGETED EDITS, start with `read_file_range` or `grep_search` to locate the target section, then make exact-match edits with `str_replace`.
-3. After editing, call `verify_compile` to check for LaTeX compilation errors.
-4. If compilation fails, read the error, inspect the problematic lines, fix with `str_replace` or `rewrite_chunk`, and verify again.
-5. When all edits are complete and compilation passes, respond with the done signal.
+YOUR WORKFLOW & FAST EXECUTION MANDATE:
+1. When doing a FULL DOCUMENT REWRITE / TOPIC OVERHAUL, use `rewrite_chunk(chunk_id, new_content)` or batched `tool_calls: [...]` to replace content cleanly by chunk ID.
+2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), systematically expand chunks using `insert_into_chunk(chunk_id, content)` or `str_replace` or `rewrite_chunk(chunk_id, new_content)`. You can execute multiple chunks in a single turn using `tool_calls: [...]`.
+3. To insert new bibliography entries (`\\bibitem`), citations, or list items, use `insert_into_chunk(chunk_id, content, position='end')`. This automatically places items before `\\end{{thebibliography}}` without breaking the environment.
+4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `read_file_range`/`grep_search` if line inspection is needed.
+5. FAST EDIT RULE: Aim to complete your edit in the minimum number of steps possible (1–2 steps for targeted edits). Set `done=true` immediately as soon as your edits are applied.
+6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `grep_search(query, file=filename)`.
+7. After editing, you may call `verify_compile` to check for LaTeX compilation errors, or set `done=true` if your edit is straightforward.
+8. When all edits are complete, respond with the done signal.
 
 {tools_block}
 
 RESPONSE FORMAT:
 You must respond with ONLY a JSON object in one of these forms:
 
-A) To call a tool:
+A) To call a tool (single or batched):
 ```json
 {{
-  "thought": "I need to read the document to find the introduction section.",
+  "thought": "Applying requested edit directly to the document.",
   "tool_call": {{
-    "name": "grep_search",
-    "arguments": {{"query": "\\\\section{{Introduction}}"}}
+    "name": "insert_into_chunk",
+    "arguments": {{"chunk_id": "section_2", "content": "\\\\bibitem{{ref1}} Author, Title, 2024."}}
   }}
 }}
 ```
-
-B) When you are DONE (all edits made and compilation passes):
+Or for multiple edits in a single fast step:
 ```json
 {{
-  "thought": "All edits are complete and compilation succeeded.",
+  "thought": "Expanding sections 1 and 2 in parallel.",
+  "tool_calls": [
+    {{"name": "insert_into_chunk", "arguments": {{"chunk_id": "section_1", "content": "..."}}}},
+    {{"name": "insert_into_chunk", "arguments": {{"chunk_id": "section_2", "content": "..."}}}}
+  ]
+}}
+```
+
+B) When you are DONE (edits applied):
+```json
+{{
+  "thought": "All edits are complete.",
   "done": true,
-  "explanation": "Added comprehensive explanations, equations, and subtopics across the chapters as requested."
+  "explanation": "Applied requested modifications."
 }}
 ```
 
@@ -105,13 +125,17 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
 
 5. GROUNDING IN EXISTING DOCUMENT DATA & ATTACHED DOCUMENTS:
-   - When asked to "elaborate", "describe", "expand", or "fill in content":
-   - Use the specific data, statistics, benchmark results, mathematical equations, algorithm pipelines, and architectural concepts present in the document and in any attached reference files.
-   - Ground all new paragraphs and subsections in real technical explanations based on the document's domain (e.g. specific model names, percentage gaps, database engine vulnerabilities, detection accuracies).
+   - When asked to "elaborate", "describe", "expand", "create", "convert", or "fill in content":
+   - When an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
+   - Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
    - Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations.
 
 6. DOCUMENT CREATION & CONVERSION MANDATE (FROM SCRATCH OR ATTACHED FILES):
-   - When asked to CREATE, GENERATE, BUILD, WRITE, DRAFT, or CONVERT a document (e.g. Presentation/Beamer, Seminar Report/Thesis, Research Paper/IEEE, Resume/CV):
+   - When asked to CREATE, GENERATE, BUILD, WRITE, DRAFT, or CONVERT a document (e.g. Presentation/Beamer from a paper, Seminar Report/Thesis from a PDF, Research Paper/IEEE, Resume/CV):
+   - If the user attached a PDF or document, carefully read through its key sections (Abstract, Introduction, Architecture, Methodology, Experiments, Conclusion) using the attached preview or `read_attached_document`.
+   - Map the attached document's core ideas into the target format:
+     * For BEAMER PRESENTATIONS (e.g. converting a paper/PDF to slides): Generate 8-12 informative slides covering Background/Motivation, Problem Statement, System Architecture, Core Methodology, Key Algorithms/Formulations, Experimental Evaluation (with LaTeX tables of numbers from the paper), Discussion, and Conclusion.
+     * For SEMINAR REPORTS / THESES: Generate multi-chapter report (`\\documentclass{{report}}`) synthesizing the paper's theory, mathematics, and experiments into comprehensive chapters.
    - You MUST generate a complete, fully compilable, high-quality LaTeX document from `\\documentclass` to `\\end{{document}}`.
    - For BEAMER PRESENTATIONS: Use `\\documentclass[aspectratio=169]{{beamer}}`, modern themes (e.g. Madrid, metropolis), clear Title slide (`[plain]`), Outline slide, and 6-12 content slides (`\\begin{{frame}}{{Title}}{{Subtitle}}`) with clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations.
    - For MULTI-CHAPTER REPORTS: Use `\\documentclass[11pt,a4paper,oneside]{{report}}`, standard geometry, setspace, amsmath, graphicx, booktabs, hyperref. Include Title, Abstract, Table of Contents, and 4-6 rich chapters with mathematical formulas, algorithms, tables, and bibliography.
@@ -262,8 +286,8 @@ def _compact_conversation_history(
     - Recent N turns (assistant + user pairs) completely intact
     
     Compacts older turns:
-    - Replaces large `read_file_range` and `get_template_theme` payloads with concise summary markers.
-    - Prevents conversation history from exploding into 30k+ tokens across multi-step runs.
+    - Replaces large tool output payloads and assistant drafts with concise markers.
+    - Dramatically reduces token count and speeds up LLM processing time.
     """
     if len(messages) <= 2 + (keep_recent_turns * 2):
         return messages
@@ -279,11 +303,54 @@ def _compact_conversation_history(
         role = msg.get("role", "")
         content = msg.get("content", "")
 
-        if role == "user":
+        if role == "assistant":
+            # Compact older assistant output: preserve thought + tool name, drop massive LaTeX replacement strings
+            if len(content) > 300:
+                try:
+                    data = json.loads(content)
+                    thought_preview = str(data.get("thought", ""))[:120]
+                    t_call = data.get("tool_call") or data.get("tool_calls")
+                    t_summary = ""
+                    if isinstance(t_call, dict):
+                        t_summary = f"tool_call={t_call.get('name')}"
+                    elif isinstance(t_call, list):
+                        t_summary = f"tool_calls={[c.get('name') for c in t_call if isinstance(c, dict)]}"
+                    compacted.append({
+                        "role": "assistant",
+                        "content": json.dumps({
+                            "thought": thought_preview + ("..." if len(thought_preview) >= 120 else ""),
+                            "status": "Executed in earlier step",
+                            "action": t_summary or "edit",
+                        })
+                    })
+                    continue
+                except Exception:
+                    compacted.append({
+                        "role": "assistant",
+                        "content": content[:200] + "\n... [previous assistant output compressed]",
+                    })
+                    continue
+            compacted.append(msg)
+        elif role == "user":
             if "TOOL RESULT from `read_file_range`:" in content or "TOOL RESULT from read_file_range:" in content:
                 compacted.append({
                     "role": "user",
                     "content": "[TOOL RESULT from read_file_range: Lines read and processed in earlier step.]",
+                })
+            elif "TOOL RESULT from `rewrite_chunk`:" in content or "TOOL RESULT from rewrite_chunk:" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[TOOL RESULT from rewrite_chunk: Chunk updated successfully in earlier step.]",
+                })
+            elif "TOOL RESULT from `str_replace`:" in content or "TOOL RESULT from str_replace:" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[TOOL RESULT from str_replace: Text replaced successfully in earlier step.]",
+                })
+            elif "TOOL RESULT from `insert_into_chunk`:" in content or "TOOL RESULT from insert_into_chunk:" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[TOOL RESULT from insert_into_chunk: Content inserted successfully in earlier step.]",
                 })
             elif "TOOL RESULT from `get_template_theme`:" in content or "TOOL RESULT from get_template_theme:" in content:
                 compacted.append({
@@ -295,10 +362,35 @@ def _compact_conversation_history(
                     "role": "user",
                     "content": "[TOOL RESULT from grep_search: Search query executed in earlier step.]",
                 })
-            elif len(content) > 600:
+            elif "TOOL RESULT from `search_uploaded_references`:" in content or "TOOL RESULT from search_uploaded_references:" in content:
                 compacted.append({
                     "role": "user",
-                    "content": content[:300] + "\n... [previous step output compressed for efficiency]",
+                    "content": "[TOOL RESULT from search_uploaded_references: Uploaded context query executed in earlier step.]",
+                })
+            elif "BATCH TOOL RESULTS" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[BATCH TOOL RESULTS: Batched edits applied successfully in earlier step.]",
+                })
+            elif "TOOL RESULT from `verify_compile`:" in content or "TOOL RESULT from verify_compile:" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[TOOL RESULT from verify_compile: Compilation check completed in earlier step.]",
+                })
+            elif "COVERAGE CHECK FAILED" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[COVERAGE CHECK: Missing chunks reported in earlier step.]",
+                })
+            elif "COMPILATION ERRORS:" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[COMPILATION ERRORS: Compilation errors diagnosed in earlier step.]",
+                })
+            elif len(content) > 400:
+                compacted.append({
+                    "role": "user",
+                    "content": content[:200] + "\n... [previous step output compressed for efficiency]",
                 })
             else:
                 compacted.append(msg)
@@ -324,28 +416,42 @@ def determine_adaptive_step_budget(
 ) -> int:
     """
     Dynamically determines the optimal agent reasoning step budget based on:
-    1. Scope: FULL_DOCUMENT_REWRITE sets step cap to max(current_max, num_chunks * 2 + 4).
+    1. Scope: FULL_DOCUMENT_REWRITE / EXPANSION sets lean step cap max(6, effective_chunks + 2).
     2. User prompt intent and complexity (creation vs broad overhaul vs single-target fix)
     3. Document scale (number of chapters, sections, and total lines)
     4. Mode (Ask vs Edit)
     """
     if mode == "ask":
-        return requested_steps if (requested_steps and requested_steps > 0) else 6
+        return requested_steps if (requested_steps and requested_steps > 0) else 4
 
-    # 1. Full document rewrite dynamic budget: guarantee loop cannot run out of steps before touching every chunk
-    if scope == ScopeType.FULL_DOCUMENT_REWRITE.value or scope == "FULL_DOCUMENT_REWRITE":
-        effective_chunks = max(num_chunks, num_chapters, 1)
-        full_rewrite_budget = max(16, effective_chunks * 2 + 4)
+    # 1. Full document rewrite & expansion dynamic budget: guarantee loop cannot run out of steps before touching every chunk
+    if scope in (
+        ScopeType.FULL_DOCUMENT_REWRITE.value,
+        "FULL_DOCUMENT_REWRITE",
+        ScopeType.FULL_DOCUMENT_EXPANSION.value,
+        "FULL_DOCUMENT_EXPANSION",
+    ):
+        effective_chunks = max(num_chunks, num_chapters, num_sections, 1)
+        full_budget = max(16, effective_chunks * 2 + 4)
         if requested_steps and requested_steps > 0:
-            return max(requested_steps, full_rewrite_budget)
-        return full_rewrite_budget
+            return max(requested_steps, full_budget)
+        return full_budget
 
     if requested_steps and requested_steps > 0:
         return requested_steps
 
     user_lower = user_instruction.lower()
 
-    # 1. Creation / Conversion requests (from scratch or attached PDF)
+    # 2. Minor / Quick localized fixes (typos, citations, bibliography, single word)
+    minor_keywords = [
+        "typo", "spelling", "rename", "change author", "change title",
+        "fix date", "replace word", "single word", "line number", "grammar",
+        "citation", "cite", "bibitem", "add reference", "add bibitem",
+    ]
+    if any(kw in user_lower for kw in minor_keywords) and len(user_instruction.split()) <= 15:
+        return 4
+
+    # 3. Creation / Conversion requests (from scratch or attached PDF)
     creation_keywords = [
         "create", "make", "generate", "build", "compose", "prepare", "draft",
         "turn this pdf", "convert this pdf", "using this pdf", "new report",
@@ -356,15 +462,15 @@ def determine_adaptive_step_budget(
     ]
     if any(kw in user_lower for kw in creation_keywords) or (total_lines <= 10 and mode == "edit"):
         if any(k in user_lower for k in ["ppt", "presentation", "beamer", "slide"]):
-            return 20
+            return 12
         elif any(k in user_lower for k in ["report", "thesis", "dissertation", "seminar"]):
-            return 24
+            return 14
         elif any(k in user_lower for k in ["paper", "article", "ieee"]):
-            return 20
+            return 12
         else:
-            return 16
+            return 10
 
-    # 2. Redesign / New design / Theme change requests
+    # 4. Redesign / New design / Theme change requests
     redesign_keywords = [
         "redesign", "new design", "change design", "better design", "different design",
         "need new design", "need a new design", "change theme", "switch theme", "apply theme",
@@ -372,9 +478,9 @@ def determine_adaptive_step_budget(
         "make it look better", "re-theme", "restyle", "improve design", "color theme", "beamer theme",
     ]
     if any(kw in user_lower for kw in redesign_keywords):
-        return 18
+        return 10
 
-    # 3. Broad / Full document / Multi-chapter requests
+    # 5. Broad / Multi-chapter requests
     broad_keywords = [
         "all chapter", "every chapter", "each chapter", "all subchapter",
         "each subchapter", "every subchapter", "all section", "every section",
@@ -384,33 +490,25 @@ def determine_adaptive_step_budget(
     ]
     if any(kw in user_lower for kw in broad_keywords):
         if num_chapters >= 4:
-            return min(32, 12 + num_chapters * 4)
+            return min(16, 6 + num_chapters * 2)
         elif num_chapters >= 2:
-            return 24
+            return 12
         elif num_sections >= 5:
-            return 20
+            return 10
         else:
-            return 18
+            return 8
 
-    # 3. Minor / Quick localized fixes
-    minor_keywords = [
-        "typo", "spelling", "rename", "change author", "change title",
-        "fix date", "replace word", "single word", "line number", "grammar",
-    ]
-    if any(kw in user_lower for kw in minor_keywords) and len(user_instruction.split()) < 10:
-        return 8
-
-    # 4. Medium multi-part edits (e.g. "add sections X and Y", "insert figures and tables")
+    # 6. Medium multi-part edits (e.g. "add sections X and Y", "insert figures and tables")
     medium_keywords = [
         "add", "insert", "elaborate", "expand", "explain",
         "table", "figure", "methodology", "literature", "results", "analysis",
     ]
     match_count = sum(1 for kw in medium_keywords if kw in user_lower)
     if match_count >= 2 or num_chapters >= 3:
-        return 16
+        return 8
 
-    # 5. Standard single edit default
-    return 12
+    # 7. Standard single edit default
+    return 6
 
 
 # ============================================================================
@@ -425,10 +523,13 @@ def stream_opencode_agent(
     model: str = DEFAULT_MODEL,
     mode: str = "edit",
     attached_file: Optional[Dict[str, Any]] = None,
+    attached_files: Optional[List[Dict[str, Any]]] = None,
     api_keys: Optional[Dict[str, str]] = None,
     max_steps: Optional[int] = None,
     cancel_token: Optional[CancellationToken] = None,
     assets_dir: Optional[str] = None,
+    session_id: Optional[str] = None,
+    project_files: Optional[Dict[str, str]] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Generator-based OpenCode agent loop that yields SSE events.
@@ -444,6 +545,7 @@ def stream_opencode_agent(
         {"type": "result",       "data": dict}  # backward-compatible
     """
     start_time = time.time()
+    effective_session_id = session_id or project_id or "default"
 
     # 1. Initialize ShadowWorkspace
     workspace = ShadowWorkspace(
@@ -451,9 +553,47 @@ def stream_opencode_agent(
         project_id=project_id,
         file_path=file_path,
         assets_dir=assets_dir,
+        session_id=effective_session_id,
     )
 
-    # 2. Classify edit scope (TARGETED_EDIT vs FULL_DOCUMENT_REWRITE)
+    # Load auxiliary project files if provided (multi-file workspace support)
+    if project_files:
+        for p_path, p_content in project_files.items():
+            if p_path != file_path and p_content is not None:
+                workspace.add_auxiliary_file(p_path, p_content)
+
+    # 1b. Store & mount attached reference document(s) into session cache and ShadowWorkspace
+    if attached_file:
+        attached_context_store.store_attachment(effective_session_id, attached_file)
+    if attached_files:
+        for af in attached_files:
+            if af:
+                attached_context_store.store_attachment(effective_session_id, af)
+
+    stored_attachments = attached_context_store.get_attachments(effective_session_id)
+    for sf in stored_attachments:
+        s_name = sf.get("filename", "reference.txt")
+        s_full = sf.get("full_content") or sf.get("content", "")
+        if s_full:
+            workspace.add_reference_file(s_name, s_full)
+
+    if stored_attachments:
+        ref_summary_parts = []
+        for sf in stored_attachments:
+            fn = sf.get("filename", "Attached document")
+            pg_cnt = sf.get("page_count", 0)
+            sz = sf.get("size", len(sf.get("content", "")))
+            if pg_cnt > 0:
+                ref_summary_parts.append(f"{fn} ({pg_cnt} pages, {sz:,} chars)")
+            else:
+                ref_summary_parts.append(f"{fn} ({sz:,} chars)")
+        yield {
+            "type": "status",
+            "step": 0,
+            "message": f"Attached reference document(s) loaded: {', '.join(ref_summary_parts)}. Grounding agent in reference material.",
+        }
+
+    # 2. Classify edit scope (TARGETED_EDIT vs FULL_DOCUMENT_REWRITE vs FULL_DOCUMENT_EXPANSION)
     scope_result = classify_scope(
         user_instruction=user_instruction,
         current_code=current_code,
@@ -462,6 +602,7 @@ def stream_opencode_agent(
     )
     scope = scope_result.scope
     is_full_rewrite = scope_result.is_full_rewrite
+    is_expansion = scope_result.is_expansion
 
     all_chunks = workspace.get_all_chunks()
     content_chunks = workspace.get_content_chunks()
@@ -473,6 +614,7 @@ def stream_opencode_agent(
         "message": f"Edit scope detected: {scope.replace('_', ' ').title()}",
         "scope": scope,
         "is_full_rewrite": is_full_rewrite,
+        "is_expansion": is_expansion,
     }
 
     # 3. Build system prompt with tool definitions
@@ -482,6 +624,23 @@ def stream_opencode_agent(
     total_lines = workspace.get_line_count()
     user_lower = user_instruction.lower()
 
+    # ================================================================
+    # 3a. Document Analysis (local, no LLM — fast)
+    # ================================================================
+    doc_analysis = analyze_document(current_code)
+    preservation_map = generate_preservation_map(doc_analysis, user_instruction)
+    doc_summary = generate_compact_summary(doc_analysis)
+
+    yield {
+        "type": "status",
+        "step": 0,
+        "message": f"Analyzed document: {doc_analysis.total_lines} lines, {doc_analysis.structural_unit_count} {doc_analysis.primary_structure_type}s, ~{doc_analysis.estimated_tokens} tokens",
+    }
+
+    # ================================================================
+    # 3b. Context Strategy Resolution
+    # ================================================================
+
     # 4. Detect broad multi-chapter requests
     broad_keywords = [
         "all chapter", "every chapter", "each chapter", "all subchapter",
@@ -489,7 +648,7 @@ def stream_opencode_agent(
         "each section", "whole document", "entire document", "all topic",
         "each topic", "every topic", "throughout the document", "full report",
     ]
-    is_broad_request = any(kw in user_lower for kw in broad_keywords) or is_full_rewrite
+    is_broad_request = any(kw in user_lower for kw in broad_keywords) or is_full_rewrite or is_expansion
 
     # 5. Detect document creation / conversion requests
     creation_keywords = [
@@ -499,6 +658,7 @@ def stream_opencode_agent(
         "create beamer", "create report", "create paper", "create resume",
         "create cv", "from scratch", "write a report", "write a paper",
         "write a presentation", "make a presentation", "make a report",
+        "convert", "turn into", "from this pdf", "from the attached",
     ]
     is_empty_or_minimal = (
         total_lines <= 5
@@ -506,7 +666,25 @@ def stream_opencode_agent(
         or (total_lines <= 20 and "\\documentclass" in current_code and "\\end{document}" in current_code and len(current_code.strip().splitlines()) <= 8)
     )
     is_creation_intent = any(kw in user_lower for kw in creation_keywords)
-    is_creation_request = (is_creation_intent or is_empty_or_minimal) and mode == "edit"
+    has_attachment_conversion = bool(stored_attachments) and any(
+        kw in user_lower for kw in ["ppt", "presentation", "slides", "beamer", "report", "paper", "convert", "turn", "make", "create"]
+    )
+    is_creation_request = (is_creation_intent or is_empty_or_minimal or has_attachment_conversion) and mode == "edit"
+
+    # Resolve context strategy based on document analysis + scope + model
+    context_decision = resolve_context_strategy(
+        analysis=doc_analysis,
+        scope=scope,
+        model=model,
+        user_instruction=user_instruction,
+        is_creation=is_creation_request,
+    )
+
+    yield {
+        "type": "status",
+        "step": 0,
+        "message": f"Context strategy: {context_decision.strategy.value} ({context_decision.reason})",
+    }
 
     # 6. Detect visibility / contrast bug reports
     visibility_keywords = [
@@ -571,21 +749,67 @@ def stream_opencode_agent(
         requested_steps=max_steps,
     )
 
-    # Format attached reference document if present
+    agent_trace = AgentTrace(
+        project_id=project_id,
+        model_used=model,
+        task_classification={
+            "scope": scope,
+            "is_full_rewrite": is_full_rewrite,
+            "is_expansion": is_expansion,
+            "context_strategy": context_decision.strategy.value,
+            "doc_tokens": doc_analysis.estimated_tokens,
+            "fits_in_context": context_decision.fits_in_context,
+        },
+        step_budget_allocated=actual_max_steps,
+    )
+
+    # Format attached reference document from active session cache
     attached_block = ""
-    if attached_file:
-        fname = attached_file.get("filename", "Attached Document")
-        ftype = attached_file.get("file_type", "document")
-        fcontent = attached_file.get("content", "")
-        if fcontent:
-            fcontent_capped = fcontent[:25000]
+    if stored_attachments:
+        stored_files_text = []
+        for sf in stored_attachments:
+            s_name = sf.get("filename", "Attached Document")
+            s_type = sf.get("file_type", "document")
+            s_pages = sf.get("page_count", 0)
+            s_is_scanned = sf.get("is_scanned", False)
+            s_content = sf.get("content", "")
+
+            header = f"ATTACHED REFERENCE FILE: {s_name} (Type: {s_type}"
+            if s_pages > 0:
+                header += f", Pages: {s_pages}"
+            header += ")"
+
+            if s_is_scanned:
+                body = (
+                    f"{header}\n"
+                    f"NOTE: This PDF appears to contain mostly scanned images. Extracted text was sparse:\n"
+                    f"{s_content[:5000]}"
+                )
+            elif s_content:
+                fcontent_capped = s_content[:40000]
+                body = (
+                    f"{header}\n"
+                    f"---------------------------------------------------------\n"
+                    f"{fcontent_capped}"
+                )
+                if len(s_content) > 40000:
+                    body += f"\n... [Truncated preview: {len(s_content):,} chars total. Use `read_attached_document(filename='{s_name}', start_page=...)` or `search_uploaded_references(query=...)` to read any section/page in full.]"
+            else:
+                body = f"{header}\n(Empty or unparseable content)"
+            stored_files_text.append(body)
+
+        if stored_files_text:
             attached_block = (
-                f"\n\n---------------------------------------------------------\n"
-                f"ATTACHED REFERENCE FILE: {fname} (Type: {ftype})\n"
-                f"---------------------------------------------------------\n"
-                f"{fcontent_capped}\n"
-                f"---------------------------------------------------------\n"
-                "INSTRUCTION FOR ATTACHED FILE: Extract and use the domain data, findings, tables, algorithms, and technical concepts from this attached file to create/elaborate the LaTeX document."
+                "\n=========================================================\n"
+                "ATTACHED REFERENCE DOCUMENTS (PRIMARY SOURCE MATERIAL):\n"
+                + "\n\n---------------------------------------------------------\n".join(stored_files_text) +
+                "\n=========================================================\n"
+                "CRITICAL MANDATE FOR ATTACHED DOCUMENTS:\n"
+                "1. The user provided the above reference document(s) as PRIMARY SOURCE MATERIAL for this request.\n"
+                "2. You MUST cite, refer to, extract, and incorporate real data, section topics, algorithms, methodologies, benchmark tables, and findings from this reference document into your LaTeX output.\n"
+                "3. To inspect specific pages, use `read_attached_document(filename=..., start_page=..., end_page=...)`.\n"
+                "4. To search for specific keywords or formulas, use `search_uploaded_references(query=...)` or `grep_search(query=..., file=...)`.\n"
+                "5. You can also read reference document lines directly using `read_file_range(file=...)`."
             )
 
     # Grounding reminder for content creation
@@ -598,25 +822,67 @@ def stream_opencode_agent(
     # Extract document structure outline to guide agent directly to target lines
     doc_outline = _build_document_outline(workspace)
 
+    # ================================================================
+    # 3c. Build Task State (compact representation for cross-iteration reuse)
+    # ================================================================
+    task_state = build_task_state(
+        user_instruction=user_instruction,
+        analysis=doc_analysis,
+        preservation_map=preservation_map,
+        scope=scope,
+        attached_documents=stored_attachments,
+    )
+
+    # ================================================================
+    # 3d. Build Smart Initial Context using Context Strategy
+    # ================================================================
+    smart_document_context = build_initial_context(
+        decision=context_decision,
+        analysis=doc_analysis,
+        workspace=workspace,
+        user_instruction=user_instruction,
+        doc_outline=doc_outline,
+    )
+
+    # Build preservation/transformation guidance for full rewrites
+    transformation_guidance = ""
+    if is_full_rewrite or is_expansion:
+        pres = preservation_map.get("preserve", [])
+        change = preservation_map.get("change", [])
+        expand = preservation_map.get("expand", [])
+        if pres or change or expand:
+            parts = ["TRANSFORMATION GUIDE:"]
+            if pres:
+                parts.append(f"  Preserve: {', '.join(pres)}")
+            if change:
+                parts.append(f"  Change: {', '.join(change)}")
+            if expand:
+                expand_str = "all sections" if expand == "all" else ", ".join(expand)
+                parts.append(f"  Expand: {expand_str}")
+            transformation_guidance = "\n".join(parts)
+
     # Build initial message context tailored to mode & intent
+    trans_block = f"\n\n{transformation_guidance}" if transformation_guidance else ""
+
     if mode == "ask":
-        preview = workspace.read_lines(1, min(100, total_lines))
         user_content = (
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{doc_outline}\n\n"
-            f"FILE PREVIEW (first 100 lines):\n{preview}\n\n"
-            f"USER QUESTION (ASK MODE):\n{user_instruction}\n"
+            f"USER QUESTION (ASK MODE):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
-            "This is ASK mode. Answer the user's question directly without editing the file. "
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
+            "This is ASK mode. Answer the user's question directly by reading and citing the attached document and current LaTeX file. "
             "Set done=true and provide your comprehensive answer in the explanation field."
         )
     elif is_full_rewrite and content_chunks and mode == "edit":
         chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in all_chunks])
         user_content = (
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{doc_outline}\n\n"
-            f"USER REQUEST (EDIT MODE — FULL DOCUMENT REWRITE / TOPIC OVERHAUL):\n{user_instruction}\n"
+            f"USER REQUEST (EDIT MODE — FULL DOCUMENT REWRITE / TOPIC OVERHAUL):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
+            f"{trans_block}\n\n"
             f"{grounding_instruction}\n\n"
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
@@ -624,14 +890,40 @@ def stream_opencode_agent(
             "MANDATE: The user explicitly requested a FULL DOCUMENT REWRITE / TOPIC REPLACEMENT.\n"
             f"Detected scope: FULL_DOCUMENT_REWRITE ({num_content_chunks} content chunks to rewrite).\n\n"
             f"ORDERED LIST OF DOCUMENT CHUNKS:\n{chunk_items}\n\n"
-            "CRITICAL INSTRUCTIONS FOR FULL REWRITE:\n"
+            "CRITICAL INSTRUCTIONS FOR FAST FULL REWRITE:\n"
             "1. You MUST rewrite EVERY content chunk using the `rewrite_chunk(chunk_id, new_content)` tool.\n"
-            "2. `rewrite_chunk` uses structural AST byte offsets rather than exact string matches, guaranteeing complete section replacement.\n"
-            "3. Systematically iterate through and rewrite EVERY content chunk in order (e.g. chapter_1, chapter_2, chapter_3, ...).\n"
+            "2. HIGH-SPEED BATCHING MANDATE: Use batched `tool_calls: [...]` to rewrite all content chunks in a single turn (or minimum turns) rather than one round-trip per chunk!\n"
+            "3. `rewrite_chunk` uses structural AST byte offsets rather than exact string matches, guaranteeing complete section replacement without needing prior `read_file_range`.\n"
             "4. Completely replace all old topic content and terminology with the new topic/source material.\n"
-            "5. After rewriting all chunks, call `verify_compile` to check for compilation errors.\n"
+            "5. After rewriting all chunks, call `verify_compile` ONCE to verify the completed document compiles cleanly.\n"
             "6. Coverage validation will verify that EVERY content chunk was rewritten before allowing completion.\n"
-            f"Start by calling `rewrite_chunk` on the first chunk: `{content_chunks[0].chunk_id}`.\n"
+            "Start by applying your rewrites across the content chunks now using batched `tool_calls: [...]`.\n"
+            "========================================================="
+        )
+    elif is_expansion and content_chunks and mode == "edit":
+        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in all_chunks])
+        user_content = (
+            f"USER REQUEST (EDIT MODE — FULL DOCUMENT EXPANSION):\n{user_instruction}\n\n"
+            f"{attached_block}\n\n"
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
+            f"{trans_block}\n\n"
+            f"{grounding_instruction}\n\n"
+            f"{visibility_diagnostic}\n\n"
+            f"{redesign_guidance}\n\n"
+            "=========================================================\n"
+            "MANDATE: The user explicitly requested to EXPAND / ADD MORE CONTENT across the document.\n"
+            f"Detected scope: FULL_DOCUMENT_EXPANSION ({num_content_chunks} content chunks to expand).\n\n"
+            f"ORDERED LIST OF DOCUMENT CHUNKS:\n{chunk_items}\n\n"
+            "CRITICAL INSTRUCTIONS FOR FAST FULL EXPANSION:\n"
+            "1. You MUST expand EVERY content chunk (chapters, sections, subtopics). Do NOT stop after only expanding the first section!\n"
+            "2. HIGH-SPEED BATCHING MANDATE: Use batched `tool_calls: [...]` with `rewrite_chunk(chunk_id, new_content)` or `insert_into_chunk(chunk_id, content)` across all chunks in a single turn to minimize agent latency.\n"
+            "3. Add rich academic paragraphs, mathematical formulations, benchmarks, subtopics, and analysis to every section.\n"
+            "4. To insert bibliography entries or list items, use `insert_into_chunk(chunk_id, content, position='end')`.\n"
+            "5. After expanding all chunks, call `verify_compile` ONCE to confirm zero LaTeX compilation errors before signaling done=true.\n"
+            "6. Coverage validation will verify that EVERY content chunk was expanded before allowing completion.\n"
+            "Start by expanding the chunks now using batched `tool_calls: [...]`.\n"
             "========================================================="
         )
     elif is_creation_request:
@@ -676,12 +968,19 @@ def stream_opencode_agent(
             )
 
         preview = workspace.read_lines(1, min(50, total_lines)) if total_lines > 1 else "(Empty file)"
+        ref_guidance = (
+            "SOURCE MATERIAL GUIDANCE:\n"
+            "An attached reference document is provided above. Synthesize its key findings, methodology, and tables directly into this document.\n"
+            if stored_attachments else ""
+        )
         user_content = (
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{doc_outline}\n\n"
-            f"FILE PREVIEW:\n{preview}\n\n"
-            f"USER REQUEST (DOCUMENT CREATION / CONVERSION MODE):\n{user_instruction}\n"
+            f"USER REQUEST (DOCUMENT CREATION / CONVERSION MODE):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
+            f"FILE PREVIEW:\n{preview}\n\n"
+            f"{ref_guidance}\n"
             f"{grounding_instruction}\n\n"
             f"{archetype_hint}\n\n"
             f"{visibility_diagnostic}\n\n"
@@ -697,34 +996,42 @@ def stream_opencode_agent(
         ch_list = "\n".join([f"  - Line {c['line_no']}: {c['match']}" for c in valid_chapters])
         sec_list = "\n".join([f"  - Line {s['line_no']}: {s['match']}" for s in valid_sections[:20]])
         user_content = (
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{doc_outline}\n\n"
-            f"USER REQUEST (EDIT MODE — BROAD DOCUMENT EXPANSION):\n{user_instruction}\n"
+            f"USER REQUEST (EDIT MODE — BROAD DOCUMENT EXPANSION):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
+            f"{trans_block}\n\n"
             f"{grounding_instruction}\n\n"
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
             "MANDATE: The user explicitly requested to elaborate/expand ALL chapters and subchapters across the document.\n"
             f"Detected chapters in the document:\n{ch_list}\n\n"
             f"Detected sections in the document:\n{sec_list}\n\n"
-            "CRITICAL REQUIREMENT: You MUST systematically iterate through EACH chapter and its subchapters. "
-            "Do NOT stop after editing only one chapter/section! Use `read_file_range` and `str_replace` across Chapter 1, Chapter 2, Chapter 3, etc., to insert extensive, full-page academic content (detailed theory, methodologies, algorithms, benchmarks, equations, and analysis) into every chapter before finishing.\n"
-            "Start by reading Chapter 1 with `read_file_range`."
+            "CRITICAL REQUIREMENT: You MUST systematically iterate through EACH chapter and its subchapters.\n"
+            "HIGH-SPEED BATCHING: Use batched `tool_calls: [...]` with `rewrite_chunk` or `insert_into_chunk` or `str_replace` across chapters in minimal turns to insert extensive academic content (detailed theory, methodologies, algorithms, benchmarks, equations, and analysis).\n"
+            "After applying all edits, run `verify_compile` once and signal done=true."
         )
     else:
         # Edit mode — strictly mandate document modification
+        ref_instruction = (
+            "REFERENCE MATERIAL ATTACHED: Use the attached reference document(s) as primary source material to extract facts, sections, or tables.\n"
+            if stored_attachments else ""
+        )
         user_content = (
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{doc_outline}\n\n"
-            f"USER REQUEST (EDIT MODE):\n{user_instruction}\n"
+            f"USER REQUEST (EDIT MODE):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
+            f"FILE: {file_path} ({total_lines} lines)\n\n"
+            f"{task_state}\n\n"
+            f"{smart_document_context}\n\n"
             f"{grounding_instruction}\n\n"
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
             "MANDATE: You are in EDIT MODE. User preference is absolute. You MUST make the requested changes and write detailed, comprehensive LaTeX content directly into the document using `str_replace`.\n"
+            f"{ref_instruction}"
             "If the user asks to elaborate, expand, explain chapters/subchapters, or add content, locate the relevant chapters/sections and insert rich, detailed LaTeX paragraphs, explanations, equations, and subsections into the file.\n"
             "Never conclude with done=true without editing the document.\n"
-            "Start by reading the file with `read_file_range` to find where to make your edits."
+            "Start by locating where to make your edits and apply them."
         )
 
     messages: List[Dict[str, Any]] = [
@@ -752,8 +1059,23 @@ def stream_opencode_agent(
         # Compact older conversation history to keep network payload lightweight and fast
         compact_messages = _compact_conversation_history(messages)
 
-        # Allocate token budget based on step requirements (creation vs routine tool call)
-        step_max_tokens = 8192 if (is_creation_request and steps_taken <= 2) else 4096
+        raw_chars = sum(len(m.get("content", "")) for m in messages)
+        compact_chars = sum(len(m.get("content", "")) for m in compact_messages)
+        agent_trace.record_step_tokens(
+            step=steps_taken,
+            raw_chars=raw_chars,
+            compacted_chars=compact_chars,
+            estimated_tokens=compact_chars // 4,
+        )
+
+        # Allocate token budget dynamically based on context strategy, scope, and step
+        step_max_tokens = compute_step_max_tokens(
+            strategy=context_decision.strategy,
+            scope=scope,
+            step_number=steps_taken,
+            is_creation=is_creation_request,
+            total_steps=actual_max_steps,
+        )
 
         # LLM call via provider router
         try:
@@ -821,7 +1143,7 @@ def stream_opencode_agent(
             yield {"type": "thought", "content": thought}
 
         # Check for done signal
-        if parsed.get("done"):
+        if parsed.get("done") and not parsed.get("tool_call") and not parsed.get("tool_calls"):
             # 1. Enforce that Edit mode must have actually produced document modifications
             if mode == "edit" and not workspace.has_changed() and steps_taken < actual_max_steps:
                 logger.info(f"Agent attempted premature done in edit mode at step {steps_taken}; enforcing edits.")
@@ -838,14 +1160,16 @@ def stream_opencode_agent(
                 })
                 continue
 
-            # 2. Coverage + Leftover validation for FULL_DOCUMENT_REWRITE
-            if mode == "edit" and (is_full_rewrite or is_broad_request):
+            # 2. Coverage + Leftover validation for FULL_DOCUMENT_REWRITE & EXPANSION
+            if mode == "edit" and (is_full_rewrite or is_expansion or is_broad_request):
+                t_val_start = time.time()
                 cov_report = validate_coverage(
                     workspace=workspace,
                     user_instruction=user_instruction,
                     scope=scope,
                     forbidden_terms=scope_result.forbidden_terms,
                 )
+                agent_trace.record_validator((time.time() - t_val_start) * 1000)
 
                 yield {
                     "type": "coverage_check",
@@ -882,137 +1206,213 @@ def stream_opencode_agent(
             agent_explanation = parsed.get("explanation", thought or "Edit completed.")
             break
 
-        # Check for tool call
-        tool_call = parsed.get("tool_call")
-        if tool_call and isinstance(tool_call, dict):
-            tool_name = tool_call.get("name", "")
-            tool_args = tool_call.get("arguments", {})
+        # Check for tool call(s) (supports single `tool_call` or batch `tool_calls: [...]`)
+        raw_tool_calls = parsed.get("tool_calls")
+        raw_tool_call = parsed.get("tool_call")
 
-            yield {
-                "type": "tool_call",
-                "tool": tool_name,
-                "args": tool_args,
-            }
+        calls: List[Dict[str, Any]] = []
+        if isinstance(raw_tool_calls, list):
+            calls = [c for c in raw_tool_calls if isinstance(c, dict)]
+        elif isinstance(raw_tool_call, list):
+            calls = [c for c in raw_tool_call if isinstance(c, dict)]
+        elif isinstance(raw_tool_call, dict):
+            calls = [raw_tool_call]
 
-            # Execute tool
-            tool_result = execute_tool(
-                tool_name=tool_name,
-                args=tool_args,
-                workspace=workspace,
-            )
+        if calls:
+            tool_results_list = []
+            for call in calls:
+                tool_name = call.get("name", "")
+                tool_args = call.get("arguments", {})
 
-            yield {
-                "type": "tool_result",
-                "tool": tool_name,
-                "result": tool_result,
-            }
+                yield {
+                    "type": "tool_call",
+                    "tool": tool_name,
+                    "args": tool_args,
+                }
 
-            # Special handling for compile results
-            if tool_name == "verify_compile":
-                if tool_result.get("infra_skip"):
-                    compile_available = False
-                    compile_verified = True
-                    yield {
-                        "type": "status",
-                        "step": steps_taken,
-                        "message": "✓ Shadow compilation skipped (LaTeX compiler not installed or unavailable in this environment). Edits preserved.",
-                    }
-                elif tool_result.get("success"):
-                    compile_verified = True
-                    yield {
-                        "type": "status",
-                        "step": steps_taken,
-                        "message": "✓ Shadow compilation passed.",
-                    }
+                # Execute tool with timing instrumentation
+                t_tool_start = time.time()
+                tool_result = execute_tool(
+                    tool_name=tool_name,
+                    args=tool_args,
+                    workspace=workspace,
+                )
+                t_tool_ms = (time.time() - t_tool_start) * 1000
+
+                is_success = bool(tool_result.get("success", True) if isinstance(tool_result, dict) else True)
+                summary_str = str(tool_result)[:100] if isinstance(tool_result, dict) else ""
+                agent_trace.record_tool_call(
+                    name=tool_name,
+                    args=tool_args,
+                    result_summary=summary_str,
+                    latency_ms=t_tool_ms,
+                    success=is_success,
+                )
+
+                yield {
+                    "type": "tool_result",
+                    "tool": tool_name,
+                    "result": tool_result,
+                }
+
+                # Special handling for compile results
+                if tool_name == "verify_compile":
+                    agent_trace.record_compile(
+                        latency_ms=t_tool_ms,
+                        success=bool(tool_result.get("success", False)),
+                    )
+                    if tool_result.get("infra_skip"):
+                        compile_available = False
+                        compile_verified = True
+                        yield {
+                            "type": "status",
+                            "step": steps_taken,
+                            "message": "✓ Shadow compilation skipped (LaTeX compiler not installed or unavailable in this environment). Edits preserved.",
+                        }
+                    elif tool_result.get("success"):
+                        compile_verified = True
+                        yield {
+                            "type": "status",
+                            "step": steps_taken,
+                            "message": "✓ Shadow compilation passed.",
+                        }
+                    else:
+                        compile_verified = False
+                        yield {
+                            "type": "compile_error",
+                            "summary": tool_result.get("stderr", "Compilation failed"),
+                            "errors": tool_result.get("errors", []),
+                            "message": "Shadow compilation failed. Agent will self-correct...",
+                        }
+
+                tool_results_list.append((tool_name, tool_args, tool_result))
+
+            # Fast 1-turn completion check: If agent signaled done=true in the same response AND tools made valid edits
+            if parsed.get("done") and workspace.has_changed():
+                # Check coverage if broad / full rewrite / expansion
+                if mode == "edit" and (is_full_rewrite or is_expansion):
+                    t_val_start = time.time()
+                    cov_report = validate_coverage(
+                        workspace=workspace,
+                        user_instruction=user_instruction,
+                        scope=scope,
+                        forbidden_terms=scope_result.forbidden_terms,
+                    )
+                    agent_trace.record_validator((time.time() - t_val_start) * 1000)
+                    if cov_report.passed:
+                        yield {
+                            "type": "coverage_check",
+                            "total_chunks": cov_report.total_chunks,
+                            "edited_chunks": cov_report.edited_chunks,
+                            "missing_chunk_ids": cov_report.missing_chunk_ids,
+                            "passed": True,
+                            "message": cov_report.feedback_message,
+                        }
+                        agent_explanation = parsed.get("explanation", thought or "Edit completed.")
+                        break
                 else:
-                    compile_verified = False
-                    yield {
-                        "type": "compile_error",
-                        "summary": tool_result.get("stderr", "Compilation failed"),
-                        "errors": tool_result.get("errors", []),
-                        "message": "Shadow compilation failed. Agent will self-correct...",
-                    }
+                    agent_explanation = parsed.get("explanation", thought or "Edit completed.")
+                    break
 
             # Append to conversation for next LLM turn
             messages.append({"role": "assistant", "content": content})
 
             # Format observation for the LLM
-            result_str = json.dumps(tool_result, indent=2, ensure_ascii=False)
-            # Truncate very long tool results to prevent context overflow
-            if len(result_str) > 8000:
-                result_str = result_str[:8000] + "\n... (truncated)"
+            if len(tool_results_list) == 1:
+                tool_name, tool_args, tool_result = tool_results_list[0]
+                result_str = json.dumps(tool_result, indent=2, ensure_ascii=False)
+                if len(result_str) > 4000:
+                    result_str = result_str[:4000] + "\n... (truncated)"
 
-            # Tailor follow-up instruction based on the tool that just executed
-            if tool_name == "rewrite_chunk":
-                touched = workspace.get_touched_chunks()
-                remaining = [c.chunk_id for c in content_chunks if c.chunk_id not in touched]
-                if remaining:
+                # Tailor follow-up instruction based on the tool that just executed
+                if tool_name == "rewrite_chunk":
+                    touched = workspace.get_touched_chunks()
+                    remaining = [c.chunk_id for c in content_chunks if c.chunk_id not in touched]
+                    if remaining:
+                        followup_msg = (
+                            f"TOOL RESULT from `rewrite_chunk`:\n{result_str}\n\n"
+                            f"Chunk `{tool_args.get('chunk_id')}` updated successfully in shadow buffer. "
+                            f"Remaining unedited chunk(s): {remaining}. "
+                            f"Proceed with `rewrite_chunk` for the next chunk: `{remaining[0]}` (or use batched `tool_calls: [...]` to rewrite all remaining chunks in one turn)."
+                        )
+                    else:
+                        followup_msg = (
+                            f"TOOL RESULT from `rewrite_chunk`:\n{result_str}\n\n"
+                            "All content chunks have now been rewritten! If all edits are complete, set done=true with your final explanation."
+                        )
+                elif tool_name == "get_template_theme":
                     followup_msg = (
-                        f"TOOL RESULT from `rewrite_chunk`:\n{result_str}\n\n"
-                        f"Chunk `{tool_args.get('chunk_id')}` updated successfully in shadow buffer. "
-                        f"Remaining unedited chunk(s): {remaining}. "
-                        f"Proceed with `rewrite_chunk` for the next chunk: `{remaining[0]}`."
+                        f"TOOL RESULT from `get_template_theme`:\n{result_str}\n\n"
+                        "ACTION REQUIRED: You have retrieved the template/theme styling. "
+                        "Now use `read_file_range` on the document's preamble (if not yet read) and call `str_replace` "
+                        "to apply these theme/color/package changes into the document buffer. "
+                        "Do NOT call done=true until you have modified the document using `str_replace`!"
+                    )
+                elif tool_name == "read_file_range":
+                    followup_msg = (
+                        f"TOOL RESULT from `read_file_range`:\n{result_str}\n\n"
+                        "Now identify the exact text to replace and use `str_replace` or `rewrite_chunk` to apply the edits. "
+                        "Remember that old_str in `str_replace` must match the file exactly character-for-character."
+                    )
+                elif tool_name in ("str_replace", "insert_into_chunk"):
+                    followup_msg = (
+                        f"TOOL RESULT from `{tool_name}`:\n{result_str}\n\n"
+                        "Edit applied successfully to shadow buffer. If all requested changes are complete, you can now set done=true with your final explanation, or continue with additional edits if needed."
+                    )
+                elif tool_name == "verify_compile":
+                    if tool_result.get("infra_skip"):
+                        followup_msg = (
+                            f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
+                            "Shadow compilation skipped (compiler unavailable). If all edits are complete, you can now set done=true."
+                        )
+                    elif tool_result.get("success"):
+                        followup_msg = (
+                            f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
+                            "Compilation passed cleanly! If all requested changes are complete, you can now set done=true."
+                        )
+                    else:
+                        err_context = tool_result.get("stderr", "")
+                        summary_msg = tool_result.get("summary", "Compilation failed")
+                        followup_msg = (
+                            f"COMPILATION FAILED: {summary_msg}\n\n"
+                            f"{err_context}\n\n"
+                            "INSTRUCTION: Target ONLY the specific lines flagged above with compilation errors. "
+                            "Use `str_replace` to fix the syntax errors (e.g. unescaped characters, missing packages, unclosed environments) "
+                            "and then call `verify_compile` to confirm the fix."
+                        )
+                elif tool_name == "search_uploaded_references":
+                    followup_msg = (
+                        f"TOOL RESULT from `search_uploaded_references`:\n{result_str}\n\n"
+                        "Use the retrieved reference details, benchmark metrics, or citations to insert or edit the LaTeX content using `insert_into_chunk` or `str_replace`."
                     )
                 else:
                     followup_msg = (
-                        f"TOOL RESULT from `rewrite_chunk`:\n{result_str}\n\n"
-                        "All content chunks have now been rewritten! Please call `verify_compile` to confirm zero compilation errors before setting done=true."
-                    )
-            elif tool_name == "get_template_theme":
-                followup_msg = (
-                    f"TOOL RESULT from `get_template_theme`:\n{result_str}\n\n"
-                    "ACTION REQUIRED: You have retrieved the template/theme styling. "
-                    "Now use `read_file_range` on the document's preamble (if not yet read) and call `str_replace` "
-                    "to apply these theme/color/package changes into the document buffer. "
-                    "Do NOT call done=true until you have modified the document using `str_replace`!"
-                )
-            elif tool_name == "read_file_range":
-                followup_msg = (
-                    f"TOOL RESULT from `read_file_range`:\n{result_str}\n\n"
-                    "Now identify the exact text to replace and use `str_replace` or `rewrite_chunk` to apply the edits. "
-                    "Remember that old_str in `str_replace` must match the file exactly character-for-character."
-                )
-            elif tool_name == "str_replace":
-                if compile_available:
-                    followup_msg = (
-                        f"TOOL RESULT from `str_replace`:\n{result_str}\n\n"
-                        "Edit applied to shadow buffer. Continue with additional `str_replace` or `rewrite_chunk` edits if needed, "
-                        "or call `verify_compile` to verify compilation before setting done=true."
-                    )
-                else:
-                    followup_msg = (
-                        f"TOOL RESULT from `str_replace`:\n{result_str}\n\n"
-                        "Edit applied to shadow buffer. Continue with additional edits if needed, "
-                        "or set done=true when all edits are complete."
-                    )
-            elif tool_name == "verify_compile":
-                if tool_result.get("infra_skip"):
-                    followup_msg = (
-                        f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
-                        "NOTE: LaTeX compilation verification was skipped because the compiler is not available in this environment. "
-                        "Do NOT call `verify_compile` again. "
-                        "Continue with additional edits if needed, or set done=true when all edits are complete."
-                    )
-                elif tool_result.get("success"):
-                    followup_msg = (
-                        f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
-                        "Compilation passed cleanly! If all requested changes and chunks are applied, you can now set done=true."
-                    )
-                else:
-                    followup_msg = (
-                        f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
-                        "Compilation reported errors. Use `read_file_range` to inspect the problematic lines and `str_replace` to fix them."
+                        f"TOOL RESULT from `{tool_name}`:\n{result_str}\n\n"
+                        "If all edits are complete, set done=true with your final explanation, or continue with the next edit."
                     )
             else:
-                if compile_available:
+                # Batch results summary
+                results_summary = []
+                for t_name, t_args, t_res in tool_results_list:
+                    res_json = json.dumps(t_res, ensure_ascii=False)
+                    if len(res_json) > 150:
+                        res_json = res_json[:150] + "..."
+                    results_summary.append(f"- `{t_name}`({json.dumps(t_args, ensure_ascii=False)}): {res_json}")
+
+                touched = workspace.get_touched_chunks()
+                remaining = [c.chunk_id for c in content_chunks if c.chunk_id not in touched]
+                if (is_full_rewrite or is_expansion) and remaining:
                     followup_msg = (
-                        f"TOOL RESULT from `{tool_name}`:\n{result_str}\n\n"
-                        "Continue with the next tool call or call `verify_compile` and set done=true when all edits are complete."
+                        f"BATCH TOOL RESULTS ({len(tool_results_list)} actions executed):\n"
+                        + "\n".join(results_summary)
+                        + f"\n\nRemaining unedited chunk(s): {remaining}. "
+                        + f"Proceed with remaining chunks: `{remaining[0]}` (or batch them in `tool_calls: [...]`)."
                     )
                 else:
                     followup_msg = (
-                        f"TOOL RESULT from `{tool_name}`:\n{result_str}\n\n"
-                        "Continue with the next tool call or set done=true when all edits are complete."
+                        f"BATCH TOOL RESULTS ({len(tool_results_list)} actions executed):\n"
+                        + "\n".join(results_summary)
+                        + "\n\nAll batched edits have been applied to the shadow buffer! If all changes are complete, set done=true with your final explanation."
                     )
 
             messages.append({
@@ -1038,11 +1438,23 @@ def stream_opencode_agent(
             ),
         })
 
-    # 5. Compute and yield diff
+    # 5. Compute and yield diff & emit trace
     elapsed_ms = int((time.time() - start_time) * 1000)
+    agent_trace.total_latency_ms = float(elapsed_ms)
+    agent_trace.steps_used = steps_taken
+    touched_chunks = workspace.get_touched_chunks()
+    agent_trace.nodes_touched = list(touched_chunks)
+    if num_content_chunks > 0:
+        touched_content = [c.chunk_id for c in content_chunks if c.chunk_id in touched_chunks]
+        agent_trace.coverage_pct = round((len(touched_content) / num_content_chunks) * 100.0, 1)
+    else:
+        agent_trace.coverage_pct = 100.0
+
+    trace_manager.emit_agent_trace(agent_trace)
+    trace_summary = agent_trace.summary()
 
     if workspace.has_changed():
-        # Generate the final_diff payload
+        # Generate the final_diff payload for main document
         diff_payload = compute_final_diff(
             original=workspace.get_original(),
             modified=workspace.get_buffer(),
@@ -1050,6 +1462,18 @@ def stream_opencode_agent(
             explanation=agent_explanation,
         )
         yield diff_payload
+
+        # Yield diff payloads for any modified auxiliary files
+        all_modified = workspace.get_all_modified_files()
+        for aux_p, aux_c in all_modified.items():
+            if aux_p != file_path and aux_p != "main.tex":
+                aux_orig = getattr(workspace, "_aux_originals", {}).get(aux_p, "")
+                yield compute_final_diff(
+                    original=aux_orig,
+                    modified=aux_c,
+                    file_path=aux_p,
+                    explanation=f"Updated auxiliary file: {aux_p}",
+                )
 
         # Also yield backward-compatible result event
         edit_items = compute_edit_items(
@@ -1068,6 +1492,8 @@ def stream_opencode_agent(
                 "compile_verified": compile_verified,
                 "edit_count": workspace.get_edit_count(),
                 "elapsed_ms": elapsed_ms,
+                "trace": trace_summary,
+                "modified_files": all_modified,
             },
         }
     else:
@@ -1083,6 +1509,7 @@ def stream_opencode_agent(
                 "compile_verified": compile_verified,
                 "edit_count": 0,
                 "elapsed_ms": elapsed_ms,
+                "trace": trace_summary,
             },
         }
 
@@ -1099,10 +1526,13 @@ def run_opencode_agent(
     model: str = DEFAULT_MODEL,
     mode: str = "edit",
     attached_file: Optional[Dict[str, Any]] = None,
+    attached_files: Optional[List[Dict[str, Any]]] = None,
     api_keys: Optional[Dict[str, str]] = None,
     max_steps: Optional[int] = None,
     cancel_token: Optional[CancellationToken] = None,
     assets_dir: Optional[str] = None,
+    session_id: Optional[str] = None,
+    project_files: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """
     Synchronous wrapper around stream_opencode_agent.
@@ -1119,10 +1549,13 @@ def run_opencode_agent(
         model=model,
         mode=mode,
         attached_file=attached_file,
+        attached_files=attached_files,
         api_keys=api_keys,
         max_steps=max_steps,
         cancel_token=cancel_token,
         assets_dir=assets_dir,
+        session_id=session_id,
+        project_files=project_files,
     ):
         events.append(event)
         if event.get("type") == "result":

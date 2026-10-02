@@ -51,6 +51,100 @@ class AgentTrace:
     tokens_in: int = 0
     tokens_out: int = 0
 
+    # Extended performance & latency profiling telemetry
+    step_budget_allocated: int = 0
+    steps_used: int = 0
+    tool_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    compile_invocations: int = 0
+    compile_latencies_ms: List[float] = field(default_factory=list)
+    compile_total_latency_ms: float = 0.0
+    step_token_sizes: List[Dict[str, Any]] = field(default_factory=list)
+    edit_validator_invocations: int = 0
+    edit_validator_latency_ms: float = 0.0
+    coverage_pct: float = 100.0
+
+    def record_tool_call(
+        self,
+        name: str,
+        args: Dict[str, Any],
+        result_summary: str,
+        latency_ms: float,
+        success: bool = True,
+        node_id: Optional[str] = None,
+    ):
+        """Records an individual tool call and aggregates tool-level breakdown."""
+        record = ToolCallRecord(
+            name=name,
+            args=args,
+            result_summary=result_summary,
+            latency_ms=latency_ms,
+            success=success,
+            node_id=node_id,
+        )
+        self.tool_calls.append(record)
+
+        if name not in self.tool_breakdown:
+            self.tool_breakdown[name] = {
+                "count": 0,
+                "success_count": 0,
+                "failure_count": 0,
+                "total_latency_ms": 0.0,
+                "avg_latency_ms": 0.0,
+            }
+
+        entry = self.tool_breakdown[name]
+        entry["count"] += 1
+        if success:
+            entry["success_count"] += 1
+        else:
+            entry["failure_count"] += 1
+        entry["total_latency_ms"] += latency_ms
+        entry["avg_latency_ms"] = entry["total_latency_ms"] / entry["count"]
+
+    def record_compile(self, latency_ms: float, success: bool = True):
+        """Records a shadow compilation event."""
+        self.compile_invocations += 1
+        self.compile_latencies_ms.append(latency_ms)
+        self.compile_total_latency_ms += latency_ms
+
+    def record_validator(self, latency_ms: float):
+        """Records an AST coverage / edit validation pass."""
+        self.edit_validator_invocations += 1
+        self.edit_validator_latency_ms += latency_ms
+
+    def record_step_tokens(
+        self,
+        step: int,
+        raw_chars: int,
+        compacted_chars: int,
+        estimated_tokens: int,
+    ):
+        """Records context token and character growth per step."""
+        self.step_token_sizes.append({
+            "step": step,
+            "raw_chars": raw_chars,
+            "compacted_chars": compacted_chars,
+            "estimated_tokens": estimated_tokens,
+        })
+
+    def summary(self) -> Dict[str, Any]:
+        """Returns a concise telemetry summary dict."""
+        return {
+            "trace_id": self.trace_id,
+            "project_id": self.project_id,
+            "total_latency_ms": self.total_latency_ms,
+            "step_budget_allocated": self.step_budget_allocated,
+            "steps_used": self.steps_used,
+            "nodes_touched": len(self.nodes_touched),
+            "tool_calls_count": len(self.tool_calls),
+            "tool_breakdown": self.tool_breakdown,
+            "compile_invocations": self.compile_invocations,
+            "compile_total_latency_ms": self.compile_total_latency_ms,
+            "edit_validator_invocations": self.edit_validator_invocations,
+            "edit_validator_latency_ms": self.edit_validator_latency_ms,
+            "coverage_pct": self.coverage_pct,
+        }
+
 
 @dataclass
 class ConversionTrace:
