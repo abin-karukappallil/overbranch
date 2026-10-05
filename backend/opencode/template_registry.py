@@ -101,13 +101,15 @@ def list_available_themes(category: Optional[str] = None) -> List[Dict[str, Any]
             description = meta.get("description", f"LaTeX template for {cat.upper()}: {item.name}")
             declared_cat = meta.get("category", cat.upper())
 
+            is_default = (cat == "ppt" and ("regalia" in theme_id or "regalia" in theme_name.lower()))
             results.append({
                 "id": theme_id,
                 "name": theme_name,
                 "category": declared_cat,
                 "folder_name": item.name,
                 "has_metadata": meta_file.exists(),
-                "description": description,
+                "description": description + (" (Default PPT Template)" if is_default else ""),
+                "is_default": is_default,
             })
 
     return results
@@ -184,34 +186,64 @@ def get_template_theme(
     theme_lower = theme_name.lower().strip()
     candidate_dirs = [p for p in cat_dir.iterdir() if p.is_dir() and (p / "main.tex").exists()]
 
-    # Match strategy: exact match, id match, or substring match
+    # Pre-parse metadata for candidate directories
+    meta_map: Dict[Path, Dict[str, Any]] = {}
+    for cdir in candidate_dirs:
+        mfile = cdir / "metadata.json"
+        if mfile.exists():
+            try:
+                meta_map[cdir] = json.loads(mfile.read_text(encoding="utf-8"))
+            except Exception:
+                meta_map[cdir] = {}
+        else:
+            meta_map[cdir] = {}
+
     matched_dir: Optional[Path] = None
 
-    # 1. Exact or ID match
-    for cdir in candidate_dirs:
-        meta_file = cdir / "metadata.json"
-        if meta_file.exists():
-            try:
-                meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                if meta.get("id", "").lower() == theme_lower or meta.get("name", "").lower() == theme_lower:
-                    matched_dir = cdir
-                    break
-            except Exception:
-                pass
-        if cdir.name.lower() == theme_lower or cdir.name.lower().replace(" ", "-") == theme_lower:
-            matched_dir = cdir
-            break
+    # 0. Check for "default": for PPT, Regalia is the designated default template
+    if theme_lower in ("default", "standard", "recommended", "regalia"):
+        regalia_dir = next((p for p in candidate_dirs if "regalia" in p.name.lower()), None)
+        if regalia_dir:
+            matched_dir = regalia_dir
 
-    # 2. Substring match
+    # 1. Exact or ID match
     if not matched_dir:
         for cdir in candidate_dirs:
-            if theme_lower in cdir.name.lower():
+            meta = meta_map.get(cdir, {})
+            m_id = meta.get("id", "").lower()
+            m_name = meta.get("name", "").lower()
+            if (
+                m_id == theme_lower
+                or m_name == theme_lower
+                or cdir.name.lower() == theme_lower
+                or cdir.name.lower().replace(" ", "-") == theme_lower
+            ):
                 matched_dir = cdir
                 break
 
-    # 3. Fallback to first available if none matched
+    # 2. Substring match (folder name, metadata ID, name, or description)
+    if not matched_dir:
+        for cdir in candidate_dirs:
+            meta = meta_map.get(cdir, {})
+            m_id = meta.get("id", "").lower()
+            m_name = meta.get("name", "").lower()
+            m_desc = meta.get("description", "").lower()
+            if (
+                theme_lower in cdir.name.lower()
+                or theme_lower in m_id
+                or theme_lower in m_name
+                or theme_lower in m_desc
+            ):
+                matched_dir = cdir
+                break
+
+    # 3. Fallback: for PPT, default to Regalia; otherwise first available
     if not matched_dir and candidate_dirs:
-        matched_dir = candidate_dirs[0]
+        if target_cat == "ppt":
+            regalia_dir = next((p for p in candidate_dirs if "regalia" in p.name.lower()), None)
+            matched_dir = regalia_dir or candidate_dirs[0]
+        else:
+            matched_dir = candidate_dirs[0]
 
     if not matched_dir:
         return {

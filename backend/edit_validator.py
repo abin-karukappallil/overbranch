@@ -7,7 +7,12 @@ Runs pre-output validation passes after the agent loop finishes:
    if any content chunk was missed, feeding the missed IDs back to the agent loop.
 2. Leftover Content Sweep: Scans the buffer for forbidden keywords and old topic terms
    if a topic change was requested.
-3. Environment Balance & LIFO Auto-Repair: Verifies balanced \\begin / \\end tags.
+3. Structural Validation: environment nesting, math delimiters, curly braces and
+   \\left / \\right pairing.
+
+This module only *validates*. Repair lives in
+``latex_error_fixer.auto_heal_latex_code``, which closes environments positionally
+(before the enclosing \\end) rather than appending them at end-of-file.
 """
 
 from __future__ import annotations
@@ -22,6 +27,295 @@ from document_index import DocumentChunk, DocumentIndex
 logger = logging.getLogger("edit_validator")
 
 
+# Environments whose body is literal text: a \begin{...}, $, { or % inside one of
+# these is content, not structure. Starred forms come first so the alternation
+# cannot match the unstarred prefix and then fail on the closing brace.
+VERBATIM_ENVS = (
+    "verbatim*", "verbatim",
+    "Verbatim*", "Verbatim",
+    "BVerbatim*", "BVerbatim",
+    "LVerbatim*", "LVerbatim",
+    "SaveVerbatim*", "SaveVerbatim",
+    "semiverbatim",
+    "alltt",
+    "lstlisting*", "lstlisting",
+    "minted*", "minted",
+    "listing*", "listing",
+    "comment",
+    "filecontents*", "filecontents",
+)
+
+# Macros whose brace-group bodies hold *template* LaTeX that must not be counted as
+# live structure: \newcommand{\openlist}{\begin{itemize}} is balanced, valid code.
+# Value = how many trailing brace groups are bodies.
+_MACRO_DEF_BODIES = {
+    "newcommand": 1,
+    "renewcommand": 1,
+    "providecommand": 1,
+    "DeclareRobustCommand": 1,
+    "newenvironment": 2,
+    "renewenvironment": 2,
+}
+
+_RE_VERBATIM_BLOCK = re.compile(
+    r"\\begin\{(" + "|".join(re.escape(e) for e in VERBATIM_ENVS) + r")\}"
+    r"(?:\[[^\]]*\])?(?:\{[^}]*\})?(.*?)\\end\{\1\}",
+    re.DOTALL,
+)
+# \verb cannot span lines in TeX, so [^\n]*? makes the line-count invariant
+# structural rather than incidental: an unterminated \verb can never swallow a newline.
+_RE_VERB_INLINE = re.compile(r"\\verb(\*?)([^a-zA-Z0-9\s*])([^\n]*?)\2")
+_RE_URL_ARG = re.compile(r"(\\(?:url|nolinkurl|path|href)\s*\{)([^{}\n]*)(\})")
+_RE_COMMENT = re.compile(r"(?<!\\)(?:\\\\)*%")
+_RE_ENV_TAG = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z@*][A-Za-z0-9@*]*)\s*\}")
+_RE_MACRO_DEF = re.compile(
+    r"\\(" + "|".join(_MACRO_DEF_BODIES) + r")\*?(?![a-zA-Z])"
+)
+_RE_DEF = re.compile(r"\\(?:def|gdef|edef|xdef)\\[A-Za-z@]+")
+_RE_LEFT = re.compile(r"\\left(?![a-zA-Z])")
+_RE_RIGHT = re.compile(r"\\right(?![a-zA-Z])")
+_RE_ESCAPED_BRACE = re.compile(r"(?<!\\)(?:\\\\)*\\[{}]")
+_RE_DOUBLE_DOLLAR = re.compile(r"(?<!\\)(?:\\\\)*\$\$")
+_RE_SINGLE_DOLLAR = re.compile(r"(?<!\\)(?:\\\\)*\$")
+_RE_PAREN_OPEN = re.compile(r"(?<!\\)(?:\\\\)*\\\(")
+_RE_PAREN_CLOSE = re.compile(r"(?<!\\)(?:\\\\)*\\\)")
+_RE_BRACKET_OPEN = re.compile(
+    r"(?<!\\)(?:\\\\)*\\\[(?!\s*-?\d+(?:\.\d+)?\s*(?:pt|mm|cm|in|ex|em|bp|dd|pc|sp)\s*\])"
+)
+_RE_BRACKET_CLOSE = re.compile(r"(?<!\\)(?:\\\\)*\\\]")
+
+
+def _blank(text: str) -> str:
+    """Replaces every character with a space, keeping newlines (and total length)."""
+    return "".join("\n" if ch == "\n" else " " for ch in text)
+
+
+def _blank_group(m: "re.Match", group: int) -> str:
+    """Returns the whole match with one group blanked in place, preserving length."""
+    full = m.group(0)
+    base = m.start(0)
+    a, b = m.start(group) - base, m.end(group) - base
+    return full[:a] + _blank(full[a:b]) + full[b:]
+
+
+def _match_brace(s: str, i: int) -> int:
+    """Given s[i] == '{', returns the index of the matching '}', or -1."""
+    depth = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return -1
+
+
+def mask_macro_definition_bodies(code: str) -> str:
+    """
+    Blanks the bodies of \\newcommand / \\newenvironment / \\def definitions.
+
+    The enclosing braces are kept, so brace balance is still validated; only the
+    template content inside is neutralised. Without this,
+    ``\\newcommand{\\openlist}{\\begin{itemize}}`` is reported as an unclosed
+    environment, which makes every later edit fail pre-commit validation.
+    """
+    if not code:
+        return code
+
+    out = list(code)
+    n = len(code)
+
+    def skip_ws(j: int) -> int:
+        while j < n and code[j] in " \t\r\n":
+            j += 1
+        return j
+
+    def skip_optional(j: int) -> int:
+        j = skip_ws(j)
+        while j < n and code[j] == "[":
+            k = code.find("]", j)
+            if k == -1:
+                return j
+            j = skip_ws(k + 1)
+        return j
+
+    def blank_span(a: int, b: int) -> None:
+        for k in range(a, b):
+            if out[k] != "\n":
+                out[k] = " "
+
+    for m in _RE_MACRO_DEF.finditer(code):
+        bodies = _MACRO_DEF_BODIES[m.group(1)]
+        j = skip_ws(m.end())
+        # The macro/environment name: either {\foo} or a bare \foo
+        if j < n and code[j] == "{":
+            k = _match_brace(code, j)
+            if k == -1:
+                continue
+            j = k + 1
+        elif j < n and code[j] == "\\":
+            j += 1
+            while j < n and (code[j].isalpha() or code[j] == "@"):
+                j += 1
+        j = skip_optional(j)
+        for _ in range(bodies):
+            j = skip_ws(j)
+            if j >= n or code[j] != "{":
+                break
+            k = _match_brace(code, j)
+            if k == -1:
+                break
+            blank_span(j + 1, k)
+            j = k + 1
+
+    for m in _RE_DEF.finditer(code):
+        j = m.end()
+        while j < n and code[j] not in "{\n":
+            j += 1
+        if j < n and code[j] == "{":
+            k = _match_brace(code, j)
+            if k != -1:
+                blank_span(j + 1, k)
+
+    return "".join(out)
+
+
+def clean_latex_for_validation(latex_code: str) -> str:
+    """
+    Neutralises content that must not be read as LaTeX structure:
+    verbatim-like environments, inline \\verb, URL arguments, macro definition
+    bodies, and % comments.
+
+    Every character is replaced in place, so both the total length and the exact
+    newline count are preserved and reported line numbers stay accurate.
+    """
+    if not latex_code:
+        return ""
+
+    # 1. Verbatim-like environment bodies
+    cleaned = _RE_VERBATIM_BLOCK.sub(lambda m: _blank_group(m, 2), latex_code)
+
+    # 2. Inline \verb<delim>...<delim> (any delimiter, starred form included)
+    cleaned = _RE_VERB_INLINE.sub(lambda m: _blank_group(m, 3), cleaned)
+
+    # 3. URL-ish arguments: % # $ & _ inside them are literal, not TeX specials.
+    #    Only the first brace group, so $math$ in \href link *text* is still checked.
+    cleaned = _RE_URL_ARG.sub(lambda m: _blank_group(m, 2), cleaned)
+
+    # 4. Macro definition bodies
+    cleaned = mask_macro_definition_bodies(cleaned)
+
+    # 5. Comments (% to end of line, unless escaped by an odd number of backslashes)
+    out_lines = []
+    for line in cleaned.splitlines(keepends=True):
+        m = _RE_COMMENT.search(line)
+        if m:
+            pct = m.end() - 1
+            nl = "\n" if line.endswith("\n") else ""
+            body = line[:-1] if nl else line
+            out_lines.append(body[:pct] + _blank(body[pct:]) + nl)
+        else:
+            out_lines.append(line)
+
+    return "".join(out_lines)
+
+
+def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
+    """
+    Strict pre-commit validation step for the edit pipeline.
+    Validates:
+    1. Every \\begin{X} has a matching \\end{X} in correct nesting order.
+    2. $, $$, \\( \\), \\[ \\] delimiters are balanced.
+    3. Braces { } are balanced.
+    4. \\left and \\right are paired.
+
+    Comments, verbatim-like environments, URL arguments and macro definition
+    bodies are neutralised first (see ``clean_latex_for_validation``).
+
+    Returns:
+        (passed: bool, errors: List[str])
+    """
+    if not latex_code or not latex_code.strip():
+        return True, []
+
+    errors: List[str] = []
+    cleaned = clean_latex_for_validation(latex_code)
+    lines = cleaned.splitlines(keepends=True)
+
+    # 1. Environment Matching Stack
+    stack: List[Tuple[str, int]] = []
+
+    for idx, line in enumerate(lines, start=1):
+        for m in _RE_ENV_TAG.finditer(line):
+            tag_type = m.group(1)
+            env_name = m.group(2)
+            if tag_type == "begin":
+                stack.append((env_name, idx))
+            elif tag_type == "end":
+                if not stack:
+                    errors.append(f"Line {idx}: Unmatched \\end{{{env_name}}} (no open environment)")
+                else:
+                    top_env, top_line = stack.pop()
+                    if top_env != env_name:
+                        errors.append(
+                            f"Line {idx}: Mismatched \\end{{{env_name}}}, expected \\end{{{top_env}}} from line {top_line}"
+                        )
+
+    for env_name, line_no in stack:
+        errors.append(f"Line {line_no}: Unclosed \\begin{{{env_name}}}")
+
+    # 2. Math Delimiters Balance
+    double_dollar_matches = list(_RE_DOUBLE_DOLLAR.finditer(cleaned))
+    if len(double_dollar_matches) % 2 != 0:
+        errors.append(f"Unbalanced '$$' display math delimiters (found {len(double_dollar_matches)} occurrences)")
+
+    temp_no_dd = _RE_DOUBLE_DOLLAR.sub("", cleaned)
+    single_dollar_matches = list(_RE_SINGLE_DOLLAR.finditer(temp_no_dd))
+    if len(single_dollar_matches) % 2 != 0:
+        errors.append(f"Unbalanced '$' inline math delimiters (found {len(single_dollar_matches)} occurrences)")
+
+    open_paren_math = len(list(_RE_PAREN_OPEN.finditer(cleaned)))
+    close_paren_math = len(list(_RE_PAREN_CLOSE.finditer(cleaned)))
+    if open_paren_math != close_paren_math:
+        errors.append(f"Unbalanced math mode delimiters: \\( ({open_paren_math}) vs \\) ({close_paren_math})")
+
+    open_bracket_math = len(list(_RE_BRACKET_OPEN.finditer(cleaned)))
+    close_bracket_math = len(list(_RE_BRACKET_CLOSE.finditer(cleaned)))
+    if open_bracket_math != close_bracket_math:
+        errors.append(f"Unbalanced display math delimiters: \\[ ({open_bracket_math}) vs \\] ({close_bracket_math})")
+
+    # 3. Curly Braces Balance { }
+    brace_depth = 0
+    for idx, line in enumerate(lines, start=1):
+        line_clean = _RE_ESCAPED_BRACE.sub("", line)
+        for char in line_clean:
+            if char == "{":
+                brace_depth += 1
+            elif char == "}":
+                brace_depth -= 1
+                if brace_depth < 0:
+                    errors.append(f"Line {idx}: Extra closing brace '}}'")
+                    brace_depth = 0
+
+    if brace_depth > 0:
+        errors.append(f"Unclosed '{{' curly brace(s) (nesting depth: {brace_depth})")
+
+    # 4. \left / \right pairing
+    n_left = len(_RE_LEFT.findall(cleaned))
+    n_right = len(_RE_RIGHT.findall(cleaned))
+    if n_left != n_right:
+        errors.append(f"Unbalanced \\left ({n_left}) vs \\right ({n_right})")
+
+    return len(errors) == 0, errors
+
+
 @dataclass
 class CoverageValidationResult:
     passed: bool
@@ -31,58 +325,6 @@ class CoverageValidationResult:
     missing_chunk_titles: List[str] = field(default_factory=list)
     leftover_terms_found: List[Dict[str, Any]] = field(default_factory=list)
     feedback_message: str = ""
-
-
-def check_environment_balance(latex_code: str) -> Tuple[bool, List[str]]:
-    """Checks that all LaTeX environments \\begin{env} have matching \\end{env}."""
-    stack: List[Tuple[str, int]] = []
-    errors: List[str] = []
-
-    pattern = re.compile(r"\\(begin|end)\{([a-zA-Z*]+)\}")
-    for idx, line in enumerate(latex_code.splitlines(), start=1):
-        for m in pattern.finditer(line):
-            tag_type = m.group(1)
-            env_name = m.group(2)
-            if tag_type == "begin":
-                stack.append((env_name, idx))
-            elif tag_type == "end":
-                if not stack:
-                    errors.append(f"Line {idx}: Unmatched \\end{{{env_name}}}")
-                else:
-                    top_env, top_line = stack.pop()
-                    if top_env != env_name:
-                        errors.append(f"Line {idx}: Mismatched \\end{{{env_name}}}, expected \\end{{{top_env}}} from line {top_line}")
-
-    for env_name, line_no in stack:
-        errors.append(f"Line {line_no}: Unclosed \\begin{{{env_name}}}")
-
-    return len(errors) == 0, errors
-
-
-def auto_repair_truncated_latex(latex_code: str) -> str:
-    """Closes unclosed LaTeX environments in LIFO order if response was cut off."""
-    code = latex_code.rstrip()
-    pattern = re.compile(r"\\(begin|end)\{([a-zA-Z*]+)\}")
-    stack: List[str] = []
-
-    for m in pattern.finditer(code):
-        tag_type = m.group(1)
-        env_name = m.group(2)
-        if tag_type == "begin":
-            stack.append(env_name)
-        elif tag_type == "end" and stack:
-            if stack[-1] == env_name:
-                stack.pop()
-
-    if stack:
-        logger.info(f"Auto-repairing {len(stack)} unclosed LaTeX environments: {stack}")
-        for env in reversed(stack):
-            code += f"\n\\end{{{env}}}"
-
-    if "\\begin{document}" in code and "\\end{document}" not in code:
-        code += "\n\\end{document}"
-
-    return code
 
 
 def validate_coverage(

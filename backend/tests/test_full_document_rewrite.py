@@ -24,7 +24,7 @@ from scope_classifier import (
 from document_index import DocumentChunk, DocumentIndex
 from query_rewriter import rewrite_query
 from retriever import retrieve_chunks
-from edit_validator import validate_coverage, check_environment_balance, auto_repair_truncated_latex
+from edit_validator import validate_coverage
 from opencode.shadow_workspace import ShadowWorkspace
 from opencode.tools import execute_tool, TOOL_DEFINITIONS
 from opencode.agent_loop import (

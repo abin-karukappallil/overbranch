@@ -24,6 +24,7 @@ import {
   Loader2,
   Pencil,
   Lock,
+  FileInput,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,8 @@ interface ProjectFilesPanelProps {
   onSelectFile: (filePath: string, fileType: "document" | "image") => void;
   onInsertLatexSnippet?: (snippet: string) => void;
   refreshTrigger?: any;
+  /** Opens the PDF → LaTeX importer for this project */
+  onImportPdf?: () => void;
 }
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -61,6 +64,7 @@ export function ProjectFilesPanel({
   onSelectFile,
   onInsertLatexSnippet,
   refreshTrigger,
+  onImportPdf,
 }: ProjectFilesPanelProps) {
   const [files, setFiles] = useState<ProjectFile[]>(() => fileListCache.get(projectId)?.files || []);
   const [isLoading, setIsLoading] = useState(() => !fileListCache.has(projectId));
@@ -314,6 +318,18 @@ export function ProjectFilesPanel({
         </div>
 
         <div className="flex items-center gap-1">
+          {onImportPdf && (
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={onImportPdf}
+              className="h-6 w-6 text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] rounded-md cursor-pointer"
+              title="Import PDF as LaTeX"
+              aria-label="Import PDF as LaTeX"
+            >
+              <FileInput className="w-3.5 h-3.5" />
+            </Button>
+          )}
           <Button
             size="icon"
             variant="ghost"

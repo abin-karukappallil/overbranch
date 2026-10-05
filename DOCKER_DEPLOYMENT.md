@@ -170,6 +170,18 @@ NVIDIA_LLM_MODEL="openai/gpt-oss-120b"
 GROQ_API_KEY="your-groq-api-key"
 ```
 
+Optional: PDF → LaTeX importer. It uses the AI copilot's LLM (`GEMINI_WEB2API_BASE_URL` / `GEMINI_WEB2API_API_KEY_*`, same model); without it, pages fall back to a positioned layout. Only non-LLM settings are configurable:
+```env
+PDF2LATEX_CONCURRENCY="4"
+PDF2LATEX_MAX_FILE_MB="50"
+PDF2LATEX_MAX_PAGES="50"
+PDF2LATEX_SIM_THRESHOLD="0.85"
+# Must be shared by all uvicorn workers (default: system temp dir inside the container)
+PDF2LATEX_JOB_DIR="/tmp/overbranch_pdf2latex_jobs"
+```
+
+The importer compiles with pdfLaTeX and compares pages with `pdftoppm`; both images install TeX Live and poppler-utils (check with `docker compose exec overbranch pdflatex --version` and `pdftoppm -v`). Large PDFs are processed as background jobs that the browser polls, so they are not affected by proxy read timeouts. Uploads still need `client_max_body_size` ≥ `PDF2LATEX_MAX_FILE_MB`.
+
 ---
 
 ### Step 4: Run OverBranch on server/vm

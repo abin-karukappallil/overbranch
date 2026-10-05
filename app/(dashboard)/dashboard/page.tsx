@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, useEffect, useRef, Suspense } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -27,7 +27,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
-import { PDFToLatexModal } from "@/components/dashboard/PDFToLatexModal";
+import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
 
 function DashboardContent() {
   const router = useRouter();
@@ -36,6 +36,7 @@ function DashboardContent() {
   const [filterTemplate, setFilterTemplate] = useState("all");
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const importedProjectId = useRef<string | null>(null);
   const [newProjName, setNewProjName] = useState("");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
@@ -548,10 +549,28 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* PDF to LaTeX Conversion Modal */}
-      <PDFToLatexModal
-        isOpen={pdfModalOpen}
-        onClose={() => setPdfModalOpen(false)}
+      {/* PDF → LaTeX import (creates a new project) */}
+      <ImportPdfDialog
+        open={pdfModalOpen}
+        onOpenChange={(open) => {
+          setPdfModalOpen(open);
+          if (!open && importedProjectId.current) {
+            const id = importedProjectId.current;
+            importedProjectId.current = null;
+            router.push(`/editor/${id}`);
+          }
+        }}
+        onCompleted={({ projectId }) => {
+          utils.projects.invalidate();
+          if (pdfModalOpen) {
+            importedProjectId.current = projectId;
+          } else {
+            // Finished while the dialog was hidden
+            toast.success("PDF import finished", {
+              action: { label: "Open project", onClick: () => router.push(`/editor/${projectId}`) },
+            });
+          }
+        }}
       />
     </div>
   );

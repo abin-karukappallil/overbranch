@@ -37,7 +37,6 @@ class TaskType(str, Enum):
     OUTLINE_PLAN = "outline_plan"
     NODE_EDITING = "node_editing"
     DOC_RESTRUCTURING = "doc_restructuring"
-    PDF_SYNTHESIS = "pdf_synthesis"
     VISION_DIFF = "vision_diff"
 
 
@@ -49,7 +48,6 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
     TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
     TaskType.NODE_EDITING: "gemini-3.7-flash",
     TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
-    TaskType.PDF_SYNTHESIS: "gemini-3.7-flash",
     TaskType.VISION_DIFF: "minimax/minimax-01",
 }
 
@@ -169,6 +167,7 @@ class ProviderRouter:
         temperature: float = 0.1,
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
+        cancel_token: Optional[Any] = None,
     ) -> Dict[str, Any]:
         clean_model = (model or "").strip().lower()
         if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
@@ -176,6 +175,7 @@ class ProviderRouter:
 
         provider = self.route(model)
         logger.info(f"Routing model '{model}' → {provider.get_provider_name()}")
+        cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         try:
             return provider.chat(
                 messages=messages,
@@ -183,6 +183,7 @@ class ProviderRouter:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 api_keys=api_keys,
+                **cancel_kwargs,
             )
         except Exception as primary_err:
             # If user explicit cancellation was requested, re-raise immediately
@@ -204,6 +205,7 @@ class ProviderRouter:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         api_keys=api_keys,
+                        **cancel_kwargs,
                     )
                     fallback_resp["is_fallback"] = True
                     return fallback_resp

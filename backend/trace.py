@@ -62,6 +62,9 @@ class AgentTrace:
     edit_validator_invocations: int = 0
     edit_validator_latency_ms: float = 0.0
     coverage_pct: float = 100.0
+    llm_invocations: int = 0
+    llm_latencies_ms: List[float] = field(default_factory=list)
+    llm_total_latency_ms: float = 0.0
 
     def record_tool_call(
         self,
@@ -100,6 +103,30 @@ class AgentTrace:
             entry["failure_count"] += 1
         entry["total_latency_ms"] += latency_ms
         entry["avg_latency_ms"] = entry["total_latency_ms"] / entry["count"]
+
+    def record_llm_call(
+        self,
+        latency_ms: float,
+        usage: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Records one provider_router.chat round trip.
+
+        Without this the trace showed total latency and payload size but not the
+        LLM-vs-local split, which had to be inferred by subtracting tool and
+        validator latencies from the total. Token counts come straight from the
+        provider response's `usage`, which was already on hand and discarded.
+        """
+        self.llm_invocations += 1
+        self.llm_latencies_ms.append(round(latency_ms, 2))
+        self.llm_total_latency_ms += latency_ms
+        if usage:
+            self.tokens_in += int(
+                usage.get("prompt_tokens") or usage.get("input_tokens") or 0
+            )
+            self.tokens_out += int(
+                usage.get("completion_tokens") or usage.get("output_tokens") or 0
+            )
 
     def record_compile(self, latency_ms: float, success: bool = True):
         """Records a shadow compilation event."""
@@ -143,23 +170,35 @@ class AgentTrace:
             "edit_validator_invocations": self.edit_validator_invocations,
             "edit_validator_latency_ms": self.edit_validator_latency_ms,
             "coverage_pct": self.coverage_pct,
+            # LLM round trips dominate wall-clock time; surfacing them directly
+            # makes the LLM-vs-local split measurable instead of inferred.
+            "llm_invocations": self.llm_invocations,
+            "llm_total_latency_ms": round(self.llm_total_latency_ms, 2),
+            "llm_share_pct": (
+                round(100.0 * self.llm_total_latency_ms / self.total_latency_ms, 1)
+                if self.total_latency_ms > 0
+                else 0.0
+            ),
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
         }
 
 
 @dataclass
 class ConversionTrace:
+    """Telemetry for one PDF → LaTeX conversion job (pdf2latex pipeline)."""
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    job_id: str = ""
     project_id: str = ""
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    model: str = ""
     num_pages: int = 0
-    doc_type: str = ""
-    embedded_images_count: int = 0
-    fidelity_score: float = 1.0
-    defects_count: int = 0
-    defects: List[Dict[str, Any]] = field(default_factory=list)
-    compile_success: bool = True
+    page_scores: List[Optional[float]] = field(default_factory=list)
+    mean_similarity: Optional[float] = None
+    fallback_pages: int = 0
+    warnings: int = 0
+    compile_success: bool = False
     total_latency_ms: float = 0.0
-    model_used: str = ""
 
 
 class TraceManager:

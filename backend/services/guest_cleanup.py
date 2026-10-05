@@ -118,6 +118,9 @@ async def start_cleanup_scheduler(interval_seconds: int = 900):
             async with _cleanup_lock:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, purge_expired_guest_projects)
+                # Also drop PDF conversion job folders (uploads, renders, outputs) older than 24h
+                from pdf2latex.jobs import purge_old_jobs
+                await loop.run_in_executor(None, purge_old_jobs)
         except asyncio.CancelledError:
             logger.info("Guest cleanup scheduler stopped.")
             break

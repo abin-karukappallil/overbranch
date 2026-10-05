@@ -69,6 +69,7 @@ OverBranch is a 100% free and open-source agentic LaTeX code editor — like Ant
 - **Instant TeX & Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
 - **Built-in AI Copilot Router**: Instant Agentic LaTeX edits powered by groq free models(can use own api key or default).
 - **Real-time Collaborative Editing**: Seamless multi-user co-authoring with cursor presence and automatic document saving.
+- **PDF → LaTeX Import**: Upload a PDF (dashboard, editor, `/convert` or the AI copilot) and get compilable LaTeX. Text, sizes, exact colors, positions, images and rules are extracted from the PDF itself; each page is then written by the same model as the AI copilot, compiled, repaired if needed and compared with the original. The report shows per-page similarity and which pages fell back to a positioned layout. Results are best-effort, not guaranteed identical.
 - **Asset Manager & Inline Preview**: Upload images and assets with one-click LaTeX code copying and instant image preview modal.
 - **Fully Responsive**: Custom layout collapsed drawers for mobile & tablet authoring.
 - **100% Self-Contained Docker Container**: Zero external cloud dependency. Runs on any Azure VM, Linux server, Windows, or Mac.
@@ -108,6 +109,12 @@ python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The PDF importer needs pdfLaTeX (TeX Live with `texlive-latex-extra`, `texlive-pictures`, `texlive-fonts-recommended`) and `pdftoppm` (poppler). Debian/Ubuntu: `texlive-latex-extra texlive-pictures texlive-fonts-recommended poppler-utils`; Arch: `texlive-latexextra texlive-pictures poppler`. It uses the AI copilot's LLM (`GEMINI_WEB2API_*`); there are no separate LLM settings.
+
+```bash
+cd backend && pytest tests/test_pdf2latex_*.py -v   # integration test is skipped without a TeX engine
 ```
 
 ---

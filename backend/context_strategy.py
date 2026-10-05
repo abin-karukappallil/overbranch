@@ -298,6 +298,11 @@ def _identify_target_sections(
 # Dynamic Max-Token Allocation
 # ============================================================================
 
+# Output budget for a batched multi-chunk rewrite turn. Must stay comfortably
+# above the largest batch the prompt asks for; every mainstream model used here
+# (Gemini, Claude, GPT-4o, Llama 3.3 70B) supports at least 16K output tokens.
+FULL_REWRITE_STEP_MAX_TOKENS = 16384
+
 def compute_step_max_tokens(
     strategy: ContextStrategy,
     scope: str,
@@ -325,7 +330,14 @@ def compute_step_max_tokens(
         return 4096  # Planning step
 
     if scope in ("FULL_DOCUMENT_REWRITE", "FULL_DOCUMENT_EXPANSION"):
-        return 4096
+        # The system prompt instructs the model to batch several rewrite_chunk
+        # calls into one turn. At 4096 output tokens (~16 KB of LaTeX) that was
+        # physically impossible for a multi-chunk deck, so the model either
+        # serialised to one chunk per turn or overran and fell into the
+        # truncation-recovery path — which costs a second full LLM call with the
+        # entire payload and then discards the response. Give batching enough
+        # room to actually happen.
+        return FULL_REWRITE_STEP_MAX_TOKENS
 
     if scope == "TARGETED_EDIT":
         return 2048

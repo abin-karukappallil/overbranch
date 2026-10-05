@@ -16,6 +16,7 @@ from context_strategy import (
     resolve_context_strategy,
     build_initial_context,
     compute_step_max_tokens,
+    FULL_REWRITE_STEP_MAX_TOKENS,
     extract_error_context,
     ContextStrategy,
     ContextDecision,
@@ -291,7 +292,7 @@ def test_compute_step_max_tokens():
     # Creation step 1
     assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "TARGETED_EDIT", 1, is_creation=True) == 8192
     # Full rewrite
-    assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "FULL_DOCUMENT_REWRITE", 3) == 4096
+    assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "FULL_DOCUMENT_REWRITE", 3) == FULL_REWRITE_STEP_MAX_TOKENS
     # Targeted edit
     assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "TARGETED_EDIT", 3) == 2048
 

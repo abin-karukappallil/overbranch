@@ -2,8 +2,8 @@
 gemini_provider.py — Gemini Web2API LLM Provider
 
 Uses the OpenAI Python SDK pointed at an OpenAI-compatible Gemini endpoint.
-Only text-based chat completions are supported (no native multimodal parts);
-PDF/image content should be pre-extracted to text before sending.
+Messages may include OpenAI-style image parts ({"type": "image_url", ...}); if the
+endpoint rejects them, the call is retried once text-only and later calls skip images.
 """
 
 import os
@@ -12,6 +12,8 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from .base_provider import LLMProvider, LLMProviderError
+from .multimodal import has_image_parts, strip_image_parts
+from .web2api_keys import get_web2api_base_url, load_web2api_keys
 
 from cancellation import LLMOperationCancelled
 
@@ -39,50 +41,16 @@ class GeminiProvider(LLMProvider):
     """
 
     def __init__(self):
-        self.base_url = os.getenv("GEMINI_WEB2API_BASE_URL", "").rstrip("/")
+        self.base_url = get_web2api_base_url()
         self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "35.0"))
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
+        self._images_unsupported = False
 
     def _load_server_keys(self) -> List[Dict[str, str]]:
-        """Loads up to 5 server-side Gemini Web2API keys from environment variables."""
-        keys: List[Dict[str, str]] = []
-        seen_keys = set()
-
-        # Check numbered keys 1 through 5
-        for i in range(1, 6):
-            env_vars = [
-                f"GEMINI_WEB2API_API_KEY_{i}",
-                f"GEMINI_WEB2API_KEY_{i}",
-                f"GEMINI_API_KEY_{i}",
-                f"GEMINI_KEY_{i}",
-                f"GEMINI_{i}",
-            ]
-            for var in env_vars:
-                val = os.getenv(var, "").strip()
-                if val and val not in seen_keys:
-                    keys.append({"name": f"Gemini Key {i}", "key": val})
-                    seen_keys.add(val)
-                    break
-
-        # Check single or comma-separated keys
-        general_keys = (
-            os.getenv("GEMINI_WEB2API_API_KEYS", "")
-            or os.getenv("GEMINI_WEB2API_API_KEY", "")
-            or os.getenv("GEMINI_API_KEYS", "")
-            or os.getenv("GEMINI_API_KEY", "")
-        )
-        if general_keys and len(keys) < 5:
-            for piece in general_keys.split(","):
-                k = piece.strip()
-                if k and k not in seen_keys:
-                    idx = len(keys) + 1
-                    keys.append({"name": f"Gemini Key {idx}", "key": k})
-                    seen_keys.add(k)
-                    if len(keys) >= 5:
-                        break
-
+        """Loads up to 5 server-side Gemini Web2API keys via the shared loader."""
+        keys = [{"name": k.name, "key": k.key} for k in load_web2api_keys()]
         logger.info(f"Gemini Web2API provider initialized with {len(keys)} server-side key(s)")
         return keys
 
@@ -136,6 +104,32 @@ class GeminiProvider(LLMProvider):
         api_keys: Optional[Dict[str, str]] = None,
         cancel_token: Optional[Any] = None,
         web_search: bool = False,
+    ) -> Dict[str, Any]:
+        args = (model, temperature, max_tokens, api_keys, cancel_token, web_search)
+        if not has_image_parts(messages):
+            return self._chat_once(messages, *args)
+        if self._images_unsupported:
+            return self._chat_once(strip_image_parts(messages), *args)
+        try:
+            return self._chat_once(messages, *args)
+        except LLMProviderError as e:
+            msg = str(e).lower()
+            rejected = e.status_code in (400, 413, 415, 422) or "empty response" in msg or "image" in msg
+            if not rejected:
+                raise
+            logger.warning(f"Gemini endpoint rejected image input ({str(e)[:120]}); retrying text-only.")
+            self._images_unsupported = True
+            return self._chat_once(strip_image_parts(messages), *args)
+
+    def _chat_once(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        api_keys: Optional[Dict[str, str]],
+        cancel_token: Optional[Any],
+        web_search: bool,
     ) -> Dict[str, Any]:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Gemini LLM call cancelled before execution.")

@@ -9,13 +9,16 @@ Thread-safe via threading.Lock so multiple concurrent agent runs are isolated.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from document_index import DocumentChunk, DocumentIndex
+from document_index import DocumentChunk, DocumentIndex, ensure_document_environment
+
+logger = logging.getLogger("shadow_workspace")
 
 
 class ShadowWorkspaceError(Exception):
@@ -41,12 +44,13 @@ class ShadowWorkspace:
         session_id: Optional[str] = None,
     ):
         self._original: str = original_code
-        self._buffer: str = original_code
+        self._buffer: str = ensure_document_environment(original_code)
+        self._snapshots: List[str] = []
         self._project_id: str = project_id
         self._file_path: str = file_path
         self._assets_dir: Optional[str] = assets_dir
         self._session_id: str = session_id or project_id or "default"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._edit_history: List[Dict[str, Any]] = []
         self._doc_index = DocumentIndex()
         self._touched_chunks: Set[str] = set()
@@ -69,6 +73,32 @@ class ShadowWorkspace:
         return self._file_path
 
     # ------------------------------------------------------------------
+    # Snapshot & Undo operations
+    # ------------------------------------------------------------------
+
+    def push_snapshot(self) -> None:
+        """Saves a snapshot of the current buffer before an edit."""
+        self._snapshots.append(self._buffer)
+        if len(self._snapshots) > 50:
+            self._snapshots.pop(0)
+
+    def undo(self) -> bool:
+        """Restores the shadow buffer to the previous snapshot."""
+        with self._lock:
+            if self._snapshots:
+                self._buffer = self._snapshots.pop()
+                self._lines = self._buffer.splitlines(keepends=True)
+                try:
+                    self._doc_index = DocumentIndex.from_latex_text(self._buffer)
+                except Exception:
+                    pass
+                return True
+            return False
+
+    def get_snapshot_count(self) -> int:
+        return len(self._snapshots)
+
+    # ------------------------------------------------------------------
     # Read operations
     # ------------------------------------------------------------------
 
@@ -77,9 +107,74 @@ class ShadowWorkspace:
         return self._original
 
     def get_buffer(self) -> str:
-        """Returns the current state of the shadow buffer."""
+        """
+        Returns the current state of the shadow buffer.
+
+        Pure by design: reads must never mutate. The buffer is normalised once in
+        __init__ and again after every write, so re-normalising here only cost
+        CPU on every read (reads are frequent: coverage, compile, diff, grep) and
+        mutated structure outside any validated path.
+        """
         with self._lock:
             return self._buffer
+
+    def _refresh_indexes(self) -> None:
+        """
+        Re-derives the cached line list and chunk index from the buffer.
+
+        This is the post-commit half of ensure_document_structure, without the
+        heal. Writes already heal *before* validating, so healing again after the
+        commit both doubled the cost of every edit and mutated the buffer after
+        it had been validated — balance_latex_environments can delete orphan
+        \\end{env} lines and inject closers, and nothing re-checked the result.
+        """
+        with self._lock:
+            self._lines = self._buffer.splitlines(keepends=True)
+            try:
+                self._doc_index = DocumentIndex.from_latex_text(self._buffer)
+            except Exception:
+                pass
+
+    def ensure_document_structure(self) -> None:
+        """Verifies and auto-repairs missing \\begin{document}, \\end{document}, unclosed frames, and syntax errors."""
+        with self._lock:
+            try:
+                from latex_error_fixer import auto_heal_latex_code
+                self._buffer, _ = auto_heal_latex_code(self._buffer)
+            except Exception as e:
+                logger.warning(f"auto_heal_latex_code in ensure_document_structure: {e}")
+                self._buffer = ensure_document_environment(self._buffer)
+            self._lines = self._buffer.splitlines(keepends=True)
+            try:
+                self._doc_index = DocumentIndex.from_latex_text(self._buffer)
+            except Exception:
+                pass
+
+    def replace_all(self, new_content: str) -> Dict[str, Any]:
+        """Replaces the entire shadow buffer with new content after pre-commit validation."""
+        with self._lock:
+            from latex_error_fixer import auto_heal_latex_code
+            healed, _ = auto_heal_latex_code(new_content)
+            from edit_validator import validate_latex_pre_commit
+            passed, errors = validate_latex_pre_commit(healed)
+            if not passed:
+                return {
+                    "success": False,
+                    "error": (
+                        f"PRE-COMMIT VALIDATION FAILED: The proposed document has structural LaTeX errors:\n"
+                        + "\n".join(f"  - {e}" for e in errors[:5])
+                        + "\nThe buffer was NOT modified. Please fix these errors and retry."
+                    ),
+                    "validation_errors": errors,
+                }
+            self.push_snapshot()
+            self._buffer = healed
+            self._refresh_indexes()
+            self._edit_history.append({
+                "action": "replace_all",
+                "length": len(self._buffer),
+            })
+            return {"success": True, "length": len(self._buffer)}
 
     def get_line_count(self) -> int:
         """Returns the number of lines in the current buffer."""
@@ -170,18 +265,45 @@ class ShadowWorkspace:
             ShadowWorkspaceError: If ``old_str`` is not found in the buffer.
         """
         with self._lock:
-            # Handle empty buffer initialization (e.g. creating brand new document from scratch)
+            # Handle empty buffer initialization (e.g. creating brand new document
+            # from scratch). This is the single largest write in the system, so it
+            # gets the same heal + validate + snapshot treatment as every other
+            # write path — without the snapshot, the final rollback loop in
+            # agent_loop has an empty stack and discards the whole new document.
             if not self._buffer.strip() and (not old_str or old_str == self._buffer):
-                self._buffer = new_str
+                from latex_error_fixer import auto_heal_latex_code
+                from edit_validator import validate_latex_pre_commit
+
+                candidate = new_str
+                try:
+                    candidate, _ = auto_heal_latex_code(candidate)
+                except Exception as e:
+                    logger.warning(f"auto_heal_latex_code on document creation: {e}")
+
+                is_valid, validation_errors = validate_latex_pre_commit(candidate)
+                if not is_valid:
+                    return {
+                        "success": False,
+                        "error": (
+                            "PRE-COMMIT VALIDATION FAILED: The new document has structural "
+                            "LaTeX errors:\n"
+                            + "\n".join(f"  - {e}" for e in validation_errors[:5])
+                            + "\nThe buffer was NOT modified. Please fix these errors and retry."
+                        ),
+                        "validation_errors": validation_errors,
+                    }
+
+                self.push_snapshot()
+                self._buffer = candidate
                 self._edit_history.append({
                     "old_str": old_str,
-                    "new_str": new_str,
+                    "new_str": candidate,
                     "line_range": [1, 1],
                 })
                 return {
                     "success": True,
                     "occurrences_found": 1,
-                    "lines_affected": [1, new_str.count("\n") + 1],
+                    "lines_affected": [1, candidate.count("\n") + 1],
                     "new_line_count": self._buffer.count("\n") + 1,
                 }
 
@@ -225,13 +347,36 @@ class ShadowWorkspace:
             line_start = self._buffer[:pos].count("\n") + 1
             line_end = line_start + old_str.count("\n")
 
+            candidate = self._buffer[:pos] + new_str + self._buffer[pos + len(old_str):]
+
+            from latex_error_fixer import auto_heal_latex_code
+            candidate, _ = auto_heal_latex_code(candidate)
+
+            # Pre-commit validation
+            from edit_validator import validate_latex_pre_commit
+            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            if not is_valid:
+                error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
+                return {
+                    "success": False,
+                    "error": (
+                        f"PRE-COMMIT VALIDATION FAILED: The proposed edit introduces structural LaTeX errors:\n"
+                        f"{error_lines}\n"
+                        f"The buffer was NOT modified. Please fix these environment/delimiter mismatches and retry."
+                    ),
+                    "validation_errors": validation_errors,
+                    "occurrences_found": 1,
+                }
+
             # Track affected chunk IDs
             chunks = self._doc_index.get_chunks(self._buffer)
             for c in chunks:
                 if (pos + len(old_str) > c.start_offset) and (pos < c.end_offset):
                     self._touched_chunks.add(c.chunk_id)
 
-            self._buffer = self._buffer.replace(old_str, new_str, 1)
+            self.push_snapshot()
+            self._buffer = candidate
+            self._refresh_indexes()
 
             self._edit_history.append({
                 "old_str": old_str,
@@ -267,7 +412,27 @@ class ShadowWorkspace:
                 chunk_id=chunk_id,
                 new_content=new_content,
             )
+
+            from latex_error_fixer import auto_heal_latex_code
+            updated_code, _ = auto_heal_latex_code(updated_code)
+
+            from edit_validator import validate_latex_pre_commit
+            is_valid, validation_errors = validate_latex_pre_commit(updated_code)
+            if not is_valid:
+                error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
+                return {
+                    "success": False,
+                    "error": (
+                        f"PRE-COMMIT VALIDATION FAILED on chunk '{chunk_id}':\n"
+                        f"{error_lines}\n"
+                        f"The buffer was NOT modified. Please ensure all environments and delimiters are closed within the chunk."
+                    ),
+                    "validation_errors": validation_errors,
+                }
+
+            self.push_snapshot()
             self._buffer = updated_code
+            self._refresh_indexes()
             self._touched_chunks.add(chunk_id)
 
             line_start = target.start_line
@@ -385,8 +550,28 @@ class ShadowWorkspace:
                 suffix = "\n"
 
             to_insert = prefix + cleaned_content + suffix
+            candidate = self._buffer[:abs_pos] + to_insert + self._buffer[abs_pos:]
 
-            self._buffer = self._buffer[:abs_pos] + to_insert + self._buffer[abs_pos:]
+            from latex_error_fixer import auto_heal_latex_code
+            candidate, _ = auto_heal_latex_code(candidate)
+
+            from edit_validator import validate_latex_pre_commit
+            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            if not is_valid:
+                error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
+                return {
+                    "success": False,
+                    "error": (
+                        f"PRE-COMMIT VALIDATION FAILED on insert into '{target.chunk_id}':\n"
+                        f"{error_lines}\n"
+                        f"The buffer was NOT modified. Please ensure the inserted LaTeX is structurally balanced."
+                    ),
+                    "validation_errors": validation_errors,
+                }
+
+            self.push_snapshot()
+            self._buffer = candidate
+            self._refresh_indexes()
             self._touched_chunks.add(target.chunk_id)
 
             line_start = self._buffer[:abs_pos].count("\n") + 1
@@ -614,11 +799,41 @@ class ShadowWorkspace:
             pos = buf.find(old_str)
             line_start = buf[:pos].count("\n") + 1
             line_end = line_start + old_str.count("\n")
-            self._aux_files[file_path] = buf.replace(old_str, new_str, 1)
+
+            # Auxiliary files get the same heal + validate gate as the main buffer.
+            # Without it, a broken \input fragment reaches the user unchecked: the
+            # final validation pass in agent_loop only covers the main buffer.
+            candidate = buf.replace(old_str, new_str, 1)
+            from latex_error_fixer import auto_heal_latex_code
+            from edit_validator import validate_latex_pre_commit
+
+            fixes: List[str] = []
+            try:
+                candidate, fixes = auto_heal_latex_code(candidate)
+            except Exception as e:
+                logger.warning(f"auto_heal_latex_code on {file_path}: {e}")
+
+            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            if not is_valid:
+                return {
+                    "success": False,
+                    "error": (
+                        f"PRE-COMMIT VALIDATION FAILED for '{file_path}': the edit introduces "
+                        f"structural LaTeX errors:\n"
+                        + "\n".join(f"  - {e}" for e in validation_errors[:5])
+                        + f"\n'{file_path}' was NOT modified. Please fix these errors and retry."
+                    ),
+                    "validation_errors": validation_errors,
+                }
+
+            self._aux_files[file_path] = candidate
             self._aux_edit_history.setdefault(file_path, []).append({
                 "old_str": old_str, "new_str": new_str, "line_range": [line_start, line_end],
             })
-            return {"success": True, "file": file_path, "lines_affected": [line_start, line_end]}
+            result = {"success": True, "file": file_path, "lines_affected": [line_start, line_end]}
+            if fixes:
+                result["auto_repairs"] = fixes
+            return result
 
     def get_all_modified_files(self) -> Dict[str, Tuple[str, str]]:
         """Returns {file_path: (original, modified)} for all changed files."""

@@ -37,7 +37,7 @@ INFRA_ERROR_PATTERNS = [
 def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
     """
     Parses a raw LaTeX compilation log or error summary into structured diagnostics:
-    - errors: List[Dict[str, Any]] with error message, line number, and context snippet
+    - errors: List[Dict[str, Any]] with error message, line number, context snippet, error type, and suggested action
     - has_errors: bool
     - summary: str
     """
@@ -45,40 +45,61 @@ def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
         return {"has_errors": False, "errors": [], "summary": ""}
 
     errors: List[Dict[str, Any]] = []
-    lines = log_text.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
-        # Pattern 1: ! <error message>
-        if line.startswith("!"):
-            err_msg = line[1:].strip()
-            line_no = None
-            context = ""
-            # Inspect following lines for l.<number> <context> or file:line:
-            j = i + 1
-            while j < min(i + 6, len(lines)):
-                nxt = lines[j].strip()
-                l_match = re.match(r"^l\.(\d+)\s*(.*)$", nxt)
-                if l_match:
-                    line_no = int(l_match.group(1))
-                    context = l_match.group(2).strip()
-                    break
-                j += 1
+
+    # Use comprehensive diagnostic parser
+    try:
+        from latex_error_fixer import parse_compilation_errors
+        parsed = parse_compilation_errors(log_text)
+        for p in parsed:
             errors.append({
-                "error": err_msg,
-                "line": line_no,
-                "context": context,
+                "error": p.message,
+                "line": p.line_number,
+                "context": p.snippet,
+                "type": p.error_type,
+                "suggested_action": p.suggested_action,
             })
-        # Pattern 2: ./file.tex:123: <error message> or main.tex:123: ...
-        else:
-            file_line_match = re.match(r"^(?:\./)?([^:\s]+):(\d+):\s*(?:LaTeX Error:\s*)?(.*)$", line)
-            if file_line_match:
+    except Exception as e:
+        logger.warning(f"parse_compilation_errors note: {e}")
+
+    # Fallback to regex line scanning if parser didn't catch errors
+    if not errors:
+        lines = log_text.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            # Pattern 1: ! <error message>
+            if line.startswith("!"):
+                err_msg = line[1:].strip()
+                line_no = None
+                context = ""
+                j = i + 1
+                while j < min(i + 6, len(lines)):
+                    nxt = lines[j].strip()
+                    l_match = re.match(r"^l\.(\d+)\s*(.*)$", nxt)
+                    if l_match:
+                        line_no = int(l_match.group(1))
+                        context = l_match.group(2).strip()
+                        break
+                    j += 1
                 errors.append({
-                    "error": file_line_match.group(3).strip() or "Syntax error",
-                    "line": int(file_line_match.group(2)),
-                    "context": "",
+                    "error": err_msg,
+                    "line": line_no,
+                    "context": context,
+                    "type": "LATEX_ERROR",
+                    "suggested_action": "",
                 })
-        i += 1
+            # Pattern 2: ./file.tex:123: <error message> or main.tex:123: ...
+            else:
+                file_line_match = re.match(r"^(?:\./)?([^:\s]+):(\d+):\s*(?:LaTeX Error:\s*)?(.*)$", line)
+                if file_line_match:
+                    errors.append({
+                        "error": file_line_match.group(3).strip() or "Syntax error",
+                        "line": int(file_line_match.group(2)),
+                        "context": "",
+                        "type": "SYNTAX_ERROR",
+                        "suggested_action": "",
+                    })
+            i += 1
 
     has_errors = len(errors) > 0 or "fatal error" in log_text.lower() or "! " in log_text
     summary = "\n".join(e["error"] for e in errors[:5]) if errors else log_text[-400:]
@@ -114,6 +135,12 @@ def compile_shadow_buffer(
             "compile_time_ms": int,
         }
     """
+    # Ensure document structure (closing unclosed environments, calc library, Regalia colors, begin/end document)
+    try:
+        workspace.ensure_document_structure()
+    except Exception as e:
+        logger.warning(f"ensure_document_structure note before compile: {e}")
+
     buffer_content = workspace.get_buffer()
 
     try:

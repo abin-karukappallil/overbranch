@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Optional, TypeVar
 
 logger = logging.getLogger("compile_queue")
@@ -41,11 +42,27 @@ class CompileQueue:
         self._current_waiting: int = 0
         self._active_compiles: int = 0
         self._total_completed: int = 0
+        self._executor: Optional[ThreadPoolExecutor] = None
 
     def _get_semaphore(self) -> asyncio.Semaphore:
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(self.max_concurrent)
         return self._semaphore
+
+    def _get_executor(self) -> ThreadPoolExecutor:
+        """
+        Compiles run on a pool of their own, sized to the semaphore.
+
+        They used to run on the event loop's default executor (run_in_executor(None, ...)),
+        which is also where every other blocking call in the process lands. A slot was taken
+        before a thread was, so a compile could hold a concurrency slot while queued behind
+        unrelated work — notably the PDF importer's provider calls, which park a thread for as
+        long as their timeout allows.
+        """
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=self.max_concurrent,
+                                                thread_name_prefix="latex-compile")
+        return self._executor
 
     @property
     def active_count(self) -> int:
@@ -92,7 +109,7 @@ class CompileQueue:
 
         loop = asyncio.get_running_loop()
         try:
-            result = await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+            result = await loop.run_in_executor(self._get_executor(), lambda: func(*args, **kwargs))
             self._total_completed += 1
             return result
         finally:

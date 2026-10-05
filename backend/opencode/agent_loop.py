@@ -22,7 +22,7 @@ from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import provider_router
 from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
 from document_index import DocumentIndex, DocumentChunk
-from edit_validator import validate_coverage, CoverageValidationResult
+from edit_validator import validate_coverage, CoverageValidationResult, validate_latex_pre_commit
 from attached_context import attached_context_store
 from trace import trace_manager, AgentTrace
 from document_analyzer import analyze_document, generate_compact_summary, generate_preservation_map, build_task_state
@@ -30,6 +30,7 @@ from context_strategy import (
     resolve_context_strategy, build_initial_context, compute_step_max_tokens,
     ContextStrategy, ContextDecision, extract_error_context,
 )
+from latex_error_fixer import parse_compilation_errors, auto_heal_latex_code, format_compilation_fix_prompt
 
 from .shadow_workspace import ShadowWorkspace
 from .tools import TOOL_DEFINITIONS, execute_tool, get_tools_prompt_block
@@ -59,6 +60,8 @@ YOUR WORKFLOW & FAST EXECUTION MANDATE:
 6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `grep_search(query, file=filename)`.
 7. After editing, you may call `verify_compile` to check for LaTeX compilation errors, or set `done=true` if your edit is straightforward.
 8. When all edits are complete, respond with the done signal.
+9. PDF IMPORT: When the user asks to convert / import / recreate an attached PDF as LaTeX, call `convert_attached_pdf()` instead of transcribing it yourself, then finish immediately with done=true (no document edits). Every page is reproduced as compilable LaTeX with the same text, images, colors, font sizes and spacing as closely as possible, then compiled and compared with the original. Results are best-effort and come with measured per-page similarity — never promise an identical copy.
+10. CRITICAL STRUCTURAL INVARIANT: NEVER remove or omit `\\begin{{document}}` or `\\end{{document}}`. Every standalone document MUST have `\\begin{{document}}` separating the preamble from the document body, and `\\end{{document}}` at the end.
 
 {tools_block}
 
@@ -110,10 +113,12 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - In Beamer presentations: The Title Slide (Slide 1 / [plain] / \\titlepage with author and metadata) is SACRED. Never overwrite the Title Slide when updating content slides.
    - Maintain hierarchical depth (\\chapter > \\section > \\subsection > \\subsubsection). Never skip levels.
 
-3. LATEX CORRECTNESS & STRICT VALIDATION:
+3. LATEX CORRECTNESS & STRICT COMPILATION INTEGRITY:
    - Exactly ONE `\\begin{{document}}` and `\\end{{document}}`.
    - Complete environment nesting: Every `\\begin{{env}}` (itemize, enumerate, tabular, tabularx, align, equation, frame, etc.) MUST be closed cleanly with `\\end{{env}}`.
-   - In Beamer presentations, every frame must be enclosed in `\\begin{{frame}} ... \\end{{frame}}`. Never place content outside a frame. Max 6 bullets/slide to prevent overflow. No `\\begin{{itemize}}[..]` options.
+   - In Beamer presentations, every frame MUST be enclosed in `\\begin{{frame}} ... \\end{{frame}}`. Never leave a frame unclosed before `\\end{{document}}` or before the next frame. Never place content outside a frame. Max 6 bullets/slide to prevent overflow.
+   - LIST & BULLET INTEGRITY: NEVER write `\\item` outside of a list environment! Every single `\\item` MUST be enclosed within `\\begin{{itemize}} ... \\end{{itemize}}` or `\\begin{{enumerate}} ... \\end{{enumerate}}`. A lonely `\\item` outside a list environment is a fatal LaTeX error!
+   - TIKZ INTEGRITY: Every statement inside `\\begin{{tikzpicture}}` (`\\draw`, `\\node`, `\\fill`, `\\path`, `\\coordinate`, `\\clip`, `\\shade`) MUST end with a semicolon (`;`). Multi-line commands must terminate with `;` on the final line. When coordinate arithmetic `($...$)` is used, ALWAYS ensure `\\usetikzlibrary{{calc}}` is in the preamble.
    - Escape text-mode special characters: `_ % & # $` outside math mode. Wrap mathematical variables and equations in `$ ... $`, `\\[ ... \\]`, or `\\begin{{equation}} ... \\end{{equation}}`.
    - Table consistency: In `tabular` / `tabularx`, every row must have the exact number of column dividers (`&`) matching the column specification and end with `\\\\`.
    - Image assets: Use `list_assets` to discover existing images. Reference images using `\\includegraphics[width=\\linewidth,keepaspectratio]{{assets/<filename>}}`. Never invent filenames or insert raw multi-page `.pdf` files into `\\includegraphics`.
@@ -124,11 +129,15 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - If `str_replace` fails with "EXACT MATCH FAILED", re-read the target area and try again with the correct text.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
 
-5. GROUNDING IN EXISTING DOCUMENT DATA & ATTACHED DOCUMENTS:
-   - When asked to "elaborate", "describe", "expand", "create", "convert", or "fill in content":
-   - When an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
-   - Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
-   - Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations.
+5. GROUNDING IN EXISTING DOCUMENT DATA & MANDATORY EXPANSION / ELABORATION:
+   - When asked to "elaborate", "describe", "expand", "explain more", "add one more additional slide for each topic", or "make longer":
+     * YOU ARE IN EDIT MODE: YOU MUST MODIFY `main.tex` IMMEDIATELY. NEVER just explain in chat.
+     * Analyze all main topics in the document and elaborate each topic thoroughly using rich LLM-generated technical text, math, tables, and diagrams using the exact same context without hesitation.
+     * When user asks for "one more additional slide for each topic", for EVERY topic/slide in the presentation, generate a new dedicated slide (e.g. `\\begin{{frame}}{{<Topic>: Detailed Analysis}}...\\end{{frame}}`) with deep technical detail, examples, or equations.
+     * If an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
+     * Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
+     * Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations.
+     * NEVER declare done=true without having applied the requested content into the file.
 
 6. DOCUMENT CREATION & CONVERSION MANDATE (FROM SCRATCH OR ATTACHED FILES):
    - When asked to CREATE, GENERATE, BUILD, WRITE, DRAFT, or CONVERT a document (e.g. Presentation/Beamer from a paper, Seminar Report/Thesis from a PDF, Research Paper/IEEE, Resume/CV):
@@ -136,8 +145,11 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Map the attached document's core ideas into the target format:
      * For BEAMER PRESENTATIONS (e.g. converting a paper/PDF to slides): Generate 8-12 informative slides covering Background/Motivation, Problem Statement, System Architecture, Core Methodology, Key Algorithms/Formulations, Experimental Evaluation (with LaTeX tables of numbers from the paper), Discussion, and Conclusion.
      * For SEMINAR REPORTS / THESES: Generate multi-chapter report (`\\documentclass{{report}}`) synthesizing the paper's theory, mathematics, and experiments into comprehensive chapters.
-   - You MUST generate a complete, fully compilable, high-quality LaTeX document from `\\documentclass` to `\\end{{document}}`.
-   - For BEAMER PRESENTATIONS: Use `\\documentclass[aspectratio=169]{{beamer}}`, modern themes (e.g. Madrid, metropolis), clear Title slide (`[plain]`), Outline slide, and 6-12 content slides (`\\begin{{frame}}{{Title}}{{Subtitle}}`) with clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations.
+   - For BEAMER PRESENTATIONS (PPT / SLIDES):
+     * DEFAULT PPT TEMPLATE MANDATE: You MUST use the **Regalia** template (`get_template_theme(category="ppt", theme_name="regalia")`) by default for all Beamer presentations and slide generation!
+     * Regalia Styling: `\\documentclass[aspectratio=169]{{beamer}}`, `\\usetheme{{default}}`, `cream` canvas background (`\\setbeamercolor{{background canvas}}{{bg=cream}}`), `navy` (#0B2545) and `gold` (#C9A24B) accent palette, custom frametitle sidebar with TikZ, elegant small-caps titles, and `[plain]` title slide banner with cream text.
+     * NEVER default to generic Madrid or bare unstyled slides — ALWAYS use Regalia as the standard presentation theme.
+     * Generate 6-12 content slides (`\\begin{{frame}}{{Title}}{{Subtitle}}`) with clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations.
    - For MULTI-CHAPTER REPORTS: Use `\\documentclass[11pt,a4paper,oneside]{{report}}`, standard geometry, setspace, amsmath, graphicx, booktabs, hyperref. Include Title, Abstract, Table of Contents, and 4-6 rich chapters with mathematical formulas, algorithms, tables, and bibliography.
    - For RESEARCH PAPERS / ARTICLES: Use `\\documentclass[conference]{{IEEEtran}}` or `\\documentclass[11pt,twocolumn]{{article}}`, abstract, keywords, numbered sections (Intro, Related Work, Methodology, Results, Conclusion), and references.
    - For RESUMES / CVs: Clean single- or two-page layout with Contact, Education, Technical Skills, Experience, and Projects.
@@ -153,18 +165,65 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - NEVER simply rephrase the wording when asked to fix invisible titles/headings — FIX THE PREAMBLE COLOR DEFINITIONS (`\\setbeamercolor` or `\\color`).
 
 8. TEMPLATES, THEMES & REDESIGNING (USING `get_template_theme`):
-   - When asked to REDESIGN, CHANGE THEME, IMPROVE AESTHETICS, or GENERATE a specific document format (Beamer PPT themes, IEEE papers, theses, resumes, letters, assignments):
-   - Call `get_template_theme` to inspect or retrieve curated themes from the OverBranch template library:
-     - Categories: "ppt" (Beamer), "papers" (IEEE), "thesis" (Theses/Reports), "resume" (CVs), "letters" (Letters), "assignments" (Lab Reports).
-     - Themes include: 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'regalia' (royal gold/crimson), 'basic' (Madrid custom), 'minimalist' (Focus clean), 'ieee-conference', 'ieee-journal', 'thesis', 'medium-length-professional-cv', 'letter1', 'navy-gold'.
-   - FOR REDESIGNING AN EXISTING DOCUMENT OR SLIDES:
-     Call `get_template_theme(category="ppt", theme_name="nordlight", extract_section="preamble")` to get the theme color definitions and packages, then use `read_file_range` on the document's preamble and `str_replace` to swap out the styling while PRESERVING all of the user's slide contents, formulas, and text!
+   - DEFAULT PPT TEMPLATE: Regalia (`regalia`) is the designated default presentation template.
+   - MANDATORY TOOL CALL ON DESIGN OR TEMPLATE CHANGE:
+     If the user asks to CHANGE DESIGN, CHANGE TEMPLATE, SWITCH THEME, REDESIGN, or RESTYLE:
+     * YOU MUST MAKE A TOOL CALL TO `get_template_theme(category="ppt", theme_name=...)` to refer to other PPT templates from the template library.
+     * Available PPT themes include: 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'minimalist' (Focus clean), 'basic' (custom Madrid), 'sorbonne', 'uwm', and 'regalia'.
+     * If the user asks for another design or to change template without naming one, call `get_template_theme(category="ppt", theme_name="list")` to see available themes, or select an alternative like 'nordlight' or 'prism' using `get_template_theme(category="ppt", theme_name="nordlight", extract_section="preamble")`.
+     * Then use `read_file_range` on the document's preamble and `str_replace` to swap out the styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
+
+9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
+   - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines.
+   - NEVER REMOVE OR ALTER \\begin{{...}} OR \\end{{...}} LINES UNLESS REPLACING THE ENTIRE ENVIRONMENT:
+     * Never drop an opening `\\begin{{env}}` or closing `\\end{{env}}` tag.
+     * When editing content INSIDE an environment (e.g. adding items inside `itemize` or paths inside `tikzpicture`), preserve the outer `\\begin{{...}}` and `\\end{{...}}` intact.
+   - COMPLETE OPENING & CLOSING LINES ON REPLACEMENTS:
+     * When replacing an environment, ALWAYS include BOTH the opening line (`\\begin{{...}}`) AND closing line (`\\end{{...}}`) in the replacement.
+   - NEVER EMIT PARTIAL ENVIRONMENTS:
+     * Never output an unclosed `\\begin{{...}}` or an unmatched `\\end{{...}}`.
+     * Every environment (especially `frame`, `tikzpicture`, `itemize`, `enumerate`, `tabular`, `align`, `equation`) must be fully closed and balanced within the proposed edit.
+   - BALANCED MATH DELIMITERS & BRACES:
+     * Ensure all math delimiters (`$ ... $`, `$$ ... $$`, `\\( ... \\)`, `\\[ ... \\]`) and curly braces `{{ ... }}` are strictly balanced.
+     * Never emit an odd number of `$` or unclosed `{{`.
 """
 
 
 # ============================================================================
-# Response Parser
+# Response Parser & LaTeX JSON Sanitizer
 # ============================================================================
+
+def sanitize_latex_json(text: str) -> str:
+    r"""
+    Sanitizes raw JSON text emitted by LLMs to prevent LaTeX backslashes from being corrupted.
+    Handles:
+    - Single backslashes before LaTeX commands: \begin, \frac, \text, \right, \node, \newline, etc.
+    - \usepackage, \url, etc. without triggering JSON unicode escape errors.
+    - Double backslashes (already escaped) preserved.
+    - Preserves JSON structural characters and legitimate escapes like \", \\, \n.
+    """
+    n_latex_pattern = re.compile(
+        r"(\\+)(n(?:ode|ewline|oindent|ormalsize|ewcommand|enewcommand|ocite|u\b|abla|eq|eg|umber))"
+    )
+    def fix_n_commands(m):
+        slashes = m.group(1)
+        cmd = m.group(2)
+        if len(slashes) % 2 != 0:
+            return slashes + "\\" + cmd
+        return m.group(0)
+    text = n_latex_pattern.sub(fix_n_commands, text)
+
+    def fix_odd_slashes(m):
+        slashes = m.group(1)
+        ch = m.group(2)
+        if len(slashes) % 2 == 0:
+            return m.group(0)
+        if ch in ('"', 'n'):
+            return m.group(0)
+        return slashes + "\\" + ch
+
+    return re.sub(r"(\\+)(.)", fix_odd_slashes, text)
+
 
 def _parse_agent_response(text: str) -> Dict[str, Any]:
     """
@@ -182,28 +241,29 @@ def _parse_agent_response(text: str) -> Dict[str, Any]:
         cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip()
 
+    # Apply sanitize_latex_json to protect LaTeX commands (\begin, \frac, \text, \right, etc.)
+    # from being decoded into control characters \x08, \x0c, \x09, \x0d
+    sanitized = sanitize_latex_json(cleaned)
+
     # Try direct parse
     try:
-        data = json.loads(cleaned)
+        data = json.loads(sanitized, strict=False)
         if isinstance(data, dict):
             return data
     except Exception:
         pass
 
     # Extract outermost balanced braces
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
+    start = sanitized.find("{")
+    end = sanitized.rfind("}")
     if start != -1 and end > start:
-        snippet = cleaned[start:end + 1]
+        snippet = sanitized[start:end + 1]
         try:
-            return json.loads(snippet)
+            data = json.loads(snippet, strict=False)
+            if isinstance(data, dict):
+                return data
         except Exception:
-            # Handle LaTeX backslashes in JSON strings
-            try:
-                sanitized = re.sub(r'\\(?![/"\\bfnrtu])', r'\\\\', snippet)
-                return json.loads(sanitized)
-            except Exception:
-                pass
+            pass
 
     return {}
 
@@ -487,16 +547,24 @@ def determine_adaptive_step_budget(
         "each section", "whole document", "entire document", "all topic",
         "each topic", "every topic", "throughout the document", "full report",
         "rewrite document", "complete report", "expand all", "all pages",
+        "each slide", "every slide", "all slide", "for each slide",
+        "each frame", "every frame", "all frame", "for each frame",
+        "for each topic", "for each section", "for each chapter",
+        "all topics", "all slides", "all frames",
+        "each page", "every page", "for each page",
+        "more slides", "more pages", "more frames",
+        "additional slide", "additional page", "additional frame",
+        "explain more", "elaborate more",
     ]
     if any(kw in user_lower for kw in broad_keywords):
         if num_chapters >= 4:
-            return min(16, 6 + num_chapters * 2)
+            return min(18, 6 + num_chapters * 2)
         elif num_chapters >= 2:
-            return 12
+            return 14
         elif num_sections >= 5:
-            return 10
+            return 12
         else:
-            return 8
+            return 10
 
     # 6. Medium multi-part edits (e.g. "add sections X and Y", "insert figures and tables")
     medium_keywords = [
@@ -505,7 +573,8 @@ def determine_adaptive_step_budget(
     ]
     match_count = sum(1 for kw in medium_keywords if kw in user_lower)
     if match_count >= 2 or num_chapters >= 3:
-        return 8
+        return 10
+
 
     # 7. Standard single edit default
     return 6
@@ -530,6 +599,7 @@ def stream_opencode_agent(
     assets_dir: Optional[str] = None,
     session_id: Optional[str] = None,
     project_files: Optional[Dict[str, str]] = None,
+    user_context: Optional[Dict[str, Any]] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Generator-based OpenCode agent loop that yields SSE events.
@@ -555,6 +625,8 @@ def stream_opencode_agent(
         assets_dir=assets_dir,
         session_id=effective_session_id,
     )
+    # Caller identity, used by tools that act on the user's behalf (e.g. convert_attached_pdf)
+    workspace.user_context = user_context or {}
 
     # Load auxiliary project files if provided (multi-file workspace support)
     if project_files:
@@ -604,6 +676,34 @@ def stream_opencode_agent(
     is_full_rewrite = scope_result.is_full_rewrite
     is_expansion = scope_result.is_expansion
 
+    # Detect compilation error fix requests ("Ask AI to Fix" / raw compilation logs)
+    compilation_error_patterns = [
+        r"fix this (?:latex )?compilation error",
+        r"compilation error",
+        r"latex error:",
+        r"package [\w\-]+ error:",
+        r"! emergency stop",
+        r"!  ==> fatal error occurred",
+        r"fatal error occurred",
+        r"bad math environment delimiter",
+        r"giving up on this path",
+        r"did you forget a sem",
+        r"ended by \\end",
+        r"ask ai to fix",
+        r"undefined control sequence",
+        r"runaway argument",
+        r"missing \\begin\{document\}",
+        r"(?:^|\s|\n)\./[\w\-./]+\.tex:\d+:",
+        r"(?:^|\s|\n)[\w\-./]+\.tex:\d+:",
+    ]
+    is_compilation_fix_request = any(
+        re.search(pat, user_instruction, re.IGNORECASE) for pat in compilation_error_patterns
+    )
+    if is_compilation_fix_request:
+        scope = ScopeType.TARGETED_EDIT.value
+        is_full_rewrite = False
+        is_expansion = False
+
     all_chunks = workspace.get_all_chunks()
     content_chunks = workspace.get_content_chunks()
     num_content_chunks = len(content_chunks)
@@ -641,16 +741,68 @@ def stream_opencode_agent(
     # 3b. Context Strategy Resolution
     # ================================================================
 
-    # 4. Detect broad multi-chapter requests
+    # 4. Detect redesign / theme change requests
+    redesign_keywords = [
+        "redesign", "change theme", "switch theme", "apply theme", "new theme",
+        "better theme", "modern theme", "nordlight", "prism", "regalia",
+        "make it look better", "re-theme", "restyle", "improve design", "color theme",
+        "change design", "change the design", "change template", "change the template",
+        "switch design", "switch the design", "switch template", "switch the template",
+        "different design", "different template", "another template", "another theme",
+        "new design", "change ppt template", "change ppt design", "switch ppt template",
+        "other template", "other theme", "different ppt", "another ppt",
+        "change the slide design", "change slide design", "update template", "update design",
+        "switch to nordlight", "switch to prism", "switch to regalia",
+        "theme to nordlight", "theme to prism", "theme to regalia",
+        "template to nordlight", "template to prism", "template to regalia",
+    ]
+    redesign_patterns = [
+        r'\b(?:change|switch|update|replace|modify|alter|choose|use)\s+(?:the\s+)?(?:ppt\s+|beamer\s+|slide\s+)?(?:design|template|theme|style)\b',
+        r'\b(?:redesign|restyle|re-style|retheme|re-theme)\b',
+        r'\b(?:different|another|new|other|alternative)\s+(?:ppt\s+|beamer\s+|slide\s+)?(?:design|template|theme|style)\b',
+        r'\b(?:template|theme)\s+(?:to|for)\s+\w+\b',
+        r'\b(?:switch\s+to|use)\s+(?:nordlight|prism|regalia|minimalist|basic|sorbonne|uwm)\b',
+    ]
+    is_redesign_regex = any(bool(re.search(pat, user_lower)) for pat in redesign_patterns)
+    is_redesign_kw = any(kw in user_lower for kw in redesign_keywords)
+    is_redesign_request = (is_redesign_regex or is_redesign_kw) and mode == "edit"
+    redesign_guidance = ""
+    if is_redesign_request:
+        redesign_guidance = (
+            "\n\n=========================================================\n"
+            "REDESIGN / TEMPLATE CHANGE MANDATE (MANDATORY TOOL CALL):\n"
+            "The user explicitly asked to CHANGE THE DESIGN or TEMPLATE of the document.\n"
+            "MANDATORY WORKFLOW:\n"
+            "1. YOU MUST MAKE A TOOL CALL TO `get_template_theme` on Step 1 to fetch the new template/theme styling:\n"
+            "   - If user specified a theme name (e.g. 'nordlight', 'prism', 'minimalist', 'regalia', 'basic', 'sorbonne', 'uwm'):\n"
+            "     Call `get_template_theme(category='ppt', theme_name='<theme>', extract_section='preamble')`.\n"
+            "   - If user asked to change design/template without naming one, call `get_template_theme(category='ppt', theme_name='list')` or fetch an alternative PPT template like 'nordlight' or 'prism':\n"
+            "     `get_template_theme(category='ppt', theme_name='nordlight', extract_section='preamble')`.\n"
+            "2. Read the current preamble with `read_file_range` from line 1 to \\begin{document}.\n"
+            "3. Use `str_replace` to update the styling, color definitions, and packages in the preamble while PRESERVING all user frames, sections, formulas, and text.\n"
+            "4. Run `verify_compile` to confirm the redesigned document compiles cleanly with 0 errors.\n"
+            "=========================================================\n"
+        )
+
+    # 5. Detect broad multi-chapter requests
     broad_keywords = [
         "all chapter", "every chapter", "each chapter", "all subchapter",
         "each subchapter", "every subchapter", "all section", "every section",
         "each section", "whole document", "entire document", "all topic",
         "each topic", "every topic", "throughout the document", "full report",
+        "each slide", "every slide", "all slide", "for each slide",
+        "each frame", "every frame", "all frame", "for each frame",
+        "for each topic", "for each section", "for each chapter",
+        "all topics", "all slides", "all frames", "all pages",
+        "each page", "every page", "for each page",
+        "more slides", "more pages", "more frames",
+        "additional slide", "additional page", "additional frame",
+        "explain more", "elaborate more",
     ]
-    is_broad_request = any(kw in user_lower for kw in broad_keywords) or is_full_rewrite or is_expansion
 
-    # 5. Detect document creation / conversion requests
+    is_broad_request = (any(kw in user_lower for kw in broad_keywords) or is_full_rewrite or is_expansion) and not is_compilation_fix_request
+
+    # 6. Detect document creation / conversion requests
     creation_keywords = [
         "create", "make", "generate", "build", "compose", "prepare", "draft",
         "turn this pdf", "convert this pdf", "using this pdf", "new report",
@@ -669,7 +821,13 @@ def stream_opencode_agent(
     has_attachment_conversion = bool(stored_attachments) and any(
         kw in user_lower for kw in ["ppt", "presentation", "slides", "beamer", "report", "paper", "convert", "turn", "make", "create"]
     )
-    is_creation_request = (is_creation_intent or is_empty_or_minimal or has_attachment_conversion) and mode == "edit"
+    # If the user is explicitly requesting a redesign/template change on an existing document, treat as edit, not creation
+    is_creation_request = (
+        (is_creation_intent or is_empty_or_minimal or has_attachment_conversion)
+        and mode == "edit"
+        and not (is_redesign_request and current_code.strip())
+        and not is_compilation_fix_request
+    )
 
     # Resolve context strategy based on document analysis + scope + model
     context_decision = resolve_context_strategy(
@@ -686,7 +844,7 @@ def stream_opencode_agent(
         "message": f"Context strategy: {context_decision.strategy.value} ({context_decision.reason})",
     }
 
-    # 6. Detect visibility / contrast bug reports
+    # 7. Detect visibility / contrast bug reports
     visibility_keywords = [
         "not visible", "invisible", "cannot see", "can't see", "dark on dark",
         "white on white", "contrast", "hidden title", "title is black",
@@ -711,25 +869,36 @@ def stream_opencode_agent(
             "=========================================================\n"
         )
 
-    # 7. Detect redesign / theme change requests
-    redesign_keywords = [
-        "redesign", "change theme", "switch theme", "apply theme", "new theme",
-        "better theme", "modern theme", "nordlight", "prism", "regalia",
-        "make it look better", "re-theme", "restyle", "improve design", "color theme"
-    ]
-    is_redesign_request = any(kw in user_lower for kw in redesign_keywords) and mode == "edit"
-    redesign_guidance = ""
-    if is_redesign_request:
-        redesign_guidance = (
-            "\n\n=========================================================\n"
-            "REDESIGN / THEME SWITCH INSTRUCTION:\n"
-            "The user asked to REDESIGN or CHANGE THE THEME of the document.\n"
-            "Recommended Workflow:\n"
-            "1. Call `get_template_theme` with category='ppt' (or 'papers'/'resume'/'thesis') and extract_section='preamble' to fetch the target theme styling.\n"
-            "2. Read the current preamble with `read_file_range` from line 1 to \\begin{document}.\n"
-            "3. Use `str_replace` to update the styling, color definitions, and packages in the preamble while PRESERVING all user frames/sections/text.\n"
-            "4. Run `verify_compile` to confirm the redesigned document compiles cleanly.\n"
-            "=========================================================\n"
+    # 7b. Detect compilation error fix requests ("Ask AI to Fix" / raw compilation logs)
+    compilation_fix_diagnostic = ""
+    parsed_compilation_errors_list = []
+    if is_compilation_fix_request:
+        parsed_compilation_errors_list = parse_compilation_errors(user_instruction)
+        healed_code, fixes_applied = auto_heal_latex_code(workspace.get_buffer(), user_instruction)
+        if healed_code != workspace.get_buffer():
+            # replace_all re-validates and may refuse; only report a heal that landed.
+            heal_res = workspace.replace_all(healed_code)
+            if heal_res.get("success"):
+                try:
+                    workspace.ensure_document_structure()
+                except Exception as e:
+                    logger.warning(f"ensure_document_structure note: {e}")
+                logger.info(f"Auto-healed workspace buffer on compilation fix request: {fixes_applied}")
+                yield {
+                    "type": "status",
+                    "step": 0,
+                    "message": f"Pre-healed document structure: {', '.join(fixes_applied[:3])}",
+                }
+            else:
+                logger.warning(
+                    f"Pre-heal rejected by pre-commit validation, buffer left as-is: "
+                    f"{heal_res.get('validation_errors', [])[:3]}"
+                )
+        compilation_fix_diagnostic = format_compilation_fix_prompt(
+            raw_error=user_instruction,
+            parsed_errors=parsed_compilation_errors_list,
+            workspace=workspace,
+            fixes_applied=fixes_applied,
         )
 
     chapters = workspace.grep(r"\\chapter\{([^}]+)\}", is_regex=True)
@@ -875,7 +1044,7 @@ def stream_opencode_agent(
             "Set done=true and provide your comprehensive answer in the explanation field."
         )
     elif is_full_rewrite and content_chunks and mode == "edit":
-        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in all_chunks])
+        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in content_chunks])
         user_content = (
             f"USER REQUEST (EDIT MODE — FULL DOCUMENT REWRITE / TOPIC OVERHAUL):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
@@ -901,7 +1070,7 @@ def stream_opencode_agent(
             "========================================================="
         )
     elif is_expansion and content_chunks and mode == "edit":
-        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in all_chunks])
+        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in content_chunks])
         user_content = (
             f"USER REQUEST (EDIT MODE — FULL DOCUMENT EXPANSION):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
@@ -935,11 +1104,35 @@ def stream_opencode_agent(
 
         if is_ppt:
             archetype_hint = (
-                "DOCUMENT TARGET: BEAMER PRESENTATION (SLIDES)\n"
-                "- Document class: `\\documentclass[aspectratio=169]{beamer}`\n"
-                "- Modern theme: `\\usetheme{Madrid}` or `\\usetheme{metropolis}`, `\\usecolortheme{whale}`\n"
-                "- Structure: Title Frame (`[plain]`), Outline Frame (`\\tableofcontents`), and 6-12 content frames (`\\begin{frame}{Title}{Subtitle}`)\n"
-                "- Use `\\begin{itemize}`, `\\begin{block}`, equations, and tables. Max 5-6 bullets per slide. Never place text outside a frame."
+                "DOCUMENT TARGET: BEAMER PRESENTATION (SLIDES) — DEFAULT TEMPLATE: REGALIA\n"
+                "- DEFAULT PPT TEMPLATE MANDATE: You MUST use the REGALIA presentation template (formal navy & gold, cream background) by default.\n"
+                "- Regalia Specification:\n"
+                "  * Document class: `\\documentclass[aspectratio=169]{beamer}`\n"
+                "  * Theme base: `\\usetheme{default}`\n"
+                "  * Packages: `\\usepackage[T1]{fontenc}\\usepackage[utf8]{inputenc}\\usepackage{tikz,booktabs,amsmath}\\usetikzlibrary{calc}`\n"
+                "  * Palette:\n"
+                "    `\\definecolor{navy}{HTML}{0B2545}\\definecolor{navylight}{HTML}{13315C}\\definecolor{gold}{HTML}{C9A24B}`\n"
+                "    `\\definecolor{cream}{HTML}{F7F4EC}\\definecolor{ink}{HTML}{1D1D1D}\\definecolor{muted}{HTML}{5C6270}`\n"
+                "  * Colors:\n"
+                "    `\\setbeamercolor{background canvas}{bg=cream}\\setbeamercolor{normal text}{fg=ink,bg=cream}`\n"
+                "    `\\setbeamercolor{frametitle}{fg=navy}\\setbeamercolor{title}{fg=navy}`\n"
+                "    `\\setbeamercolor{itemize item}{fg=gold}\\setbeamercolor{itemize subitem}{fg=navylight}`\n"
+                "    `\\setbeamercolor{block title}{fg=cream,bg=navy}\\setbeamercolor{block body}{fg=ink,bg=white}`\n"
+                "    `\\setbeamercolor{page number in head/foot}{fg=muted}`\n"
+                "  * Fonts & Templates:\n"
+                "    `\\setbeamerfont{frametitle}{series=\\bfseries,size=\\Large}\\setbeamerfont{title}{series=\\bfseries,size=\\huge}`\n"
+                "    `\\setbeamertemplate{navigation symbols}{}`\n"
+                "    `\\setbeamertemplate{itemize item}{\\textcolor{gold}{\\ensuremath{\\blacksquare}}}`\n"
+                "    `\\setbeamertemplate{itemize subitem}{\\textcolor{navylight}{\\textendash}}`\n"
+                "  * Custom Frametitle with left sidebar TikZ accent:\n"
+                "    `\\setbeamertemplate{frametitle}{\\begin{tikzpicture}[remember picture,overlay]\\fill[navy] (current page.north west) rectangle ($(current page.north west)+(0.55,-\\paperheight)$);\\fill[gold] ($(current page.north west)+(0.55,0)$) rectangle ($(current page.north west)+(0.62,-\\paperheight)$);\\node[anchor=north west,navy,font=\\usebeamerfont{frametitle}\\scshape] at ($(current page.north west)+(1.05,-0.55)$) {\\insertframetitle};\\draw[gold,line width=1pt] ($(current page.north west)+(1.05,-1.25)$) -- ($(current page.north west)+(3.4,-1.25)$);\\end{tikzpicture}\\vspace{9mm}}`\n"
+                "  * Footline:\n"
+                "    `\\setbeamertemplate{footline}{\\begin{tikzpicture}[remember picture,overlay]\\fill[navy] (current page.south west) rectangle ($(current page.south west)+(0.55,\\paperheight)$);\\fill[gold] ($(current page.south west)+(0.55,0)$) rectangle ($(current page.south west)+(0.62,\\paperheight)$);\\node[anchor=south east,muted,font=\\scriptsize] at ($(current page.south east)+(-0.4,0.22)$) {\\insertframenumber\\ / \\inserttotalframenumber};\\end{tikzpicture}}`\n"
+                "- Structure:\n"
+                "  * Title Slide (`[plain]`): TikZ banner with navy background, gold accent line, cream title text, author, and date.\n"
+                "  * Outline Slide (`\\begin{frame}{Outline}`): Key topics.\n"
+                "  * 6-12 content frames (`\\begin{frame}{Title}`): Clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations. Never place text outside a frame.\n"
+                "- TIP: You can also call `get_template_theme(category='ppt', theme_name='regalia', extract_section='all')` to fetch the complete Regalia source if needed."
             )
         elif is_rep:
             archetype_hint = (
@@ -973,6 +1166,11 @@ def stream_opencode_agent(
             "An attached reference document is provided above. Synthesize its key findings, methodology, and tables directly into this document.\n"
             if stored_attachments else ""
         )
+        creation_step_1 = (
+            "1. Start by calling `get_template_theme` to retrieve the requested template/theme styling.\n"
+            if is_redesign_request
+            else "1. Read the current file (if not empty) with `read_file_range`.\n"
+        )
         user_content = (
             f"USER REQUEST (DOCUMENT CREATION / CONVERSION MODE):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
@@ -986,7 +1184,7 @@ def stream_opencode_agent(
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
             "CREATION INSTRUCTIONS:\n"
-            "1. Read the current file (if not empty) with `read_file_range`.\n"
+            f"{creation_step_1}"
             "2. Generate the complete, publication-grade LaTeX code from `\\documentclass` to `\\end{document}`.\n"
             "3. Use `str_replace` to write the newly created document into the workspace.\n"
             "4. Call `verify_compile` to check that the newly created document compiles with 0 errors.\n"
@@ -1018,20 +1216,37 @@ def stream_opencode_agent(
             "REFERENCE MATERIAL ATTACHED: Use the attached reference document(s) as primary source material to extract facts, sections, or tables.\n"
             if stored_attachments else ""
         )
+        if is_compilation_fix_request:
+            start_instruction = (
+                "COMPILATION ERROR SURGICAL REPAIR WORKFLOW:\n"
+                "1. Focus strictly on the parsed compilation errors and flagged lines above.\n"
+                "2. If needed, inspect the code around the error lines with `read_file_range`.\n"
+                "3. Apply surgical syntax/structure corrections using `str_replace`.\n"
+                "4. MANDATORY STEP: Call `verify_compile` to confirm that all errors are resolved.\n"
+                "5. Only signal done=true after `verify_compile` succeeds."
+            )
+        elif is_redesign_request:
+            start_instruction = (
+                "Start by calling `get_template_theme` to retrieve the new template styling, then inspect the preamble with `read_file_range` and apply the theme using `str_replace`."
+            )
+        else:
+            start_instruction = "Start by locating where to make your edits and apply them."
+
         user_content = (
-            f"USER REQUEST (EDIT MODE):\n{user_instruction}\n\n"
+            f"USER REQUEST (EDIT MODE{' — COMPILATION FIX' if is_compilation_fix_request else ''}):\n{user_instruction}\n\n"
             f"{attached_block}\n\n"
             f"FILE: {file_path} ({total_lines} lines)\n\n"
             f"{task_state}\n\n"
             f"{smart_document_context}\n\n"
             f"{grounding_instruction}\n\n"
+            f"{compilation_fix_diagnostic}\n\n"
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
             "MANDATE: You are in EDIT MODE. User preference is absolute. You MUST make the requested changes and write detailed, comprehensive LaTeX content directly into the document using `str_replace`.\n"
             f"{ref_instruction}"
             "If the user asks to elaborate, expand, explain chapters/subchapters, or add content, locate the relevant chapters/sections and insert rich, detailed LaTeX paragraphs, explanations, equations, and subsections into the file.\n"
-            "Never conclude with done=true without editing the document.\n"
-            "Start by locating where to make your edits and apply them."
+            "Never conclude with done=true without editing the document or verifying compilation.\n"
+            f"{start_instruction}"
         )
 
     messages: List[Dict[str, Any]] = [
@@ -1044,6 +1259,8 @@ def stream_opencode_agent(
     agent_explanation = ""
     compile_verified = False
     compile_available = True
+    done_rejections = 0  # Track how many times we rejected a premature done=true
+    pdf_conversion_job_id: Optional[str] = None  # set when convert_attached_pdf starts a job
 
     while steps_taken < actual_max_steps:
         if cancel_token and cancel_token.is_cancelled():
@@ -1078,6 +1295,7 @@ def stream_opencode_agent(
         )
 
         # LLM call via provider router
+        t_llm_start = time.time()
         try:
             response = provider_router.chat(
                 messages=compact_messages,
@@ -1086,7 +1304,14 @@ def stream_opencode_agent(
                 max_tokens=step_max_tokens,
                 api_keys=api_keys,
             )
+            agent_trace.record_llm_call(
+                latency_ms=(time.time() - t_llm_start) * 1000,
+                usage=response.get("usage") if isinstance(response, dict) else None,
+            )
         except Exception as e:
+            agent_trace.record_llm_call(
+                latency_ms=(time.time() - t_llm_start) * 1000,
+            )
             logger.error(f"LLM call failed at step {steps_taken}: {e}")
             yield {
                 "type": "status",
@@ -1099,13 +1324,14 @@ def stream_opencode_agent(
         finish_reason = response.get("finish_reason", "stop")
 
         # Handle truncated responses — LLM ran out of output tokens
-        if finish_reason == "length" and raw_content:
-            logger.warning(f"LLM response truncated at step {steps_taken}. Requesting continuation...")
+        if finish_reason in ("length", "max_tokens") and raw_content:
+            logger.warning(f"LLM response truncated (finish_reason={finish_reason}) at step {steps_taken}. Requesting continuation...")
             messages.append({"role": "assistant", "content": raw_content})
             messages.append({
                 "role": "user",
                 "content": "Your previous response was truncated. Please COMPLETE the JSON object from where you left off. Output ONLY the remaining part of the JSON.",
             })
+            cont_succeeded = False
             try:
                 continuation = provider_router.chat(
                     messages=_compact_conversation_history(messages),
@@ -1115,15 +1341,39 @@ def stream_opencode_agent(
                     api_keys=api_keys,
                 )
                 cont_text = continuation.get("content", "")
+                cont_finish = continuation.get("finish_reason", "stop")
                 if cont_text:
                     if cont_text.strip().startswith("```"):
                         cont_text = re.sub(r"^\s*```(?:json)?\s*", "", cont_text)
                         cont_text = re.sub(r"\s*```\s*$", "", cont_text)
-                    raw_content = raw_content + cont_text
+                    combined = raw_content + cont_text
+                    # Check if combined text forms a valid complete JSON
+                    if cont_finish not in ("length", "max_tokens") and _parse_agent_response(combined):
+                        raw_content = combined
+                        cont_succeeded = True
             except Exception as e:
                 logger.warning(f"Continuation chat failed: {e}")
             finally:
                 messages = messages[:-2]
+
+            if not cont_succeeded:
+                # Discard truncated edit to prevent document corruption
+                logger.warning(f"Discarding truncated model response at step {steps_taken}.")
+                yield {
+                    "type": "status",
+                    "step": steps_taken,
+                    "message": "⚠️ AI response was cut off by token limit. Discarding partial edit...",
+                }
+                messages.append({"role": "assistant", "content": raw_content})
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "DISCARDED: Your response was truncated by the token limit and could not be completed. "
+                        "The partial edit was discarded to prevent document corruption. "
+                        "Please submit a smaller, more focused edit targeting only one section or slide at a time."
+                    ),
+                })
+                continue
 
         content = raw_content.strip()
         parsed = _parse_agent_response(content)
@@ -1144,20 +1394,82 @@ def stream_opencode_agent(
 
         # Check for done signal
         if parsed.get("done") and not parsed.get("tool_call") and not parsed.get("tool_calls"):
-            # 1. Enforce that Edit mode must have actually produced document modifications
-            if mode == "edit" and not workspace.has_changed() and steps_taken < actual_max_steps:
-                logger.info(f"Agent attempted premature done in edit mode at step {steps_taken}; enforcing edits.")
+            # 0. Enforce mandatory compilation verification on compilation fix requests
+            if is_compilation_fix_request and not compile_verified and steps_taken < actual_max_steps:
+                logger.info(f"Agent attempted completion without verifying compilation at step {steps_taken}; enforcing verify_compile.")
                 messages.append({"role": "assistant", "content": content})
                 messages.append({
                     "role": "user",
                     "content": (
-                        f"REJECTED: You are in EDIT MODE and have made 0 edits to the document (0 lines changed).\n"
-                        f"The user's prompt is: \"{user_instruction}\".\n"
-                        "User preference is absolute. You MUST modify the LaTeX file using `rewrite_chunk` or `str_replace`.\n"
-                        "Do not declare the document complete without applying the requested design, expansions, or edits into the file.\n"
-                        "Use `rewrite_chunk` or `str_replace` to apply your modifications now."
+                        "REJECTED: This is a COMPILATION FIX request. You CANNOT complete without verifying compilation.\n"
+                        "You MUST run `verify_compile` to confirm that the LaTeX document compiles cleanly with 0 errors.\n"
+                        "Call `verify_compile` now."
                     ),
                 })
+                continue
+
+            # 1. Enforce that Edit mode must have actually produced document modifications
+            if mode == "edit" and not (is_compilation_fix_request and compile_verified) and not workspace.has_changed() and not pdf_conversion_job_id:
+                done_rejections += 1
+                logger.info(f"Agent attempted premature done in edit mode at step {steps_taken} (rejection #{done_rejections}); enforcing edits.")
+
+                # Safety cap: after 5 rejections, let the agent exit to prevent infinite loop
+                if done_rejections > 5:
+                    logger.warning(f"Agent has been rejected {done_rejections} times. Allowing exit to prevent infinite loop.")
+                    agent_explanation = parsed.get("explanation", thought or "Agent was unable to apply edits after multiple attempts.")
+                    break
+
+                messages.append({"role": "assistant", "content": content})
+
+                if done_rejections >= 3:
+                    # Final chance — give an extremely explicit instruction
+                    if is_expansion or is_broad_request:
+                        rejection_msg = (
+                            f"FINAL WARNING (attempt #{done_rejections}): You have declared done=true {done_rejections} times WITHOUT making ANY edits.\n"
+                            f"The user asked: \"{user_instruction}\"\n\n"
+                            "You MUST expand the document NOW. Here is exactly what to do:\n"
+                            "1. Call `read_file_range` with start_line=1 and end_line=50 to read the document structure.\n"
+                            "2. Identify the first topic/slide/section.\n"
+                            "3. Use `str_replace` to add detailed content AFTER the first section's content.\n"
+                            "4. Repeat for each subsequent topic/section.\n"
+                            "DO NOT say done=true again without making edits. The user is waiting for content."
+                        )
+                    else:
+                        rejection_msg = (
+                            f"FINAL WARNING (attempt #{done_rejections}): You have declared done=true {done_rejections} times WITHOUT making ANY edits.\n"
+                            f"The user asked: \"{user_instruction}\"\n\n"
+                            "You MUST make edits NOW:\n"
+                            "1. Call `read_file_range` to inspect the document.\n"
+                            "2. Use `str_replace` to apply the requested changes.\n"
+                            "DO NOT say done=true again without making edits."
+                        )
+                else:
+                    if is_expansion or is_broad_request:
+                        avail_chunks_str = ", ".join([f"`{c.chunk_id}` ({c.title})" for c in content_chunks[:10]])
+                        chunk_hint = f"\nAvailable document chunks to expand:\n{avail_chunks_str}\n" if content_chunks else ""
+                        rejection_msg = (
+                            f"REJECTED (attempt #{done_rejections}): You are in EDIT MODE and have made 0 edits to the document (0 lines changed).\n"
+                            f"The user's prompt is: \"{user_instruction}\".\n"
+                            "The user explicitly wants you to EXPAND / ELABORATE / ADD MORE SLIDES / CONTENT to the document.\n"
+                            f"{chunk_hint}"
+                            "You MUST NOT conclude without modifying the file. You MUST:\n"
+                            "1. Generate rich, detailed LLM-written content for each topic/slide (e.g. an additional in-depth slide per topic).\n"
+                            "2. Use `rewrite_chunk(chunk_id, new_content)` or `str_replace(old_str, new_str)` to insert the new slides/content into main.tex.\n"
+                            "3. Call `verify_compile` to confirm 0 compilation errors.\n"
+                            "Do NOT declare done=true until you have actually added content to the file."
+                        )
+                    else:
+                        rejection_msg = (
+                            f"REJECTED (attempt #{done_rejections}): You are in EDIT MODE and have made 0 edits to the document (0 lines changed).\n"
+                            f"The user's prompt is: \"{user_instruction}\".\n"
+                            "User preference is absolute. You MUST modify the LaTeX file using `rewrite_chunk` or `str_replace`.\n"
+                            "Do not declare the document complete without applying the requested design, expansions, or edits into the file.\n"
+                            "Use `rewrite_chunk` or `str_replace` to apply your modifications now."
+                        )
+
+                messages.append({"role": "user", "content": rejection_msg})
+                # Don't burn a step on rejections — give the agent its step back
+                steps_taken -= 1
                 continue
 
             # 2. Coverage + Leftover validation for FULL_DOCUMENT_REWRITE & EXPANSION
@@ -1191,7 +1503,7 @@ def stream_opencode_agent(
 
             # 3. For broad multi-chapter requests without explicit chunk IDs, enforce multi-chapter edit count
             min_expected_edits = min(3, len(valid_chapters) or 3)
-            if mode == "edit" and is_broad_request and len(valid_chapters) >= 2 and workspace.get_edit_count() < min_expected_edits and steps_taken < actual_max_steps - 2:
+            if mode == "edit" and not pdf_conversion_job_id and is_broad_request and len(valid_chapters) >= 2 and workspace.get_edit_count() < min_expected_edits and steps_taken < actual_max_steps - 2:
                 logger.info(f"Agent attempted early done with only {workspace.get_edit_count()} edits on broad request at step {steps_taken}; prompting to continue.")
                 messages.append({"role": "assistant", "content": content})
                 messages.append({
@@ -1255,6 +1567,9 @@ def stream_opencode_agent(
                     "result": tool_result,
                 }
 
+                if tool_name == "convert_attached_pdf" and isinstance(tool_result, dict) and tool_result.get("job_id") and tool_result.get("success"):
+                    pdf_conversion_job_id = tool_result["job_id"]
+
                 # Special handling for compile results
                 if tool_name == "verify_compile":
                     agent_trace.record_compile(
@@ -1289,8 +1604,11 @@ def stream_opencode_agent(
 
             # Fast 1-turn completion check: If agent signaled done=true in the same response AND tools made valid edits
             if parsed.get("done") and workspace.has_changed():
+                if is_compilation_fix_request and not compile_verified and steps_taken < actual_max_steps:
+                    # In compilation fix mode, require verified compilation before concluding
+                    pass
                 # Check coverage if broad / full rewrite / expansion
-                if mode == "edit" and (is_full_rewrite or is_expansion):
+                elif mode == "edit" and (is_full_rewrite or is_expansion):
                     t_val_start = time.time()
                     cov_report = validate_coverage(
                         workspace=workspace,
@@ -1373,11 +1691,19 @@ def stream_opencode_agent(
                     else:
                         err_context = tool_result.get("stderr", "")
                         summary_msg = tool_result.get("summary", "Compilation failed")
+                        errors_list = tool_result.get("errors", [])
+                        diag_lines = []
+                        for e in errors_list[:6]:
+                            l_info = f"Line {e.get('line')}" if e.get('line') else "Document / Preamble"
+                            action_info = f" -> Fix: {e.get('suggested_action')}" if e.get('suggested_action') else ""
+                            diag_lines.append(f"- [{l_info}] {e.get('error')}{action_info}")
+                        diag_str = "\n".join(diag_lines) if diag_lines else summary_msg
+
                         followup_msg = (
-                            f"COMPILATION FAILED: {summary_msg}\n\n"
-                            f"{err_context}\n\n"
+                            f"COMPILATION FAILED:\n{diag_str}\n\n"
+                            f"Raw Log Snippet:\n{err_context[:1000]}\n\n"
                             "INSTRUCTION: Target ONLY the specific lines flagged above with compilation errors. "
-                            "Use `str_replace` to fix the syntax errors (e.g. unescaped characters, missing packages, unclosed environments) "
+                            "Use `read_file_range` around the error line if needed, then `str_replace` to fix the syntax errors (e.g. unclosed environments, missing TikZ semicolon, missing packages) "
                             "and then call `verify_compile` to confirm the fix."
                         )
                 elif tool_name == "search_uploaded_references":
@@ -1454,6 +1780,74 @@ def stream_opencode_agent(
     trace_summary = agent_trace.summary()
 
     if workspace.has_changed():
+        # Ensure document structure integrity before computing final diffs
+        workspace.ensure_document_structure()
+
+        # Run auto_heal_latex_code to repair any stray spacing, packages, or unmatched environments
+        healed_final, auto_repairs = auto_heal_latex_code(workspace.get_buffer())
+        if auto_repairs:
+            heal_res = workspace.replace_all(healed_final)
+            if heal_res.get("success"):
+                logger.info(f"Auto-healed final buffer before pre-commit: {auto_repairs}")
+            else:
+                logger.warning(
+                    f"Final auto-heal rejected by pre-commit validation: "
+                    f"{heal_res.get('validation_errors', [])[:3]}"
+                )
+
+        # Pre-commit validation pass before generating final diff
+        is_valid, val_errors = validate_latex_pre_commit(workspace.get_buffer())
+        if not is_valid:
+            logger.warning(f"Final buffer failed pre-commit validation: {val_errors}. Attempting snapshot rollback...")
+            while not is_valid and workspace.undo():
+                healed_candidate, _ = auto_heal_latex_code(workspace.get_buffer())
+                is_valid, val_errors = validate_latex_pre_commit(healed_candidate)
+                if is_valid:
+                    heal_res = workspace.replace_all(healed_candidate)
+                    if not heal_res.get("success"):
+                        # The candidate did not survive commit-time validation;
+                        # keep unwinding instead of claiming success.
+                        is_valid = False
+                        val_errors = heal_res.get("validation_errors", val_errors)
+                        continue
+                    break
+
+            if not is_valid:
+                logger.error(f"Buffer remains invalid after rollback: {val_errors}")
+                rejection_msg = (
+                    f"The proposed edits could not be safely applied because they introduced LaTeX syntax errors:\n"
+                    + "\n".join(f"- {e}" for e in val_errors[:3])
+                    + "\n\nThe original document was preserved to prevent compilation failure."
+                )
+                yield {
+                    "type": "compile_error",
+                    "message": f"Pre-commit validation failed: {'; '.join(val_errors[:2])}",
+                    "errors": val_errors,
+                }
+                yield {
+                    "type": "result",
+                    "data": {
+                        "original_chunk": workspace.get_original(),
+                        "proposed_chunk": workspace.get_original(),
+                        "explanation": rejection_msg,
+                        "edits": [],
+                        "has_changes": False,
+                        "steps_taken": steps_taken,
+                        "compile_verified": False,
+                        "edit_count": 0,
+                        "elapsed_ms": elapsed_ms,
+                        "trace": trace_summary,
+                        "validation_errors": val_errors,
+                    },
+                }
+                yield compute_final_diff(
+                    original=workspace.get_original(),
+                    modified=workspace.get_original(),
+                    file_path=file_path,
+                    explanation=rejection_msg,
+                )
+                return
+
         # Generate the final_diff payload for main document
         diff_payload = compute_final_diff(
             original=workspace.get_original(),
@@ -1463,17 +1857,51 @@ def stream_opencode_agent(
         )
         yield diff_payload
 
-        # Yield diff payloads for any modified auxiliary files
-        all_modified = workspace.get_all_modified_files()
-        for aux_p, aux_c in all_modified.items():
-            if aux_p != file_path and aux_p != "main.tex":
-                aux_orig = getattr(workspace, "_aux_originals", {}).get(aux_p, "")
-                yield compute_final_diff(
+        # Yield diff payloads for any modified auxiliary files.
+        # get_all_modified_files() returns {path: (original, modified)}; the whole
+        # block is guarded so a single bad aux file can never prevent the `result`
+        # event from being emitted (the frontend treats a missing result as "no
+        # changes" and silently discards the run).
+        try:
+            all_modified = workspace.get_all_modified_files()
+        except Exception as e:
+            logger.error(f"Could not enumerate modified files: {e}")
+            all_modified = {}
+
+        for aux_p, aux_pair in all_modified.items():
+            if aux_p == file_path or aux_p == "main.tex":
+                continue
+            try:
+                aux_orig, aux_mod = aux_pair
+            except (TypeError, ValueError):
+                logger.error(f"Unexpected modified-file entry for {aux_p}; skipping.")
+                continue
+            try:
+                aux_warnings: List[str] = []
+                healed_aux, aux_fixes = auto_heal_latex_code(aux_mod)
+                aux_valid, aux_errors = validate_latex_pre_commit(healed_aux)
+                if not aux_valid:
+                    # Never ship an aux file we know to be broken.
+                    logger.warning(
+                        f"Auxiliary file {aux_p} failed pre-commit validation: {aux_errors[:3]}"
+                    )
+                    continue
+                if aux_fixes:
+                    aux_warnings.append(
+                        "Auto-repaired while saving: " + "; ".join(aux_fixes[:3])
+                    )
+                aux_payload = compute_final_diff(
                     original=aux_orig,
-                    modified=aux_c,
+                    modified=healed_aux,
                     file_path=aux_p,
                     explanation=f"Updated auxiliary file: {aux_p}",
                 )
+                if aux_warnings:
+                    aux_payload["warnings"] = aux_warnings
+                yield aux_payload
+            except Exception as e:
+                logger.error(f"Failed to build diff for auxiliary file {aux_p}: {e}")
+                continue
 
         # Also yield backward-compatible result event
         edit_items = compute_edit_items(
@@ -1494,6 +1922,7 @@ def stream_opencode_agent(
                 "elapsed_ms": elapsed_ms,
                 "trace": trace_summary,
                 "modified_files": all_modified,
+                "pdf_conversion_job_id": pdf_conversion_job_id,
             },
         }
     else:
@@ -1510,6 +1939,7 @@ def stream_opencode_agent(
                 "edit_count": 0,
                 "elapsed_ms": elapsed_ms,
                 "trace": trace_summary,
+                "pdf_conversion_job_id": pdf_conversion_job_id,
             },
         }
 

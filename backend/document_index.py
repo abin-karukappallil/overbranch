@@ -20,6 +20,105 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger("document_index")
 
 
+def ensure_document_environment(code: str) -> str:
+    """
+    Ensures that a LaTeX document with \\documentclass contains both
+    \\begin{document} and \\end{document} in their proper structural positions,
+    and deduplicates multiple occurrences.
+    Guarantees that rewrite-like agentic edits never produce code with missing
+    \\begin{document}.
+    """
+    if not code or not code.strip():
+        return code
+
+    # Only process documents that define a \\documentclass
+    if not re.search(r"\\documentclass\b", code):
+        return code
+
+    # Deduplicate multiple \\begin{document} if present
+    begin_matches = list(re.finditer(r"\\begin\s*\{document\}", code))
+    if len(begin_matches) > 1:
+        # Keep the first, remove the subsequent duplicates
+        for m in reversed(begin_matches[1:]):
+            code = code[:m.start()] + code[m.end():]
+        begin_matches = list(re.finditer(r"\\begin\s*\{document\}", code))
+
+    # Deduplicate multiple \\end{document} if present
+    end_matches = list(re.finditer(r"\\end\s*\{document\}", code))
+    if len(end_matches) > 1:
+        # Keep the last, remove earlier duplicates
+        for m in reversed(end_matches[:-1]):
+            code = code[:m.start()] + code[m.end():]
+
+    has_begin_doc = len(begin_matches) > 0
+    has_end_doc = bool(re.search(r"\\end\s*\{document\}", code))
+
+    if has_begin_doc and has_end_doc:
+        return code
+
+    lines = code.splitlines(keepends=True)
+
+    if not has_begin_doc:
+        # Find the optimal boundary line to insert \\begin{document}
+        # Pre-scan for body triggers: \\chapter, \\section, \\begin{frame}, \\maketitle, \\begin{abstract}, etc.
+        body_trigger_pattern = re.compile(
+            r"^\s*\\(?:chapter\*?|section\*?|subsection\*?|subsubsection\*?|part\*?|"
+            r"maketitle|tableofcontents|titlepage)\b|"
+            r"^\s*\\begin\s*\{(?:frame|titlepage|abstract)\}"
+        )
+        insert_line_idx = -1
+        for idx, line in enumerate(lines):
+            if body_trigger_pattern.search(line):
+                insert_line_idx = idx
+                break
+
+        # If no explicit structural trigger was found, find the end of preamble declarations
+        if insert_line_idx == -1:
+            preamble_macros = re.compile(
+                r"^\s*\\(?:documentclass|usepackage|RequirePackage|definecolor|colorlet|usetheme|usecolortheme|"
+                r"usefonttheme|useinnertheme|useoutertheme|setbeamer[a-zA-Z*]+|setbeamertemplate|setbeamercolor|"
+                r"setbeamerfont|title|author|date|institute|titlegraphic|newcommand|renewcommand|DeclareMathOperator|"
+                r"DeclarePairedDelimiter|geometry|hypersetup|pagestyle|thispagestyle|setlength|tikzset|usetikzlibrary|"
+                r"bibliographystyle)\b"
+            )
+            last_preamble_line = -1
+            in_multiline_macro = False
+            for idx, line in enumerate(lines):
+                stripped = line.strip()
+                if not stripped or stripped.startswith("%"):
+                    continue
+                if preamble_macros.search(line):
+                    last_preamble_line = idx
+                    open_braces = line.count("{")
+                    close_braces = line.count("}")
+                    if open_braces > close_braces:
+                        in_multiline_macro = True
+                    continue
+                if in_multiline_macro:
+                    open_braces = line.count("{")
+                    close_braces = line.count("}")
+                    if close_braces >= open_braces:
+                        in_multiline_macro = False
+                    last_preamble_line = idx
+                    continue
+
+                if last_preamble_line != -1 and not in_multiline_macro:
+                    insert_line_idx = idx
+                    break
+
+            if insert_line_idx == -1:
+                insert_line_idx = (last_preamble_line + 1) if last_preamble_line != -1 else len(lines)
+
+        lines.insert(insert_line_idx, "\\begin{document}\n\n")
+        code = "".join(lines)
+
+    # Now verify \\end{document}
+    if not re.search(r"\\end\s*\{document\}", code):
+        code = code.rstrip() + "\n\\end{document}\n"
+
+    return code
+
+
 @dataclass
 class DocumentChunk:
     chunk_id: str
@@ -57,11 +156,15 @@ class DocumentIndex:
         if not latex_code:
             return []
 
+        # Auto-repair document environment if a standalone LaTeX document is missing \begin{document}
+        if re.search(r"\\documentclass\b", latex_code) and not re.search(r"\\begin\s*\{document\}", latex_code):
+            latex_code = ensure_document_environment(latex_code)
+
         chunks: List[DocumentChunk] = []
         doc_len = len(latex_code)
 
         # 1. Preamble Detection
-        doc_begin_match = re.search(r"\\begin\{document\}", latex_code)
+        doc_begin_match = re.search(r"\\begin\s*\{document\}", latex_code)
         if doc_begin_match:
             preamble_end = doc_begin_match.end()
             preamble_content = latex_code[:preamble_end]
@@ -282,10 +385,18 @@ class DocumentIndex:
         if not target:
             return latex_code, None, 0
 
+        # Preserve \begin{document} if target is preamble and new_content omits it
+        if target.chunk_id == "preamble":
+            if r"\begin{document}" in target.content and not re.search(r"\\begin\s*\{document\}", new_content):
+                new_content = new_content.rstrip() + "\n\\begin{document}\n"
+
         before = latex_code[:target.start_offset]
         after = latex_code[target.end_offset:]
         updated_code = before + new_content + after
-        length_delta = len(new_content) - len(target.content)
+
+        # Ensure document structure integrity (\begin{document} and \end{document})
+        updated_code = ensure_document_environment(updated_code)
+        length_delta = len(updated_code) - len(target.content)
 
         # Re-index to get the updated chunk object
         new_chunks = self.index_document(updated_code)

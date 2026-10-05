@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import os
 import re
 import threading
 import time
@@ -221,9 +222,19 @@ class AttachedContextStore:
         if len(prompt_content) > MAX_ATTACHED_FILE_CHARS:
             prompt_content = prompt_content[:MAX_ATTACHED_FILE_CHARS] + f"\n\n... [Remaining content available via `read_attached_document` ({page_count} pages total)]"
 
+        # Keep the original PDF bytes so the PDF → LaTeX converter can import the attachment
+        raw_pdf: Optional[bytes] = None
+        if isinstance(raw_content, str) and raw_content.strip()[:30].startswith(("data:application/pdf", "data:application/x-pdf", "JVBERi0")):
+            decoded = _decode_base64_payload(raw_content.strip())
+            max_bytes = int(os.getenv("PDF2LATEX_MAX_FILE_MB", "50")) * 1024 * 1024
+            if decoded and decoded[:5] == b"%PDF-" and len(decoded) <= max_bytes:
+                raw_pdf = decoded
+
         record = {
             "filename": filename,
             "file_type": file_type,
+            "is_pdf": raw_pdf is not None,
+            "raw_bytes": raw_pdf,
             "content": prompt_content,           # Capped preview for prompt context
             "full_content": full_text,            # Full un-truncated text for tool reading
             "pages": pages_dict,                  # Dict[page_number: text]

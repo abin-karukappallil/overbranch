@@ -5,10 +5,10 @@ from dotenv import load_dotenv
 _root_env = Path(__file__).resolve().parent.parent / ".env"
 _backend_env = Path(__file__).resolve().parent / ".env"
 if _root_env.exists():
-    load_dotenv(dotenv_path=_root_env, override=False)
+    load_dotenv(dotenv_path=_root_env, override=True)
 if _backend_env.exists():
     load_dotenv(dotenv_path=_backend_env, override=True)
-load_dotenv(override=False)
+load_dotenv(override=True)
 
 import os
 import asyncio
@@ -37,7 +37,7 @@ _cleanup_task: Optional[asyncio.Task] = None
 async def lifespan(app: FastAPI):
     global _cleanup_task
     logger.info("Starting OverBranch TeX Engine API...")
-    # Start guest project cleanup scheduler (runs every 15 mins)
+    # Start guest project + PDF conversion job cleanup scheduler (runs every 15 mins)
     from services.guest_cleanup import start_cleanup_scheduler
     _cleanup_task = asyncio.create_task(start_cleanup_scheduler(900))
 
@@ -76,15 +76,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from routes.pdf_conversion import router as pdf_conversion_router
-from routes.guest_pdf import router as guest_pdf_router
+from routes.pdf_convert import router as pdf_convert_router
 from routes.agent_routes import router as agent_opencode_router
 
 app.include_router(project_storage.router)
 app.include_router(template_service.router)
 app.include_router(file_analyzer.router, prefix="/api")
-app.include_router(pdf_conversion_router)
-app.include_router(guest_pdf_router)
+app.include_router(pdf_convert_router)
 app.include_router(agent_opencode_router)
 
 

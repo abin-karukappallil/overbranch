@@ -7,6 +7,7 @@ import io
 import time
 import shutil
 import sys
+import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -14,6 +15,29 @@ from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+
+logger = logging.getLogger("compiler")
+
+_MAGIC_PROGRAM_RE = re.compile(
+    r"^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_DEFAULT_ENGINES = {"", "latexmk", "pdflatex", "pdf", "latex"}
+
+
+def detect_magic_engine(latex_code: str) -> Optional[str]:
+    """Returns the engine named by a `% !TEX program = ...` magic comment in the file header, if any."""
+    head = "\n".join((latex_code or "").splitlines()[:20])
+    m = _MAGIC_PROGRAM_RE.search(head)
+    return m.group(1).lower() if m else None
+
+
+_TEX_ERROR_RE = re.compile(r"^(?:\S+\.tex:\d+: .*|! .*)$", re.MULTILINE)
+
+
+def tex_errors(output: str) -> List[str]:
+    """Error lines from a nonstopmode / -file-line-error TeX run (a PDF can still be produced)."""
+    return list(dict.fromkeys(m.group(0).strip() for m in _TEX_ERROR_RE.finditer(output or "")))[:20]
 
 
 def augment_path_for_latex():
@@ -648,12 +672,24 @@ def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str]) -> None:
         logger.debug(f"SyncTeX caching note: {synctex_err}")
 
 
+def _compile_failure(output: str) -> dict:
+    """Clean compilation error for the caller to show, or to hand to the AI fixer."""
+    clean_err = (output or "").strip() or "LaTeX compilation failed."
+    error_lines = [l for l in clean_err.split("\n")
+                   if l.strip().startswith("!") or "error:" in l.lower() or "fatal error" in l.lower()]
+    summary = "\n".join(error_lines[-12:]) if error_lines else clean_err[-1500:]
+    return {"success": False, "error_log": summary, "raw_log": clean_err[-4000:]}
+
+
 def compile_latex(
     latex_code: str,
     engine: str = "pdfLaTeX",
     images: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, str]]] = None,
-    project_id: Optional[str] = None
+    project_id: Optional[str] = None,
+    timeout_seconds: int = 30,
+    persist_synctex: bool = True,
+    allow_recovery: bool = True,
 ) -> dict:
     """
     High-performance TeX compiler pipeline with smart single/double pass dispatch,
@@ -663,6 +699,12 @@ def compile_latex(
     augment_path_for_latex()
 
     eng_clean = (engine or "pdfLaTeX").strip().lower()
+
+    # Honor `% !TEX program = xelatex|lualatex` when the caller asked for the default engine
+    magic_engine = detect_magic_engine(latex_code)
+    if magic_engine and eng_clean in _DEFAULT_ENGINES:
+        eng_clean = magic_engine
+    recovery_engine = eng_clean if eng_clean in ("xelatex", "lualatex") else "pdflatex"
 
     # Fast ReportLab engine override check
     if eng_clean in ["fast", "reportlab"]:
@@ -719,6 +761,11 @@ def compile_latex(
                         pass
 
             # 2. Write current main.tex
+            try:
+                from document_index import ensure_document_environment
+                latex_code = ensure_document_environment(latex_code)
+            except Exception:
+                pass
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
 
@@ -769,25 +816,29 @@ def compile_latex(
             existing_texinputs = comp_env.get("TEXINPUTS", "")
             comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
 
-            COMPILE_TIMEOUT = 30
+            COMPILE_TIMEOUT = timeout_seconds
 
-            # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled)
+            # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled).
+            # SyncTeX costs an extra output file per run, so it is only asked for when the
+            # artifacts will actually be kept (the editor); the PDF importer compiles throwaway
+            # pages and never navigates them.
+            sx = ["-synctex=1"] if persist_synctex else []
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [["pdflatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["xelatex", "xe"]:
-                cmd_list = [["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [["xelatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean in ["lualatex", "lua"]:
-                cmd_list = [["lualatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [["lualatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
             elif eng_clean == "tectonic":
                 cmd_list = [["tectonic", "main.tex"]]
             elif eng_clean == "latexmk":
-                cmd_list = [["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
+                cmd_list = [["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
             else:
                 cmd_list = [
-                    ["pdflatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
-                    ["xelatex", "-synctex=1", "-interaction=nonstopmode", "-file-line-error", "main.tex"],
-                    ["latexmk", "-synctex=1", "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
+                    ["pdflatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                    ["xelatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                    ["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
                 ]
 
             last_output = ""
@@ -823,12 +874,13 @@ def compile_latex(
                                 cwd=tmpdir,
                                 capture_output=True,
                                 text=True,
-                                timeout=15,
+                                timeout=max(15, COMPILE_TIMEOUT // 2),
                                 env=comp_env
                             )
                             last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
 
-                        _save_synctex_artifacts(tmpdir, project_id)
+                        if persist_synctex:
+                            _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -837,12 +889,20 @@ def compile_latex(
                             "pdf_base64": pdf_base64,
                             "compile_time_ms": elapsed_ms,
                             "log": last_output[-1000:] if last_output else f"Compiled via {cmd[0]}",
+                            "errors": tex_errors(last_output),
                         }
                 except subprocess.TimeoutExpired:
                     last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
                     continue
                 except Exception:
                     continue
+
+            if not allow_recovery:
+                # A caller that only wants to know whether THIS code compiles (the PDF importer,
+                # which then hands the errors to the model) must not pay for the cascade below:
+                # every patch is another engine run, up to seven of them, and a PDF obtained by
+                # silently disabling a package is a result such a caller rejects anyway.
+                return _compile_failure(last_output)
 
             # 1. Missing LaTeX package iterative auto-recovery patch
             patched_code = latex_code
@@ -864,7 +924,7 @@ def compile_latex(
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
                     result = subprocess.run(
-                        ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                        [recovery_engine, "-interaction=nonstopmode", "main.tex"],
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
@@ -874,7 +934,8 @@ def compile_latex(
                     cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
                     pdf_path = tmpdir / "main.pdf"
                     if pdf_path.exists():
-                        _save_synctex_artifacts(tmpdir, project_id)
+                        if persist_synctex:
+                            _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -905,10 +966,11 @@ def compile_latex(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run(["pdflatex", "-interaction=nonstopmode", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
+                        result = subprocess.run([recovery_engine, "-interaction=nonstopmode", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            _save_synctex_artifacts(tmpdir, project_id)
+                            if persist_synctex:
+                                _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -932,7 +994,7 @@ def compile_latex(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = subprocess.run(
-                            ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                            [recovery_engine, "-interaction=nonstopmode", "main.tex"],
                             cwd=tmpdir,
                             capture_output=True,
                             text=True,
@@ -941,7 +1003,8 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            _save_synctex_artifacts(tmpdir, project_id)
+                            if persist_synctex:
+                                _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -978,7 +1041,7 @@ def compile_latex(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = subprocess.run(
-                            ["pdflatex", "-interaction=nonstopmode", "main.tex"],
+                            [recovery_engine, "-interaction=nonstopmode", "main.tex"],
                             cwd=tmpdir,
                             capture_output=True,
                             text=True,
@@ -987,7 +1050,8 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            _save_synctex_artifacts(tmpdir, project_id)
+                            if persist_synctex:
+                                _save_synctex_artifacts(tmpdir, project_id)
                             pdf_bytes = pdf_path.read_bytes()
                             pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                             elapsed_ms = int((time.time() - start_time) * 1000)
@@ -1004,14 +1068,5 @@ def compile_latex(
             pass
 
         # No fallback PDFs — return clean compilation error directly so user can see it and ask AI to fix it
-        clean_err = last_output.strip() if last_output else "LaTeX compilation failed."
-        # Extract the most relevant error lines (e.g. lines starting with ! or error lines)
-        error_lines = [l for l in clean_err.split("\n") if l.strip().startswith("!") or "error:" in l.lower() or "fatal error" in l.lower()]
-        summary = "\n".join(error_lines[-12:]) if error_lines else clean_err[-1500:]
-
-        return {
-            "success": False,
-            "error_log": summary,
-            "raw_log": clean_err[-4000:],
-        }
+        return _compile_failure(last_output)
 

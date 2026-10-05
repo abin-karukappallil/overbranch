@@ -264,6 +264,24 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         },
         "required": [],
     },
+    {
+        "name": "convert_attached_pdf",
+        "description": (
+            "Convert a PDF the user attached to this chat into LaTeX for the current project (PDF import). "
+            "Use ONLY when the user asks to convert / import / recreate / reproduce an attached PDF as LaTeX. "
+            "Each page is reproduced as compilable LaTeX (same text, images, colors, font sizes, spacing and "
+            "alignment as closely as possible), compiled and compared with the original. Starts a background job "
+            "and returns its job_id; the user sees per-page progress and similarity scores and confirms before "
+            "main.tex is replaced. Do not edit the document yourself after starting a conversion — finish with done=true."
+        ),
+        "parameters": {
+            "filename": {
+                "type": "string",
+                "description": "Name of the attached PDF (optional, defaults to the most recent attached PDF).",
+            },
+        },
+        "required": [],
+    },
 ]
 
 
@@ -512,6 +530,9 @@ def execute_tool(
                 "content": text,
             }
 
+        elif tool_name == "convert_attached_pdf":
+            return _convert_attached_pdf(args, workspace)
+
         else:
             return {
                 "error": f"Unknown tool: '{tool_name}'. Available tools: {[t['name'] for t in TOOL_DEFINITIONS]}",
@@ -522,3 +543,63 @@ def execute_tool(
         return {
             "error": f"Tool '{tool_name}' failed: {str(e)}",
         }
+
+
+def _convert_attached_pdf(args: Dict[str, Any], workspace: "ShadowWorkspace") -> Dict[str, Any]:
+    """Starts a pdf2latex conversion job for an attached PDF (see TOOL_DEFINITIONS)."""
+    from attached_context import attached_context_store
+    from pdf2latex import jobs
+    from pdf2latex.config import get_settings
+    from pdf2latex.extract import PdfValidationError, open_pdf
+    from pdf2latex.runner import start_job
+
+    settings = get_settings()
+
+    user_ctx = getattr(workspace, "user_context", None) or {}
+    owner = user_ctx.get("user_id")
+    project_id = getattr(workspace, "project_id", None) or getattr(workspace, "_project_id", None)
+    if not owner or not project_id:
+        return {"error": "PDF conversion needs a signed-in user and an open project."}
+
+    pdfs = [a for a in attached_context_store.get_attachments(workspace.session_id) if a.get("raw_bytes")]
+    if not pdfs:
+        return {"error": "No attached PDF found in this chat. Ask the user to attach the PDF file."}
+    wanted = (args.get("filename") or "").lower()
+    att = next((a for a in pdfs if wanted and a.get("filename", "").lower() == wanted), pdfs[-1])
+
+    data: bytes = att["raw_bytes"]
+    try:
+        doc = open_pdf(data)
+        page_count = doc.page_count
+        doc.close()
+    except PdfValidationError as e:
+        return {"error": str(e)}
+    if page_count > settings.max_pages:
+        return {"error": f"The PDF has {page_count} pages; the conversion limit is {settings.max_pages}."}
+    existing = jobs.active_job_for(owner)
+    if existing:
+        return {"error": "A PDF conversion is already running for this user.", "job_id": existing["job_id"]}
+    if user_ctx.get("is_guest"):
+        from services.guest_quota import check_guest_conversion_quota, consume_guest_conversion
+        from project_storage import get_supabase_client
+        sid = owner.replace("guest_", "", 1)
+        res = get_supabase_client().table("guest_sessions").select("*").eq("id", sid).limit(1).execute()
+        if not res.data:
+            return {"error": "Guest session not found."}
+        allowed, _used, _resets, reason = check_guest_conversion_quota(res.data[0], "")
+        if not allowed:
+            return {"error": reason or "Guest conversion limit reached."}
+        consume_guest_conversion(sid)
+
+    state = start_job(owner, bool(user_ctx.get("is_guest")), project_id,
+                      att.get("filename") or "document.pdf", data, page_count, overwrite=False)
+    return {
+        "success": True,
+        "job_id": state["job_id"],
+        "filename": att.get("filename"),
+        "page_count": page_count,
+        "message": (
+            "Conversion started. The user sees live progress and a similarity report, and is asked before "
+            "an existing main.tex is replaced. Results are best-effort with measured similarity."
+        ),
+    }

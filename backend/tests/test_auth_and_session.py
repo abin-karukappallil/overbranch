@@ -261,10 +261,11 @@ def test_endpoints_reject_unauthenticated_requests():
     )
     assert resp_compile.status_code == status.HTTP_401_UNAUTHORIZED
 
-    # 4. /api/pdf/convert must return 401 without session
+    # 4. /api/convert/pdf must return 401 without session or guest token
     resp_pdf = client.post(
-        "/api/pdf/convert",
-        json={"pdf_data": "fake_base64"},
+        "/api/convert/pdf",
+        files={"file": ("doc.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        data={"mode": "exact"},
     )
     assert resp_pdf.status_code == status.HTTP_401_UNAUTHORIZED
 
