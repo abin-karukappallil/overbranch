@@ -62,6 +62,7 @@ import { PresentationView } from "@/components/editor/PresentationView";
 import { ModelSelector, type ProviderGroup } from "@/components/editor/ModelSelector";
 import type { SyncTeXForwardResult, SyncState } from "@/types/sync";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
+import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { ApiSettingsModal } from "@/components/editor/ApiSettingsModal";
@@ -84,6 +85,13 @@ import { ChatMessageContent } from "@/components/editor/ChatMessageContent";
 import { AgentReasoningWindow } from "@/components/editor/AgentReasoningWindow";
 import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } from "@/lib/IndexedDBEmbeddingCache";
 import { authFetch } from "@/lib/api-client";
+import {
+  applyEditItems,
+  describeSkipped,
+  type AppliedEditItem,
+  type ApplyOutcome,
+} from "@/lib/latex-edit-apply";
+import { healAndValidateLatex } from "@/lib/latex-validate";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -110,10 +118,22 @@ interface ChatMessage {
   };
 }
 
+interface AuthoritativeDoc {
+  file: string;
+  originalCode: string;
+  proposedCode: string;
+}
+
 interface DiffData {
   original_chunk: string;
   proposed_chunk: string;
   explanation: string;
+  /**
+   * The backend's full healed+validated buffer for this file. When the live
+   * document still matches `originalCode`, this is written verbatim instead of
+   * replaying chunks — see lib/latex-edit-apply.ts.
+   */
+  authoritative?: AuthoritativeDoc;
 }
 
 class EditorErrorBoundary extends React.Component<
@@ -242,6 +262,8 @@ export function EditorLayout({
 
   // In-memory SWR file cache for instantaneous file switching
   const fileContentCacheRef = useRef<Map<string, { content: string; timestamp: number }>>(new Map());
+  // The backend's authoritative healed+validated buffer for the current proposal.
+  const authoritativeDocRef = useRef<AuthoritativeDoc | null>(null);
 
   // Theme Support
   const { theme: appTheme, setTheme: setAppTheme, resolvedTheme } = useTheme();
@@ -322,6 +344,9 @@ export function EditorLayout({
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
+  const [pdfImportOpen, setPdfImportOpen] = useState(false);
+  const [pdfImportJobId, setPdfImportJobId] = useState<string | null>(null);
+  const [fileReloadNonce, setFileReloadNonce] = useState(0);
   const [chatMode, setChatMode] = useState<ChatMode>("edit");
   const editHistoryStoreRef = useRef<EditHistoryStore | null>(null);
 
@@ -1200,7 +1225,7 @@ export function EditorLayout({
     return () => {
       isCancelled = true;
     };
-  }, [projectId, activeFilePath, storageKey]);
+  }, [projectId, activeFilePath, storageKey, fileReloadNonce]);
 
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
   const saveDocument = async (newCode: string, showToast = true) => {
@@ -1510,14 +1535,14 @@ export function EditorLayout({
       {
         id: `user-${Date.now()}`,
         sender: "user",
-        text: (customPrompt === undefined && attachedFile)
-          ? `${userText}\n\n📎 Attached File: ${attachedFile.filename}`
+        text: attachedFile && !userText.includes(attachedFile.filename)
+          ? `${userText}\n\n📎 Attached Document: ${attachedFile.filename}`
           : userText,
         time: now,
       },
     ]);
 
-    const currentFilePayload = customPrompt === undefined ? attachedFile : null;
+    const currentFilePayload = attachedFile;
     if (customPrompt === undefined) {
       setChatInput("");
       if (typeof document !== "undefined") {
@@ -1525,7 +1550,8 @@ export function EditorLayout({
           el.style.height = "auto";
         });
       }
-      setAttachedFile(null);
+      // Note: Do NOT clear attachedFile here so attached document persists across multi-turn requests!
+      // User can remove it anytime via the (x) button on the attachment badge or by clearing chat.
     }
     setIsAgentThinking(true);
     setFallbackModelNotice(null);
@@ -1541,9 +1567,7 @@ export function EditorLayout({
     const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), timeoutMs);
 
     try {
-      // Prepare the attached file payload — for very large files (>5MB content),
-      // truncate to avoid 413 errors from reverse proxies (Nginx, cloud LBs).
-      // The backend has its own PDF text extraction as fallback.
+      // Prepare the attached file payload
       let filePayload: { filename: string; content: string; file_type: string } | null = null;
       if (currentFilePayload) {
         filePayload = {
@@ -1568,6 +1592,7 @@ export function EditorLayout({
         signal: abortControllerRef.current.signal,
         body: JSON.stringify({
           project_id: projectId || "proj-default",
+          session_id: projStorageKey || projectId || "proj-default",
           request_id: reqId,
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,
@@ -1595,6 +1620,10 @@ export function EditorLayout({
       const decoder = new TextDecoder();
       let buffer = "";
       let finalData: any = null;
+      // final_diff arrives once per modified file; keyed by file so an auxiliary
+      // file's payload cannot clobber the main one (and so aux edits are visible
+      // instead of silently discarded).
+      const finalDiffsByFile: Record<string, any> = {};
       let sseError: Error | null = null;
 
       try {
@@ -1639,19 +1668,41 @@ export function EditorLayout({
                   parsed.proposed_chunk !== undefined ||
                   (Array.isArray(parsed.edits) && parsed.edits.length > 0)
                 ) {
-                  finalData = {
+                  const hasExplicitNoChanges = parsed.has_changes === false;
+                  const editsArr = hasExplicitNoChanges
+                    ? []
+                    : (Array.isArray(parsed.edits) && parsed.edits.length > 0
+                        ? parsed.edits
+                        : ((parsed.proposed_code || parsed.proposed_chunk) && (parsed.proposed_code !== parsed.original_code || parsed.proposed_chunk !== parsed.original_chunk)
+                            ? [{
+                                original_chunk: parsed.original_code || parsed.original_chunk || "",
+                                proposed_chunk: parsed.proposed_code || parsed.proposed_chunk || "",
+                                explanation: parsed.explanation || "",
+                              }]
+                            : []));
+                  const diffFile =
+                    parsed.file || activeFilePath || "main.tex";
+                  const normalizedDiff = {
                     ...parsed,
+                    file: diffFile,
                     original_chunk: parsed.original_code || parsed.original_chunk || "",
                     proposed_chunk: parsed.proposed_code || parsed.proposed_chunk || "",
                     explanation: parsed.explanation || "",
-                    edits: parsed.edits && parsed.edits.length > 0 ? parsed.edits : [{
-                      original_chunk: parsed.original_code || parsed.original_chunk || "",
-                      proposed_chunk: parsed.proposed_code || parsed.proposed_chunk || "",
-                      explanation: parsed.explanation || "",
-                    }],
+                    edits: editsArr,
                   };
+                  finalDiffsByFile[diffFile] = normalizedDiff;
+                  // Only the active file drives the inline diff UI.
+                  if (diffFile === (activeFilePath || "main.tex")) {
+                    finalData = normalizedDiff;
+                  } else if (!finalData) {
+                    finalData = normalizedDiff;
+                  }
+                } else if (currentEventType === "pdf_conversion" && parsed.job_id) {
+                  // The copilot started a PDF import: show its live progress & report
+                  setPdfImportJobId(parsed.job_id);
+                  setPdfImportOpen(true);
                 } else if (currentEventType === "result") {
-                  finalData = parsed;
+                  finalData = { ...(finalData || {}), ...parsed };
                 } else if (currentEventType === "cancelled") {
                   console.log("AI Agent generation cleanly stopped by user:", parsed);
                   return;
@@ -1692,7 +1743,18 @@ export function EditorLayout({
       }
 
       if (sseError) throw sseError;
-      if (!finalData) throw new Error("No result received from AI agent");
+      if (!finalData) {
+        // Fallback: check if we received any progress error or step
+        const lastErrStep = agentProgressSteps.slice().reverse().find((s: any) => s.step === "compile_error" || s.icon === "alert");
+        const fallbackMsg = lastErrStep?.message || "AI completed processing, but no modifications were produced.";
+        finalData = {
+          original_chunk: "",
+          proposed_chunk: "",
+          explanation: fallbackMsg,
+          edits: [],
+          has_changes: false,
+        };
+      }
 
       const data = finalData;
       const assistantTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -1758,23 +1820,31 @@ export function EditorLayout({
 
       if (hasEdits) {
         setDiffEditsList(editsList);
+        const activeFile = activeFilePath || "main.tex";
+        const authoritativeDoc: AuthoritativeDoc | undefined =
+          typeof data.original_code === "string" && typeof data.proposed_code === "string"
+            ? {
+              file: data.file || activeFile,
+              originalCode: data.original_code,
+              proposedCode: data.proposed_code,
+            }
+            : undefined;
+        authoritativeDocRef.current = authoritativeDoc ?? null;
         setDiffData({
           original_chunk: data.original_chunk || editsList[0].original_chunk,
           proposed_chunk: data.proposed_chunk || editsList[0].proposed_chunk,
           explanation: sanitizeChunkReferences(data.explanation || "AI Suggested Modifications"),
+          authoritative: authoritativeDoc,
         });
       } else {
+        authoritativeDocRef.current = null;
         setDiffEditsList([]);
         setDiffData(null);
       }
 
-      if (data.is_pdf_conversion || (data.files_written && data.files_written.length > 0)) {
-        setFilesRefreshTrigger((prev) => prev + 1);
-        setFilesOpen(true);
-        toast.success(
-          `Project updated from PDF! ${data.files_written?.length || 0} file(s) and ${data.assets_written?.length || 0} asset(s) saved in assets/.`,
-          { icon: "📄" }
-        );
+      if (data.pdf_conversion_job_id) {
+        setPdfImportJobId(data.pdf_conversion_job_id);
+        setPdfImportOpen(true);
       }
     } catch (err: any) {
       clearTimeout(timeoutId);
@@ -1862,167 +1932,64 @@ export function EditorLayout({
     return text + "\n\n" + snippet;
   };
 
-  const applySingleEditInPlace = (currentText: string, orig: string, prop: string): string => {
-    const propVal = prop !== undefined && prop !== null ? prop : "";
-    if (!propVal && !orig) return currentText;
+  /**
+   * The single place that commits an apply outcome to the editor.
+   *
+   * Previously this logic was copy-pasted across applySingleEditInPlace,
+   * handleAcceptDiff, handleAcceptSingleEdit and handleAcceptAllEdits, each with
+   * subtly different history IDs and message flags — and each silently dropping
+   * edits whose anchor was missing or ambiguous. Skips are now always surfaced,
+   * and a partial apply is re-validated before it is saved.
+   */
+  const commitEditOutcome = async (
+    outcome: ApplyOutcome,
+    opts: {
+      codeBeforeEdit: string;
+      historyId: string;
+      historyLabel: string;
+      source: string;
+      msgId?: string;
+      clearDiffState: boolean;
+      markMessagesApplied?: boolean;
+    },
+  ) => {
+    const { code: updatedCode, applied, skipped, strategy } = outcome;
+    const file = activeFilePath || "main.tex";
 
-    // 1. Full document replacement
-    if (propVal.includes("\\documentclass") && propVal.includes("\\begin{document}")) {
-      return propVal;
+    if (applied.length === 0) {
+      // Nothing landed: leave the buffer untouched, do not save, do not compile.
+      toast.error(
+        skipped.length > 0
+          ? `No edits applied — ${describeSkipped(skipped)}.`
+          : "No edits could be applied to this document.",
+      );
+      return;
     }
 
-    // 2. Direct exact verbatim match (including deletions where propVal is "")
-    if (orig && currentText.includes(orig)) {
-      let res = currentText.replace(orig, propVal);
-      if (!propVal.trim()) {
-        res = res.replace(/\n{3,}/g, "\n\n");
-      }
-      return res;
-    }
-
-    // 3. Whitespace-tolerant regex match
-    if (orig && orig.trim()) {
-      const escaped = orig.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
-      try {
-        const regex = new RegExp(escaped, 'i');
-        if (regex.test(currentText)) {
-          let res = currentText.replace(regex, propVal);
-          if (!propVal.trim()) {
-            res = res.replace(/\n{3,}/g, "\n\n");
-          }
-          return res;
-        }
-      } catch {
-        // continue to next strategy
-      }
-    }
-
-    // If this was a deletion operation and exact/regex matching failed, don't append empty snippet
-    if (!propVal.trim()) {
-      return currentText;
-    }
-
-    // 4. In-place Beamer frame replacement (prevents duplicate slides at bottom of document)
-    if (propVal.includes("\\begin{frame}") && propVal.includes("\\end{frame}")) {
-      const normalizeTitle = (t: string): string => {
-        if (!t) return "";
-        let clean = t.replace(/\\[a-zA-Z]+(?:\[[^\]]*\])?\{([^}]*)\}/g, "$1");
-        clean = clean.replace(/\\[a-zA-Z]+/g, "");
-        clean = clean.replace(/^\s*\d+[\.\:\-\s]*/, "");
-        clean = clean.replace(/^\d+/, "");
-        clean = clean.replace(/[^a-zA-Z0-9\s]/g, " ");
-        return clean.replace(/\s+/g, " ").trim().toLowerCase();
-      };
-
-      const isPropTitleSlide = propVal.includes("\\titlepage") || (propVal.startsWith("\\begin{frame}[plain]") && (propVal.toLowerCase().includes("presented by") || propVal.toLowerCase().includes("seminar")));
-      const isPropRefSlide = propVal.includes("\\begin{thebibliography}") || propVal.includes("\\bibitem") || propVal.toLowerCase().slice(0, 150).includes("reference");
-      const isPropTableSlide = (propVal.includes("\\begin{table}") || propVal.includes("\\begin{tabular")) && (propVal.toLowerCase().includes("comparative") || propVal.toLowerCase().includes("comparison"));
-
-      const titleMatch = propVal.match(/\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}/);
-      const cleanPropTitle = titleMatch ? normalizeTitle(titleMatch[1]) : "";
-      const fracMatch = propVal.match(/\(?(\d+\/\d+)\)?/);
-      const numMatch = propVal.match(/\b(?:survey|paper|slide|frame)\s*#?\s*(\d+)\b/i);
-
-      const frameRegex = /\\begin\{frame\}[\s\S]*?\\end\{frame\}/g;
-      let m: RegExpExecArray | null;
-      let bestMatch: { index: number; length: number } | null = null;
-
-      while ((m = frameRegex.exec(currentText)) !== null) {
-        const existingFrame = m[0];
-        const isExistingTitleSlide = existingFrame.includes("\\titlepage") || (existingFrame.startsWith("\\begin{frame}[plain]") && (existingFrame.toLowerCase().includes("presented by") || existingFrame.toLowerCase().includes("seminar")));
-
-        // Never overwrite a Title Slide with a content slide
-        if (isExistingTitleSlide && !isPropTitleSlide) {
-          continue;
-        }
-
-        // References slide matching
-        if (isPropRefSlide && (existingFrame.includes("\\begin{thebibliography}") || existingFrame.includes("\\bibitem") || existingFrame.toLowerCase().includes("reference"))) {
-          bestMatch = { index: m.index, length: existingFrame.length };
-          break;
-        }
-
-        // Comparative analysis table slide matching
-        if (isPropTableSlide && (existingFrame.includes("\\begin{table}") || existingFrame.includes("\\begin{tabular")) && (existingFrame.toLowerCase().includes("comparative") || existingFrame.toLowerCase().includes("comparison"))) {
-          bestMatch = { index: m.index, length: existingFrame.length };
-          break;
-        }
-
-        // Match by fraction like (7/7)
-        if (fracMatch && existingFrame.includes(fracMatch[1])) {
-          bestMatch = { index: m.index, length: existingFrame.length };
-          break;
-        }
-
-        // Match by normalized title (handles '3Literature Survey' vs '3. Literature Survey')
-        if (cleanPropTitle) {
-          const exTitleMatch = existingFrame.match(/\\begin\{frame\}(?:\[[^\]]*\])?\s*\{([^}]+)\}/);
-          if (exTitleMatch) {
-            const cleanExTitle = normalizeTitle(exTitleMatch[1]);
-            if (cleanPropTitle === cleanExTitle || (cleanPropTitle.length >= 4 && cleanExTitle.includes(cleanPropTitle)) || (cleanExTitle.length >= 4 && cleanPropTitle.includes(cleanExTitle))) {
-              bestMatch = { index: m.index, length: existingFrame.length };
-              break;
-            }
-          }
-        }
-
-        // Match by survey/slide number
-        if (numMatch && (existingFrame.includes(`(${numMatch[1]}/`) || existingFrame.includes(` ${numMatch[1]}/`))) {
-          bestMatch = { index: m.index, length: existingFrame.length };
-          break;
-        }
-      }
-
-      if (bestMatch) {
-        return currentText.slice(0, bestMatch.index) + propVal + currentText.slice(bestMatch.index + bestMatch.length);
-      }
-    }
-
-    // 5. In-place Section / Chapter / Subsection replacement
-    const secMatch = propVal.match(/\\(chapter|section\*?|subsection|subsubsection)\{([^}]+)\}/);
-    if (secMatch) {
-      const secTitle = secMatch[2].trim();
-      const escapedTitle = secTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      try {
-        const nextSecRegex = new RegExp(
-          `\\\\(?:chapter|section\\*?|subsection|subsubsection)\\{${escapedTitle}\\}[\\s\\S]*?(?=\\\\(?:chapter|section|subsection|subsubsection|begin\\{thebibliography\\}|bibliography|end\\{document\\})|$)`,
-          'i'
+    // A partial chunk replay can leave structurally broken LaTeX (e.g. an
+    // orphaned \\end{...}) that no other check would catch. The authoritative
+    // path is already validated on the backend.
+    if (strategy === "chunks" && skipped.length > 0) {
+      const check = await healAndValidateLatex(updatedCode, projectId, file, false);
+      if (check.unavailable) {
+        toast.warning(
+          `Applied ${applied.length} of ${applied.length + skipped.length} edits. Could not verify the result — compile to check.`,
         );
-        if (nextSecRegex.test(currentText)) {
-          return currentText.replace(nextSecRegex, propVal + "\n\n");
-        }
-      } catch {
-        // continue
+      } else if (!check.valid) {
+        toast.error(
+          `Edits not applied: the partial selection would leave invalid LaTeX — ${check.errors
+            .slice(0, 2)
+            .join("; ")}`,
+        );
+        return;
       }
     }
 
-    // 6. Safeguards before fallback append:
-    // Never append a duplicate \documentclass or \begin{document} into an existing document
-    if (propVal.includes("\\documentclass") || propVal.includes("\\begin{document}")) {
-      return currentText;
-    }
-
-    // If an original anchor was given but not found at all, and propVal contains a duplicate section header, do not append blindly
-    if (orig && secMatch) {
-      const secTitle = secMatch[2].trim();
-      if (currentText.toLowerCase().includes(secTitle.toLowerCase())) {
-        return currentText;
-      }
-    }
-
-    // 7. Append safely before \end{document}
-    return insertSnippetSafely(currentText, propVal);
-  };
-
-  const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
     const editor = editorRef.current;
     const model = editor?.getModel?.();
-    const currentText = model ? model.getValue() : code;
-    const updatedCode = applySingleEditInPlace(currentText, originalChunk, proposedChunk);
-
     if (editor && model) {
       editor.pushUndoStop();
-      editor.executeEdits("ai-diff-edit", [
+      editor.executeEdits(opts.source, [
         {
           range: model.getFullModelRange(),
           text: updatedCode,
@@ -2030,63 +1997,28 @@ export function EditorLayout({
         },
       ]);
       editor.pushUndoStop();
-    } else {
-      setCode(updatedCode);
+    }
+    setCode(updatedCode);
+
+    if (opts.clearDiffState) {
+      setDiffData(null);
+      setDiffEditsList([]);
+      authoritativeDocRef.current = null;
     }
 
-    setCode(updatedCode);
-    setDiffData(null);
-    setDiffEditsList([]);
-
-    // Auto-save to Supabase & Qdrant
-    saveDocument(updatedCode, true);
-    handleCompile(updatedCode);
-  };
-
-  const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
-    const editor = editorRef.current;
-    const model = editor?.getModel?.();
-    const codeBeforeEdit = model ? model.getValue() : code;
-    let updatedCode = codeBeforeEdit;
-
-    itemsToApply.forEach((item) => {
-      const orig = item.original_chunk;
-      const prop = item.proposed_chunk;
-      updatedCode = applySingleEditInPlace(updatedCode, orig, prop);
-    });
-
-    if (editor && model) {
-      editor.pushUndoStop();
-      editor.executeEdits("ai-accept-all", [
-        {
-          range: model.getFullModelRange(),
-          text: updatedCode,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
-    } else {
-      setCode(updatedCode);
-    }
-
-    setCode(updatedCode);
-    setDiffData(null);
-    setDiffEditsList([]);
-
-    const historyId = msgId || `edit-${Date.now()}`;
-    const userPrompt = messages.filter((m) => m.sender === "user").pop()?.text || "AI Document Edit";
-
+    const userPrompt =
+      messages.filter((m) => m.sender === "user").pop()?.text || opts.historyLabel;
     if (editHistoryStoreRef.current) {
       editHistoryStoreRef.current.pushEdit({
-        id: historyId,
+        id: opts.historyId,
         timestamp: Date.now(),
         model: activeModelName,
         prompt: userPrompt,
-        files: [activeFilePath || "main.tex"],
-        beforeCode: { [activeFilePath || "main.tex"]: codeBeforeEdit },
-        afterCode: { [activeFilePath || "main.tex"]: updatedCode },
+        files: [file],
+        beforeCode: { [file]: opts.codeBeforeEdit },
+        afterCode: { [file]: updatedCode },
         cursorState: {
-          file: activeFilePath || "main.tex",
+          file,
           line: editor?.getPosition()?.lineNumber || 1,
           column: editor?.getPosition()?.column || 1,
           scrollTop: editor?.getScrollTop() || 0,
@@ -2095,21 +2027,29 @@ export function EditorLayout({
       });
     }
 
-    if (msgId) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === msgId
-            ? { ...m, isApplied: true, isReverted: false, historyEntryId: historyId }
-            : m
-        )
-      );
-    } else {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.edits && m.edits.length > 0
-            ? { ...m, isApplied: true, isReverted: false, historyEntryId: historyId }
-            : m
-        )
+    if (opts.markMessagesApplied) {
+      if (opts.msgId) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === opts.msgId
+              ? { ...m, isApplied: true, isReverted: false, historyEntryId: opts.historyId }
+              : m,
+          ),
+        );
+      } else {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.edits && m.edits.length > 0
+              ? { ...m, isApplied: true, isReverted: false, historyEntryId: opts.historyId }
+              : m,
+          ),
+        );
+      }
+    }
+
+    if (skipped.length > 0) {
+      toast.warning(
+        `Applied ${applied.length} of ${applied.length + skipped.length} edits — ${describeSkipped(skipped)}.`,
       );
     }
 
@@ -2117,44 +2057,95 @@ export function EditorLayout({
     handleCompile(updatedCode);
   };
 
+  /** Resolves the authoritative buffer for the active file, if one is in hand. */
+  const authoritativeForActiveFile = (): { originalText?: string; authoritativeText?: string } => {
+    const doc = authoritativeDocRef.current;
+    const file = activeFilePath || "main.tex";
+    if (!doc || (doc.file && doc.file !== file)) return {};
+    return { originalText: doc.originalCode, authoritativeText: doc.proposedCode };
+  };
+
+  const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const currentText = model ? model.getValue() : code;
+    const outcome = applyEditItems(
+      currentText,
+      [{ original_chunk: originalChunk, proposed_chunk: proposedChunk }],
+      authoritativeForActiveFile(),
+    );
+    void commitEditOutcome(outcome, {
+      codeBeforeEdit: currentText,
+      historyId: `diff-${Date.now()}`,
+      historyLabel: "AI Document Edit",
+      source: "ai-diff-edit",
+      clearDiffState: true,
+    });
+  };
+
+  const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
+    const editor = editorRef.current;
+    const model = editor?.getModel?.();
+    const codeBeforeEdit = model ? model.getValue() : code;
+
+    // Accept All prefers the backend's full healed+validated buffer, so the text
+    // in the editor is byte-identical to what passed pre-commit validation.
+    // applyEditItems falls back to replaying chunks if the document changed
+    // while the agent was streaming (the editor is not locked during a stream).
+    const outcome = applyEditItems(
+      codeBeforeEdit,
+      itemsToApply as AppliedEditItem[],
+      authoritativeForActiveFile(),
+    );
+
+    if (outcome.strategy === "chunks" && authoritativeDocRef.current) {
+      toast.info("Document changed while the AI was working — applying edits individually.");
+    }
+
+    void commitEditOutcome(outcome, {
+      codeBeforeEdit,
+      historyId: msgId || `edit-${Date.now()}`,
+      historyLabel: "AI Document Edit",
+      source: "ai-accept-all",
+      msgId,
+      clearDiffState: true,
+      markMessagesApplied: true,
+    });
+  };
+
   const handleRejectAllEdits = () => {
     setDiffData(null);
     setDiffEditsList([]);
+    authoritativeDocRef.current = null;
   };
 
   const handleAcceptSingleEdit = (item: EditItem) => {
     const editor = editorRef.current;
     const model = editor?.getModel?.();
     const codeBeforeEdit = model ? model.getValue() : code;
-    const orig = item.original_chunk;
-    const prop = item.proposed_chunk;
 
-    const updatedCode = applySingleEditInPlace(codeBeforeEdit, orig, prop);
-
-    if (editor && model) {
-      editor.pushUndoStop();
-      editor.executeEdits("ai-accept-single", [
-        {
-          range: model.getFullModelRange(),
-          text: updatedCode,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
-    } else {
-      setCode(updatedCode);
-    }
-
-    setCode(updatedCode);
+    // A single item out of several is by definition a partial apply, so it is
+    // replayed as a chunk and re-validated rather than taking the whole-document
+    // shortcut.
+    const outcome = applyEditItems(codeBeforeEdit, [item as AppliedEditItem], {
+      originalText: authoritativeForActiveFile().originalText,
+    });
 
     const remaining = diffEditsList.filter((e) => e.id !== item.id);
-    setDiffEditsList(remaining);
-    if (remaining.length === 0) {
-      setDiffData(null);
-    }
 
-    saveDocument(updatedCode, true);
-    handleCompile(updatedCode);
+    void commitEditOutcome(outcome, {
+      codeBeforeEdit,
+      historyId: item.id || `single-${Date.now()}`,
+      historyLabel: "AI Single Edit",
+      source: "ai-accept-single",
+      clearDiffState: false,
+    }).then(() => {
+      setDiffEditsList(remaining);
+      if (remaining.length === 0) {
+        setDiffData(null);
+        authoritativeDocRef.current = null;
+      }
+    });
   };
 
   const handleRevertEdit = (editId: string) => {
@@ -2254,8 +2245,26 @@ export function EditorLayout({
     }
   };
 
-  const getEditLineRange = (originalChunk: string, proposedChunk: string): string => {
+  const getEditLineRange = (
+    originalChunk: string,
+    proposedChunk: string,
+    item?: AppliedEditItem,
+  ): string => {
     if (!code) return "Line 1";
+
+    // Prefer the apply contract's line numbers, and report only the *inner*
+    // changed range: anchors now carry surrounding context, so the raw chunk
+    // bounds would overstate what actually changed.
+    if (item?.orig_start_line && item.orig_end_line !== undefined) {
+      const innerStart = item.orig_start_line + (item.context_before ?? 0);
+      const innerEnd = item.orig_end_line - (item.context_after ?? 0);
+      if (innerEnd < innerStart) {
+        return `Line ${innerStart} (Insertion)`;
+      }
+      return innerStart === innerEnd
+        ? `Line ${innerStart}`
+        : `Lines ${innerStart}–${innerEnd}`;
+    }
 
     if (originalChunk && code.includes(originalChunk)) {
       const startIdx = code.indexOf(originalChunk);
@@ -2651,6 +2660,10 @@ export function EditorLayout({
             onSelectFile={(filePath) => handleSelectFile(filePath)}
             onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
             refreshTrigger={filesRefreshTrigger}
+            onImportPdf={() => {
+              setPdfImportJobId(null);
+              setPdfImportOpen(true);
+            }}
           />
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
@@ -2722,7 +2735,7 @@ export function EditorLayout({
                       <span>In-Editor Diff</span>
                     </div>
                     <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] font-mono">
-                      {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
+                      {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk, diffEditsList[0] as AppliedEditItem)}
                     </span>
                   </div>
 
@@ -2951,7 +2964,7 @@ export function EditorLayout({
                         <span>Proposed TeX Patch</span>
                       </div>
                       <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#18191B] text-slate-600 dark:text-[#8A8F98] border border-slate-200 dark:border-[#23252A] font-medium">
-                        {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk)}
+                        {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk, diffEditsList[0] as AppliedEditItem)}
                       </span>
                     </div>
 
@@ -3114,6 +3127,10 @@ export function EditorLayout({
             }}
             onInsertLatexSnippet={(snippet) => insertSymbol(snippet)}
             refreshTrigger={filesRefreshTrigger}
+            onImportPdf={() => {
+              setPdfImportJobId(null);
+              setPdfImportOpen(true);
+            }}
           />
         </div>
 
@@ -3375,6 +3392,27 @@ export function EditorLayout({
       {isApiSettingsOpen && (
         <ApiSettingsModal onClose={() => setIsApiSettingsOpen(false)} />
       )}
+
+      <ImportPdfDialog
+        open={pdfImportOpen}
+        onOpenChange={(open) => {
+          setPdfImportOpen(open);
+          if (!open) setPdfImportJobId(null);
+        }}
+        projectId={projectId || "proj-1"}
+        attachJobId={pdfImportJobId}
+        onCompleted={({ texPath }) => {
+          // Drop stale cached copies so the editor shows the converted file from the server
+          fileContentCacheRef.current.delete(texPath);
+          try {
+            localStorage.removeItem(`overbranch_code_${projectId || "default"}_${texPath}`);
+          } catch (_) {}
+          setFilesRefreshTrigger((prev) => prev + 1);
+          if (texPath === activeFilePath) setFileReloadNonce((n) => n + 1);
+          else setActiveFilePath(texPath);
+          toast.success(`PDF imported into ${texPath}`, { icon: "📄" });
+        }}
+      />
     </div>
   );
 }

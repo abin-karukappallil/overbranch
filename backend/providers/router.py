@@ -33,19 +33,21 @@ DEFAULT_MODEL = "gemini-3.7-flash"
 class TaskType(str, Enum):
     TASK_CLASSIFICATION = "task_classification"
     QUERY_REWRITING = "query_rewriting"
+    FAST_PLAN = "fast_plan"
+    OUTLINE_PLAN = "outline_plan"
     NODE_EDITING = "node_editing"
     DOC_RESTRUCTURING = "doc_restructuring"
-    PDF_SYNTHESIS = "pdf_synthesis"
     VISION_DIFF = "vision_diff"
 
 
 # Task type to recommended model class mapping
 TASK_ROUTING_TABLE: Dict[TaskType, str] = {
-    TaskType.TASK_CLASSIFICATION: "openai/gpt-oss-120b",
-    TaskType.QUERY_REWRITING: "openai/gpt-oss-120b",
+    TaskType.TASK_CLASSIFICATION: "llama-3.1-8b-instant",
+    TaskType.QUERY_REWRITING: "llama-3.1-8b-instant",
+    TaskType.FAST_PLAN: "llama-3.1-8b-instant",
+    TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
     TaskType.NODE_EDITING: "gemini-3.7-flash",
     TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
-    TaskType.PDF_SYNTHESIS: "gemini-3.7-flash",
     TaskType.VISION_DIFF: "minimax/minimax-01",
 }
 
@@ -88,7 +90,15 @@ class ProviderRouter:
         if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS or "gemini" in clean_model:
             return self.gemini
 
-        if clean_model.startswith("groq/") or clean_model.startswith("groq:") or "gpt-oss-120b" in clean_model:
+        if (
+            clean_model.startswith("groq/")
+            or clean_model.startswith("groq:")
+            or clean_model.startswith("llama-3")
+            or clean_model.startswith("llama3")
+            or clean_model in ("fast", "groq-fast", "mixtral", "gemma2-9b", "gemma2-9b-it")
+            or "gpt-oss-120b" in clean_model
+            or "instant" in clean_model
+        ):
             return self.groq
 
         return self.openrouter
@@ -107,10 +117,19 @@ class ProviderRouter:
         return "minimax/minimax-01"
 
     def get_fast_model(self) -> str:
-        return "openai/gpt-oss-120b"
+        return "llama-3.1-8b-instant"
 
     def get_strong_model(self) -> str:
         return DEFAULT_MODEL
+
+    def get_context_window(self, model: str) -> int:
+        """Returns the context window size (in tokens) for a given model.
+        Delegates to the context_strategy module's registry."""
+        try:
+            from context_strategy import get_model_context_window
+            return get_model_context_window(model)
+        except ImportError:
+            return 120_000  # Conservative default
 
     def get_available_models(self) -> Dict[str, Any]:
         providers_list = []
@@ -120,6 +139,13 @@ class ProviderRouter:
             providers_list.append({
                 "name": "Gemini Web2API",
                 "models": gemini_models,
+            })
+
+        groq_models = self.groq.get_available_models()
+        if groq_models:
+            providers_list.append({
+                "name": "Groq (Ultra-Fast Inference)",
+                "models": groq_models,
             })
 
         openrouter_models = self.openrouter.get_available_models()
@@ -141,6 +167,7 @@ class ProviderRouter:
         temperature: float = 0.1,
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
+        cancel_token: Optional[Any] = None,
     ) -> Dict[str, Any]:
         clean_model = (model or "").strip().lower()
         if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
@@ -148,6 +175,7 @@ class ProviderRouter:
 
         provider = self.route(model)
         logger.info(f"Routing model '{model}' → {provider.get_provider_name()}")
+        cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         try:
             return provider.chat(
                 messages=messages,
@@ -155,6 +183,7 @@ class ProviderRouter:
                 temperature=temperature,
                 max_tokens=max_tokens,
                 api_keys=api_keys,
+                **cancel_kwargs,
             )
         except Exception as primary_err:
             # If user explicit cancellation was requested, re-raise immediately
@@ -162,12 +191,12 @@ class ProviderRouter:
             if isinstance(primary_err, LLMOperationCancelled):
                 raise
 
-            # Automatic fallback to OpenRouter if Gemini / Groq fails or times out
+            # Automatic fallback to OpenRouter (MiniMax M3) if Gemini Web2API / Groq fails or times out
             if provider != self.openrouter and (self.openrouter.candidates or (api_keys and api_keys.get("openrouter"))):
-                fallback_model = "meta-llama/llama-3.3-70b-instruct"
+                fallback_model = self.get_fallback_model()  # "minimax/minimax-01" (MiniMax M3)
                 logger.warning(
-                    f"Primary provider '{provider.get_provider_name()}' failed ({primary_err}). "
-                    f"Auto-falling back to OpenRouter ({fallback_model})..."
+                    f"Primary provider '{provider.get_provider_name()}' failed/timed out ({primary_err}). "
+                    f"Auto-falling back to OpenRouter MiniMax M3 ({fallback_model})..."
                 )
                 try:
                     fallback_resp = self.openrouter.chat(
@@ -176,11 +205,12 @@ class ProviderRouter:
                         temperature=temperature,
                         max_tokens=max_tokens,
                         api_keys=api_keys,
+                        **cancel_kwargs,
                     )
                     fallback_resp["is_fallback"] = True
                     return fallback_resp
                 except Exception as fb_err:
-                    logger.error(f"Fallback to OpenRouter also failed: {fb_err}")
+                    logger.error(f"Fallback to OpenRouter MiniMax M3 ({fallback_model}) also failed: {fb_err}")
 
             raise primary_err
 
@@ -191,10 +221,11 @@ class ProviderRouter:
         max_tokens: int = 2048,
         api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        fast_model = self.get_fast_model()
         try:
             return self.groq.chat(
                 messages=messages,
-                model="openai/gpt-oss-120b",
+                model=fast_model,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 api_keys=api_keys,

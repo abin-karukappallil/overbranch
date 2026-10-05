@@ -115,7 +115,9 @@ class RateLimiter:
                 request.cookies.get("__Secure-better-auth.session_token")
                 or request.cookies.get("better-auth.session_token")
                 or request.cookies.get("session_token")
+                or request.cookies.get("ob_guest_token")
                 or request.cookies.get("guest_token")
+                or request.headers.get("x-guest-token")
             )
             if token:
                 user_id = token[:32]

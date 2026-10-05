@@ -53,7 +53,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "grep_search",
         "description": (
-            "Search the LaTeX file for a pattern. Returns matching lines with "
+            "Search a LaTeX file for a pattern. Returns matching lines with "
             "line numbers. Use this to find \\\\labels, \\\\includegraphics references, "
             "section headings, or any specific text. Supports literal strings and regex."
         ),
@@ -61,6 +61,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "query": {
                 "type": "string",
                 "description": "Search pattern (literal text or regex).",
+            },
+            "file": {
+                "type": "string",
+                "description": "Optional file to search (default: main document file).",
             },
             "is_regex": {
                 "type": "boolean",
@@ -88,6 +92,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
                 "type": "string",
                 "description": "The replacement string.",
             },
+            "file": {
+                "type": "string",
+                "description": "Optional file to modify (default: main document file).",
+            },
         },
         "required": ["old_str", "new_str"],
     },
@@ -109,6 +117,45 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             },
         },
         "required": ["chunk_id", "new_content"],
+    },
+    {
+        "name": "insert_into_chunk",
+        "description": (
+            "Insert new content into a specific document chunk (e.g. bibliography, section, chapter, frame). "
+            "Position can be 'end' (default) or 'begin'. "
+            "For bibliography chunks (containing \\end{thebibliography}), 'end' automatically inserts the new \\bibitem entries "
+            "BEFORE \\end{thebibliography}, preserving bibliography structure."
+        ),
+        "parameters": {
+            "chunk_id": {
+                "type": "string",
+                "description": "The target chunk ID (e.g. 'chapter_1', 'section_3', 'frame_2', 'content_body').",
+            },
+            "content": {
+                "type": "string",
+                "description": "The LaTeX content or \\bibitem entry to insert.",
+            },
+            "position": {
+                "type": "string",
+                "description": "Where to insert within the chunk: 'end' (default, before closing tags like \\end{thebibliography}) or 'begin'.",
+                "default": "end",
+            },
+        },
+        "required": ["chunk_id", "content"],
+    },
+    {
+        "name": "search_uploaded_references",
+        "description": (
+            "Search previously uploaded reference files/PDFs attached to this session. "
+            "Use this to look up specific benchmark numbers, equations, citations, or domain details from attached papers."
+        ),
+        "parameters": {
+            "query": {
+                "type": "string",
+                "description": "Keywords or topic to search for in attached references.",
+            },
+        },
+        "required": ["query"],
     },
     {
         "name": "list_assets",
@@ -156,6 +203,85 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         },
         "required": ["category"],
     },
+    {
+        "name": "list_project_files",
+        "description": (
+            "List all files in the project workspace with metadata (line count, char count, modified status). "
+            "Use this to discover multi-file project structure before editing auxiliary .tex files."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "read_document_summary",
+        "description": (
+            "Get a compact structural analysis of the document: metadata (title, author, class), "
+            "content inventory (figures, tables, equations, references), per-section breakdown "
+            "with line counts and content markers. Use this instead of reading the entire file "
+            "when you need a global understanding of the document structure."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "list_attached_documents",
+        "description": (
+            "List all reference documents (PDFs, research papers, data files) attached by the user to this chat. "
+            "Returns filenames, page counts, total character sizes, and text previews. "
+            "Use this to discover what external source material is available to incorporate into the LaTeX document."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "read_attached_document",
+        "description": (
+            "Read pages or lines from an attached reference document (PDF or text file). "
+            "Can read by page range (start_page, end_page) or line range (start_line, end_line). "
+            "Use this to inspect specific sections, algorithms, theorems, data tables, or equations from the uploaded PDF."
+        ),
+        "parameters": {
+            "filename": {
+                "type": "string",
+                "description": "Name of the attached document to read (optional, defaults to active attached document).",
+            },
+            "start_page": {
+                "type": "integer",
+                "description": "1-indexed starting page number to read (optional).",
+            },
+            "end_page": {
+                "type": "integer",
+                "description": "1-indexed ending page number to read (optional, max 5 pages per call).",
+            },
+            "start_line": {
+                "type": "integer",
+                "description": "1-indexed line number to start reading from (optional).",
+            },
+            "end_line": {
+                "type": "integer",
+                "description": "1-indexed line number to stop reading at (optional).",
+            },
+        },
+        "required": [],
+    },
+    {
+        "name": "convert_attached_pdf",
+        "description": (
+            "Convert a PDF the user attached to this chat into LaTeX for the current project (PDF import). "
+            "Use ONLY when the user asks to convert / import / recreate / reproduce an attached PDF as LaTeX. "
+            "Each page is reproduced as compilable LaTeX (same text, images, colors, font sizes, spacing and "
+            "alignment as closely as possible), compiled and compared with the original. Starts a background job "
+            "and returns its job_id; the user sees per-page progress and similarity scores and confirms before "
+            "main.tex is replaced. Do not edit the document yourself after starting a conversion — finish with done=true."
+        ),
+        "parameters": {
+            "filename": {
+                "type": "string",
+                "description": "Name of the attached PDF (optional, defaults to the most recent attached PDF).",
+            },
+        },
+        "required": [],
+    },
 ]
 
 
@@ -202,23 +328,41 @@ def execute_tool(
         Dict with the tool result (always JSON-serializable).
     """
     try:
+        main_file = getattr(workspace, "file_path", getattr(workspace, "_file_path", "main.tex"))
+
         if tool_name == "read_file_range":
+            target_file = args.get("file")
             start = int(args.get("start_line", 1))
             end = int(args.get("end_line", start + 50))
             # Clamp range to prevent excessive context
             if end - start > 300:
                 end = start + 300
-            content = workspace.read_lines(start, end)
-            return {
-                "content": content,
-                "lines_read": f"{start}-{end}",
-                "total_lines": workspace.get_line_count(),
-            }
+            if target_file and target_file not in ("main.tex", main_file):
+                content = workspace.read_file_lines(target_file, start, end)
+                file_lines = len(workspace._aux_files.get(target_file, "").splitlines()) if hasattr(workspace, "_aux_files") and target_file in workspace._aux_files else 0
+                return {
+                    "file": target_file,
+                    "content": content,
+                    "lines_read": f"{start}-{end}",
+                    "total_lines": file_lines,
+                }
+            else:
+                content = workspace.read_lines(start, end)
+                return {
+                    "file": main_file,
+                    "content": content,
+                    "lines_read": f"{start}-{end}",
+                    "total_lines": workspace.get_line_count(),
+                }
 
         elif tool_name == "grep_search":
             query = args.get("query", "")
             is_regex = bool(args.get("is_regex", False))
-            results = workspace.grep(query, is_regex=is_regex)
+            target_file = args.get("file")
+            if target_file and target_file not in ("main.tex", main_file):
+                results = workspace.grep_file(target_file, query, is_regex=is_regex)
+            else:
+                results = workspace.grep(query, is_regex=is_regex)
             return {
                 "matches": results,
                 "match_count": len([r for r in results if "line_no" in r]),
@@ -228,7 +372,11 @@ def execute_tool(
         elif tool_name == "str_replace":
             old_str = args.get("old_str", "")
             new_str = args.get("new_str", "")
-            result = workspace.str_replace(old_str, new_str)
+            target_file = args.get("file")
+            if target_file and target_file not in ("main.tex", main_file):
+                result = workspace.str_replace_file(target_file, old_str, new_str)
+            else:
+                result = workspace.str_replace(old_str, new_str)
             return result
 
         elif tool_name == "rewrite_chunk":
@@ -236,6 +384,23 @@ def execute_tool(
             new_content = args.get("new_content", "")
             result = workspace.rewrite_chunk(chunk_id, new_content)
             return result
+
+        elif tool_name == "insert_into_chunk":
+            chunk_id = str(args.get("chunk_id", "")).strip()
+            content = args.get("content", "")
+            position = args.get("position", "end")
+            result = workspace.insert_into_chunk(chunk_id=chunk_id, content=content, position=position)
+            return result
+
+        elif tool_name == "search_uploaded_references":
+            from attached_context import attached_context_store
+            query = args.get("query", "")
+            results = attached_context_store.search_attachments(session_id=workspace.session_id, query=query)
+            return {
+                "query": query,
+                "matches": results,
+                "count": len(results),
+            }
 
         elif tool_name == "list_assets":
             assets = workspace.list_assets()
@@ -257,6 +422,117 @@ def execute_tool(
             extract_sec = args.get("extract_section", "all")
             return fetch_theme(category=cat, theme_name=theme, extract_section=extract_sec)
 
+        elif tool_name == "list_project_files":
+            files = workspace.get_file_list()
+            return {
+                "files": files,
+                "count": len(files),
+            }
+
+        elif tool_name == "read_document_summary":
+            from document_analyzer import analyze_document, generate_compact_summary
+            buffer_content = workspace.get_buffer()
+            analysis = analyze_document(buffer_content)
+            summary = generate_compact_summary(analysis)
+            return {
+                "summary": summary,
+                "total_lines": analysis.total_lines,
+                "estimated_tokens": analysis.estimated_tokens,
+                "structure_type": analysis.primary_structure_type,
+                "structural_units": analysis.structural_unit_count,
+            }
+
+        elif tool_name == "list_attached_documents":
+            from attached_context import attached_context_store
+            attachments = attached_context_store.get_attachments(session_id=workspace.session_id)
+            doc_list = []
+            for a in attachments:
+                doc_list.append({
+                    "filename": a.get("filename"),
+                    "file_type": a.get("file_type"),
+                    "page_count": a.get("page_count", 1),
+                    "size_chars": a.get("size", len(a.get("content", ""))),
+                    "is_pdf": a.get("is_pdf", False),
+                    "preview": (a.get("content", "")[:300] + "...").replace("\n", " "),
+                })
+            # Also check workspace reference files
+            ref_files = getattr(workspace, "get_reference_files", lambda: {})()
+            for rname, rcontent in ref_files.items():
+                if not any(d["filename"] == rname for d in doc_list):
+                    doc_list.append({
+                        "filename": rname,
+                        "file_type": "reference",
+                        "page_count": 1,
+                        "size_chars": len(rcontent),
+                        "is_pdf": rname.lower().endswith(".pdf"),
+                        "preview": (rcontent[:300] + "...").replace("\n", " "),
+                    })
+            return {
+                "attached_documents": doc_list,
+                "documents": doc_list,
+                "count": len(doc_list),
+            }
+
+        elif tool_name == "read_attached_document":
+            from attached_context import attached_context_store
+            filename = args.get("filename")
+            start_page = args.get("start_page")
+            end_page = args.get("end_page")
+            start_line = args.get("start_line")
+            end_line = args.get("end_line")
+
+            # 1. Page-based reading
+            if start_page is not None or end_page is not None:
+                sp = int(start_page or 1)
+                ep = int(end_page or (sp + 3))
+                if ep - sp > 5:
+                    ep = sp + 5
+                text = attached_context_store.read_attachment_pages(
+                    session_id=workspace.session_id,
+                    filename=filename,
+                    start_page=sp,
+                    end_page=ep,
+                )
+                return {
+                    "filename": filename or "attached_document",
+                    "pages_read": f"{sp}-{ep}",
+                    "content": text,
+                }
+
+            # 2. Line-based reading
+            if start_line is not None or end_line is not None:
+                sl = int(start_line or 1)
+                el = int(end_line or (sl + 50))
+                if el - sl > 200:
+                    el = sl + 200
+                text = attached_context_store.read_attachment_lines(
+                    session_id=workspace.session_id,
+                    filename=filename,
+                    start_line=sl,
+                    end_line=el,
+                )
+                return {
+                    "filename": filename or "attached_document",
+                    "lines_read": f"{sl}-{el}",
+                    "content": text,
+                }
+
+            # 3. Default: read first 3 pages
+            text = attached_context_store.read_attachment_pages(
+                session_id=workspace.session_id,
+                filename=filename,
+                start_page=1,
+                end_page=3,
+            )
+            return {
+                "filename": filename or "attached_document",
+                "pages_read": "1-3",
+                "content": text,
+            }
+
+        elif tool_name == "convert_attached_pdf":
+            return _convert_attached_pdf(args, workspace)
+
         else:
             return {
                 "error": f"Unknown tool: '{tool_name}'. Available tools: {[t['name'] for t in TOOL_DEFINITIONS]}",
@@ -267,3 +543,63 @@ def execute_tool(
         return {
             "error": f"Tool '{tool_name}' failed: {str(e)}",
         }
+
+
+def _convert_attached_pdf(args: Dict[str, Any], workspace: "ShadowWorkspace") -> Dict[str, Any]:
+    """Starts a pdf2latex conversion job for an attached PDF (see TOOL_DEFINITIONS)."""
+    from attached_context import attached_context_store
+    from pdf2latex import jobs
+    from pdf2latex.config import get_settings
+    from pdf2latex.extract import PdfValidationError, open_pdf
+    from pdf2latex.runner import start_job
+
+    settings = get_settings()
+
+    user_ctx = getattr(workspace, "user_context", None) or {}
+    owner = user_ctx.get("user_id")
+    project_id = getattr(workspace, "project_id", None) or getattr(workspace, "_project_id", None)
+    if not owner or not project_id:
+        return {"error": "PDF conversion needs a signed-in user and an open project."}
+
+    pdfs = [a for a in attached_context_store.get_attachments(workspace.session_id) if a.get("raw_bytes")]
+    if not pdfs:
+        return {"error": "No attached PDF found in this chat. Ask the user to attach the PDF file."}
+    wanted = (args.get("filename") or "").lower()
+    att = next((a for a in pdfs if wanted and a.get("filename", "").lower() == wanted), pdfs[-1])
+
+    data: bytes = att["raw_bytes"]
+    try:
+        doc = open_pdf(data)
+        page_count = doc.page_count
+        doc.close()
+    except PdfValidationError as e:
+        return {"error": str(e)}
+    if page_count > settings.max_pages:
+        return {"error": f"The PDF has {page_count} pages; the conversion limit is {settings.max_pages}."}
+    existing = jobs.active_job_for(owner)
+    if existing:
+        return {"error": "A PDF conversion is already running for this user.", "job_id": existing["job_id"]}
+    if user_ctx.get("is_guest"):
+        from services.guest_quota import check_guest_conversion_quota, consume_guest_conversion
+        from project_storage import get_supabase_client
+        sid = owner.replace("guest_", "", 1)
+        res = get_supabase_client().table("guest_sessions").select("*").eq("id", sid).limit(1).execute()
+        if not res.data:
+            return {"error": "Guest session not found."}
+        allowed, _used, _resets, reason = check_guest_conversion_quota(res.data[0], "")
+        if not allowed:
+            return {"error": reason or "Guest conversion limit reached."}
+        consume_guest_conversion(sid)
+
+    state = start_job(owner, bool(user_ctx.get("is_guest")), project_id,
+                      att.get("filename") or "document.pdf", data, page_count, overwrite=False)
+    return {
+        "success": True,
+        "job_id": state["job_id"],
+        "filename": att.get("filename"),
+        "page_count": page_count,
+        "message": (
+            "Conversion started. The user sees live progress and a similarity report, and is asked before "
+            "an existing main.tex is replaced. Results are best-effort with measured similarity."
+        ),
+    }

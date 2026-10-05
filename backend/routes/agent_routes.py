@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -44,9 +44,14 @@ class OpenCodeRequest(BaseModel):
     model: Optional[str] = Field(None, description="LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'edit' (default) or 'ask'")
     attached_file: Optional[Dict[str, Any]] = Field(None, description="Attached PDF/text document reference")
+    attached_files: Optional[List[Dict[str, Any]]] = Field(None, description="List of attached documents")
     api_keys: Optional[Dict[str, str]] = Field(None, description="User-provided API keys")
     request_id: Optional[str] = Field(None, description="Unique client request ID for cancellation")
+    session_id: Optional[str] = Field(None, description="Client session ID for cross-turn context persistence")
     max_steps: Optional[int] = Field(None, description="Max agent reasoning steps (default: 12)")
+
+
+OpenCodeRequest.model_rebuild()
 
 
 class AgentStopRequest(BaseModel):
@@ -89,6 +94,87 @@ async def agent_stop(
         f"request_id={req.request_id}, project_id={req.project_id}, stopped={cancelled}"
     )
     return {"success": True, "stopped": cancelled}
+
+
+class ValidateLatexRequest(BaseModel):
+    latex_code: str = Field(..., description="Full LaTeX document to validate")
+    project_id: Optional[str] = Field(None, description="Project ID, for access control")
+    file_path: str = Field("main.tex", description="Path of the TeX file being validated")
+    heal: bool = Field(
+        False,
+        description=(
+            "Also return an auto-healed version. Off by default: healing hoists "
+            "\\usepackage, injects \\usetikzlibrary and theme colours and rewrites "
+            "\\[len] spacing, so it must never be applied without showing the user "
+            "what changed (see fixes_applied)."
+        ),
+    )
+
+
+MAX_VALIDATE_BYTES = 2_000_000
+
+
+@router.post(
+    "/api/agent/validate-latex",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_latex_validate"))],
+)
+async def validate_latex_endpoint(
+    req: ValidateLatexRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """
+    Heals and/or validates a LaTeX document without writing anything.
+
+    The editor calls this after applying a *subset* of the agent's proposed edits:
+    the full-document path is already backend-validated, but a partial selection
+    can leave an orphaned \\end{...} that nothing else would catch.
+    """
+    user_id = auth_info["user_id"]
+    is_guest = bool(auth_info.get("is_guest"))
+
+    if req.project_id:
+        try:
+            sb = get_supabase_client()
+            verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
+        except Exception as auth_err:
+            logger.warning(f"validate-latex project authorization check: {auth_err}")
+            if req.project_id not in ("proj-default", "default", "scratchpad") and not req.project_id.startswith("proj-"):
+                raise
+
+    if len(req.latex_code.encode("utf-8")) > MAX_VALIDATE_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "detail": f"Document exceeds the {MAX_VALIDATE_BYTES // 1_000_000} MB validation limit."
+            },
+        )
+
+    from latex_error_fixer import auto_heal_latex_code
+    from edit_validator import validate_latex_pre_commit
+
+    code = req.latex_code
+    fixes: List[str] = []
+    healed: Optional[str] = None
+
+    if req.heal:
+        try:
+            healed, fixes = auto_heal_latex_code(code)
+        except Exception as e:
+            logger.warning(f"validate-latex heal failed, validating as-is: {e}")
+            healed = code
+
+    target = healed if healed is not None else code
+    valid, errors = validate_latex_pre_commit(target)
+
+    return {
+        "valid": valid,
+        "errors": errors,
+        "fixes_applied": fixes,
+        "healed_code": healed,
+        "changed": healed is not None and healed != code,
+        "file_path": req.file_path,
+    }
 
 
 # ============================================================================
@@ -195,10 +281,13 @@ async def agent_opencode(
                         model=model,
                         mode=req.mode or "edit",
                         attached_file=req.attached_file,
+                        attached_files=req.attached_files,
                         api_keys=req.api_keys,
                         max_steps=max_steps,
                         cancel_token=token,
                         assets_dir=assets_dir,
+                        session_id=req.session_id or req.project_id,
+                        user_context={"user_id": user_id, "is_guest": is_guest},
                     ):
                         if token.is_cancelled():
                             break
@@ -207,6 +296,10 @@ async def agent_opencode(
                     loop.call_soon_threadsafe(queue.put_nowait, exc)
                 finally:
                     loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+
+            # Lets tools running in the worker thread (convert_attached_pdf) schedule async jobs
+            from pdf2latex.runner import bind_loop
+            bind_loop(loop)
 
             producer_task = loop.run_in_executor(None, producer)
 
@@ -247,6 +340,12 @@ async def agent_opencode(
                         "message": summary,
                         "icon": "check",
                     })
+                    if tool_name == "convert_attached_pdf" and result.get("job_id") and result.get("success"):
+                        yield sse_event("pdf_conversion", {
+                            "job_id": result["job_id"],
+                            "page_count": result.get("page_count"),
+                            "filename": result.get("filename"),
+                        })
 
                 elif event_type == "coverage_check":
                     yield sse_event("coverage_check", event)
@@ -264,6 +363,10 @@ async def agent_opencode(
                         "message": f" {event.get('message', 'Compilation error')}",
                         "icon": "alert",
                     })
+                    yield sse_event("compile_error", event)
+
+                elif event_type == "error":
+                    yield sse_event("error", event)
 
                 elif event_type == "status":
                     yield sse_event("progress", {
@@ -370,5 +473,9 @@ def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         else:
             err_count = len(result.get("errors", []))
             return f"Compilation failed with {err_count} error{'s' if err_count != 1 else ''}"
+
+    elif tool_name == "convert_attached_pdf":
+        pages = result.get("page_count", "?")
+        return f"Started {result.get('mode', 'exact')} PDF → LaTeX conversion ({pages} page{'s' if pages != 1 else ''})"
 
     return f"✓ `{tool_name}` completed"

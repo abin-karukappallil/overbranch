@@ -28,6 +28,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-dejavu \
     fonts-lmodern \
     fonts-urw-base35 \
+    fontconfig \
+    fonts-liberation \
+    fonts-liberation2 \
+    fonts-noto-core \
+    fonts-crosextra-carlito \
+    fonts-crosextra-caladea \
+    fonts-texgyre \
     latexmk \
     ghostscript \
     poppler-utils \
@@ -35,7 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f
 
 WORKDIR /app/backend
 

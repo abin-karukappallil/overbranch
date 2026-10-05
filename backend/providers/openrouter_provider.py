@@ -38,6 +38,9 @@ class OpenRouterProvider(LLMProvider):
                 f"OPENROUTER_API_KEY_{i}",
                 f"OPENROUTER_{i}",
                 f"OPENROUTER_KEY_{i}",
+                f"MINIMAX_API_KEY_{i}",
+                f"MINIMAX_KEY_{i}",
+                f"MINIMAX_{i}",
             ]
             for var in env_vars:
                 val = os.getenv(var, "").strip()
@@ -47,7 +50,12 @@ class OpenRouterProvider(LLMProvider):
                     break
 
         # Check single or comma-separated keys
-        general_keys = os.getenv("OPENROUTER_API_KEYS", "") or os.getenv("OPENROUTER_API_KEY", "")
+        general_keys = (
+            os.getenv("OPENROUTER_API_KEYS", "")
+            or os.getenv("OPENROUTER_API_KEY", "")
+            or os.getenv("MINIMAX_API_KEYS", "")
+            or os.getenv("MINIMAX_API_KEY", "")
+        )
         if general_keys and len(keys) < 5:
             for piece in general_keys.split(","):
                 k = piece.strip()
@@ -77,7 +85,13 @@ class OpenRouterProvider(LLMProvider):
 
     def _normalize_model_name(self, model: str) -> str:
         clean = (model or "").strip().lower()
-        if clean in ("minimax m3", "minimax-m3", "minimax", "minimax/minimax-m3"):
+        if clean in (
+            "minimax m3", "minimax-m3", "minimax", "minimax/minimax-m3",
+            "minimax m3 (text-01)", "minimax-01", "text-01", "minimax/minimax-01",
+            "minimax m3 free", "minimax/minimax-m3:free"
+        ):
+            if "free" in clean:
+                return "minimax/minimax-m3:free"
             return "minimax/minimax-01"
         return model or self.default_model
 
