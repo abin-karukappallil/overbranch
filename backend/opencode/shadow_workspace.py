@@ -135,6 +135,44 @@ class ShadowWorkspace:
             except Exception:
                 pass
 
+    def _heal_and_validate(
+        self,
+        candidate: str,
+        baseline: Optional[str] = None,
+    ) -> Tuple[bool, str, List[str], List[str]]:
+        """
+        Runs the shared write gate: deterministic heal, then *differential*
+        pre-commit validation against ``baseline`` (the buffer before the edit).
+
+        Validation is differential on purpose. Every write validates the whole
+        buffer, so an absolute check lets a single defect the validator cannot
+        model -- a list environment defined in a .cls, an \\end{...} its grammar
+        cannot pair -- reject every edit for the rest of the run. The agent then
+        spends its entire step budget retrying edits that can never pass, and
+        the final rollback throws the work away. Only defects the edit *adds*
+        are the edit's fault, so only those block it.
+
+        Returns ``(ok, healed, new_errors, fixes_applied)``.
+        """
+        from latex_error_fixer import auto_heal_latex_code
+        from edit_validator import validate_edit
+
+        fixes: List[str] = []
+        try:
+            candidate, fixes = auto_heal_latex_code(candidate)
+        except Exception as e:
+            logger.warning(f"auto_heal_latex_code during write: {e}")
+
+        before = self._original if baseline is None else baseline
+        try:
+            ok, new_errors = validate_edit(before, candidate)
+        except Exception as e:
+            logger.warning(f"validate_edit failed, falling back to absolute check: {e}")
+            from edit_validator import validate_latex_pre_commit
+            ok, new_errors = validate_latex_pre_commit(candidate)
+
+        return ok, candidate, new_errors, fixes
+
     def ensure_document_structure(self) -> None:
         """Verifies and auto-repairs missing \\begin{document}, \\end{document}, unclosed frames, and syntax errors."""
         with self._lock:
@@ -153,10 +191,7 @@ class ShadowWorkspace:
     def replace_all(self, new_content: str) -> Dict[str, Any]:
         """Replaces the entire shadow buffer with new content after pre-commit validation."""
         with self._lock:
-            from latex_error_fixer import auto_heal_latex_code
-            healed, _ = auto_heal_latex_code(new_content)
-            from edit_validator import validate_latex_pre_commit
-            passed, errors = validate_latex_pre_commit(healed)
+            passed, healed, errors, _ = self._heal_and_validate(new_content)
             if not passed:
                 return {
                     "success": False,
@@ -271,16 +306,11 @@ class ShadowWorkspace:
             # write path — without the snapshot, the final rollback loop in
             # agent_loop has an empty stack and discards the whole new document.
             if not self._buffer.strip() and (not old_str or old_str == self._buffer):
-                from latex_error_fixer import auto_heal_latex_code
-                from edit_validator import validate_latex_pre_commit
-
-                candidate = new_str
-                try:
-                    candidate, _ = auto_heal_latex_code(candidate)
-                except Exception as e:
-                    logger.warning(f"auto_heal_latex_code on document creation: {e}")
-
-                is_valid, validation_errors = validate_latex_pre_commit(candidate)
+                # A brand new document has no baseline to be fair to, so it is
+                # held to the absolute standard.
+                is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+                    new_str, baseline=""
+                )
                 if not is_valid:
                     return {
                         "success": False,
@@ -349,12 +379,9 @@ class ShadowWorkspace:
 
             candidate = self._buffer[:pos] + new_str + self._buffer[pos + len(old_str):]
 
-            from latex_error_fixer import auto_heal_latex_code
-            candidate, _ = auto_heal_latex_code(candidate)
-
-            # Pre-commit validation
-            from edit_validator import validate_latex_pre_commit
-            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+                candidate, baseline=self._buffer
+            )
             if not is_valid:
                 error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
                 return {
@@ -413,11 +440,9 @@ class ShadowWorkspace:
                 new_content=new_content,
             )
 
-            from latex_error_fixer import auto_heal_latex_code
-            updated_code, _ = auto_heal_latex_code(updated_code)
-
-            from edit_validator import validate_latex_pre_commit
-            is_valid, validation_errors = validate_latex_pre_commit(updated_code)
+            is_valid, updated_code, validation_errors, _ = self._heal_and_validate(
+                updated_code, baseline=self._buffer
+            )
             if not is_valid:
                 error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
                 return {
@@ -552,11 +577,9 @@ class ShadowWorkspace:
             to_insert = prefix + cleaned_content + suffix
             candidate = self._buffer[:abs_pos] + to_insert + self._buffer[abs_pos:]
 
-            from latex_error_fixer import auto_heal_latex_code
-            candidate, _ = auto_heal_latex_code(candidate)
-
-            from edit_validator import validate_latex_pre_commit
-            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+                candidate, baseline=self._buffer
+            )
             if not is_valid:
                 error_lines = "\n".join(f"  - {e}" for e in validation_errors[:5])
                 return {
@@ -804,16 +827,9 @@ class ShadowWorkspace:
             # Without it, a broken \input fragment reaches the user unchecked: the
             # final validation pass in agent_loop only covers the main buffer.
             candidate = buf.replace(old_str, new_str, 1)
-            from latex_error_fixer import auto_heal_latex_code
-            from edit_validator import validate_latex_pre_commit
-
-            fixes: List[str] = []
-            try:
-                candidate, fixes = auto_heal_latex_code(candidate)
-            except Exception as e:
-                logger.warning(f"auto_heal_latex_code on {file_path}: {e}")
-
-            is_valid, validation_errors = validate_latex_pre_commit(candidate)
+            is_valid, candidate, validation_errors, fixes = self._heal_and_validate(
+                candidate, baseline=buf
+            )
             if not is_valid:
                 return {
                     "success": False,

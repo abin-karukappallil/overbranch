@@ -340,7 +340,12 @@ def compute_step_max_tokens(
         return FULL_REWRITE_STEP_MAX_TOKENS
 
     if scope == "TARGETED_EDIT":
-        return 2048
+        # 2048 was below the size of a single Beamer frame or a short section
+        # once JSON escaping is paid for, so ordinary targeted edits tripped the
+        # truncation path: a second full LLM call to continue the JSON, and a
+        # discarded step plus a third call when that continuation also ran long.
+        # Recovering from truncation costs far more than the headroom does.
+        return 4096
 
     return 4096
 

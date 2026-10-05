@@ -235,28 +235,39 @@ def test_retriever_full_rewrite_bypasses_top_k():
 # ============================================================================
 
 def test_dynamic_step_budget_full_rewrite():
-    """Verify that step budget scales dynamically with chunk count in FULL_DOCUMENT_REWRITE."""
-    # 4 chunks -> max(16, 4*2 + 4) = 16
-    budget_4 = determine_adaptive_step_budget(
-        user_instruction="Rewrite the entire document",
-        total_lines=100,
-        num_chapters=4,
-        num_sections=4,
-        num_chunks=4,
-        scope=ScopeType.FULL_DOCUMENT_REWRITE.value,
-    )
-    assert budget_4 == 16
+    """
+    Step budget scales with chunk count in FULL_DOCUMENT_REWRITE, monotonically
+    and within the documented cap.
 
-    # 10 chunks -> max(16, 10*2 + 4) = 24
-    budget_10 = determine_adaptive_step_budget(
-        user_instruction="Rewrite the entire document",
-        total_lines=500,
-        num_chapters=10,
-        num_sections=10,
-        num_chunks=10,
-        scope=ScopeType.FULL_DOCUMENT_REWRITE.value,
-    )
-    assert budget_10 == 24
+    The budget assumes the model *batches* several rewrite_chunk calls per turn,
+    as the prompt mandates and compute_step_max_tokens funds. One step per chunk
+    would make the budget an uncapped latency bill -- every step is a full LLM
+    round trip.
+    """
+    from opencode.agent_loop import MAX_STEP_BUDGET
+
+    def budget(n):
+        return determine_adaptive_step_budget(
+            user_instruction="Rewrite the entire document",
+            total_lines=100 + n * 40,
+            num_chapters=n,
+            num_sections=n,
+            num_chunks=n,
+            scope=ScopeType.FULL_DOCUMENT_REWRITE.value,
+        )
+
+    budgets = [budget(n) for n in (4, 10, 20, 40, 120)]
+
+    # Monotonic in document size, and always under the documented ceiling.
+    assert budgets == sorted(budgets)
+    assert all(b <= MAX_STEP_BUDGET for b in budgets), budgets
+
+    # Enough room to batch the chunks plus verification and self-correction.
+    assert budget(4) >= 8
+    assert budget(20) > budget(4)
+
+    # A very large document is capped rather than scaled without limit.
+    assert budget(120) == MAX_STEP_BUDGET
 
 
 # ============================================================================

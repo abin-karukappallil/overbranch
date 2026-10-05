@@ -151,57 +151,129 @@ def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
     return deduped
 
 
-def heal_lonely_items(code: str) -> Tuple[str, List[str]]:
+def _structure_view(code: str) -> str:
+    r"""
+    Returns a same-length, same-line-count copy of ``code`` in which everything
+    that must NOT be read as structure is blanked out: verbatim/lstlisting
+    bodies, inline \verb, URL arguments, \newcommand / \newenvironment bodies,
+    and % comments.
+
+    The healer used to scan raw text while the validator scanned a masked view,
+    so the two disagreed about what the document contains. The healer then
+    "repaired" things that were never broken — a \begin{itemize} mentioned in a
+    trailing comment, an \item inside a lstlisting, a \begin{list} inside a
+    \newenvironment body — and emitted real syntax errors into the user's file.
+    Because every write validates the whole buffer, that corruption also made
+    every subsequent edit fail, which is what burned the step budget.
+
+    Offsets, lines and columns are identical to the input, so a decision taken
+    on the view can be applied to the original text directly.
     """
-    Detects \\item statements that exist outside of any list environment
-    (\\begin{itemize}, \\begin{enumerate}, \\begin{description}) and wraps
-    them in \\begin{itemize} ... \\end{itemize}.
-    Prevents 'LaTeX Error: Lonely \\item--perhaps a missing list environment'.
+    try:
+        from edit_validator import clean_latex_for_validation
+        view = clean_latex_for_validation(code)
+    except Exception as e:  # never let masking failure disable healing
+        logger.warning(f"structure view unavailable, healing on raw text: {e}")
+        return code
+    # Defensive: the masking contract is length- and line-preserving. If that
+    # ever breaks, fall back to the raw text rather than mis-mapping offsets.
+    if len(view) != len(code) or view.count("\n") != code.count("\n"):
+        logger.warning("structure view changed length; healing on raw text")
+        return code
+    return view
+
+
+# Environments in which a bare \item is unambiguously illegal. A lonely \item is
+# only wrapped when the innermost open environment is one of these (or nothing
+# is open). Any *unknown* environment is assumed to be a list defined by a class
+# or package — moderncv's rSubsection, res.cls's basedescript, custom cvitemize
+# — where wrapping the items in \begin{itemize} silently re-renders the section.
+ITEM_ILLEGAL_HOSTS = frozenset({
+    "document", "frame", "frame*", "block", "alertblock", "exampleblock",
+    "column", "columns", "center", "flushleft", "flushright", "minipage",
+    "quote", "quotation", "verse", "abstract", "titlepage", "slide",
+})
+
+_RE_ITEM = re.compile(r"^\s*\\item\b")
+_RE_BLOCK_BREAK = re.compile(
+    r"^\s*\\(?:begin|end|section\*?|chapter\*?|part\*?|subsection\*?|subsubsection\*?)\b"
+)
+_RE_ENV_TAG_HEAL = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z@*][A-Za-z0-9@*]*)\s*\}")
+
+
+def heal_lonely_items(code: str) -> Tuple[str, List[str]]:
+    r"""
+    Wraps \item statements that sit outside any list environment in
+    \begin{itemize} ... \end{itemize}, preventing
+    'LaTeX Error: Lonely \item--perhaps a missing list environment'.
+
+    Only acts when the enclosing environment is one in which \item is certainly
+    illegal (see ITEM_ILLEGAL_HOSTS) and only on structure that survives
+    masking, so items inside listings, verbatim blocks, macro bodies or
+    class-defined list environments are left alone.
     """
     if not code or r"\item" not in code:
         return code, []
 
+    view = _structure_view(code)
     repairs: List[str] = []
     lines = code.splitlines(keepends=True)
+    view_lines = view.splitlines(keepends=True)
+    if len(view_lines) != len(lines):
+        view_lines = lines
     out_lines: List[str] = []
 
+    env_stack: List[str] = []
     list_depth = 0
     in_lonely_block = False
 
-    re_list_begin = re.compile(r"\\begin\s*\{(?:itemize|enumerate|description)\}")
-    re_list_end = re.compile(r"\\end\s*\{(?:itemize|enumerate|description)\}")
-    re_item = re.compile(r"^\s*\\item\b")
-    re_block_break = re.compile(r"^\s*\\(?:begin|end|section\*?|chapter\*?|part\*?|subsection\*?|subsubsection\*?)\b")
+    for idx, (line, vline) in enumerate(zip(lines, view_lines), start=1):
+        stripped = vline.strip()
 
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
-
-        # Update list_depth from line content
-        for _ in re_list_begin.finditer(line):
-            list_depth += 1
-        for _ in re_list_end.finditer(line):
-            list_depth = max(0, list_depth - 1)
-
-        is_item_line = bool(re_item.search(line))
+        is_item_line = bool(_RE_ITEM.search(vline))
+        innermost = env_stack[-1] if env_stack else None
 
         if is_item_line:
-            if list_depth == 0 and not in_lonely_block:
+            if (
+                list_depth == 0
+                and not in_lonely_block
+                and (innermost is None or innermost in ITEM_ILLEGAL_HOSTS)
+            ):
                 out_lines.append("\\begin{itemize}\n")
                 in_lonely_block = True
-                repairs.append(f"Auto-wrapped lonely \\item starting at line {idx} in \\begin{{itemize}}.")
+                repairs.append(
+                    f"Auto-wrapped lonely \\item starting at line {idx} in \\begin{{itemize}}."
+                )
             out_lines.append(line)
         else:
-            if in_lonely_block:
-                # Close the lonely block if blank line, environment start/end, or inside real list
-                if stripped == "" or re_block_break.search(line) or list_depth > 0:
-                    out_lines.append("\\end{itemize}\n")
-                    in_lonely_block = False
-                    repairs.append(f"Auto-closed lonely \\item block with \\end{{itemize}} before line {idx}.")
+            if in_lonely_block and (
+                stripped == "" or _RE_BLOCK_BREAK.search(vline) or list_depth > 0
+            ):
+                out_lines.append("\\end{itemize}\n")
+                in_lonely_block = False
+                repairs.append(
+                    f"Auto-closed lonely \\item block with \\end{{itemize}} before line {idx}."
+                )
             out_lines.append(line)
+
+        # Update environment state *after* the line is emitted, so an \item on
+        # the same line as its \begin{itemize} is still seen as inside the list.
+        for m in _RE_ENV_TAG_HEAL.finditer(vline):
+            env = m.group(2)
+            if m.group(1) == "begin":
+                env_stack.append(env)
+            elif env_stack and env in env_stack:
+                while env_stack and env_stack.pop() != env:
+                    pass
+        list_depth = sum(
+            1 for e in env_stack if e.rstrip("*") in ("itemize", "enumerate", "description")
+        )
 
     if in_lonely_block:
         out_lines.append("\\end{itemize}\n")
-        repairs.append("Auto-closed trailing lonely \\item block with \\end{itemize} at document end.")
+        repairs.append(
+            "Auto-closed trailing lonely \\item block with \\end{itemize} at document end."
+        )
 
     return "".join(out_lines), repairs
 
@@ -260,143 +332,169 @@ def fix_tikz_semicolons(code: str) -> Tuple[str, List[str]]:
 
         return "".join(new_lines)
 
-    healed_code = re.sub(
+    block_re = re.compile(
         r"\\begin\{tikzpicture\}(?:\[[^\]]*\])?.*?(?:\\end\{tikzpicture\}|\\end\{frame\}|\\end\{document\})",
-        _fix_block,
-        code,
-        flags=re.DOTALL,
+        re.DOTALL,
     )
-    return healed_code, fixes
+    # A tikzpicture shown inside a listing or verbatim block is example text, not
+    # code to repair; appending semicolons there changes what the user is showing.
+    view = _structure_view(code)
+    if len(view) != len(code):
+        view = code
+
+    out: List[str] = []
+    cursor = 0
+    for m in block_re.finditer(code):
+        if view[m.start():m.start() + len("\\begin{tikzpicture}")] != "\\begin{tikzpicture}":
+            continue
+        out.append(code[cursor:m.start()])
+        out.append(_fix_block(m))
+        cursor = m.end()
+    out.append(code[cursor:])
+    return "".join(out), fixes
 
 
 def balance_latex_environments(latex_code: str) -> Tuple[str, List[str]]:
-    """
-    Accurately balances LaTeX environments (\\begin{env} ... \\end{env}),
-    ensuring that:
-    1. Frames are closed before the next \\begin{frame} or \\end{document}.
-    2. Inner environments inside frames (itemize, tikzpicture, columns, etc.) are closed before \\end{frame}.
-    3. All remaining open environments are closed before \\end{document}.
+    r"""
+    Balances LaTeX environments (\begin{env} ... \end{env}) positionally:
+
+    1. A still-open frame is closed before the next \begin{frame}.
+    2. Inner environments are closed before the \end that closes an outer one.
+    3. Everything still open is closed before \end{document} (or at end of file).
+    4. An \end{env} with no matching \begin anywhere in scope is dropped.
+
+    Tags are processed in the order they appear **within** a line, not ends
+    before begins. Without that ordering,
+    ``\date{\begin{flushleft}\today\end{flushleft}}`` had its \end{flushleft}
+    deleted as an "orphan" (the \begin on the same line had not been pushed yet)
+    and a replacement emitted before \end{document} — silently moving the rest
+    of the document inside a flushleft group.
+
+    Structure is read from the masked view (see ``_structure_view``), so
+    environments mentioned in comments, listings, verbatim blocks or
+    \newenvironment bodies are not treated as live.
     """
     if not latex_code or not latex_code.strip():
         return latex_code, []
 
+    view = _structure_view(latex_code)
     repairs: List[str] = []
     lines = latex_code.splitlines(keepends=True)
-    out_lines: List[str] = []
+    view_lines = view.splitlines(keepends=True)
+    if len(view_lines) != len(lines):
+        view_lines = lines
 
-    # Stack holds tuples of (env_name, line_number)
+    out_lines: List[str] = []
     env_stack: List[Tuple[str, int]] = []
 
-    re_begin = re.compile(r"\\begin\s*\{([a-zA-Z*]+)\}")
-    re_end = re.compile(r"\\end\s*\{([a-zA-Z*]+)\}")
+    def close_down_to(env: str, idx: int, reason: str) -> bool:
+        """Pops inner environments above ``env`` (emitting closers), then ``env``."""
+        if not any(e[0] == env for e in env_stack):
+            return False
+        while env_stack and env_stack[-1][0] != env:
+            inner, inner_line = env_stack.pop()
+            out_lines.append(f"\\end{{{inner}}}\n")
+            repairs.append(
+                f"Auto-closed inner environment \\begin{{{inner}}} from line {inner_line} {reason} at line {idx}."
+            )
+        if env_stack and env_stack[-1][0] == env:
+            env_stack.pop()
+        return True
 
-    for idx, line in enumerate(lines, start=1):
-        stripped = line.strip()
-
-        # Ignore comments
-        if stripped.startswith("%"):
+    for idx, (line, vline) in enumerate(zip(lines, view_lines), start=1):
+        tags = [
+            (m.start(), m.end(), m.group(1), m.group(2), m.group(0))
+            for m in _RE_ENV_TAG_HEAL.finditer(vline)
+        ]
+        if not tags:
             out_lines.append(line)
             continue
 
-        # Check if line starts a new frame while a previous frame is still open
-        if _RE_BEGIN_FRAME.search(line) and any(e[0] == "frame" for e in env_stack):
-            # Close all environments up to and including 'frame'
-            while env_stack:
-                env_name, open_line = env_stack.pop()
-                out_lines.append(f"\\end{{{env_name}}}\n")
-                repairs.append(f"Auto-closed unclosed \\begin{{{env_name}}} from line {open_line} before starting new frame at line {idx}.")
-                if env_name == "frame":
-                    break
+        drop_spans: List[Tuple[int, int]] = []
+        pending_before: List[str] = []
 
-        # Check if line closes a frame (\end{frame}) while inner environments are still open
-        if _RE_END_FRAME.search(line) and any(e[0] == "frame" for e in env_stack):
-            while env_stack and env_stack[-1][0] != "frame":
-                inner_env, inner_line = env_stack.pop()
-                out_lines.append(f"\\end{{{inner_env}}}\n")
-                repairs.append(f"Auto-closed inner environment \\begin{{{inner_env}}} from line {inner_line} before \\end{{frame}} at line {idx}.")
+        for start, end, kind, env, _raw in tags:
+            if kind == "begin":
+                if env == "frame" and any(e[0] == "frame" for e in env_stack):
+                    # A new frame starts while the previous one is still open.
+                    while env_stack:
+                        prev, prev_line = env_stack.pop()
+                        pending_before.append(f"\\end{{{prev}}}\n")
+                        repairs.append(
+                            f"Auto-closed unclosed \\begin{{{prev}}} from line {prev_line} before starting new frame at line {idx}."
+                        )
+                        if prev == "frame":
+                            break
+                env_stack.append((env, idx))
+                continue
 
-        # Check if line is \end{document} while other environments are still open
-        if _RE_END_DOCUMENT.search(line) and env_stack:
-            while env_stack:
-                env_name, open_line = env_stack.pop()
-                if env_name != "document":
-                    out_lines.append(f"\\end{{{env_name}}}\n")
-                    repairs.append(f"Auto-closed unclosed \\begin{{{env_name}}} from line {open_line} before \\end{{document}} at line {idx}.")
-                else:
-                    break
+            # kind == "end"
+            if env == "document":
+                # Close everything still open above \end{document}.
+                while env_stack and env_stack[-1][0] != "document":
+                    inner, inner_line = env_stack.pop()
+                    pending_before.append(f"\\end{{{inner}}}\n")
+                    repairs.append(
+                        f"Auto-closed unclosed \\begin{{{inner}}} from line {inner_line} before \\end{{document}} at line {idx}."
+                    )
+                if env_stack and env_stack[-1][0] == "document":
+                    env_stack.pop()
+                continue
 
-        end_matches = list(re_end.finditer(line))
-        begin_matches = list(re_begin.finditer(line))
+            if any(e[0] == env for e in env_stack):
+                # Inner closers belong on their own lines *before* this one.
+                emitted_before = len(out_lines)
+                close_down_to(env, idx, f"before \\end{{{env}}}")
+                if len(out_lines) > emitted_before:
+                    pending_before.extend(out_lines[emitted_before:])
+                    del out_lines[emitted_before:]
+            else:
+                # Genuinely orphaned: nothing it could be closing.
+                drop_spans.append((start, end))
+                repairs.append(
+                    f"Removed orphaned \\end{{{env}}} at line {idx} (no matching open environment)."
+                )
 
-        # Check for end environments on this line
-        is_orphan_scope = all(e[0] == "document" for e in env_stack)
-        if end_matches and not begin_matches:
-            line_to_keep = line
-            for m in end_matches:
-                env_name = m.group(1)
-                stack_names = [e[0] for e in env_stack]
-                if env_name not in stack_names and env_name != "document":
-                    if is_orphan_scope:
-                        # Discard orphaned \end{env} with no matching open environment
-                        line_to_keep = line_to_keep.replace(m.group(0), "")
-                        repairs.append(f"Removed orphaned \\end{{{env_name}}} at line {idx} (no matching open environment).")
-                elif env_name in stack_names:
-                    # Close inner environments if this \end closes an outer one
-                    while env_stack and env_stack[-1][0] != env_name:
-                        inner_env, inner_line = env_stack.pop()
-                        out_lines.append(f"\\end{{{inner_env}}}\n")
-                        repairs.append(f"Auto-closed inner environment \\begin{{{inner_env}}} from line {inner_line} before \\end{{{env_name}}} at line {idx}.")
-                    if env_stack and env_stack[-1][0] == env_name:
-                        env_stack.pop()
+        out_lines.extend(pending_before)
 
-            if line_to_keep.strip() or line_to_keep.endswith("\n"):
-                if line_to_keep.strip():
-                    out_lines.append(line_to_keep)
-        else:
-            for m in end_matches:
-                env_name = m.group(1)
-                stack_names = [e[0] for e in env_stack]
-                if env_name in stack_names:
-                    while env_stack and env_stack[-1][0] != env_name:
-                        inner_env, inner_line = env_stack.pop()
-                        out_lines.append(f"\\end{{{inner_env}}}\n")
-                        repairs.append(f"Auto-closed inner environment \\begin{{{inner_env}}} from line {inner_line} before \\end{{{env_name}}} at line {idx}.")
-                    if env_stack and env_stack[-1][0] == env_name:
-                        env_stack.pop()
-                elif env_name != "document" and is_orphan_scope:
-                    line = line.replace(m.group(0), "")
-                    repairs.append(f"Removed orphaned \\end{{{env_name}}} at line {idx}.")
+        if drop_spans:
+            kept = []
+            cursor = 0
+            for a, b in drop_spans:
+                kept.append(line[cursor:a])
+                cursor = b
+            kept.append(line[cursor:])
+            line = "".join(kept)
+            if not line.strip():
+                continue
 
-            # Push begin environments
-            for m in begin_matches:
-                env_name = m.group(1)
-                env_stack.append((env_name, idx))
+        out_lines.append(line)
 
-            if line.strip() or line.endswith("\n"):
-                out_lines.append(line)
-
-    # If document ended without closing environments (e.g. unclosed frame before document end)
+    # Anything still open at end of file.
     if env_stack:
         for env_name, open_line in reversed(env_stack):
-            if env_name != "document":
-                # Insert \end{env_name} before \end{document} if present in out_lines
-                inserted = False
-                for j in range(len(out_lines) - 1, -1, -1):
-                    if r"\end{document}" in out_lines[j]:
-                        out_lines.insert(j, f"\\end{{{env_name}}}\n")
-                        repairs.append(f"Auto-closed trailing unclosed \\begin{{{env_name}}} from line {open_line} before \\end{{document}}.")
-                        inserted = True
-                        break
-                if not inserted:
-                    out_lines.append(f"\\end{{{env_name}}}\n")
-                    repairs.append(f"Auto-closed trailing unclosed \\begin{{{env_name}}} from line {open_line} at document end.")
+            if env_name == "document":
+                continue
+            inserted = False
+            for j in range(len(out_lines) - 1, -1, -1):
+                if _RE_END_DOCUMENT.search(out_lines[j]):
+                    out_lines.insert(j, f"\\end{{{env_name}}}\n")
+                    repairs.append(
+                        f"Auto-closed trailing unclosed \\begin{{{env_name}}} from line {open_line} before \\end{{document}}."
+                    )
+                    inserted = True
+                    break
+            if not inserted:
+                out_lines.append(f"\\end{{{env_name}}}\n")
+                repairs.append(
+                    f"Auto-closed trailing unclosed \\begin{{{env_name}}} from line {open_line} at document end."
+                )
 
-    result = "".join(out_lines)
-    return result, repairs
+    return "".join(out_lines), repairs
 
 
-def auto_heal_latex_code(code: str, error_log: str = "") -> Tuple[str, List[str]]:
-    """
+def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
+    r"""
     Applies deterministic automatic fixes to LaTeX code for common syntax and compilation issues:
     1. Ensures \\begin{document} and \\end{document} structural integrity.
     2. Repairs mangled newline spacing (e.g. \\[0.3em] written as \\[0.3em]).
@@ -437,7 +535,16 @@ def auto_heal_latex_code(code: str, error_log: str = "") -> Tuple[str, List[str]
             r"^[ \t]*(\\(?:usepackage|usetikzlibrary|RequirePackage)(?:\[[^\]]*\])?\{[^}]+\}[ \t]*\n?)",
             re.MULTILINE,
         )
-        found_in_body = list(pkg_pattern.finditer(body))
+        # Match against the masked view so a \usepackage shown inside a
+        # lstlisting / verbatim block (documentation, tutorials) is not torn out
+        # of the example and pasted into the preamble.
+        body_view = _structure_view(code)[doc_pos:]
+        if len(body_view) != len(body):
+            body_view = body
+        found_in_body = [
+            pm for pm in pkg_pattern.finditer(body)
+            if body_view[pm.start(1):pm.end(1)] == pm.group(1)
+        ]
         if found_in_body:
             extracted_pkgs = []
             for pm in reversed(found_in_body):
@@ -483,8 +590,20 @@ def auto_heal_latex_code(code: str, error_log: str = "") -> Tuple[str, List[str]
 
     # 8. Injected Undefined Colors (Regalia / Beamer)
     needed_colors = []
+    color_view = _structure_view(code)
     for c_name in ("navy", "gold", "cream", "ink", "muted"):
-        if re.search(rf"\b{c_name}\b", code) and not re.search(rf"\\definecolor\{{{c_name}\}}", code):
+        # The bare word must appear as a *colour argument*, not as prose. "The
+        # gold standard" and "think in ink" are not colour references, and
+        # injecting a palette for them rewrote preambles that never asked for one.
+        used_as_color = re.search(
+            rf"(?:\\(?:color|textcolor|colorbox|fcolorbox|pagecolor|rowcolor|cellcolor|columncolor|arrayrulecolor)"
+            rf"\s*\{{\s*{c_name}\s*[}}!]"
+            rf"|(?:fg|bg|fill|draw|text|color)\s*=\s*{c_name}\b"
+            rf"|\[\s*{c_name}\s*[\]!,]"
+            rf"|\\colorlet\s*\{{[^}}]*\}}\s*\{{\s*{c_name}\b)",
+            color_view,
+        )
+        if used_as_color and not re.search(rf"\\definecolor\s*\*?\s*\{{\s*{c_name}\s*\}}", color_view):
             needed_colors.append(c_name)
 
     if needed_colors:
@@ -502,6 +621,51 @@ def auto_heal_latex_code(code: str, error_log: str = "") -> Tuple[str, List[str]
         logger.warning(f"ensure_document_environment post-pass note: {e}")
 
     return code, fixes_applied
+
+
+def auto_heal_latex_code(code: str, error_log: str = "") -> Tuple[str, List[str]]:
+    r"""
+    Deterministically repairs common LaTeX syntax faults — and never makes the
+    document worse than it found it.
+
+    This runs on the whole buffer on **every** agent write, so a healing pass
+    that introduces a defect does not just corrupt one edit: the next write
+    fails pre-commit validation against the already-corrupted buffer, the agent
+    retries, and the run burns its entire step budget before discarding
+    everything. The repairs are therefore applied speculatively and kept only if
+    the structural error count does not rise.
+
+    Returns ``(healed_code, fixes_applied)``; on a regression the original code
+    is returned with an empty fix list.
+    """
+    if not code or not code.strip():
+        return code, []
+
+    try:
+        healed, fixes = _apply_heal_passes(code, error_log)
+    except Exception as e:
+        logger.warning(f"auto_heal_latex_code failed, returning input unchanged: {e}")
+        return code, []
+
+    if healed == code:
+        return code, fixes
+
+    try:
+        from edit_validator import validate_latex_pre_commit
+        ok_after, errors_after = validate_latex_pre_commit(healed)
+        if not ok_after:
+            _, errors_before = validate_latex_pre_commit(code)
+            if len(errors_after) > len(errors_before):
+                logger.warning(
+                    "auto_heal_latex_code regressed the document "
+                    f"({len(errors_before)} -> {len(errors_after)} structural errors); "
+                    f"discarding repairs: {fixes[:3]}"
+                )
+                return code, []
+    except Exception as e:
+        logger.warning(f"post-heal validation unavailable: {e}")
+
+    return healed, fixes
 
 
 def format_compilation_fix_prompt(

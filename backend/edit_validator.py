@@ -57,16 +57,6 @@ _MACRO_DEF_BODIES = {
     "renewenvironment": 2,
 }
 
-_RE_VERBATIM_BLOCK = re.compile(
-    r"\\begin\{(" + "|".join(re.escape(e) for e in VERBATIM_ENVS) + r")\}"
-    r"(?:\[[^\]]*\])?(?:\{[^}]*\})?(.*?)\\end\{\1\}",
-    re.DOTALL,
-)
-# \verb cannot span lines in TeX, so [^\n]*? makes the line-count invariant
-# structural rather than incidental: an unterminated \verb can never swallow a newline.
-_RE_VERB_INLINE = re.compile(r"\\verb(\*?)([^a-zA-Z0-9\s*])([^\n]*?)\2")
-_RE_URL_ARG = re.compile(r"(\\(?:url|nolinkurl|path|href)\s*\{)([^{}\n]*)(\})")
-_RE_COMMENT = re.compile(r"(?<!\\)(?:\\\\)*%")
 _RE_ENV_TAG = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z@*][A-Za-z0-9@*]*)\s*\}")
 _RE_MACRO_DEF = re.compile(
     r"\\(" + "|".join(_MACRO_DEF_BODIES) + r")\*?(?![a-zA-Z])"
@@ -83,19 +73,6 @@ _RE_BRACKET_OPEN = re.compile(
     r"(?<!\\)(?:\\\\)*\\\[(?!\s*-?\d+(?:\.\d+)?\s*(?:pt|mm|cm|in|ex|em|bp|dd|pc|sp)\s*\])"
 )
 _RE_BRACKET_CLOSE = re.compile(r"(?<!\\)(?:\\\\)*\\\]")
-
-
-def _blank(text: str) -> str:
-    """Replaces every character with a space, keeping newlines (and total length)."""
-    return "".join("\n" if ch == "\n" else " " for ch in text)
-
-
-def _blank_group(m: "re.Match", group: int) -> str:
-    """Returns the whole match with one group blanked in place, preserving length."""
-    full = m.group(0)
-    base = m.start(0)
-    a, b = m.start(group) - base, m.end(group) - base
-    return full[:a] + _blank(full[a:b]) + full[b:]
 
 
 def _match_brace(s: str, i: int) -> int:
@@ -187,44 +164,143 @@ def mask_macro_definition_bodies(code: str) -> str:
     return "".join(out)
 
 
-def clean_latex_for_validation(latex_code: str) -> str:
+# Only these verbatim-like environments take a brace argument
+# (\begin{minted}{python}). Allowing one for all of them let
+# \begin{alltt}{ $ %\end{alltt} be read as a 16-character environment name.
+_ARG_VERBATIM_ENVS = frozenset({
+    "minted", "minted*", "filecontents", "filecontents*",
+    "SaveVerbatim", "SaveVerbatim*", "listing", "listing*",
+})
+
+_RE_VERBATIM_OPEN = re.compile(
+    r"\\begin\{(" + "|".join(re.escape(e) for e in VERBATIM_ENVS) + r")\}"
+    r"(?:\[[^\]\n]*\])?"
+)
+_RE_VERBATIM_ARG = re.compile(r"\{[^}\n]*\}")
+
+
+_RE_VERB_OPEN = re.compile(r"\\verb(\*?)([^a-zA-Z0-9\s*])")
+_RE_URL_OPEN = re.compile(r"\\(?:url|nolinkurl|path|href)\s*\{")
+
+
+def _mask_literal_regions(code: str) -> str:
+    r"""
+    Blanks every region whose content must not be read as LaTeX structure, in a
+    single left-to-right pass: % comments, verbatim-like environment bodies,
+    inline \verb spans and URL arguments.
+
+    These cannot be masked independently, because each decides what the others
+    mean. A % inside a \begin{verbatim} body or a \verb span is literal text; a
+    %20 inside \url{} is literal; and a \begin{lstlisting} inside a comment does
+    not open a block. Masking comments first ate the bodies of real verbatim
+    blocks; masking verbatim first let a commented-out usage example swallow the
+    % that disabled its own \end{lstlisting}, leaving a live orphan tag — a
+    false positive that, because every write validates the whole buffer, blocked
+    every edit to that document.
+
+    Scanning once in document order is the only way all of them stay correct.
+    Total length and newline count are preserved, so reported line numbers and
+    any offsets derived from the view stay accurate.
     """
-    Neutralises content that must not be read as LaTeX structure:
-    verbatim-like environments, inline \\verb, URL arguments, macro definition
-    bodies, and % comments.
+    if not code:
+        return code
+
+    out = list(code)
+    n = len(code)
+
+    def blank(a: int, b: int) -> None:
+        for k in range(a, min(b, n)):
+            if out[k] != "\n":
+                out[k] = " "
+
+    i = 0
+    while i < n:
+        ch = code[i]
+
+        if ch == "\\":
+            m = _RE_VERBATIM_OPEN.match(code, i)
+            if m:
+                env = m.group(1)
+                body_from = m.end()
+                if env in _ARG_VERBATIM_ENVS:
+                    arg = _RE_VERBATIM_ARG.match(code, body_from)
+                    if arg:
+                        body_from = arg.end()
+                closer = re.compile(r"\\end\{" + re.escape(env) + r"\}")
+                end_m = closer.search(code, body_from)
+                if end_m:
+                    blank(body_from, end_m.start())
+                    i = end_m.end()
+                    continue
+                # Unterminated: leave the remainder as ordinary text so real
+                # errors after it stay visible.
+                i = body_from
+                continue
+
+            m = _RE_VERB_OPEN.match(code, i)
+            if m:
+                delim = m.group(2)
+                # \verb cannot span lines in TeX, so the span is line-bounded.
+                line_end = code.find("\n", m.end())
+                if line_end == -1:
+                    line_end = n
+                close = code.find(delim, m.end(), line_end)
+                if close != -1:
+                    blank(m.end(), close)
+                    i = close + 1
+                    continue
+                i = m.end()
+                continue
+
+            m = _RE_URL_OPEN.match(code, i)
+            if m:
+                close = _match_brace(code, m.end() - 1)
+                if close != -1:
+                    blank(m.end(), close)
+                    i = close + 1
+                    continue
+                i = m.end()
+                continue
+
+            # Escaped character (\%, \\, \{ ...): consume both so \% is not a comment.
+            i += 2
+            continue
+
+        if ch == "%":
+            j = code.find("\n", i)
+            if j == -1:
+                j = n
+            blank(i, j)
+            i = j
+            continue
+
+        i += 1
+
+    return "".join(out)
+
+
+def clean_latex_for_validation(latex_code: str) -> str:
+    r"""
+    Neutralises content that must not be read as LaTeX structure: % comments,
+    verbatim-like environments, inline \verb, URL arguments and macro
+    definition bodies.
 
     Every character is replaced in place, so both the total length and the exact
-    newline count are preserved and reported line numbers stay accurate.
+    newline count are preserved and reported line numbers stay accurate. Callers
+    may therefore map any offset in the view straight back onto the input.
     """
     if not latex_code:
         return ""
 
-    # 1. Verbatim-like environment bodies
-    cleaned = _RE_VERBATIM_BLOCK.sub(lambda m: _blank_group(m, 2), latex_code)
+    # 1. Comments, verbatim bodies, \verb spans and URL arguments (one pass:
+    #    each decides what the others mean).
+    cleaned = _mask_literal_regions(latex_code)
 
-    # 2. Inline \verb<delim>...<delim> (any delimiter, starred form included)
-    cleaned = _RE_VERB_INLINE.sub(lambda m: _blank_group(m, 3), cleaned)
-
-    # 3. URL-ish arguments: % # $ & _ inside them are literal, not TeX specials.
-    #    Only the first brace group, so $math$ in \href link *text* is still checked.
-    cleaned = _RE_URL_ARG.sub(lambda m: _blank_group(m, 2), cleaned)
-
-    # 4. Macro definition bodies
+    # 2. Macro definition bodies. The enclosing braces are kept, so genuine
+    #    brace imbalance is still caught; only the template content is blanked.
     cleaned = mask_macro_definition_bodies(cleaned)
 
-    # 5. Comments (% to end of line, unless escaped by an odd number of backslashes)
-    out_lines = []
-    for line in cleaned.splitlines(keepends=True):
-        m = _RE_COMMENT.search(line)
-        if m:
-            pct = m.end() - 1
-            nl = "\n" if line.endswith("\n") else ""
-            body = line[:-1] if nl else line
-            out_lines.append(body[:pct] + _blank(body[pct:]) + nl)
-        else:
-            out_lines.append(line)
-
-    return "".join(out_lines)
+    return cleaned
 
 
 def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
@@ -314,6 +390,61 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
         errors.append(f"Unbalanced \\left ({n_left}) vs \\right ({n_right})")
 
     return len(errors) == 0, errors
+
+
+_RE_ERROR_LINE_PREFIX = re.compile(r"^Line \d+:\s*")
+_RE_ERROR_NUMBERS = re.compile(r"\d+")
+
+
+def _error_signature(message: str) -> str:
+    """
+    Reduces a validation error to a position-independent signature.
+
+    ``Line 12: Unclosed \\begin{itemize}`` and ``Line 48: Unclosed
+    \\begin{itemize}`` are the *same* defect seen at two offsets; an edit that
+    moves a pre-existing error around must not be reported as having created it.
+    """
+    stripped = _RE_ERROR_LINE_PREFIX.sub("", message)
+    return _RE_ERROR_NUMBERS.sub("#", stripped).strip()
+
+
+def validate_edit(before: str, after: str) -> Tuple[bool, List[str]]:
+    """
+    Differential pre-commit validation: does ``after`` introduce structural
+    errors that ``before`` did not already have?
+
+    Every write path validates the *whole* buffer, so an absolute check makes a
+    single pre-existing defect — a custom list environment from a .cls, an
+    \\end{...} the regex grammar cannot pair, a stray brace in a package the
+    validator does not model — reject **every** subsequent edit. The agent then
+    burns its entire step budget retrying edits that can never pass, and the
+    final rollback discards the whole run.
+
+    Only *new* defects are the edit's fault, so only new defects block it.
+
+    Returns:
+        (passed, new_errors) — ``new_errors`` lists only the defects the edit added.
+    """
+    ok_after, errors_after = validate_latex_pre_commit(after)
+    if ok_after:
+        return True, []
+
+    _, errors_before = validate_latex_pre_commit(before)
+
+    baseline: Dict[str, int] = {}
+    for e in errors_before:
+        sig = _error_signature(e)
+        baseline[sig] = baseline.get(sig, 0) + 1
+
+    new_errors: List[str] = []
+    for e in errors_after:
+        sig = _error_signature(e)
+        if baseline.get(sig, 0) > 0:
+            baseline[sig] -= 1
+        else:
+            new_errors.append(e)
+
+    return len(new_errors) == 0, new_errors
 
 
 @dataclass

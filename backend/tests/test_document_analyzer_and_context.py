@@ -293,8 +293,10 @@ def test_compute_step_max_tokens():
     assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "TARGETED_EDIT", 1, is_creation=True) == 8192
     # Full rewrite
     assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "FULL_DOCUMENT_REWRITE", 3) == FULL_REWRITE_STEP_MAX_TOKENS
-    # Targeted edit
-    assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "TARGETED_EDIT", 3) == 2048
+    # Targeted edit: enough room for a whole frame or short section after JSON
+    # escaping, so an ordinary edit does not trip the truncation-recovery path
+    # (which costs an extra LLM call and then discards the step).
+    assert compute_step_max_tokens(ContextStrategy.WHOLE_FILE, "TARGETED_EDIT", 3) == 4096
 
 
 def test_build_initial_context_whole_file():

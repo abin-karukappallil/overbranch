@@ -269,7 +269,8 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
    - Checks balance of math delimiters (`$`, `$$`, `\[`, `\]`) and curly braces (`{`, `}`).
    - Ensures list integrity (`\item` is strictly inside `itemize` or `enumerate`).
    - Ensures TikZ statements end with semicolons (`;`).
-2. **Deterministic Repair**: `latex_error_fixer.auto_heal_latex_code` closes unclosed environments **positionally** — before the enclosing `\end{frame}` / `\end{document}` — never by appending them at end-of-file, and hoists stray `\usepackage` into the preamble. Validation and repair are deliberately separate: `edit_validator` only reports.
+2. **Deterministic Repair**: `latex_error_fixer.auto_heal_latex_code` closes unclosed environments **positionally** — before the enclosing `\end{frame}` / `\end{document}` — never by appending them at end-of-file, and hoists stray `\usepackage` into the preamble. Validation and repair are deliberately separate (`edit_validator` only reports) but share one **masked view** of the document, and healing is **discarded if it raises the error count**. See [Feature 4](#feature-4-automated-latex-error-diagnostics--deterministic-auto-healing).
+2b. **Differential Pre-Commit Check**: writes are gated by `validate_edit(before, after)`, not by an absolute pass. A defect the validator cannot model in the user's *original* document no longer rejects every subsequent edit for the rest of the run.
 3. **Coverage & Leftover Checks**: Verifies all chunks were rewritten during full rewrites and alerts if residual terms from older topics remain.
 
 #### I. Shadow Compilation & Compiler-Feedback Self-Correction
@@ -468,7 +469,9 @@ overbranch/
 │   │   ├── test_document_environment_integrity.py# Verification that \begin/\end environments remain balanced
 │   │   ├── test_edit_pipeline_integrity.py     # End-to-end edit pipeline tests, AST preservation & auto-repair
 │   │   ├── test_full_document_expansion.py     # Content expansion tests (elaborating topics, adding slides)
-│   │   ├── test_full_document_rewrite.py       # Scope classifier, coverage check & full rewrite tests
+│   │   ├── test_agent_json_sanitizer.py        # Model JSON -> LaTeX decoding: \nonumber, \\ line breaks, escaped/unescaped modes
+│   │   ├── test_full_document_rewrite.py       # Scope classifier, coverage check, step-budget cap & full rewrite tests
+│   │   ├── test_heal_does_not_corrupt.py       # Healer must not invent structure; every bundled template validates & survives healing
 │   │   ├── test_insert_into_chunk.py           # AST chunk insertion & surgical replacement tests
 │   │   ├── test_latex_error_fixer.py           # Automated LaTeX error parser & deterministic repair tests
 │   │   ├── test_opencode_fixes.py              # OpenCode ReAct loop, shadow workspace & tool execution tests
@@ -493,9 +496,9 @@ overbranch/
 │   ├── database.py                             # Asynchronous SQLAlchemy connection pool & sessionmaker
 │   ├── document_analyzer.py                    # Fast local LaTeX AST parser & structural metrics extractor (No LLM)
 │   ├── document_index.py                       # LaTeX AST chunk indexer & ensure_document_environment repairer
-│   ├── edit_validator.py                       # Coverage validation & pre-commit structural checks (validation only; repair lives in latex_error_fixer)
+│   ├── edit_validator.py                       # Coverage validation, single-pass literal masking & differential pre-commit checks (validate_edit; validation only — repair lives in latex_error_fixer)
 │   ├── file_analyzer.py                        # Multimodal AI analysis for uploaded files & TikZ synthesizer
-│   ├── latex_error_fixer.py                    # Automated LaTeX error log parser & deterministic syntax repairer
+│   ├── latex_error_fixer.py                    # LaTeX error log parser & deterministic repairer (masked-view structure, discarded if it raises the error count)
 │   ├── main.py                                 # FastAPI application entry point, CORS, lifespan, compile & synctex
 │   ├── models.py                               # SQLAlchemy ORM models for Better-Auth schema (User, Session, Account)
 │   ├── project_storage.py                      # Local filesystem disk storage & Supabase storage manager
@@ -777,33 +780,43 @@ overbranch/
   - `POST /api/agent/opencode` — SSE reasoning stream (`progress`, `coverage_check`, `compile_error`, `final_diff`, `result`, `pdf_conversion`, `cancelled`, `error`).
   - `POST /api/agent/stop` — cancels an in-flight run.
   - `POST /api/agent/validate-latex` — heals and/or validates a LaTeX string without writing anything. Body `{latex_code, project_id?, file_path?, heal?}` → `{valid, errors[], fixes_applied[], healed_code, changed}`. `heal` defaults to **false**: healing hoists packages and injects theme colours, so it must never be applied without showing the user `fixes_applied`. Rate limited 60/min; bodies over 2 MB return 413.
-- **Dynamic Adaptive Step Budgeting**:
-  Instead of hardcoded limits, the step budget dynamically calculates:
-  $$\text{Budget} = \text{clamp}\left(6 + 2 \times N_{\text{chunks}} + \text{scope\_bias}, 6, 32\right)$$
-  - `TARGETED_EDIT`: 8–12 steps.
-  - `EXPAND_CONTENT`: 14–22 steps.
-  - `FULL_DOCUMENT_REWRITE`: 20–32 steps.
+- **Dynamic Adaptive Step Budgeting** (`determine_adaptive_step_budget`): the budget scales with document structure and is **hard-capped at `MAX_STEP_BUDGET` (32)**.
+  - `TARGETED_EDIT`: 4–12 steps (4 for a typo or citation, 10–12 for creation / redesign).
+  - `FULL_DOCUMENT_REWRITE` / `FULL_DOCUMENT_EXPANSION`: `8 + ceil(chunks / 2)`, capped at 32.
+  - Ask mode: 4 steps.
+  - **Every step is a full LLM round trip, and round trips dominate wall-clock time, so an uncapped budget is an uncapped latency bill.** The previous `max(16, chunks * 2 + 4)` had no ceiling at all: it handed a 20-section report 44 steps and a 40-frame deck 84 — and gave even a 2-chunk rewrite a floor of 16 — for work the prompt explicitly asks the model to **batch** into a handful of turns (and that `compute_step_max_tokens` funds with 16 K output tokens precisely so batching is possible). The budget now assumes several chunks land per turn, plus headroom for `verify_compile` and self-correction.
 - **In-Memory Shadow Workspace**:
   All mutations apply to [`ShadowWorkspace`](file:///home/abin/overbranch/backend/opencode/shadow_workspace.py). Disk files remain untouched until the user accepts the diff in the UI.
-- **Scope precision matters more than step count**: on a 15-chunk deck, `FULL_DOCUMENT_EXPANSION` raises the budget from 8 to 34 steps *and* makes coverage validation demand that every chunk be rewritten. `scope_classifier.py` therefore keeps explicitly singular targets (`"expand the conclusion paragraph"`, `"explain this slide"`, `"fix slide 3"`) as `TARGETED_EDIT` via `SINGLE_TARGET_PATTERNS`, and only promotes to document-wide scope on genuine all-document language (`ALL_DOCUMENT_PATTERNS`: `"every section"`, `"all slides"`, `"the entire document"`).
-- **Output budget must permit batching**: the prompt asks the model to batch several `rewrite_chunk` calls per turn, so `compute_step_max_tokens` allocates `FULL_REWRITE_STEP_MAX_TOKENS` (16 K) for rewrite scopes. A 4 K cap made batching impossible and pushed the model into truncation recovery, which costs a second full LLM call and then discards the response.
-- **Write-path cost**: each write runs exactly one `auto_heal_latex_code` + one `validate_latex_pre_commit`. Healing again *after* the commit (via `ensure_document_structure`) both doubled per-edit cost and mutated the buffer after validation, so the post-commit step is now `_refresh_indexes()`, which only re-derives the line list and chunk index. `get_buffer()` is pure — reads never mutate.
+- **Scope precision matters more than step count**: on a 15-chunk deck, `FULL_DOCUMENT_EXPANSION` raises the budget from 4 to 16 steps *and* makes coverage validation demand that every chunk be rewritten. `scope_classifier.py` therefore keeps explicitly singular targets (`"expand the conclusion paragraph"`, `"explain this slide"`, `"fix slide 3"`) as `TARGETED_EDIT` via `SINGLE_TARGET_PATTERNS`, and only promotes to document-wide scope on genuine all-document language (`ALL_DOCUMENT_PATTERNS`: `"every section"`, `"all slides"`, `"the entire document"`).
+- **Output budget must permit batching**: the prompt asks the model to batch several `rewrite_chunk` calls per turn, so `compute_step_max_tokens` allocates `FULL_REWRITE_STEP_MAX_TOKENS` (16 K) for rewrite scopes. A 4 K cap made batching impossible and pushed the model into truncation recovery, which costs a second full LLM call and then discards the response. `TARGETED_EDIT` gets **4 K** for the same reason: 2 K sat below the size of one Beamer frame once JSON escaping is paid for, so ordinary targeted edits tripped the truncation path — an extra LLM call to continue the JSON, then a discarded step and a third call when the continuation also ran long.
+- **The model's JSON must decode back to the LaTeX it wrote** (`sanitize_latex_json`). Models routinely emit `\begin` rather than `\\begin` inside JSON strings, so odd-length backslash runs are doubled before `json.loads`. Two shapes are ambiguous and both used to be resolved the wrong way, silently, inside the string the agent then wrote into the document:
+  - `\n` is both the JSON newline escape and the prefix of real macros. The rule was a hand-kept whitelist, so every macro missing from it — `\nonumber`, `\notag`, `\nicefrac`, `\notin`, `\normalfont` — decoded to a **literal newline plus the rest of the command name**, i.e. an undefined control sequence. It is now resolved by first deciding whether the response escapes LaTeX *at all* (`_emits_unescaped_latex`): in an unescaped response any `\n<letters>` is a macro; in a properly escaped one `\n` stays a newline.
+  - `\\` is both an escaped backslash and the LaTeX line break. In an unescaped response a bare pair is widened to four, so a `tabular` row break survives and `\\[0.3em]` no longer decodes to `\[0.3em]` — opening display math where a spaced line break was meant. (That corruption was common enough that `auto_heal_latex_code` still carries a rule to undo one symptom of it.)
+  The whole transform runs in **one pass** over the original text, so a run it widens is never reconsidered and widened twice; `tests/test_agent_json_sanitizer.py` covers both modes and idempotence.
+- **Write-path cost**: every write goes through one gate, `ShadowWorkspace._heal_and_validate` — one `auto_heal_latex_code`, then one **differential** `validate_edit` against the pre-edit buffer ([Feature 12](#feature-12-pre-commit-structural-validation)). Healing again *after* the commit (via `ensure_document_structure`) both doubled per-edit cost and mutated the buffer after validation, so the post-commit step is now `_refresh_indexes()`, which only re-derives the line list and chunk index. The end-of-run pass heals **once** and then validates, for the same reason. `get_buffer()` is pure — reads never mutate.
 - **Telemetry**: `AgentTrace.record_llm_call` records per-round-trip latency and `usage` tokens, so `summary()` reports `llm_invocations`, `llm_total_latency_ms`, `llm_share_pct` and `tokens_in`/`tokens_out`. LLM round trips dominate wall-clock time; this makes the split measurable instead of inferred.
 
 ---
 
 ### Feature 4: Automated LaTeX Error Diagnostics & Deterministic Auto-Healing
 
-- **File Implementation**: [`backend/latex_error_fixer.py`](file:///home/abin/overbranch/backend/latex_error_fixer.py), [`components/editor/CompileToolbar.tsx`](file:///home/abin/overbranch/components/editor/CompileToolbar.tsx), [`backend/tests/test_latex_error_fixer.py`](file:///home/abin/overbranch/backend/tests/test_latex_error_fixer.py)
+- **File Implementation**: [`backend/latex_error_fixer.py`](file:///home/abin/overbranch/backend/latex_error_fixer.py), [`components/editor/CompileToolbar.tsx`](file:///home/abin/overbranch/components/editor/CompileToolbar.tsx), [`backend/tests/test_latex_error_fixer.py`](file:///home/abin/overbranch/backend/tests/test_latex_error_fixer.py), [`backend/tests/test_heal_does_not_corrupt.py`](file:///home/abin/overbranch/backend/tests/test_heal_does_not_corrupt.py)
+- **The healer reads structure through the validator's masked view** (`_structure_view` → `clean_latex_for_validation`, see [Feature 12](#feature-12-pre-commit-structural-validation)). It used to scan raw text while the validator scanned the masked view, so the two disagreed about what the document contains and the healer "repaired" structure that was never there. Because `auto_heal_latex_code` runs on the **whole buffer on every agent write**, that damage compounded twice over: the user got broken LaTeX, *and* the corrupted buffer failed validation on the next write, so every later edit was rejected and the agent burned its full step budget before the final rollback discarded the run. Observed on shipped templates:
+  - `letters/letter3`: `\date{...\begin{flushleft}\today\end{flushleft}}` — ends were processed before begins, so the `\end` on the *same line* looked orphaned, was deleted, and a replacement emitted before `\end{document}`, silently wrapping the rest of the document in a `flushleft` group. **Tags are now processed in the order they appear within a line.**
+  - A trailing comment such as `% use \begin{itemize} here later` added a stray `\end{itemize}`, after which no edit to that document could ever pass validation.
+  - `resume/63abeea…`: `\item` inside moderncv's class-defined `rSubsection` was wrapped in `\begin{itemize}`, re-rendering the section. **A lonely `\item` is now wrapped only when the innermost open environment is one where `\item` is certainly illegal** (`ITEM_ILLEGAL_HOSTS`: `document`, `frame`, `block`, `column`, `center`, `minipage`, …); any *unknown* environment is assumed to be a class- or package-defined list.
+  - `resume/63b8103a…/structure.tex`: `\newenvironment{indentsection}{\begin{list}…}{\end{list}}` is balanced template text, and healing it turned a valid file into an invalid one.
+  - `\item` / `\begin{...}` inside `verbatim` and `lstlisting` bodies, and `\usepackage` shown inside a listing being torn out of the example and pasted into the preamble.
+- **Healing never makes a document worse.** `auto_heal_latex_code` applies its passes speculatively and **discards all of them** if the structural error count rises, returning the input unchanged. This is the outermost guarantee behind the write path: one bad repair no longer poisons the buffer for the rest of the run.
 - **How It Works**:
   1. When LaTeX compilation fails, the raw compiler log is passed to `parse_compilation_errors(error_text)`.
   2. The parser scans for error patterns (`! LaTeX Error: ...`, `l.<line> <snippet>`) and produces structured `ParsedLatexError` records.
-  3. `auto_heal_latex_code(code, errors)` runs deterministic AST and regex healing rules:
-     - Detects unclosed environments using stack tracking and appends closing tags before `\end{document}`.
+  3. `auto_heal_latex_code(code, errors)` runs the deterministic passes in `_apply_heal_passes`, all of them reading structure from the masked view:
+     - Closes unclosed environments **positionally** via stack tracking — before the next `\begin{frame}`, before the `\end` that closes an outer environment, or before `\end{document}` — and drops a genuinely orphaned `\end{...}`.
      - Injects `\usetikzlibrary{calc}` into the preamble if TikZ coordinate math `($ ... $)` is present.
-     - Adds missing semicolons to TikZ path operations.
+     - Adds missing semicolons to TikZ path operations, skipping any `tikzpicture` shown inside a listing (that is example text, not code to repair).
      - Ensures `\begin{document}` and `\end{document}` exist.
-     - Injects missing standard color definitions (`navy`, `gold`, `cream`, etc.).
+     - Injects missing standard color definitions (`navy`, `gold`, `cream`, …) **only where the name is used as a colour argument** (`fg=navy`, `\textcolor{gold}`, `[cream]`), not merely as the word in prose — "the gold standard" was rewriting preambles that never asked for a palette.
   4. When users click "Ask AI to Fix" in [`CompileToolbar.tsx`](file:///home/abin/overbranch/components/editor/CompileToolbar.tsx), `format_compilation_fix_prompt` constructs a targeted prompt sent to the agent loop with exact line numbers and suggested actions.
 
 ---
@@ -895,16 +908,18 @@ overbranch/
 ### Feature 12: Pre-Commit Structural Validation
 
 - **File Implementation**: [`backend/edit_validator.py`](file:///home/abin/overbranch/backend/edit_validator.py), [`backend/tests/test_edit_pipeline_integrity.py`](file:///home/abin/overbranch/backend/tests/test_edit_pipeline_integrity.py)
-- **This module validates only.** Repair lives in `auto_heal_latex_code` ([Feature 4](#feature-4-automated-latex-error-diagnostics--deterministic-auto-healing)), which closes environments **positionally** — before the enclosing `\end` — rather than appending them at end-of-file. (`\item` placement and TikZ semicolons are healer rules, not validator checks.)
+- **This module validates only.** Repair lives in `auto_heal_latex_code` ([Feature 4](#feature-4-automated-latex-error-diagnostics--deterministic-auto-healing)), which closes environments **positionally** — before the enclosing `\end` — rather than appending them at end-of-file. (`\item` placement and TikZ semicolons are healer rules, not validator checks.) **Both read structure through the same masked view** (`clean_latex_for_validation`); when they disagreed about what the document contains, the healer "repaired" structure that was never there — see [Feature 4](#feature-4-automated-latex-error-diagnostics--deterministic-auto-healing).
+- **Validation is differential** (`validate_edit(before, after)`). Every write validates the **whole** buffer, so an absolute check let a single defect the validator cannot model — a list environment defined in a `.cls`, an `\end{...}` its grammar cannot pair — reject *every* edit for the rest of the run: the agent retried until its step budget ran out and the final rollback discarded the work. Only defects an edit **adds** are that edit's fault, so only those block it. Error signatures are compared position-independently (`Line 12:` prefixes and digits normalised), so a pre-existing defect that merely *moves* is not counted as new. Brand-new documents (empty buffer) are still held to the absolute standard, and so is `POST /api/agent/validate-latex`.
 - **How It Works**:
-  1. Every `ShadowWorkspace` write runs `auto_heal_latex_code` and then `validate_latex_pre_commit(code)`, and is **rejected** if validation fails; the agent gets the errors as feedback. This includes the document-creation path and auxiliary `.tex` files.
-  2. `clean_latex_for_validation(code)` first neutralises everything that must not be read as structure, replacing characters **in place** so the total length and exact newline count are preserved and reported line numbers stay accurate:
-     - Verbatim-like environment bodies: `verbatim`, `semiverbatim` (Beamer `[fragile]` frames), `Verbatim`/`BVerbatim`/`LVerbatim` (fancyvrb), `alltt`, `lstlisting`, `minted`, `listing`, `comment`, `filecontents` and their starred forms.
+  1. Every `ShadowWorkspace` write goes through one gate, `_heal_and_validate`: `auto_heal_latex_code`, then `validate_edit` against the pre-edit buffer. A write that adds a defect is **rejected** and the agent gets the new errors as feedback. This includes the document-creation path and auxiliary `.tex` files. The final pass in `agent_loop` uses the same differential check against `workspace.get_original()`.
+  2. `clean_latex_for_validation(code)` first neutralises everything that must not be read as structure, replacing characters **in place** so the total length and exact newline count are preserved — reported line numbers stay accurate and callers (the healer) can map any offset in the view straight back onto the input:
+     - **One left-to-right pass** (`_mask_literal_regions`) for `%` comments, verbatim-like environment bodies, inline `\verb` spans and URL arguments, because **each decides what the others mean**. A `%` inside a `verbatim` body or a `\verb` span is literal; `%20` inside `\url{}` is literal; and a `\begin{lstlisting}` inside a *comment* does not open a block. Masking comments first ate the bodies of real verbatim blocks; masking verbatim first let a commented-out usage example swallow the `%` that disabled its own `\end{lstlisting}`, leaving a live orphan tag — which is why `assignments/Modern Lab Report Assignment` validated as broken and every edit to it failed.
+     - Verbatim-like environments: `verbatim`, `semiverbatim` (Beamer `[fragile]` frames), `Verbatim`/`BVerbatim`/`LVerbatim` (fancyvrb), `alltt`, `lstlisting`, `minted`, `listing`, `comment`, `filecontents` and their starred forms. Only the forms that genuinely take one (`minted`, `filecontents`, `SaveVerbatim`, `listing`) may consume a `{...}` argument; allowing it for all of them read `\begin{alltt}{ $ %\end{alltt}` as a 16-character environment name.
      - Inline `\verb` with **any** delimiter, including the starred `\verb*` form. (`\verb` cannot span lines in TeX, so the masking is line-bounded by construction.)
-     - The first brace group of `\url` / `\nolinkurl` / `\path` / `\href`, so `%`, `#`, `$`, `&` and `_` inside a URL are literal. Math in `\href` *link text* is still validated.
+     - The brace group of `\url` / `\nolinkurl` / `\path` / `\href`, so `%`, `#`, `$`, `&` and `_` inside a URL are literal. Math in `\href` *link text* is still validated.
      - Bodies of `\newcommand` / `\renewcommand` / `\providecommand` / `\newenvironment` / `\def`, via a brace-matched scan. Their enclosing braces are kept, so genuine brace imbalance is still caught. Without this, `\newcommand{\openlist}{\begin{itemize}}` reported an unclosed environment and — because every write validates the whole buffer — made **all** subsequent edits fail.
-     - `%` comments, honouring `\%`.
   3. Then checks, with line numbers: environment nesting order via a stack (accepting `\begin {env}` with whitespace, matching the healer's grammar), `$` / `$$` / `\(…\)` / `\[…\]` balance, curly-brace depth, and `\left` / `\right` pairing.
+- **Every bundled template is covered** by `tests/test_heal_does_not_corrupt.py`: each `backend/templates/**/*.tex` must validate clean *and* survive a heal unchanged in error count. These are the documents users start from, so one false positive there blocks every edit to a brand-new project.
 
 ---
 
@@ -1162,6 +1177,8 @@ overbranch/
   10. `test_insert_into_chunk.py`: AST chunk insertion and surgical replacement tests.
   11. `test_latex_error_fixer.py`: Automated LaTeX error parser and deterministic syntax repair tests.
   12. `test_opencode_fixes.py`: OpenCode ReAct loop, shadow workspace, and tool execution tests.
+  12b. `test_heal_does_not_corrupt.py`: the healer must not invent structure from comments, verbatim/listing bodies, macro definition bodies or class-defined list environments; healing is discarded if it raises the error count; **every** `backend/templates/**/*.tex` must validate clean and survive a heal; differential validation tolerates a pre-existing defect but still blocks a newly introduced one.
+  12c. `test_agent_json_sanitizer.py`: LaTeX survives decoding out of the model's JSON in both escaped and unescaped modes — `\nonumber` is not a newline, `\\` stays a line break, `\\[0.3em]` does not become `\[0.3em]`, and the transform is idempotent.
   13. `test_performance_regression.py`: Benchmarks and performance regression tests for compilation and token usage.
   14. `test_ppt_templates.py`: Tests for Beamer/PPT templates (Regalia, Nordlight, Prism, etc.) rendering and theme compilation.
   15. `test_pdf2latex_*.py` & `test_provider_multimodal.py`: PDF → LaTeX importer — fact extraction, preamble/facts/merging, stubbed-LLM pipeline (retries, compile repair, re-run, fallbacks), the acceptance predicate (a faithful reflow is accepted without a re-run; the positioned layout rescues but never displaces a complete page), shift-tolerant page comparison, API, copilot tool, provider image parts, and an end-to-end pdfLaTeX test asserting compiled page count = source page count (skipped without pdflatex + pdftoppm; `PDF2LATEX_LIVE_LLM=1` adds a real-model run).

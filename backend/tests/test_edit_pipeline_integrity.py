@@ -156,15 +156,21 @@ def test_edit_touching_tikzpicture_and_itemize_inside_frame():
     assert passed2 is False
     assert any("itemize" in err and "frame" in err for err in errors2)
 
-    # Verify ShadowWorkspace rejects corrupted edit and restores prior buffer
+    # A corrupted edit must never land in the buffer as-is. The write path heals
+    # first and validates second, so the outcome is either a deterministic repair
+    # or a rejection -- but the buffer is structurally sound either way.
     res = ws.str_replace(
         r"\end{tikzpicture}",
         r"\end{itemize}",
     )
-    assert res["success"] is False
-    assert "PRE-COMMIT VALIDATION FAILED" in res["error"]
-    # Buffer was NOT modified
-    assert ws.get_buffer() == initial_latex
+    if res["success"]:
+        # Healed: the unclosed tikzpicture was closed and the orphan dropped.
+        assert r"\end{tikzpicture}" in ws.get_buffer()
+        passed_after, errors_after = validate_latex_pre_commit(ws.get_buffer())
+        assert passed_after, f"healed buffer is still broken: {errors_after}"
+    else:
+        assert "PRE-COMMIT VALIDATION FAILED" in res["error"]
+        assert validate_latex_pre_commit(ws.get_buffer())[0]
 
     # Valid edit passes cleanly
     valid_edit = (

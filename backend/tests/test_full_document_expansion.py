@@ -99,8 +99,12 @@ def test_scope_classifier_preserves_targeted_and_rewrite():
 
 
 def test_adaptive_step_budget_scales_for_expansion():
-    """Verify that determine_adaptive_step_budget scales for FULL_DOCUMENT_EXPANSION."""
-    # 5 chapters -> budget should be at least max(16, 5*2 + 4) = 16 or more
+    """
+    FULL_DOCUMENT_EXPANSION gets more steps than a targeted edit, scaling with
+    chunk count but never past the documented cap.
+    """
+    from opencode.agent_loop import MAX_STEP_BUDGET
+
     budget_5_chunks = determine_adaptive_step_budget(
         user_instruction="Add more content to all chapters",
         total_lines=100,
@@ -110,9 +114,6 @@ def test_adaptive_step_budget_scales_for_expansion():
         scope=ScopeType.FULL_DOCUMENT_EXPANSION.value,
         mode="edit",
     )
-    assert budget_5_chunks >= 16
-
-    # 10 chunks -> budget should be 10*2 + 4 = 24
     budget_10_chunks = determine_adaptive_step_budget(
         user_instruction="Expand all sections with deep technical explanations",
         total_lines=200,
@@ -122,7 +123,20 @@ def test_adaptive_step_budget_scales_for_expansion():
         scope=ScopeType.FULL_DOCUMENT_EXPANSION.value,
         mode="edit",
     )
-    assert budget_10_chunks >= 24
+    budget_huge = determine_adaptive_step_budget(
+        user_instruction="Expand every section",
+        total_lines=4000,
+        num_chapters=0,
+        num_sections=150,
+        num_chunks=150,
+        scope=ScopeType.FULL_DOCUMENT_EXPANSION.value,
+        mode="edit",
+    )
+
+    assert budget_5_chunks >= 10
+    assert budget_10_chunks > budget_5_chunks
+    assert budget_huge == MAX_STEP_BUDGET
+    assert all(b <= MAX_STEP_BUDGET for b in (budget_5_chunks, budget_10_chunks))
 
 
 def test_coverage_validation_blocks_incomplete_expansion():

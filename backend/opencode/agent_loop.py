@@ -22,7 +22,9 @@ from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import provider_router
 from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
 from document_index import DocumentIndex, DocumentChunk
-from edit_validator import validate_coverage, CoverageValidationResult, validate_latex_pre_commit
+from edit_validator import (
+    validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
+)
 from attached_context import attached_context_store
 from trace import trace_manager, AgentTrace
 from document_analyzer import analyze_document, generate_compact_summary, generate_preservation_map, build_task_state
@@ -193,36 +195,98 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
 # Response Parser & LaTeX JSON Sanitizer
 # ============================================================================
 
+# LaTeX control words beginning with "n". In JSON, "\n" is the newline escape,
+# so a single-backslash LaTeX macro starting with n is indistinguishable from a
+# line break by shape alone -- and decoding \nonumber as newline + "onumber"
+# writes an undefined control sequence into the user's document.
+_N_LATEX_COMMANDS = (
+    "nonumber", "notag", "noindent", "nopagebreak", "nolinebreak", "nobreakspace",
+    "nobreak", "noalign", "nocite", "normalsize", "normalfont", "normalcolor",
+    "normalem", "newline", "newpage", "newcommand", "newenvironment", "newtheorem",
+    "newcounter", "newlength", "newcolumntype", "newsavebox", "newgeometry",
+    "newblock", "newfont", "needspace", "node", "nodepart", "nameref", "nicefrac",
+    "nullfont", "null", "numberline", "number", "nabla", "nearrow", "nwarrow",
+    "nexists", "nparallel", "nsubseteq", "nsupseteq", "nrightarrow", "nleftarrow",
+    "nleqslant", "ngeqslant", "notin", "nmid", "neq", "neg", "nu", "ne", "ni",
+)
+# Longest-first so "ne" cannot shadow "neq" / "newline".
+_N_LATEX_ALTS = "|".join(sorted(_N_LATEX_COMMANDS, key=len, reverse=True))
+_RE_N_LATEX_BODY = re.compile(r"(?:" + _N_LATEX_ALTS + r")(?![a-zA-Z])")
+_RE_SLASH_RUN = re.compile(r"(\\+)(.)")
+
+
+def _emits_unescaped_latex(text: str) -> bool:
+    r"""
+    True when this response writes LaTeX backslashes raw (``\begin``) instead of
+    escaped for JSON (``\\begin``).
+
+    A single odd-length backslash run before anything other than a real JSON
+    escape is proof: ``\b``, ``\f`` and ``\t`` are control characters no model
+    means to put in a LaTeX string.
+    """
+    for m in _RE_SLASH_RUN.finditer(text):
+        if len(m.group(1)) % 2 == 1 and m.group(2) not in ('"', "n"):
+            return True
+        if len(m.group(1)) % 2 == 1 and m.group(2) == "n":
+            if _RE_N_LATEX_BODY.match(text, m.start(2)):
+                return True
+    return False
+
+
 def sanitize_latex_json(text: str) -> str:
     r"""
-    Sanitizes raw JSON text emitted by LLMs to prevent LaTeX backslashes from being corrupted.
-    Handles:
-    - Single backslashes before LaTeX commands: \begin, \frac, \text, \right, \node, \newline, etc.
-    - \usepackage, \url, etc. without triggering JSON unicode escape errors.
-    - Double backslashes (already escaped) preserved.
-    - Preserves JSON structural characters and legitimate escapes like \", \\, \n.
+    Repairs raw JSON emitted by an LLM so that unescaped LaTeX survives
+    ``json.loads``.
+
+    A model that writes ``\begin`` instead of ``\\begin`` inside a JSON string
+    hands the decoder escape sequences it never meant: ``\b`` becomes a
+    backspace, ``\f`` a form feed, ``\t`` a tab. Each odd-length backslash run
+    is therefore doubled.
+
+    Two cases are genuinely ambiguous by shape, and both are resolved by first
+    deciding whether the *response as a whole* escapes LaTeX
+    (``_emits_unescaped_latex``):
+
+    * ``\n`` is both the JSON newline escape and the prefix of real macros. It is
+      doubled for known control words always, and for any ``\n<letters>`` when
+      the response is unescaped. A model that escapes properly writes
+      ``\\nonumber``, so there ``\n`` is left as a newline.
+    * ``\\`` is both an escaped backslash and the LaTeX line break. In an
+      unescaped response it is the line break, so a run of exactly two is
+      widened to four. Left alone, ``\\[0.3em]`` decoded to ``\[0.3em]`` --
+      opening display math where a spaced line break was meant. (That exact
+      corruption is common enough that ``auto_heal_latex_code`` carries a
+      dedicated rule to undo one symptom of it.)
+
+    The whole transform runs in a single pass over the original text, so a run
+    this function widens is never reconsidered and widened twice.
     """
-    n_latex_pattern = re.compile(
-        r"(\\+)(n(?:ode|ewline|oindent|ormalsize|ewcommand|enewcommand|ocite|u\b|abla|eq|eg|umber))"
-    )
-    def fix_n_commands(m):
-        slashes = m.group(1)
-        cmd = m.group(2)
-        if len(slashes) % 2 != 0:
-            return slashes + "\\" + cmd
+    if not text or "\\" not in text:
+        return text
+
+    unescaped = _emits_unescaped_latex(text)
+
+    def _fix(m: "re.Match") -> str:
+        slashes, ch = m.group(1), m.group(2)
+        n_slashes = len(slashes)
+
+        if n_slashes % 2 == 1:
+            if ch == '"':
+                return m.group(0)  # a real JSON string escape
+            if ch == "n":
+                if unescaped or _RE_N_LATEX_BODY.match(m.string, m.start(2)):
+                    return slashes + "\\" + ch
+                return m.group(0)  # genuine newline escape
+            return slashes + "\\" + ch
+
+        # Even run. Only a bare pair is ambiguous, and only when this response
+        # does not escape LaTeX: there it is the LaTeX line break `\\`.
+        # `\\"` is excluded -- widening it would break the JSON string itself.
+        if n_slashes == 2 and unescaped and ch != '"':
+            return "\\\\\\\\" + ch
         return m.group(0)
-    text = n_latex_pattern.sub(fix_n_commands, text)
 
-    def fix_odd_slashes(m):
-        slashes = m.group(1)
-        ch = m.group(2)
-        if len(slashes) % 2 == 0:
-            return m.group(0)
-        if ch in ('"', 'n'):
-            return m.group(0)
-        return slashes + "\\" + ch
-
-    return re.sub(r"(\\+)(.)", fix_odd_slashes, text)
+    return _RE_SLASH_RUN.sub(_fix, text)
 
 
 def _parse_agent_response(text: str) -> Dict[str, Any]:
@@ -464,6 +528,9 @@ def _compact_conversation_history(
 # Dynamic Adaptive Step Budgeting
 # ============================================================================
 
+MAX_STEP_BUDGET = 32
+
+
 def determine_adaptive_step_budget(
     user_instruction: str,
     total_lines: int,
@@ -475,16 +542,48 @@ def determine_adaptive_step_budget(
     requested_steps: Optional[int] = None,
 ) -> int:
     """
-    Dynamically determines the optimal agent reasoning step budget based on:
-    1. Scope: FULL_DOCUMENT_REWRITE / EXPANSION sets lean step cap max(6, effective_chunks + 2).
+    Dynamically determines the agent reasoning step budget from:
+    1. Scope (FULL_DOCUMENT_REWRITE / EXPANSION get room to touch every chunk)
     2. User prompt intent and complexity (creation vs broad overhaul vs single-target fix)
     3. Document scale (number of chapters, sections, and total lines)
     4. Mode (Ask vs Edit)
+
+    The result is capped at MAX_STEP_BUDGET. Every step is a full LLM round trip
+    and round trips dominate wall-clock time, so an unbounded budget is an
+    uncapped latency bill: the previous ``max(16, chunks * 2 + 4)`` handed a
+    20-section report 44 steps and a 40-frame deck 84 -- for work the prompt
+    explicitly asks the model to *batch* into a handful of turns.
     """
+    return min(MAX_STEP_BUDGET, _raw_step_budget(
+        user_instruction=user_instruction,
+        total_lines=total_lines,
+        num_chapters=num_chapters,
+        num_sections=num_sections,
+        num_chunks=num_chunks,
+        scope=scope,
+        mode=mode,
+        requested_steps=requested_steps,
+    ))
+
+
+def _raw_step_budget(
+    user_instruction: str,
+    total_lines: int,
+    num_chapters: int,
+    num_sections: int,
+    num_chunks: int = 0,
+    scope: str = "TARGETED_EDIT",
+    mode: str = "edit",
+    requested_steps: Optional[int] = None,
+) -> int:
+    """Unclamped heuristic behind determine_adaptive_step_budget."""
     if mode == "ask":
         return requested_steps if (requested_steps and requested_steps > 0) else 4
 
-    # 1. Full document rewrite & expansion dynamic budget: guarantee loop cannot run out of steps before touching every chunk
+    # 1. Full document rewrite & expansion: enough room to batch every chunk,
+    #    not one step per chunk. The prompt mandates batched `tool_calls: [...]`
+    #    and compute_step_max_tokens funds it, so the budget assumes several
+    #    chunks land per turn plus headroom for verification and self-correction.
     if scope in (
         ScopeType.FULL_DOCUMENT_REWRITE.value,
         "FULL_DOCUMENT_REWRITE",
@@ -492,7 +591,7 @@ def determine_adaptive_step_budget(
         "FULL_DOCUMENT_EXPANSION",
     ):
         effective_chunks = max(num_chunks, num_chapters, num_sections, 1)
-        full_budget = max(16, effective_chunks * 2 + 4)
+        full_budget = 8 + (effective_chunks + 1) // 2
         if requested_steps and requested_steps > 0:
             return max(requested_steps, full_budget)
         return full_budget
@@ -1780,10 +1879,11 @@ def stream_opencode_agent(
     trace_summary = agent_trace.summary()
 
     if workspace.has_changed():
-        # Ensure document structure integrity before computing final diffs
-        workspace.ensure_document_structure()
-
-        # Run auto_heal_latex_code to repair any stray spacing, packages, or unmatched environments
+        # One heal, then validate. Every write already healed and validated this
+        # buffer, so a second heal here is both redundant work and a chance to
+        # mutate code *after* it was checked; `replace_all` re-runs the same
+        # gate, so a repair that regresses anything is refused rather than
+        # committed.
         healed_final, auto_repairs = auto_heal_latex_code(workspace.get_buffer())
         if auto_repairs:
             heal_res = workspace.replace_all(healed_final)
@@ -1795,13 +1895,17 @@ def stream_opencode_agent(
                     f"{heal_res.get('validation_errors', [])[:3]}"
                 )
 
-        # Pre-commit validation pass before generating final diff
-        is_valid, val_errors = validate_latex_pre_commit(workspace.get_buffer())
+        # Final gate: differential, like every write. The user's original
+        # document may already contain structure this validator cannot model
+        # (a list environment from a .cls, an \end{...} its grammar cannot
+        # pair); holding the result to an absolute standard threw away the whole
+        # run over a defect the agent neither introduced nor was asked to fix.
+        is_valid, val_errors = validate_edit(workspace.get_original(), workspace.get_buffer())
         if not is_valid:
-            logger.warning(f"Final buffer failed pre-commit validation: {val_errors}. Attempting snapshot rollback...")
+            logger.warning(f"Final buffer introduced new structural errors: {val_errors}. Attempting snapshot rollback...")
             while not is_valid and workspace.undo():
                 healed_candidate, _ = auto_heal_latex_code(workspace.get_buffer())
-                is_valid, val_errors = validate_latex_pre_commit(healed_candidate)
+                is_valid, val_errors = validate_edit(workspace.get_original(), healed_candidate)
                 if is_valid:
                     heal_res = workspace.replace_all(healed_candidate)
                     if not heal_res.get("success"):
@@ -1879,7 +1983,7 @@ def stream_opencode_agent(
             try:
                 aux_warnings: List[str] = []
                 healed_aux, aux_fixes = auto_heal_latex_code(aux_mod)
-                aux_valid, aux_errors = validate_latex_pre_commit(healed_aux)
+                aux_valid, aux_errors = validate_edit(aux_orig, healed_aux)
                 if not aux_valid:
                     # Never ship an aux file we know to be broken.
                     logger.warning(
