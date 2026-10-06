@@ -48,6 +48,7 @@ export const metadata: Metadata = {
 };
 
 import { GuestMigrationListener } from "@/components/GuestMigrationListener";
+import { GoogleAnalytics } from "@/components/GoogleAnalytics";
 
 export default function RootLayout({
   children,
@@ -56,6 +57,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning className="scroll-smooth">
+      <head>
+        <GoogleAnalytics />
+      </head>
       <body
         className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
