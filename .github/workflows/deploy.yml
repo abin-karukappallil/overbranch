@@ -1,0 +1,55 @@
+name: Deploy to AWS EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy OverBranch on AWS EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Execute Remote SSH Deployment
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST || secrets.AZURE_VM_IP }}
+          username: ${{ secrets.EC2_USER || secrets.AZURE_VM_USERNAME || 'ubuntu' }}
+          key: ${{ secrets.EC2_SSH_KEY || secrets.AZURE_VM_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || secrets.AZURE_VM_PORT || 22 }}
+          script_stop: true
+          script: |
+            echo "🚀 [Deploy] Starting automated deployment..."
+            cd ~/overbranch || cd /home/ubuntu/overbranch
+
+            echo "📥 [Deploy] Pulling latest changes from main..."
+            git reset --hard
+            git pull origin main
+
+            # Update .env if ENV_FILE secret is provided
+            if [ -n "${{ secrets.ENV_FILE }}" ]; then
+              echo "📝 [Deploy] Updating .env from GitHub Secrets..."
+              echo "${{ secrets.ENV_FILE }}" > .env
+            fi
+
+            echo "🐳 [Deploy] Rebuilding and launching containers..."
+            docker compose up --build -d
+
+            echo "🧹 [Deploy] Pruning old dangling Docker images..."
+            docker image prune -f
+
+            echo "⏳ [Deploy] Verifying health check..."
+            sleep 10
+            curl -f http://localhost:8000/api/health || {
+              echo "❌ [Deploy] Health check failed! Showing container logs:"
+              docker compose logs --tail=50
+              exit 1
+            }
+
+            echo "✅ [Deploy] Deployment successful! OverBranch is live."
+            docker compose ps
