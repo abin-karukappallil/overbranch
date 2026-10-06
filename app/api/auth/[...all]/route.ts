@@ -10,8 +10,8 @@ async function handleWithTimeout(
   try {
     const timeoutPromise = new Promise<Response>((_, reject) => {
       const timer = setTimeout(() => {
-        reject(new Error(`Auth ${method} ${req.nextUrl.pathname} timed out after 20s`));
-      }, 20000);
+        reject(new Error(`Auth ${method} ${req.nextUrl.pathname} timed out after 45s`));
+      }, 45000);
       if (typeof timer === "object" && "unref" in timer) {
         (timer as any).unref();
       }

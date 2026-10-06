@@ -17,23 +17,33 @@ function createDbClient() {
     connectionString = connectionString.replace('pooler.supabase.com:5432', 'pooler.supabase.com:6543');
   }
 
+  const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME !== undefined;
+
   const client = postgres(connectionString, {
     prepare: false, // Required for transaction pooler / PgBouncer
-    max: 1, // Serverless isolate uses at most 1 connection per request
-    idle_timeout: 1, // Close connection after 1s of inactivity (0 is a no-op in postgres.js)
-    connect_timeout: 5, // Fail fast if DB host cannot be reached within 5s
-    max_lifetime: 10, // Recycle connection within 10s
+    max: isServerless ? 1 : 10, // Docker: pool of 10 connections. Serverless: 1.
+    idle_timeout: isServerless ? 1 : 20, // Keep pooled connections alive 20s
+    connect_timeout: 10, // 10s connect timeout for cross-region latency
+    max_lifetime: isServerless ? 10 : 60 * 30, // Recycle connection after 30 mins
   });
 
   return drizzle(client, { schema });
 }
 
-// React cache ensures getDb() returns a memoized DB client for the duration of the
-// current request lifecycle, and is discarded when the request completes.
-// This prevents dead TCP sockets from being reused across requests in Serverless Functions.
-export const getDb = cache(() => {
+let _serverClient: ReturnType<typeof createDbClient> | null = null;
+
+// React cache ensures getDb() returns a memoized DB client for request lifecycle.
+// In long-running Node/Docker environments, we maintain a persistent pool singleton.
+export const getDb = () => {
+  const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME !== undefined;
+  if (!isServerless) {
+    if (!_serverClient) {
+      _serverClient = createDbClient();
+    }
+    return _serverClient;
+  }
   return createDbClient();
-});
+};
 
 export const db = new Proxy({} as ReturnType<typeof createDbClient>, {
   get(_target, prop) {
