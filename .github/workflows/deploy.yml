@@ -24,32 +24,32 @@ jobs:
           port: ${{ secrets.EC2_PORT || secrets.AZURE_VM_PORT || 22 }}
           script_stop: true
           script: |
-            echo "🚀 [Deploy] Starting automated deployment..."
+            echo "[Deploy] Starting automated deployment..."
             cd ~/overbranch || cd /home/ubuntu/overbranch
 
-            echo "📥 [Deploy] Pulling latest changes from main..."
+            echo "[Deploy] Pulling latest changes from main..."
             git reset --hard
             git pull origin main
 
             # Update .env if ENV_FILE secret is provided
             if [ -n "${{ secrets.ENV_FILE }}" ]; then
-              echo "📝 [Deploy] Updating .env from GitHub Secrets..."
+              echo "[Deploy] Updating .env from GitHub Secrets..."
               echo "${{ secrets.ENV_FILE }}" > .env
             fi
 
-            echo "🐳 [Deploy] Rebuilding and launching containers..."
+            echo "[Deploy] Rebuilding and launching containers..."
             docker compose up --build -d
 
-            echo "🧹 [Deploy] Pruning old dangling Docker images..."
+            echo "[Deploy] Pruning old dangling Docker images..."
             docker image prune -f
 
-            echo "⏳ [Deploy] Verifying health check..."
+            echo "[Deploy] Verifying health check..."
             sleep 10
             curl -f http://localhost:8000/api/health || {
-              echo "❌ [Deploy] Health check failed! Showing container logs:"
+              echo "[Deploy] Health check failed! Showing container logs:"
               docker compose logs --tail=50
               exit 1
             }
 
-            echo "✅ [Deploy] Deployment successful! OverBranch is live."
+            echo "[Deploy] Deployment successful! OverBranch is live."
             docker compose ps
