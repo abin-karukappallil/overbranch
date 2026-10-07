@@ -25,6 +25,23 @@ logger = logging.getLogger("trace")
 TRACE_DIR = Path("/tmp/overbranch_traces")
 
 
+def redact_args(args: Dict[str, Any], limit: int = 80) -> Dict[str, Any]:
+    """
+    Tool arguments as they may be logged: identifiers and numbers kept, any
+    long text (document content, replacement LaTeX) reduced to its length.
+    """
+    out: Dict[str, Any] = {}
+    for k, v in (args or {}).items():
+        if isinstance(v, str):
+            out[k] = v if len(v) <= limit and "\n" not in v and k not in (
+                "new_content", "content", "new_str", "old_str", "text") else f"<{len(v)} chars>"
+        elif isinstance(v, (int, float, bool)) or v is None:
+            out[k] = v
+        else:
+            out[k] = f"<{type(v).__name__}>"
+    return out
+
+
 @dataclass
 class ToolCallRecord:
     name: str
@@ -33,6 +50,9 @@ class ToolCallRecord:
     latency_ms: float
     success: bool = True
     node_id: Optional[str] = None
+    edit_type: Optional[str] = None
+    target_resolution_method: Optional[str] = None
+    failure_reason: Optional[str] = None
 
 
 @dataclass
@@ -66,6 +86,36 @@ class AgentTrace:
     llm_latencies_ms: List[float] = field(default_factory=list)
     llm_total_latency_ms: float = 0.0
 
+    # Request / provider provenance (key IDs only — never keys)
+    request_id: str = ""
+    document_id: str = ""
+    provider: str = ""
+    key_ids: List[str] = field(default_factory=list)
+    llm_attempts: List[Dict[str, Any]] = field(default_factory=list)
+    fallback_used: bool = False
+    # Edit outcome
+    context_info: Dict[str, Any] = field(default_factory=dict)
+    retry_count: int = 0
+    compile_result: str = ""          # passed | failed | skipped | not_run
+    failure_reason: str = ""
+
+    @property
+    def agent_run_id(self) -> str:
+        return self.trace_id
+
+    def record_llm_attempt(self, attempt: Dict[str, Any]) -> None:
+        """One provider attempt as reported by ProviderRouter.chat's observer."""
+        clean = {k: attempt.get(k) for k in ("provider", "model", "ok", "failure", "status_code", "key_id", "latency_ms")}
+        self.llm_attempts.append(clean)
+        if attempt.get("ok"):
+            self.provider = attempt.get("provider") or self.provider
+            if attempt.get("model"):
+                self.model_used = attempt["model"]
+            if attempt.get("key_id") and attempt["key_id"] not in self.key_ids:
+                self.key_ids.append(attempt["key_id"])
+        if len(self.llm_attempts) > 1 and any(not a.get("ok") for a in self.llm_attempts):
+            self.fallback_used = any(a.get("ok") for a in self.llm_attempts[1:])
+
     def record_tool_call(
         self,
         name: str,
@@ -74,15 +124,21 @@ class AgentTrace:
         latency_ms: float,
         success: bool = True,
         node_id: Optional[str] = None,
+        edit_type: Optional[str] = None,
+        target_resolution_method: Optional[str] = None,
+        failure_reason: Optional[str] = None,
     ):
         """Records an individual tool call and aggregates tool-level breakdown."""
         record = ToolCallRecord(
             name=name,
-            args=args,
-            result_summary=result_summary,
+            args=redact_args(args),
+            result_summary=result_summary[:160],
             latency_ms=latency_ms,
             success=success,
             node_id=node_id,
+            edit_type=edit_type,
+            target_resolution_method=target_resolution_method,
+            failure_reason=failure_reason,
         )
         self.tool_calls.append(record)
 
@@ -181,6 +237,24 @@ class AgentTrace:
             ),
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
+            "agent_run_id": self.trace_id,
+            "request_id": self.request_id,
+            "document_id": self.document_id,
+            "provider": self.provider,
+            "model": self.model_used,
+            "key_ids": self.key_ids,
+            "fallback_used": self.fallback_used,
+            "llm_attempts": len(self.llm_attempts),
+            "context": self.context_info,
+            "edits": [
+                {"tool": t.name, "edit_type": t.edit_type, "method": t.target_resolution_method,
+                 "node_id": t.node_id, "success": t.success, "failure_reason": t.failure_reason}
+                for t in self.tool_calls if t.edit_type
+            ],
+            "retry_count": self.retry_count,
+            "compile_result": self.compile_result,
+            "validation_result": self.validation_result,
+            "failure_reason": self.failure_reason,
         }
 
 
@@ -199,6 +273,9 @@ class ConversionTrace:
     warnings: int = 0
     compile_success: bool = False
     total_latency_ms: float = 0.0
+    style_mismatches: int = 0
+    overflow_lines: int = 0
+    geometry_repairs: int = 0
 
 
 class TraceManager:
@@ -215,9 +292,10 @@ class TraceManager:
             logger.debug(f"Trace dir init note: {e}")
 
     def emit_agent_trace(self, trace: AgentTrace):
-        """Emits an AgentTrace to stdout and project log file."""
+        """Emits an AgentTrace to stdout and project log file (metadata only)."""
         trace_dict = asdict(trace)
-        json_line = json.dumps({"trace_type": "agent", **trace_dict})
+        trace_dict["agent_run_id"] = trace.trace_id
+        json_line = json.dumps({"trace_type": "agent", **trace_dict}, default=str)
 
         # Structured log to stdout
         logger.info(f"[TRACE:AGENT] {json_line}")

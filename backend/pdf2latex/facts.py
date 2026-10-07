@@ -86,6 +86,36 @@ def _blocks(lines: List[Line]) -> Dict[int, Dict[str, float]]:
     return boxes
 
 
+FIT_TOLERANCE = 1.02  # a line measuring wider than its source by more than this gets a fit width
+
+
+def _metrics_family(family: str, fonts: FontPlan) -> str:
+    """The font class that will actually set text of ``family`` under this preamble."""
+    if family == fonts.main_family:
+        return fonts.main
+    return {"sans": fonts.sans, "mono": "courier"}.get(family, "times")
+
+
+def _fit_width(ln: Line, fonts: FontPlan, src_w: float) -> Optional[float]:
+    """
+    The source width when this line, set in the substitute font, would come out
+    wider than it is in the PDF (so it would run past its right edge). Measured
+    with the TeX font files themselves (latex_layout.metrics).
+    """
+    if src_w <= 0:
+        return None
+    try:
+        from latex_layout.metrics import text_width
+        width = 0.0
+        for (size, _c, bold, italic, family, _sup), text, _x in _runs(ln):
+            width += text_width(text, _metrics_family(family, fonts), size, bold, italic)
+    except Exception:
+        return None
+    if width > src_w * FIT_TOLERANCE + 0.5:
+        return _r(src_w + 0.5)
+    return None
+
+
 def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
                default_color: str) -> Tuple[Dict[str, Any], Set[str]]:
     """Returns (facts dict, characters that could not be represented in pdfLaTeX)."""
@@ -143,6 +173,9 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
         al = _alignment(x0, x1, geom.text_w)
         if al:
             entry["al"] = al
+        fit = _fit_width(ln, fonts, x1 - x0)
+        if fit:
+            entry["fit"] = fit
         entries.append(entry)
 
     images = []

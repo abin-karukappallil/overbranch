@@ -111,138 +111,183 @@ def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
     }
 
 
+def _error_signature(err: Dict[str, Any]) -> str:
+    """Position-independent identity of a compile error, for before/after comparison."""
+    msg = str(err.get("error", "")).lower()
+    msg = re.sub(r"l\.\d+|line \d+|\d+", "#", msg)
+    return re.sub(r"\s+", " ", msg).strip()[:160]
+
+
+def _project_files(workspace: "ShadowWorkspace") -> List[Dict[str, str]]:
+    files: List[Dict[str, str]] = []
+    assets_dir = getattr(workspace, "_assets_dir", None)
+    if assets_dir:
+        try:
+            assets_path = Path(assets_dir)
+            if assets_path.is_dir():
+                for item in assets_path.rglob("*"):
+                    if item.is_file() and item.name != "main.tex":
+                        try:
+                            files.append({
+                                # Relative to the project root: documents reference
+                                # assets/<file>, so a path relative to assets/ itself
+                                # left every image missing from the compile.
+                                "filename": str(item.relative_to(assets_path.parent)),
+                                "data": base64.b64encode(item.read_bytes()).decode("ascii"),
+                            })
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+    for fpath, content in getattr(workspace, "_aux_files", {}).items():
+        files.append({"filename": fpath, "data": base64.b64encode(content.encode("utf-8")).decode("ascii")})
+    return files
+
+
+def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_seconds: int) -> Dict[str, Any]:
+    """One compile of ``code`` with the project's files. Raw result + parsed errors + PDF bytes."""
+    from compiler import compile_latex
+
+    result = compile_latex(
+        latex_code=code,
+        engine=engine,
+        project_id=None,
+        files=_project_files(workspace) or None,
+        timeout_seconds=timeout_seconds,
+        persist_synctex=False,
+        # The agent must see the real errors: auto-recovery silently disables
+        # packages and reports success for a document the user would not get.
+        allow_recovery=False,
+    )
+    log_text = result.get("raw_log") or result.get("error_log") or result.get("log", "")
+    diagnostics = parse_latex_error_log(log_text)
+    errors = diagnostics.get("errors", [])
+    tex_errs = result.get("errors") or []
+    if result.get("success") and not tex_errs:
+        errors = []  # warnings in the tail of a clean log are not errors
+    elif not errors and tex_errs:
+        errors = [{"error": e, "line": None, "context": "", "type": "LATEX_ERROR", "suggested_action": ""}
+                  for e in tex_errs]
+    pdf_bytes = None
+    if result.get("pdf_base64"):
+        try:
+            pdf_bytes = base64.b64decode(result["pdf_base64"])
+        except Exception:
+            pdf_bytes = None
+    is_infra_error = (
+        any(p in str(result).lower() for p in INFRA_ERROR_PATTERNS)
+        and not any(e.get("line") for e in errors) and "! " not in log_text
+    ) or (not result.get("success") and not errors
+          and log_text.strip() in ("LaTeX compilation failed.", "Compilation failed", ""))
+    if result.get("log", "").startswith("Rendered via Fast TeX Engine"):
+        is_infra_error = True  # ReportLab preview: no TeX engine on this host
+    return {
+        "result": result,
+        "log": log_text,
+        "errors": errors,
+        "summary": diagnostics.get("summary", ""),
+        "pdf": pdf_bytes,
+        "overfull": result.get("overfull") or [],
+        "infra": bool(is_infra_error),
+    }
+
+
+def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
+                      timeout_seconds: int = 30) -> Dict[str, Any]:
+    """
+    Compiles the buffer (cached by content) and classifies its errors against
+    the ORIGINAL document's: only errors the edits introduced are ``new_errors``.
+    The original is compiled at most once per run, and only when a compile is
+    actually requested.
+    """
+    import hashlib
+
+    code = workspace.get_buffer()
+    key = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    cache = workspace.__dict__.setdefault("_compile_cache", {})
+    if key in cache:
+        return cache[key]
+
+    run = _run_compile(workspace, code, engine, timeout_seconds)
+    if not run["infra"] and run["errors"]:
+        base = workspace.__dict__.get("_original_compile")
+        if base is None:
+            original = workspace.get_original()
+            base = run if original == code else _run_compile(workspace, original, engine, timeout_seconds)
+            workspace.__dict__["_original_compile"] = base
+        before = {_error_signature(e) for e in base["errors"]}
+        run["new_errors"] = [e for e in run["errors"] if _error_signature(e) not in before]
+        run["preexisting_errors"] = len(run["errors"]) - len(run["new_errors"])
+    else:
+        run["new_errors"] = list(run["errors"])
+        run["preexisting_errors"] = 0
+    cache.clear()  # only the latest buffer is worth keeping
+    cache[key] = run
+    return run
+
+
 def compile_shadow_buffer(
     workspace: "ShadowWorkspace",
     engine: str = "pdfLaTeX",
     timeout_seconds: int = 30,
 ) -> Dict[str, Any]:
     """
-    Compiles the current shadow buffer content with the LaTeX engine.
+    The agent's compile check.
 
-    Creates an isolated temp directory, writes the buffer content as main.tex,
-    symlinks/copies assets, runs the compiler, and returns structured results.
+    ``success`` means the edits introduced no compile error: errors the user's
+    document already had are reported (``preexisting_errors``) but do not fail
+    the check, so the agent never burns its budget on problems it did not cause
+    and was not asked to fix. Before compiling, deterministic repairs are applied
+    to the lines the agent edited (and only those, see edit_guard.scoped_heal).
 
-    Args:
-        workspace: The active ShadowWorkspace instance.
-        engine: LaTeX engine to use (pdfLaTeX, XeLaTeX, LuaLaTeX).
-        timeout_seconds: Max seconds for compilation (30s default).
-
-    Returns:
-        {
-            "success": bool,
-            "errors": [{"error": str, "line": int|None, "context": str}],
-            "stderr": str,  # Raw error log for the agent
-            "compile_time_ms": int,
-        }
+    Returns {success, errors, new_errors, preexisting_errors, overfull_boxes,
+    stderr, compile_time_ms, summary[, infra_skip]}.
     """
-    # Ensure document structure (closing unclosed environments, calc library, Regalia colors, begin/end document)
     try:
-        workspace.ensure_document_structure()
+        workspace.heal_touched()
     except Exception as e:
-        logger.warning(f"ensure_document_structure note before compile: {e}")
-
-    buffer_content = workspace.get_buffer()
+        logger.warning(f"heal_touched before compile: {e}")
 
     try:
-        from compiler import compile_latex
-
-        # Pass project files and assets if available
-        extra_files = []
-        if getattr(workspace, "_assets_dir", None):
-            try:
-                assets_path = Path(workspace._assets_dir)
-                if assets_path.exists() and assets_path.is_dir():
-                    for item in assets_path.rglob("*"):
-                        if item.is_file() and item.name != "main.tex":
-                            try:
-                                rel_path = str(item.relative_to(assets_path))
-                                data_bytes = item.read_bytes()
-                                extra_files.append({
-                                    "filename": rel_path,
-                                    "data": base64.b64encode(data_bytes).decode("ascii"),
-                                })
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-
-        result = compile_latex(
-            latex_code=buffer_content,
-            engine=engine,
-            project_id=workspace._project_id,
-            files=extra_files if extra_files else None,
-        )
-
-        success = result.get("success", False)
-        # Check raw_log or error_log (returned on failure) or log (returned on success)
-        log_text = result.get("raw_log") or result.get("error_log") or result.get("log", "")
-        diagnostics = parse_latex_error_log(log_text)
-
-        errors = diagnostics.get("errors", [])
-        has_errors = not success or diagnostics.get("has_errors", False)
-
-        # Detect infrastructure errors vs LaTeX syntax errors
-        # If pdflatex is missing, binary not found, or command failed at OS level
-        is_infra_error = (
-            any(p.lower() in str(result).lower() for p in INFRA_ERROR_PATTERNS)
-            or (not success and not errors and log_text.strip() in ("LaTeX compilation failed.", "Compilation failed", ""))
-        )
-
-        if is_infra_error and not any(e.get("line") for e in errors) and "! " not in log_text:
-            logger.info("Shadow compilation infrastructure error detected — treating as skipped.")
-            return {
-                "success": True,  # Treat as pass so agent doesn't try to fix non-existent bugs
-                "errors": [],
-                "stderr": "",
-                "compile_time_ms": result.get("compile_time_ms", 0),
-                "summary": "Shadow compilation skipped (LaTeX compiler not available or infrastructure error). Edits are syntactically plausible.",
-                "infra_skip": True,
-            }
-
-        if has_errors:
-            # Format errors with focused context from the document buffer
-            # instead of sending full stderr that wastes LLM context
-            try:
-                from context_strategy import extract_error_context
-                stderr_text = extract_error_context(
-                    latex_code=buffer_content,
-                    errors=errors[:5],
-                    context_radius=10,
-                )
-            except ImportError:
-                # Fallback to original formatting if context_strategy not available
-                stderr_lines = ["COMPILATION ERRORS:"]
-                if errors:
-                    for err in errors[:5]:
-                        line_no = err.get("line", "?")
-                        error_msg = err.get("error", "Unknown error")
-                        context = err.get("context", "")
-                        stderr_lines.append(f"  Line {line_no}: {error_msg}")
-                        if context:
-                            stderr_lines.append(f"    Context: {context}")
-                else:
-                    raw_summary = result.get("error_log") or log_text[-500:] or "Compilation failed"
-                    stderr_lines.append(f"  {raw_summary}")
-                stderr_text = "\n".join(stderr_lines)
-        else:
-            stderr_text = ""
-
-        return {
-            "success": success and not has_errors,
-            "errors": errors[:5],
-            "stderr": stderr_text,
-            "compile_time_ms": result.get("compile_time_ms", 0),
-            "summary": diagnostics.get("summary", ""),
-        }
-
+        run = compile_workspace(workspace, engine, timeout_seconds)
     except Exception as e:
         logger.warning(f"Shadow compilation exception: {e}", exc_info=True)
-        # If compiler is unavailable (e.g., no LaTeX installed), report gracefully
         return {
-            "success": True,
-            "errors": [],
-            "stderr": "",
-            "compile_time_ms": 0,
-            "summary": f"Shadow compilation skipped (infrastructure error: {e}). Edits are syntactically plausible.",
+            "success": True, "errors": [], "new_errors": [], "stderr": "", "compile_time_ms": 0,
+            "summary": f"Shadow compilation skipped (infrastructure error: {e}).", "infra_skip": True,
+        }
+
+    result = run["result"]
+    if run["infra"]:
+        logger.info("Shadow compilation infrastructure error detected — treating as skipped.")
+        return {
+            "success": True, "errors": [], "new_errors": [], "stderr": "",
+            "compile_time_ms": result.get("compile_time_ms", 0),
+            "summary": "Shadow compilation skipped (LaTeX compiler not available). Edits are syntactically plausible.",
             "infra_skip": True,
         }
+
+    new_errors = run["new_errors"]
+    stderr_text = ""
+    if new_errors:
+        try:
+            from context_strategy import extract_error_context
+            stderr_text = extract_error_context(latex_code=workspace.get_buffer(), errors=new_errors[:5],
+                                                context_radius=10)
+        except Exception:
+            stderr_text = "COMPILATION ERRORS:\n" + "\n".join(
+                f"  Line {e.get('line', '?')}: {e.get('error', 'Unknown error')}" for e in new_errors[:5])
+
+    severe = [o for o in run["overfull"] if o.get("severe")]
+    return {
+        "success": not new_errors,
+        "errors": new_errors[:5],
+        "new_errors": new_errors[:5],
+        "preexisting_errors": run["preexisting_errors"],
+        "overfull_boxes": severe[:10],
+        "stderr": stderr_text,
+        "compile_time_ms": result.get("compile_time_ms", 0),
+        "summary": run["summary"] if new_errors else (
+            "Compiled without new errors" + (f" ({run['preexisting_errors']} error(s) were already in the "
+                                              f"original document)" if run["preexisting_errors"] else "") + "."),
+    }

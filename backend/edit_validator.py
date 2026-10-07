@@ -500,7 +500,7 @@ def validate_coverage(
 
         mode_name = "FULL_DOCUMENT_EXPANSION" if is_expansion else "FULL_DOCUMENT_REWRITE"
         action_name = "expand and detail" if is_expansion else "replace"
-        tool_hint = "`insert_into_chunk(chunk_id, ...)` or `rewrite_chunk(chunk_id, ...)` or `str_replace(...)`" if is_expansion else "`rewrite_chunk(chunk_id, new_content)`"
+        tool_hint = "`insert_into_chunk(chunk_id, ...)` or `rewrite_chunk(chunk_id, ...)` or `replace_text(...)`" if is_expansion else "`rewrite_chunk(chunk_id, new_content)`"
 
         feedback = (
             f"COVERAGE CHECK FAILED: In {mode_name} mode, you must {action_name} all content chunks across the document.\n"

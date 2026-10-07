@@ -10,6 +10,20 @@ export interface EditItem {
   original_chunk: string;
   proposed_chunk: string;
   explanation?: string;
+  // Apply-contract fields from the backend (lib/latex-edit-apply.ts). They must
+  // survive into accept handlers: dropping them lost whole-document items
+  // ("no anchor") and the node used to re-locate an edit after the text moved.
+  orig_start_line?: number;
+  orig_end_line?: number;
+  new_start_line?: number;
+  new_end_line?: number;
+  context_before?: number;
+  context_after?: number;
+  op?: string;
+  anchor_unique?: boolean;
+  is_full_document?: boolean;
+  node_id?: string;
+  node_path?: string[];
 }
 
 export interface InlineDiffEditorProps {

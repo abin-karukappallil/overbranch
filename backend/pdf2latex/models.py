@@ -28,15 +28,19 @@ class Span:
     flags: int
     bbox: BBox
     origin: Tuple[float, float]  # baseline start
+    # Bold established from the FontDescriptor (/FontWeight, ForceBold) or from
+    # synthetic bold (fill+stroke rendering) — signals the font name and flags miss.
+    force_bold: bool = False
 
     @property
     def bold(self) -> bool:
-        return bool(self.flags & FLAG_BOLD) or "bold" in self.font.lower() or "black" in self.font.lower()
+        from .fontmap import name_is_bold
+        return self.force_bold or bool(self.flags & FLAG_BOLD) or name_is_bold(self.font)
 
     @property
     def italic(self) -> bool:
-        low = self.font.lower()
-        return bool(self.flags & FLAG_ITALIC) or "italic" in low or "oblique" in low
+        from .fontmap import name_is_italic
+        return bool(self.flags & FLAG_ITALIC) or name_is_italic(self.font)
 
     @property
     def superscript(self) -> bool:
@@ -126,6 +130,9 @@ class PageReport:
     fallback: Optional[str] = None  # None | "layout" (deterministic positioned text) | "image"
     overflow: bool = False
     warnings: List[str] = field(default_factory=list)
+    style_mismatches: Optional[int] = None   # runs whose weight/slant/size differ from the PDF (after repair)
+    overflow_lines: Optional[int] = None     # lines still running past their right edge (after repair)
+    geometry_repairs: List[str] = field(default_factory=list)  # deterministic fixes applied
 
 
 @dataclass

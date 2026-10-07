@@ -64,6 +64,11 @@ class ShadowWorkspace:
         # Attached reference files (PDFs, papers, source documents) — read-only
         self._reference_files: Dict[str, str] = {}
 
+        # Stable node IDs that changed because an op edited the node's own title:
+        # old_id -> new_id, so an ID the model already holds keeps working.
+        self._node_aliases: Dict[str, str] = {}
+        self._lines = self._buffer.splitlines(keepends=True)
+
     @property
     def session_id(self) -> str:
         return self._session_id
@@ -141,37 +146,62 @@ class ShadowWorkspace:
         baseline: Optional[str] = None,
     ) -> Tuple[bool, str, List[str], List[str]]:
         """
-        Runs the shared write gate: deterministic heal, then *differential*
-        pre-commit validation against ``baseline`` (the buffer before the edit).
+        Runs the shared write gate: *scoped* deterministic heal, then
+        *differential* pre-commit validation against ``baseline`` (the buffer
+        before the edit), then the duplicate-block guard.
 
         Validation is differential on purpose. Every write validates the whole
         buffer, so an absolute check lets a single defect the validator cannot
         model -- a list environment defined in a .cls, an \\end{...} its grammar
-        cannot pair -- reject every edit for the rest of the run. The agent then
-        spends its entire step budget retrying edits that can never pass, and
-        the final rollback throws the work away. Only defects the edit *adds*
-        are the edit's fault, so only those block it.
+        cannot pair -- reject every edit for the rest of the run. Only defects
+        the edit *adds* are the edit's fault, so only those block it.
 
-        Returns ``(ok, healed, new_errors, fixes_applied)``.
+        Healing is scoped for the same reason: repairs are kept only on the lines
+        the edit changed (see edit_guard.scoped_heal), so a defect the user
+        already had elsewhere is never "fixed" as a side effect of this edit.
+        A heal that makes validation worse is dropped.
+
+        Returns ``(ok, committed_candidate, new_errors, fixes_applied)``.
         """
-        from latex_error_fixer import auto_heal_latex_code
         from edit_validator import validate_edit
-
-        fixes: List[str] = []
-        try:
-            candidate, fixes = auto_heal_latex_code(candidate)
-        except Exception as e:
-            logger.warning(f"auto_heal_latex_code during write: {e}")
+        from .edit_guard import introduced_duplicates, scoped_heal
 
         before = self._original if baseline is None else baseline
-        try:
-            ok, new_errors = validate_edit(before, candidate)
-        except Exception as e:
-            logger.warning(f"validate_edit failed, falling back to absolute check: {e}")
-            from edit_validator import validate_latex_pre_commit
-            ok, new_errors = validate_latex_pre_commit(candidate)
 
-        return ok, candidate, new_errors, fixes
+        def check(code: str) -> Tuple[bool, List[str]]:
+            try:
+                return validate_edit(before, code)
+            except Exception as e:
+                logger.warning(f"validate_edit failed, falling back to absolute check: {e}")
+                from edit_validator import validate_latex_pre_commit
+                return validate_latex_pre_commit(code)
+
+        ok, errors = check(candidate)
+        fixes: List[str] = []
+        try:
+            healed, heal_fixes, _trimmed = scoped_heal(before, candidate)
+        except Exception as e:
+            logger.warning(f"scoped heal during write: {e}")
+            healed, heal_fixes = candidate, []
+        if healed != candidate:
+            ok_h, errors_h = check(healed)
+            if ok_h:
+                candidate, ok, errors, fixes = healed, True, [], heal_fixes
+            elif not ok and len(errors_h) < len(errors):
+                errors = errors_h
+
+        if ok:
+            try:
+                dups = introduced_duplicates(before, candidate)
+            except Exception as e:
+                logger.warning(f"duplicate check failed: {e}")
+                dups = []
+            if dups:
+                ok = False
+                errors = [f"Duplicate block: the edit makes `{d}` appear twice. Edit the existing block instead "
+                          f"of inserting a copy." for d in dups]
+
+        return ok, candidate, errors, fixes
 
     def ensure_document_structure(self) -> None:
         """Verifies and auto-repairs missing \\begin{document}, \\end{document}, unclosed frames, and syntax errors."""
@@ -187,6 +217,25 @@ class ShadowWorkspace:
                 self._doc_index = DocumentIndex.from_latex_text(self._buffer)
             except Exception:
                 pass
+
+    def heal_touched(self) -> List[str]:
+        """
+        Applies deterministic repairs to the lines the agent changed (relative to
+        the original) and nowhere else, through the normal write gate. Used
+        before compiling, in place of healing the whole buffer.
+        """
+        from .edit_guard import scoped_heal
+        with self._lock:
+            healed, fixes, _ = scoped_heal(self._original, self._buffer)
+            if healed == self._buffer:
+                return []
+            ok, healed, _errors, _ = self._heal_and_validate(healed, baseline=self._buffer)
+            if not ok:
+                return []
+            self.push_snapshot()
+            self._buffer = healed
+            self._refresh_indexes()
+            return fixes
 
     def replace_all(self, new_content: str) -> Dict[str, Any]:
         """Replaces the entire shadow buffer with new content after pre-commit validation."""
@@ -282,12 +331,23 @@ class ShadowWorkspace:
     # Write operations
     # ------------------------------------------------------------------
 
-    def str_replace(self, old_str: str, new_str: str) -> Dict[str, Any]:
+    def str_replace(
+        self,
+        old_str: str,
+        new_str: str,
+        line_hint: Optional[int] = None,
+        node_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Exact character-for-character replacement in the shadow buffer.
+        Replaces the text ``old_str`` refers to.
 
-        Enforces that ``old_str`` exists verbatim in the buffer. This prevents
-        hallucinated edits where the LLM invents text that doesn't exist.
+        Exact matching comes first, so behaviour is unchanged whenever the model
+        copied the text faithfully. When it did not (re-indented, normalised
+        quotes, a neighbouring edit changed a word), the locator falls back to
+        context / line-hint disambiguation, normalised matching and finally a
+        strict fuzzy match (see opencode/locator.py). Text that cannot be found
+        confidently is never guessed at: the failure says what was tried and
+        shows the region, so the model can correct the patch in one turn.
 
         Args:
             old_str: The exact string to find in the buffer.
@@ -344,40 +404,19 @@ class ShadowWorkspace:
                     "occurrences_found": 0,
                 }
 
-            count = self._buffer.count(old_str)
+            from .locator import Target, resolve
 
-            if count == 0:
-                # Provide diagnostic info to help the LLM self-correct
-                # Try to find a close match
-                snippet = old_str[:80].replace("\n", "\\n")
-                return {
-                    "success": False,
-                    "error": (
-                        f"EXACT MATCH FAILED: The string was not found character-for-character "
-                        f"in the buffer. Searched for: \"{snippet}...\"\n"
-                        f"Use read_file_range to re-read the exact current content, then retry "
-                        f"with the precise text."
-                    ),
-                    "occurrences_found": 0,
-                }
-
-            if count > 1:
-                return {
-                    "success": False,
-                    "error": (
-                        f"AMBIGUOUS MATCH: Found {count} occurrences of the target string. "
-                        f"Include more surrounding context in old_str to uniquely identify "
-                        f"the target location."
-                    ),
-                    "occurrences_found": count,
-                }
-
-            # Exactly one occurrence — safe to replace
-            pos = self._buffer.find(old_str)
+            res = resolve(self._buffer, Target(node_id=node_id, text=old_str, line_hint=line_hint),
+                          aliases=self._node_aliases)
+            if not res.ok:
+                return self._failure("replace_text", {"text": old_str[:120], "node_id": node_id,
+                                                      "line_hint": line_hint}, res)
+            pos, span_end = res.start, res.end
+            matched = self._buffer[pos:span_end]
             line_start = self._buffer[:pos].count("\n") + 1
-            line_end = line_start + old_str.count("\n")
+            line_end = line_start + matched.count("\n")
 
-            candidate = self._buffer[:pos] + new_str + self._buffer[pos + len(old_str):]
+            candidate = self._buffer[:pos] + new_str + self._buffer[span_end:]
 
             is_valid, candidate, validation_errors, _ = self._heal_and_validate(
                 candidate, baseline=self._buffer
@@ -398,7 +437,7 @@ class ShadowWorkspace:
             # Track affected chunk IDs
             chunks = self._doc_index.get_chunks(self._buffer)
             for c in chunks:
-                if (pos + len(old_str) > c.start_offset) and (pos < c.end_offset):
+                if (span_end > c.start_offset) and (pos < c.end_offset):
                     self._touched_chunks.add(c.chunk_id)
 
             self.push_snapshot()
@@ -406,14 +445,19 @@ class ShadowWorkspace:
             self._refresh_indexes()
 
             self._edit_history.append({
-                "old_str": old_str,
+                "old_str": matched,
                 "new_str": new_str,
                 "line_range": [line_start, line_end],
+                "op": "replace_text",
+                "method": res.method,
+                "node_id": res.node_id,
             })
 
             return {
                 "success": True,
                 "occurrences_found": 1,
+                "method": res.method,
+                "node_id": res.node_id,
                 "lines_affected": [line_start, line_end],
                 "new_line_count": self._buffer.count("\n") + 1,
             }
@@ -427,11 +471,15 @@ class ShadowWorkspace:
             chunks = self._doc_index.get_chunks(self._buffer)
             target = next((c for c in chunks if c.chunk_id == chunk_id), None)
             if not target:
+                # A stable node ID (sec:results, frame:overview) works here too.
+                if self.resolve_node(chunk_id) is not None:
+                    return self.replace_block(chunk_id, new_content)
                 available_ids = [c.chunk_id for c in chunks]
                 return {
                     "success": False,
                     "error": f"Chunk '{chunk_id}' not found in document. Available chunk IDs: {available_ids}",
                     "available_chunks": available_ids,
+                    "document_unchanged": True,
                 }
 
             updated_code, updated_chunk, delta = self._doc_index.replace_chunk(
@@ -511,11 +559,15 @@ class ShadowWorkspace:
                 )
 
             if not target:
+                node = self.resolve_node(chunk_id)
+                if node is not None:
+                    return self.insert_block(chunk_id, content, "start" if position == "begin" else "end")
                 available_ids = [c.chunk_id for c in chunks]
                 return {
                     "success": False,
                     "error": f"Chunk '{chunk_id}' not found in document. Available chunk IDs: {available_ids}",
                     "available_chunks": available_ids,
+                    "document_unchanged": True,
                 }
 
             chunk_text = self._buffer[target.start_offset:target.end_offset]
@@ -616,6 +668,220 @@ class ShadowWorkspace:
                 "inserted_length": len(to_insert),
                 "new_line_count": self._buffer.count("\n") + 1,
             }
+
+    # ------------------------------------------------------------------
+    # Structural (node-addressed) operations
+    # ------------------------------------------------------------------
+
+    def get_nodes(self) -> List[Any]:
+        """Structural nodes of the current buffer (stable IDs, see document_index)."""
+        from document_index import index_nodes
+        with self._lock:
+            return index_nodes(self._buffer)
+
+    def resolve_node(self, ref: str) -> Optional[Any]:
+        from .locator import resolve_node
+        with self._lock:
+            return resolve_node(self._buffer, ref, self._node_aliases)
+
+    def get_block(self, ref: str, include_parent: bool = False, include_style: bool = False) -> Dict[str, Any]:
+        """Content of one node, optionally with its parent's header and the preamble lines styling it."""
+        with self._lock:
+            node = self.resolve_node(ref)
+            if node is None:
+                return self._node_not_found("get_block", ref)
+            text = self._buffer[node.start:node.end]
+            out: Dict[str, Any] = {
+                "node_id": node.node_id, "kind": node.kind, "title": node.title,
+                "lines": [node.start_line, node.end_line],
+                "content": self.read_lines(node.start_line, node.end_line),
+                "chars": len(text),
+            }
+            if include_parent and node.parent_id:
+                parent = self.resolve_node(node.parent_id)
+                if parent:
+                    out["parent"] = {"node_id": parent.node_id, "kind": parent.kind, "title": parent.title,
+                                     "lines": [parent.start_line, parent.end_line],
+                                     "header": self.read_lines(parent.start_line, parent.start_line)}
+            if include_style:
+                from .context_builder import style_lines_for
+                out["style"] = style_lines_for(self._buffer, text)
+            return out
+
+    def replace_block(self, ref: str, new_content: str) -> Dict[str, Any]:
+        """Replaces a whole node (heading + body, or \\begin..\\end) by stable ID."""
+        with self._lock:
+            node = self.resolve_node(ref)
+            if node is None:
+                return self._node_not_found("replace_block", ref)
+            return self._splice(node.start, node.end, new_content, op="replace_block", node=node)
+
+    def insert_block(self, ref: str, content: str, position: str = "after") -> Dict[str, Any]:
+        """
+        Inserts ``content`` relative to a node: ``before`` / ``after`` the node,
+        or at the ``start`` / ``end`` of its body (inside \\begin..\\end, after a
+        heading line).
+        """
+        with self._lock:
+            node = self.resolve_node(ref)
+            if node is None:
+                return self._node_not_found("insert_block", ref)
+            pos = {"before": node.start, "after": node.end, "start": node.body_start,
+                   "end": node.body_end}.get(position)
+            if pos is None:
+                return {"success": False, "error": f"Invalid position '{position}'. Use before, after, start or end."}
+            text = content.strip("\r\n")
+            prefix = "" if pos == 0 or self._buffer[pos - 1] == "\n" else "\n"
+            suffix = "" if self._buffer[pos:pos + 1] == "\n" else "\n"
+            return self._splice(pos, pos, prefix + text + suffix, op=f"insert_block:{position}", node=node)
+
+    def delete_block(self, ref: str) -> Dict[str, Any]:
+        with self._lock:
+            node = self.resolve_node(ref)
+            if node is None:
+                return self._node_not_found("delete_block", ref)
+            if node.kind in ("preamble",):
+                return {"success": False, "error": "The preamble cannot be deleted."}
+            end = node.end
+            if self._buffer[end:end + 1] == "\n":
+                end += 1
+            return self._splice(node.start, end, "", op="delete_block", node=node)
+
+    def _splice(self, start: int, end: int, new_text: str, op: str, node: Any = None,
+                method: str = "node") -> Dict[str, Any]:
+        """Applies one span replacement through the shared write gate."""
+        baseline = self._buffer
+        candidate = baseline[:start] + new_text + baseline[end:]
+        ok, candidate, errors, fixes = self._heal_and_validate(candidate, baseline=baseline)
+        if not ok:
+            line = baseline[:start].count("\n") + 1
+            return {
+                "success": False,
+                "failed_op": op,
+                "target": getattr(node, "node_id", None),
+                "error": "PRE-COMMIT VALIDATION FAILED: the edit introduces structural LaTeX errors:\n"
+                         + "\n".join(f"  - {e}" for e in errors[:5])
+                         + "\nThe buffer was NOT modified.",
+                "validation_errors": errors,
+                "document_unchanged": True,
+                "region_excerpt": self._excerpt(line),
+            }
+
+        line_start = baseline[:start].count("\n") + 1
+        old_text = baseline[start:end]
+        for c in self._doc_index.get_chunks(baseline):
+            if end >= c.start_offset and start < c.end_offset:
+                self._touched_chunks.add(c.chunk_id)
+
+        self.push_snapshot()
+        self._buffer = candidate
+        self._refresh_indexes()
+        new_id = None
+        if node is not None and op == "replace_block":
+            new_id = self._carry_node_id(node, start)
+        self._edit_history.append({
+            "op": op, "method": method, "node_id": getattr(node, "node_id", None),
+            "old_str": old_text, "new_str": new_text,
+            "line_range": [line_start, line_start + new_text.count("\n")],
+        })
+        result: Dict[str, Any] = {
+            "success": True,
+            "op": op,
+            "method": method,
+            "node_id": new_id or getattr(node, "node_id", None),
+            "lines_affected": [line_start, line_start + new_text.count("\n")],
+            "new_line_count": self._buffer.count("\n") + 1,
+        }
+        if fixes:
+            result["auto_repairs"] = fixes
+        return result
+
+    def _carry_node_id(self, old_node: Any, start: int) -> Optional[str]:
+        """After a node was replaced, keeps its old ID pointing at the new node."""
+        from document_index import index_nodes
+        for n in index_nodes(self._buffer):
+            if n.start == start and n.kind == old_node.kind:
+                if n.node_id != old_node.node_id:
+                    self._node_aliases[old_node.node_id] = n.node_id
+                return n.node_id
+        return None
+
+    def _excerpt(self, line: Optional[int], radius: int = 20) -> str:
+        from .edit_guard import region_excerpt
+        return region_excerpt(self._buffer, line, radius)
+
+    def _node_not_found(self, op: str, ref: str) -> Dict[str, Any]:
+        from document_index import index_nodes
+        ids = [n.node_id for n in index_nodes(self._buffer) if n.kind != "env"][:40]
+        return {
+            "success": False,
+            "failed_op": op,
+            "target": ref,
+            "error": f"Node '{ref}' not found. Use one of the node IDs from inspect_document: {ids}",
+            "available_nodes": ids,
+            "document_unchanged": True,
+        }
+
+    def _failure(self, op: str, target: Dict[str, Any], res: Any) -> Dict[str, Any]:
+        """Structured failure for a text target the locator could not resolve."""
+        line = target.get("line_hint")
+        if not line and res.node_id:
+            node = self.resolve_node(res.node_id)
+            line = node.start_line if node else None
+        reason = res.reason or "target_not_found"
+        if reason == "ambiguous":
+            msg = ("AMBIGUOUS MATCH: the text occurs more than once and the location could not be decided. "
+                   "Pass node_id or line_hint, or include more surrounding text.")
+        else:
+            msg = ("TARGET NOT FOUND: the text was not found exactly, after normalising whitespace/quotes, or by "
+                   "similarity. Re-read the region below (or use get_block/search_document) and retry with "
+                   "the current text, or address the block by node_id.")
+        return {
+            "success": False,
+            "failed_op": op,
+            "target": target,
+            "error": msg,
+            "reason": reason,
+            "attempts": res.attempts,
+            "occurrences_found": 0 if reason != "ambiguous" else 2,
+            "document_unchanged": True,
+            "region_excerpt": self._excerpt(line) if line else "",
+        }
+
+    # ------------------------------------------------------------------
+    # Transactions
+    # ------------------------------------------------------------------
+
+    def begin_transaction(self) -> Dict[str, Any]:
+        """Captures everything an edit batch can change, for an all-or-nothing rollback."""
+        with self._lock:
+            return {
+                "buffer": self._buffer,
+                "aux": dict(self._aux_files),
+                "touched": set(self._touched_chunks),
+                "history": len(self._edit_history),
+                "snapshots": len(self._snapshots),
+                "aliases": dict(self._node_aliases),
+            }
+
+    def rollback_transaction(self, tx: Dict[str, Any]) -> None:
+        with self._lock:
+            self._buffer = tx["buffer"]
+            self._aux_files = dict(tx["aux"])
+            self._touched_chunks = set(tx["touched"])
+            del self._edit_history[tx["history"]:]
+            del self._snapshots[tx["snapshots"]:]
+            self._node_aliases = dict(tx["aliases"])
+            self._refresh_indexes()
+
+    def rollback_last(self) -> Dict[str, Any]:
+        """Undoes the most recent successful edit (the agent's rollback_edit tool)."""
+        with self._lock:
+            if not self._snapshots:
+                return {"success": False, "error": "Nothing to roll back."}
+            last = self._edit_history.pop() if self._edit_history else {}
+            self.undo()
+            return {"success": True, "rolled_back": {k: last.get(k) for k in ("op", "node_id", "line_range")}}
 
     # ------------------------------------------------------------------
     # Asset operations
@@ -813,20 +1079,29 @@ class ShadowWorkspace:
                 return {"success": False, "error": f"File '{file_path}' not found in workspace"}
 
             buf = self._aux_files[file_path]
-            count = buf.count(old_str)
-            if count == 0:
-                return {"success": False, "error": "EXACT MATCH FAILED in auxiliary file", "occurrences_found": 0}
-            if count > 1:
-                return {"success": False, "error": f"AMBIGUOUS MATCH: {count} occurrences", "occurrences_found": count}
+            from .locator import Target, resolve
+            res = resolve(buf, Target(text=old_str))
+            if not res.ok:
+                return {
+                    "success": False,
+                    "failed_op": "replace_text",
+                    "target": {"file": file_path, "text": old_str[:120]},
+                    "error": ("AMBIGUOUS MATCH in auxiliary file" if res.reason == "ambiguous"
+                              else "TARGET NOT FOUND in auxiliary file"),
+                    "reason": res.reason,
+                    "attempts": res.attempts,
+                    "document_unchanged": True,
+                    "occurrences_found": 0,
+                }
 
-            pos = buf.find(old_str)
+            pos, span_end = res.start, res.end
             line_start = buf[:pos].count("\n") + 1
-            line_end = line_start + old_str.count("\n")
+            line_end = line_start + buf[pos:span_end].count("\n")
 
             # Auxiliary files get the same heal + validate gate as the main buffer.
             # Without it, a broken \input fragment reaches the user unchecked: the
             # final validation pass in agent_loop only covers the main buffer.
-            candidate = buf.replace(old_str, new_str, 1)
+            candidate = buf[:pos] + new_str + buf[span_end:]
             is_valid, candidate, validation_errors, fixes = self._heal_and_validate(
                 candidate, baseline=buf
             )
@@ -846,7 +1121,8 @@ class ShadowWorkspace:
             self._aux_edit_history.setdefault(file_path, []).append({
                 "old_str": old_str, "new_str": new_str, "line_range": [line_start, line_end],
             })
-            result = {"success": True, "file": file_path, "lines_affected": [line_start, line_end]}
+            result = {"success": True, "file": file_path, "method": res.method,
+                      "lines_affected": [line_start, line_end]}
             if fixes:
                 result["auto_repairs"] = fixes
             return result

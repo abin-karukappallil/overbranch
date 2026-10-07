@@ -73,3 +73,60 @@ export async function healAndValidateLatex(
     };
   }
 }
+
+export interface ResolveEditsFailure {
+  id: string | null;
+  op: string;
+  target: string | null;
+  reason: string;
+  attempts: { method: string; outcome: string }[];
+}
+
+export interface ResolveEditsResult {
+  success: boolean;
+  code: string;
+  applied: { id: string; method: string; confidence?: number }[];
+  failed: ResolveEditsFailure[];
+  document_unchanged: boolean;
+  /** True when the server could not be reached; nothing was resolved. */
+  unavailable?: boolean;
+}
+
+/**
+ * Asks the backend to place edits the exact-text pass could not, using the same
+ * target locator as the agent (node → exact → normalised → fuzzy). All or
+ * nothing: on any failure `code` is the unchanged input.
+ */
+export async function resolveEditsOnServer(
+  currentCode: string,
+  items: unknown[],
+  originalCode?: string,
+  projectId?: string,
+  filePath?: string,
+): Promise<ResolveEditsResult> {
+  const unchanged = (unavailable: boolean): ResolveEditsResult => ({
+    success: false,
+    code: currentCode,
+    applied: [],
+    failed: [],
+    document_unchanged: true,
+    unavailable,
+  });
+  try {
+    const res = await authFetch(`${BACKEND_URL}/api/agent/resolve-edits`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        current_code: currentCode,
+        items,
+        original_code: originalCode,
+        project_id: projectId,
+        file_path: filePath || "main.tex",
+      }),
+    });
+    if (!res.ok) return unchanged(true);
+    return (await res.json()) as ResolveEditsResult;
+  } catch {
+    return unchanged(true);
+  }
+}

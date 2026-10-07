@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,122 +27,179 @@ logger = logging.getLogger("opencode.tools")
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
-        "name": "read_file_range",
+        "name": "inspect_document",
         "description": (
-            "Read exact line-numbered content from the LaTeX file. "
-            "Returns lines in the format '<line_no>: <content>'. "
-            "Use this to inspect the target section or surrounding context (up to 200-300 lines in one call). "
-            "Always read the target area first to get the exact text for str_replace."
+            "Compact structural outline of the document: every chapter/section/frame/environment with its "
+            "stable node_id, title and line range, plus metadata and a token estimate. node_ids stay valid "
+            "while other parts of the document are edited — prefer them over line numbers and copied text."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "get_block",
+        "description": (
+            "Read one structural block by node_id (e.g. 'sec:introduction', 'frame:results', 'meta:title', "
+            "'label:fig:arch', 'slide 3'). Optionally include its parent header and the preamble lines that "
+            "style it (\\setbeamerfont/\\setbeamercolor/\\definecolor/macros it uses)."
         ),
         "parameters": {
-            "file": {
-                "type": "string",
-                "description": "File to read (default: 'main.tex'). Usually 'main.tex'.",
-                "default": "main.tex",
-            },
-            "start_line": {
-                "type": "integer",
-                "description": "1-indexed start line (inclusive).",
-            },
-            "end_line": {
-                "type": "integer",
-                "description": "1-indexed end line (inclusive). Can read up to 200-300 lines in one call.",
-            },
+            "node_id": {"type": "string", "description": "Stable node ID, label:<label>, or 'slide N' / 'section N'."},
+            "include_parent": {"type": "boolean", "description": "Also return the parent node's header.", "default": False},
+            "include_style": {"type": "boolean", "description": "Also return the relevant preamble style lines.", "default": False},
+        },
+        "required": ["node_id"],
+    },
+    {
+        "name": "read_file_range",
+        "description": (
+            "Read exact line-numbered content ('<line_no>: <content>'), up to 300 lines per call. "
+            "Content you already received and that has not changed since is not re-sent."
+        ),
+        "parameters": {
+            "file": {"type": "string", "description": "File to read (default: main document).", "default": "main.tex"},
+            "start_line": {"type": "integer", "description": "1-indexed start line (inclusive)."},
+            "end_line": {"type": "integer", "description": "1-indexed end line (inclusive)."},
         },
         "required": ["start_line", "end_line"],
     },
     {
-        "name": "grep_search",
-        "description": (
-            "Search a LaTeX file for a pattern. Returns matching lines with "
-            "line numbers. Use this to find \\\\labels, \\\\includegraphics references, "
-            "section headings, or any specific text. Supports literal strings and regex."
-        ),
+        "name": "search_document",
+        "description": "Search a file for a literal string or regex. Returns matching lines with line numbers.",
         "parameters": {
-            "query": {
-                "type": "string",
-                "description": "Search pattern (literal text or regex).",
-            },
-            "file": {
-                "type": "string",
-                "description": "Optional file to search (default: main document file).",
-            },
-            "is_regex": {
-                "type": "boolean",
-                "description": "If true, treat query as a regex pattern. Default: false.",
-                "default": False,
-            },
+            "query": {"type": "string", "description": "Search pattern (literal text or regex)."},
+            "file": {"type": "string", "description": "Optional file to search (default: main document)."},
+            "is_regex": {"type": "boolean", "description": "Treat query as a regex. Default: false.", "default": False},
         },
         "required": ["query"],
     },
     {
-        "name": "str_replace",
+        "name": "replace_text",
         "description": (
-            "Replace an exact string in the shadow buffer. The old_str MUST match "
-            "the file content character-for-character (including whitespace and newlines). "
-            "If the match fails, you will receive an error — read the file again to get "
-            "the exact text. Only one occurrence must exist; include surrounding context "
-            "to disambiguate if needed."
+            "Replace a piece of text with new text — the smallest edit; prefer it for changes inside a block. "
+            "old_str should be copied from the document, but small drift (indentation, spacing, quotes) is "
+            "tolerated: the target is located exactly, then normalised, then by close similarity. Pass node_id "
+            "(and/or line_hint) to scope the search when the text may occur more than once. If the target "
+            "cannot be found confidently, nothing is changed and the current region is returned."
         ),
         "parameters": {
-            "old_str": {
-                "type": "string",
-                "description": "The exact string to find and replace. Must match verbatim.",
-            },
-            "new_str": {
-                "type": "string",
-                "description": "The replacement string.",
-            },
-            "file": {
-                "type": "string",
-                "description": "Optional file to modify (default: main document file).",
-            },
+            "old_str": {"type": "string", "description": "The text to replace, copied from the document."},
+            "new_str": {"type": "string", "description": "The replacement text."},
+            "node_id": {"type": "string", "description": "Optional: node the text lives in."},
+            "line_hint": {"type": "integer", "description": "Optional: approximate line number of the text."},
+            "file": {"type": "string", "description": "Optional file to modify (default: main document)."},
         },
         "required": ["old_str", "new_str"],
     },
     {
-        "name": "rewrite_chunk",
+        "name": "replace_block",
         "description": (
-            "Replace an entire document chunk (chapter, section, or frame) by its chunk_id. "
-            "Uses structural byte/character offsets rather than requiring exact string matching. "
-            "This is the PREFERRED tool in FULL_DOCUMENT_REWRITE mode to guarantee full section replacement."
+            "Replace a whole structural block (section with its body, a frame, an environment, \\title{...}) "
+            "by node_id. Use when most of the block changes; include the block's own heading or "
+            "\\begin/\\end lines in new_content."
         ),
         "parameters": {
-            "chunk_id": {
-                "type": "string",
-                "description": "The ID of the chunk to replace (e.g. 'chapter_1', 'chapter_2', 'section_1', 'frame_1').",
-            },
-            "new_content": {
-                "type": "string",
-                "description": "The complete replacement LaTeX content for this entire chunk.",
-            },
+            "node_id": {"type": "string", "description": "Stable node ID of the block."},
+            "new_content": {"type": "string", "description": "The complete replacement block."},
+        },
+        "required": ["node_id", "new_content"],
+    },
+    {
+        "name": "insert_block",
+        "description": (
+            "Insert new LaTeX relative to a block: position 'after' / 'before' the block, or 'start' / 'end' "
+            "of its body (inside \\begin..\\end, after a heading line). Use for new slides, sections, items, "
+            "figures."
+        ),
+        "parameters": {
+            "node_id": {"type": "string", "description": "Stable node ID of the reference block."},
+            "content": {"type": "string", "description": "The LaTeX to insert (balanced environments)."},
+            "position": {"type": "string", "description": "'after' (default), 'before', 'start' or 'end'.", "default": "after"},
+        },
+        "required": ["node_id", "content"],
+    },
+    {
+        "name": "delete_block",
+        "description": "Delete a whole structural block by node_id.",
+        "parameters": {"node_id": {"type": "string", "description": "Stable node ID of the block to delete."}},
+        "required": ["node_id"],
+    },
+    {
+        "name": "rewrite_chunk",
+        "description": (
+            "FULL-REWRITE MODE: replace an entire chunk (chapter, section, or frame) by its chunk_id from the "
+            "chunk list (e.g. 'section_2', 'frame_3'). Stable node IDs are accepted too."
+        ),
+        "parameters": {
+            "chunk_id": {"type": "string", "description": "Chunk ID (e.g. 'chapter_1', 'section_1', 'frame_1') or node ID."},
+            "new_content": {"type": "string", "description": "The complete replacement LaTeX content for this chunk."},
         },
         "required": ["chunk_id", "new_content"],
     },
     {
         "name": "insert_into_chunk",
         "description": (
-            "Insert new content into a specific document chunk (e.g. bibliography, section, chapter, frame). "
-            "Position can be 'end' (default) or 'begin'. "
-            "For bibliography chunks (containing \\end{thebibliography}), 'end' automatically inserts the new \\bibitem entries "
-            "BEFORE \\end{thebibliography}, preserving bibliography structure."
+            "Insert content into a chunk: position 'end' (default; before \\end{thebibliography} / the closing "
+            "list or frame tag) or 'begin'. Use for \\bibitem entries and list items."
         ),
         "parameters": {
-            "chunk_id": {
-                "type": "string",
-                "description": "The target chunk ID (e.g. 'chapter_1', 'section_3', 'frame_2', 'content_body').",
-            },
-            "content": {
-                "type": "string",
-                "description": "The LaTeX content or \\bibitem entry to insert.",
-            },
-            "position": {
-                "type": "string",
-                "description": "Where to insert within the chunk: 'end' (default, before closing tags like \\end{thebibliography}) or 'begin'.",
-                "default": "end",
-            },
+            "chunk_id": {"type": "string", "description": "Chunk ID or node ID (e.g. 'section_3', 'bibliography')."},
+            "content": {"type": "string", "description": "The LaTeX content or \\bibitem entry to insert."},
+            "position": {"type": "string", "description": "'end' (default) or 'begin'.", "default": "end"},
         },
         "required": ["chunk_id", "content"],
+    },
+    {
+        "name": "compile_latex",
+        "description": (
+            "Compile the current buffer. Returns {success, errors, new_errors, overfull_boxes}. Errors the "
+            "original document already had are reported separately — fix only new_errors."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "validate_edit",
+        "description": "Check the buffer's LaTeX structure (environments, braces, math) against the original, without compiling.",
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "rollback_edit",
+        "description": "Undo the most recent successful edit.",
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "detect_overflow",
+        "description": (
+            "Compile and report text that runs past its container or the page: overfull boxes mapped to source "
+            "lines, plus glyphs beyond the text area or page edge."
+        ),
+        "parameters": {},
+        "required": [],
+    },
+    {
+        "name": "inspect_pdf_geometry",
+        "description": "Compile and return the text lines of one rendered page with position, width, font size and weight.",
+        "parameters": {"page": {"type": "integer", "description": "1-based page number.", "default": 1}},
+        "required": [],
+    },
+    {
+        "name": "justify_content",
+        "description": (
+            "Deterministically fix horizontal alignment / overflow of a block or line: measures the content "
+            "against the available width with the document's font and applies the smallest fix — alignment "
+            "only, wrapping in a fixed-width box, breaking an over-long token, slight horizontal condensing, "
+            "or a small font-size reduction. Do not hand-insert line breaks for this."
+        ),
+        "parameters": {
+            "node_id": {"type": "string", "description": "Block to fix (or use text)."},
+            "text": {"type": "string", "description": "A line/phrase to fix when there is no suitable node."},
+            "width_pt": {"type": "number", "description": "Target width in pt (default: the text width)."},
+            "alignment": {"type": "string", "description": "'left', 'right', 'center' or 'justify' (default: keep)."},
+        },
+        "required": [],
     },
     {
         "name": "search_uploaded_references",
@@ -162,17 +220,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "List all files in the project's assets/ directory. Use this to discover "
             "available images, PDFs, and other files for \\\\includegraphics{} references."
-        ),
-        "parameters": {},
-        "required": [],
-    },
-    {
-        "name": "verify_compile",
-        "description": (
-            "Compile the current shadow buffer with the LaTeX engine to check for errors. "
-            "Returns {success: true/false, errors: [...], stderr: '...'}. "
-            "Call this after applying your edits to verify the document compiles cleanly before signaling done=true. "
-            "If compilation fails, read the error, fix it with str_replace, and verify again."
         ),
         "parameters": {},
         "required": [],
@@ -208,17 +255,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "List all files in the project workspace with metadata (line count, char count, modified status). "
             "Use this to discover multi-file project structure before editing auxiliary .tex files."
-        ),
-        "parameters": {},
-        "required": [],
-    },
-    {
-        "name": "read_document_summary",
-        "description": (
-            "Get a compact structural analysis of the document: metadata (title, author, class), "
-            "content inventory (figures, tables, equations, references), per-section breakdown "
-            "with line counts and content markers. Use this instead of reading the entire file "
-            "when you need a global understanding of the document structure."
         ),
         "parameters": {},
         "required": [],
@@ -285,6 +321,25 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
+# Earlier tool names, still accepted from the model (and from older prompts).
+TOOL_ALIASES: Dict[str, str] = {
+    "str_replace": "replace_text",
+    "grep_search": "search_document",
+    "verify_compile": "compile_latex",
+    "read_document_summary": "inspect_document",
+}
+
+# Tools that change the document (used for transactions and tracing).
+EDIT_TOOLS = frozenset({
+    "replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",
+    "insert_into_chunk", "justify_content",
+})
+
+
+def canonical_tool_name(name: str) -> str:
+    return TOOL_ALIASES.get(name, name)
+
+
 def get_tools_prompt_block() -> str:
     """
     Generates the tool documentation block for the LLM system prompt.
@@ -330,6 +385,8 @@ def execute_tool(
     try:
         main_file = getattr(workspace, "file_path", getattr(workspace, "_file_path", "main.tex"))
 
+        tool_name = TOOL_ALIASES.get(tool_name, tool_name)
+
         if tool_name == "read_file_range":
             target_file = args.get("file")
             start = int(args.get("start_line", 1))
@@ -346,38 +403,82 @@ def execute_tool(
                     "lines_read": f"{start}-{end}",
                     "total_lines": file_lines,
                 }
-            else:
-                content = workspace.read_lines(start, end)
-                return {
-                    "file": main_file,
-                    "content": content,
-                    "lines_read": f"{start}-{end}",
-                    "total_lines": workspace.get_line_count(),
-                }
+            content = workspace.read_lines(start, end)
+            ledger = getattr(workspace, "context_ledger", None)
+            if ledger is not None:
+                content = ledger.filter(content)
+            return {
+                "file": main_file,
+                "content": content,
+                "lines_read": f"{start}-{end}",
+                "total_lines": workspace.get_line_count(),
+            }
 
-        elif tool_name == "grep_search":
+        elif tool_name == "search_document":
             query = args.get("query", "")
             is_regex = bool(args.get("is_regex", False))
             target_file = args.get("file")
-            if target_file and target_file not in ("main.tex", main_file):
-                results = workspace.grep_file(target_file, query, is_regex=is_regex)
-            else:
-                results = workspace.grep(query, is_regex=is_regex)
-            return {
+            def run(q: str, rx: bool):
+                if target_file and target_file not in ("main.tex", main_file):
+                    return workspace.grep_file(target_file, q, is_regex=rx)
+                return workspace.grep(q, is_regex=rx)
+
+            results = run(query, is_regex)
+            ignore_case = False
+            if not any("line_no" in r for r in results) and query:
+                # Users name things in lower case ("change jacob ..."), documents do not
+                # ("JACOB PRASANTH"): retry ignoring case rather than report nothing.
+                results = run("(?i)" + (query if is_regex else re.escape(query)), True)
+                ignore_case = any("line_no" in r for r in results)
+            out = {
                 "matches": results,
                 "match_count": len([r for r in results if "line_no" in r]),
                 "query": query,
             }
+            if ignore_case:
+                out["note"] = "No exact-case match; these lines match ignoring case."
+            return out
 
-        elif tool_name == "str_replace":
-            old_str = args.get("old_str", "")
-            new_str = args.get("new_str", "")
+        elif tool_name == "replace_text":
+            old_str = args.get("old_str", args.get("old_text", ""))
+            new_str = args.get("new_str", args.get("new_text", ""))
             target_file = args.get("file")
             if target_file and target_file not in ("main.tex", main_file):
-                result = workspace.str_replace_file(target_file, old_str, new_str)
-            else:
-                result = workspace.str_replace(old_str, new_str)
-            return result
+                return workspace.str_replace_file(target_file, old_str, new_str)
+            line_hint = args.get("line_hint")
+            try:
+                line_hint = int(line_hint) if line_hint not in (None, "") else None
+            except (TypeError, ValueError):
+                line_hint = None
+            return workspace.str_replace(old_str, new_str, line_hint=line_hint, node_id=args.get("node_id") or None)
+
+        elif tool_name == "inspect_document":
+            from .context_builder import build_outline
+            from document_analyzer import analyze_document
+            analysis = analyze_document(workspace.get_buffer())
+            return {
+                "outline": build_outline(workspace),
+                "total_lines": analysis.total_lines,
+                "estimated_tokens": analysis.estimated_tokens,
+                "structure_type": analysis.primary_structure_type,
+            }
+
+        elif tool_name == "get_block":
+            return workspace.get_block(
+                str(args.get("node_id", "")).strip(),
+                include_parent=bool(args.get("include_parent", False)),
+                include_style=bool(args.get("include_style", False)),
+            )
+
+        elif tool_name == "replace_block":
+            return workspace.replace_block(str(args.get("node_id", "")).strip(), args.get("new_content", ""))
+
+        elif tool_name == "insert_block":
+            return workspace.insert_block(str(args.get("node_id", "")).strip(), args.get("content", ""),
+                                          str(args.get("position", "after")).strip().lower())
+
+        elif tool_name == "delete_block":
+            return workspace.delete_block(str(args.get("node_id", "")).strip())
 
         elif tool_name == "rewrite_chunk":
             chunk_id = str(args.get("chunk_id", "")).strip()
@@ -391,6 +492,30 @@ def execute_tool(
             position = args.get("position", "end")
             result = workspace.insert_into_chunk(chunk_id=chunk_id, content=content, position=position)
             return result
+
+        elif tool_name == "compile_latex":
+            from .shadow_compiler import compile_shadow_buffer
+            return compile_shadow_buffer(workspace)
+
+        elif tool_name == "validate_edit":
+            from edit_validator import validate_edit
+            ok, errors = validate_edit(workspace.get_original(), workspace.get_buffer())
+            return {"success": ok, "valid": ok, "new_errors": errors[:10]}
+
+        elif tool_name == "rollback_edit":
+            return workspace.rollback_last()
+
+        elif tool_name == "detect_overflow":
+            from .layout_tools import detect_overflow_tool
+            return detect_overflow_tool(workspace)
+
+        elif tool_name == "inspect_pdf_geometry":
+            from .layout_tools import inspect_pdf_geometry_tool
+            return inspect_pdf_geometry_tool(workspace, int(args.get("page", 1) or 1))
+
+        elif tool_name == "justify_content":
+            from .layout_tools import justify_content_tool
+            return justify_content_tool(workspace, args)
 
         elif tool_name == "search_uploaded_references":
             from attached_context import attached_context_store
@@ -409,12 +534,6 @@ def execute_tool(
                 "count": len(assets),
             }
 
-        elif tool_name == "verify_compile":
-            # Delegate to shadow_compiler module
-            from .shadow_compiler import compile_shadow_buffer
-            result = compile_shadow_buffer(workspace)
-            return result
-
         elif tool_name == "get_template_theme":
             from .template_registry import get_template_theme as fetch_theme
             cat = args.get("category", "ppt")
@@ -427,19 +546,6 @@ def execute_tool(
             return {
                 "files": files,
                 "count": len(files),
-            }
-
-        elif tool_name == "read_document_summary":
-            from document_analyzer import analyze_document, generate_compact_summary
-            buffer_content = workspace.get_buffer()
-            analysis = analyze_document(buffer_content)
-            summary = generate_compact_summary(analysis)
-            return {
-                "summary": summary,
-                "total_lines": analysis.total_lines,
-                "estimated_tokens": analysis.estimated_tokens,
-                "structure_type": analysis.primary_structure_type,
-                "structural_units": analysis.structural_unit_count,
             }
 
         elif tool_name == "list_attached_documents":

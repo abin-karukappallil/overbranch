@@ -32,6 +32,8 @@ from . import jobs
 from .config import Pdf2LatexSettings, get_settings
 from .extract import extract_document, render_page_png
 from .facts import fallback_body, page_facts
+from .geometry import (describe_unresolved, drop_condensed_sizes, fitted_texts, page_mismatches,
+                       repair_body, source_blocks)
 from .llm import LLMCallFailed, complete, llm_available, model_name
 from .models import RGB, ConversionReport, DocExtract, PageExtract, PageReport
 from .preamble import (
@@ -93,6 +95,7 @@ class Score:
     extra_ratio: float = 0.0
     shift_pt: float = 0.0
     displacement: Optional[float] = None  # median pt a word moved from its place in the PDF
+    clipped: bool = False  # text runs off the page edge
 
     @property
     def rank(self) -> float:
@@ -125,6 +128,7 @@ class Ctx:
     bodies: Dict[int, str] = field(default_factory=dict)
     b64: Dict[str, str] = field(default_factory=dict)
     src_words: Dict[int, List[WordBox]] = field(default_factory=dict)
+    src_blocks: Dict[int, Tuple[list, Tuple[float, float]]] = field(default_factory=dict)
     doc_lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
@@ -144,7 +148,7 @@ class Ctx:
         replaced by the positioned-layout fallback. Text coverage is the signal that actually
         separates a faithful page from a broken one.
         """
-        return (sc is not None and not sc.overflow
+        return (sc is not None and not sc.overflow and not sc.clipped
                 and sc.coverage >= self.settings.coverage_target
                 and sc.extra_ratio <= EXTRA_TOLERANCE
                 and sc.value >= self.settings.visual_floor
@@ -170,7 +174,9 @@ def _page_status(ctx: Ctx, pr: PageReport, status: Optional[str] = None) -> None
     if status:
         pr.status = status
     jobs.update_page(ctx.job_id, pr.number, status=pr.status, similarity=pr.similarity, attempts=pr.attempts,
-                     fallback=pr.fallback, warnings=pr.warnings, text_coverage=pr.text_coverage)
+                     fallback=pr.fallback, warnings=pr.warnings, text_coverage=pr.text_coverage,
+                     style_mismatches=pr.style_mismatches, overflow_lines=pr.overflow_lines,
+                     geometry_repairs=pr.geometry_repairs)
     done = sum(1 for p in ctx.report.pages if p.status in ("done", "below_threshold", "failed"))
     total = max(1, len(ctx.report.pages))
     jobs.update_job(ctx.job_id, progress=round(0.15 + 0.75 * done / total, 3),
@@ -383,6 +389,58 @@ async def _score(ctx: Ctx, page: PageExtract, pdf: bytes) -> Optional[Score]:
                  displacement=moved)
 
 
+GEOMETRY_ROUNDS = 2
+GEOMETRY_RANK_TOLERANCE = 0.02  # a style repair may cost this much visual rank (bold is wider)
+_FIXABLE = ("weight", "italic", "overflow_right")
+
+
+def _src_blocks(ctx: Ctx, n: int):
+    if n not in ctx.src_blocks:
+        with ctx.doc_lock:
+            ctx.src_blocks[n] = source_blocks(ctx.doc, n)
+    return ctx.src_blocks[n]
+
+
+async def _polish(ctx: Ctx, page: PageExtract, body: str, pdf: bytes, sc: Score,
+                  pr: PageReport) -> Tuple[str, bytes, Score, list]:
+    """
+    Compares the compiled page with the PDF line by line and fixes, in place and
+    without the LLM, what can be fixed locally: lost bold/italic and lines that
+    run past their right edge. A repair is kept only if it does not cost text
+    coverage or more than a sliver of visual rank. Returns the (possibly
+    repaired) page and the mismatches still left.
+    """
+    try:
+        src, size = await asyncio.to_thread(_src_blocks, ctx, page.number)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"source blocks unavailable for page {page.number}: {e}")
+        return body, pdf, sc, []
+    mism = await asyncio.to_thread(page_mismatches, src, size, pdf)
+    for _ in range(GEOMETRY_ROUNDS):
+        fixable = [m for m in mism if m.kind in _FIXABLE]
+        if not fixable:
+            break
+        ordered = [(ln.text.strip(), ln.bbox[0], ln.baseline) for ln in page.lines]
+        new_body, repairs, _left = repair_body(body, fixable, ordered)
+        if not repairs:
+            break
+        nb, npdf, _log = await _compile_page(ctx, page, new_body, pr, allow_llm=False)
+        if npdf is None:
+            break
+        nsc = await _score(ctx, page, npdf)
+        if (nsc is None or nsc.coverage + 1e-9 < sc.coverage or (nsc.overflow and not sc.overflow)
+                or nsc.rank < sc.rank - GEOMETRY_RANK_TOLERANCE):
+            break
+        body, pdf, sc = nb, npdf, nsc
+        pr.geometry_repairs.extend(repairs)
+        mism = await asyncio.to_thread(page_mismatches, src, size, pdf)
+    mism = drop_condensed_sizes(mism, fitted_texts(pr.geometry_repairs))
+    sc.clipped = any(m.kind == "clipped" for m in mism)
+    pr.style_mismatches = sum(1 for m in mism if m.kind in ("weight", "italic", "size"))
+    pr.overflow_lines = sum(1 for m in mism if m.kind in ("overflow_right", "clipped"))
+    return body, pdf, sc, mism
+
+
 def _differences(sc: Score) -> str:
     """The note for a re-run: the concrete, fixable defects first."""
     parts = []
@@ -445,6 +503,9 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
         if pdf is not None:
             _page_status(ctx, pr, "verifying")
             sc = await _score(ctx, page, pdf)
+            unresolved: list = []
+            if sc is not None and not page.is_scanned:
+                body, pdf, sc, unresolved = await _polish(ctx, page, body, pdf, sc, pr)
 
             # 1. Re-run only for a defect the model can act on: missing or invented words,
             #    an overflow, or a page that looks nothing like the original. A page that is
@@ -453,12 +514,18 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
             if (ctx.settings.quality_rerun and ctx.use_llm and pr.fallback is None
                     and sc is not None and not ctx.acceptable(sc)):
                 _page_status(ctx, pr, "rerunning")
+                details = _differences(sc)
+                style = describe_unresolved(unresolved)
+                if style:
+                    details += "\n- Text style / right-edge differences (fix each):\n" + style
                 note = fill(QUALITY_NOTE, SCORE=f"{sc.value:.2f}", TARGET=f"{ctx.threshold:.2f}",
-                            DETAILS=_differences(sc), BODY=body)
+                            DETAILS=details, BODY=body)
                 body2 = await _generate(ctx, page, facts, png, pr, note=note, allow_short_retry=False)
                 if body2:
                     body2, pdf2, _ = await _compile_page(ctx, page, body2, pr)
                     sc2 = await _score(ctx, page, pdf2) if pdf2 is not None else None
+                    if sc2 is not None and pdf2 is not None:
+                        body2, pdf2, sc2, _unres2 = await _polish(ctx, page, body2, pdf2, sc2, pr)
                     if sc2 is not None and sc2.rank > sc.rank:
                         body, pdf, sc = body2, pdf2, sc2
                     else:
@@ -637,6 +704,9 @@ def _emit_trace(job_id: str, project_id: str, report: ConversionReport, elapsed:
             page_scores=[p.similarity for p in report.pages], mean_similarity=report.mean_similarity,
             fallback_pages=sum(1 for p in report.pages if p.fallback), warnings=len(report.warnings),
             compile_success=report.compiled, total_latency_ms=elapsed * 1000,
+            style_mismatches=sum(p.style_mismatches or 0 for p in report.pages),
+            overflow_lines=sum(p.overflow_lines or 0 for p in report.pages),
+            geometry_repairs=sum(len(p.geometry_repairs) for p in report.pages),
         ))
     except Exception as e:  # noqa: BLE001
         logger.debug(f"Conversion trace emission failed: {e}")
