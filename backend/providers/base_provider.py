@@ -13,11 +13,30 @@ logger = logging.getLogger("llm_provider")
 
 
 class LLMProviderError(Exception):
-    """Base exception for all LLM provider errors."""
-    def __init__(self, message: str, status_code: Optional[int] = None, provider: str = "unknown"):
+    """
+    Base exception for all LLM provider errors.
+
+    ``kind`` (a providers.errors.FailureKind) decides whether the ProviderRouter
+    may fall back to another provider; it is derived from ``status_code`` and the
+    message when the raiser does not set it.
+    """
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        provider: str = "unknown",
+        kind: Optional[Any] = None,
+        retry_after: Optional[float] = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.provider = provider
+        if kind is None:
+            from .errors import classify
+            kind, parsed_retry = classify(status_code, message)
+            retry_after = retry_after if retry_after is not None else parsed_retry
+        self.kind = kind
+        self.retry_after = retry_after
 
 
 class LLMProvider(ABC):

@@ -1,13 +1,29 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Zap, Square, ArrowDown, Check, Loader2 } from "lucide-react";
+import { Zap, Square, ArrowDown, Check, Loader2, AlertTriangle } from "lucide-react";
 
 export interface AgentProgressStep {
   step: string;
   message: string;
   icon?: string;
+  /** For step === "phase": finding_target | applying | compiling | checking_layout | repairing | done | failed */
+  phase?: string;
+  /** Structured failure detail (operation, target, attempts) — shown in development only. */
+  details?: Record<string, unknown> | null;
 }
+
+const PHASE_LABELS: Record<string, string> = {
+  finding_target: "Finding target…",
+  applying: "Applying patch…",
+  compiling: "Compiling…",
+  checking_layout: "Checking layout…",
+  repairing: "Repairing…",
+  done: "Done",
+  failed: "Not applied",
+};
+
+const SHOW_DEBUG_DETAILS = process.env.NODE_ENV !== "production";
 
 interface AgentReasoningWindowProps {
   steps: AgentProgressStep[];
@@ -72,6 +88,8 @@ export function AgentReasoningWindow({
   };
 
   const activeStepNumber = steps.length > 0 ? steps.length : 1;
+  const currentPhase = [...steps].reverse().find((s) => s.step === "phase" && s.phase);
+  const phaseFailed = currentPhase?.phase === "failed";
 
   return (
     <div
@@ -87,6 +105,18 @@ export function AgentReasoningWindow({
           <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#22242C] text-[#9E9E9E] border border-[#282A30] font-mono font-medium shrink-0">
             Step {activeStepNumber}
           </span>
+          {currentPhase?.phase && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-md border font-mono font-medium shrink-0 ${
+                phaseFailed
+                  ? "bg-[#EB5757]/10 text-[#EB5757] border-[#EB5757]/30"
+                  : "bg-[#10B981]/10 text-[#10B981] border-[#10B981]/30"
+              }`}
+              title={currentPhase.message}
+            >
+              {PHASE_LABELS[currentPhase.phase] || currentPhase.phase}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -148,7 +178,9 @@ export function AgentReasoningWindow({
                 }`}
               >
                 <div className="mt-0.5 shrink-0">
-                  {isLatest ? (
+                  {s.step === "phase" && s.phase === "failed" ? (
+                    <AlertTriangle className="w-3 h-3 text-[#EB5757]" />
+                  ) : isLatest ? (
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10B981]" />
@@ -159,6 +191,11 @@ export function AgentReasoningWindow({
                 </div>
                 <div className="flex-1 min-w-0 break-words leading-relaxed">
                   <span title={s.message}>{s.message}</span>
+                  {SHOW_DEBUG_DETAILS && s.details && (
+                    <pre className="mt-1 whitespace-pre-wrap text-[10px] text-[#9E9E9E]">
+                      {JSON.stringify(s.details, null, 1)}
+                    </pre>
+                  )}
                 </div>
               </div>
             );

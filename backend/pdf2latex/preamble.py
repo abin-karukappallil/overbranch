@@ -42,11 +42,12 @@ class Geometry:
 
 @dataclass(frozen=True)
 class FontPlan:
-    main: str  # "times" | "palatino" | "lmodern" | "helvetica" | "courier"
+    main: str  # "times" | "palatino" | "lmodern" | "helvetica" | "courier" | "carlito" | "caladea"
     main_family: str  # "serif" | "sans" | "mono"
     uses_sans: bool
     uses_mono: bool
     body_size: float
+    sans: str = "helvetica"  # font class providing \sffamily when sans is secondary
 
 
 def page_geometry(doc: DocExtract) -> Geometry:
@@ -80,32 +81,8 @@ def collect_colors(doc: DocExtract) -> Dict[str, RGB]:
     return {color_name(rgb): rgb for rgb, _ in counts.most_common()}
 
 
-_TIMES = ("times", "tinos", "nimbusrom", "liberationserif", "termes", "stix", "cambria", "georgia", "minion")
-_PALATINO = ("palatino", "palladio", "bookantiqua", "pagella", "garamond", "baskerville")
-_LMODERN = ("cmr", "cmbx", "cmti", "cmsl", "lmroman", "sfrm", "sfbx", "sfti", "cmss", "lmsans", "cmtt", "lmmono")
-_SANS = ("arial", "helvetica", "calibri", "verdana", "tahoma", "segoe", "roboto", "opensans", "dejavusans",
-         "liberationsans", "arimo", "nimbussans", "heros", "sans", "gothic", "lato", "montserrat", "carlito",
-         "myriad", "franklin", "futura", "gill", "trebuchet", "ubuntu", "inter", "poppins", "candara", "corbel")
-_MONO = ("courier", "mono", "consolas", "menlo", "inconsolata", "code", "typewriter", "cousine")
-
-
-def font_class(font_name: str, flags: int = 0) -> str:
-    n = re.sub(r"^[A-Z]{6}\+", "", font_name or "").lower().replace(" ", "").replace("-", "")
-    if flags & 8 or any(k in n for k in _MONO):
-        return "courier"
-    if any(k in n for k in _LMODERN):
-        return "lmodern"
-    if any(k in n for k in _PALATINO):
-        return "palatino"
-    if any(k in n for k in _TIMES):
-        return "times"
-    if any(k in n for k in _SANS):
-        return "helvetica"
-    return "times" if flags & 4 else "helvetica"
-
-
-def family_of(cls: str) -> str:
-    return {"helvetica": "sans", "courier": "mono"}.get(cls, "serif")
+# Font classification lives in fontmap.py (metric-compatible substitutes, weights).
+from .fontmap import FONT_LINES, SECONDARY_LINES, family_of, font_class  # noqa: E402,F401
 
 
 def plan_fonts(doc: DocExtract) -> FontPlan:
@@ -121,22 +98,15 @@ def plan_fonts(doc: DocExtract) -> FontPlan:
     main = by_class.most_common(1)[0][0] if by_class else "lmodern"
     families = {family_of(c) for c in by_class}
     main_family = family_of(main)
+    sans_classes = [c for c, _ in by_class.most_common() if family_of(c) == "sans" and c in SECONDARY_LINES]
     return FontPlan(
         main=main,
         main_family=main_family,
         uses_sans="sans" in families and main_family != "sans",
         uses_mono="mono" in families and main_family != "mono",
         body_size=float(by_size.most_common(1)[0][0]) if by_size else 10.0,
+        sans=sans_classes[0] if sans_classes else "helvetica",
     )
-
-
-_FONT_LINES = {
-    "lmodern": ["\\usepackage{lmodern}"],
-    "times": ["\\usepackage{mathptmx}"],
-    "palatino": ["\\usepackage{mathpazo}"],
-    "helvetica": ["\\usepackage{lmodern}", "\\usepackage{helvet}", "\\renewcommand{\\familydefault}{\\sfdefault}"],
-    "courier": ["\\usepackage{lmodern}", "\\usepackage{courier}", "\\renewcommand{\\familydefault}{\\ttdefault}"],
-}
 
 
 def build_preamble(geom: Geometry, colors: Dict[str, RGB], fonts: FontPlan) -> str:
@@ -146,10 +116,10 @@ def build_preamble(geom: Geometry, colors: Dict[str, RGB], fonts: FontPlan) -> s
         "\\usepackage[T1]{fontenc}",
         "\\usepackage[utf8]{inputenc}",
         "\\usepackage{textcomp}",
-        *_FONT_LINES[fonts.main],
+        *FONT_LINES[fonts.main],
     ]
     if fonts.uses_sans:
-        lines.append("\\usepackage{helvet}")
+        lines.append(SECONDARY_LINES.get(fonts.sans, SECONDARY_LINES["helvetica"]))
     if fonts.uses_mono:
         lines.append("\\usepackage{courier}")
     lines += [
@@ -180,6 +150,10 @@ def build_preamble(geom: Geometry, colors: Dict[str, RGB], fonts: FontPlan) -> s
         "\\newcommand{\\obfit}[1]{\\sbox{\\obpagebox}{\\begin{minipage}[t]{\\linewidth}#1\\end{minipage}}%",
         "  \\ifdim\\dimexpr\\ht\\obpagebox+\\dp\\obpagebox\\relax>\\dimexpr\\textheight-2pt\\relax"
         "\\resizebox*{!}{\\dimexpr\\textheight-2pt\\relax}{\\usebox{\\obpagebox}}\\else\\usebox{\\obpagebox}\\fi}",
+        # Condenses one line horizontally to a width, only if it is wider (right-edge fit)
+        "\\newsavebox{\\obhbox}",
+        "\\newcommand{\\obhfit}[2]{\\sbox{\\obhbox}{#2}%",
+        "  \\ifdim\\wd\\obhbox>#1\\relax\\resizebox{#1}{\\ht\\obhbox}{\\usebox{\\obhbox}}\\else\\usebox{\\obhbox}\\fi}",
         f"\\AtBeginDocument{{\\fontsize{{{size}bp}}{{{lead}bp}}\\selectfont}}",
     ]
     return "\n".join(lines)

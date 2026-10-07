@@ -36,6 +36,9 @@ FACTS FORMAT
   carries gap, because the line before it is elsewhere on the page.
   side = this block sits BESIDE the main text (a margin note / annotation column), bw = its width
   in pt. Lines within one block are consecutive and do carry gap as usual.
+  fit = this line, set in the document's font, would come out WIDER than in the PDF and run past its
+  right edge: wrap the line's text in \obhfit{<fit>pt}{...} (predefined; it condenses the line to that
+  width only if needed). Keep the fonts/colours inside the braces. Never shorten or break such a line.
 - images[]: file (exact path), x, y = TOP edge, w, h. kind "figure" = rasterized diagram/chart (its labels are inside the image).
 - shapes[]: hrule / vrule (lw = thickness, c = color) and rect (fill / stroke color, lw); x, y = top-left, w, h.
 - marks[]: small graphic marks (bullets, icons): use \textbullet, \rule or a small tikz shape of the same color.
@@ -44,6 +47,7 @@ RULES
 1. Reproduce ALL visible text exactly, in order, including headers, footers, page numbers, captions, labels and small instruction text. Never summarize, paraphrase, translate, reorder or omit anything.
 2. Colors: use the predefined names (\textcolor{c1F4E79}{...} or {\color{c1F4E79} ...}). Define any other color with exact RGB: \definecolor{name}{RGB}{r,g,b}.
 3. Font sizes: use \fontsize{sz}{1.2*sz}\selectfont with the exact pt values from the facts ("gap" is computed for that leading, so changing it will shift the page).
+3b. Weight and slant are part of the text: every run with b=1 MUST be bold (\textbf{...} or \bfseries) and every run with i=1 italic — including small labels and table headers. The result is checked word by word against the PDF.
 4. Images: \includegraphics[width=<w>bp,height=<h>bp]{<file>} with the exact file path from the facts.
 5. Spacing and alignment: use each line's "gap" for vertical space (do not compute your own from y, and do not add space where there is no gap), and \hspace{..pt} from the x coordinates for horizontal offsets. Centered lines → \begin{center} or \centering; right-aligned → \raggedleft / \begin{flushright}; wrapped prose whose lines fill the width → one justified paragraph (join its lines, do not force line breaks inside it). Keep separate units (titles, list items, table rows, labels, signatures) on their own lines.
 6. Blocks: lines are given in reading order, grouped into blocks. Render the blocks in the order

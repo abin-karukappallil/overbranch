@@ -40,6 +40,14 @@ def tex_errors(output: str) -> List[str]:
     return list(dict.fromkeys(m.group(0).strip() for m in _TEX_ERROR_RE.finditer(output or "")))[:20]
 
 
+def _overfull_boxes(output: str) -> List[Dict[str, Any]]:
+    try:
+        from latex_layout.overflow import parse_overfull
+        return parse_overfull(output)
+    except Exception:
+        return []
+
+
 def augment_path_for_latex():
     """Augments system PATH with common MiKTeX and TeX Live installation locations on Windows."""
     if sys.platform == "win32":
@@ -890,6 +898,9 @@ def compile_latex(
                             "compile_time_ms": elapsed_ms,
                             "log": last_output[-1000:] if last_output else f"Compiled via {cmd[0]}",
                             "errors": tex_errors(last_output),
+                            # Overfull boxes are warnings, so they never reach the
+                            # truncated log above; keep them for layout checks.
+                            "overfull": _overfull_boxes(last_output),
                         }
                 except subprocess.TimeoutExpired:
                     last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"

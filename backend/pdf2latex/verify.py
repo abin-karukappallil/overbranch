@@ -301,8 +301,13 @@ def words_with_boxes(pdf_bytes: bytes, page_index: int = 0) -> List[WordBox]:
             return out
         for x0, y0, x1, y1, w, *_ in doc[page_index].get_text("words"):
             norm = _normalize_word(unicodedata.normalize("NFKC", w))
-            if len(norm) >= 2:
-                out.append(WordBox(norm, (x0 + x1) / 2.0, (y0 + y1) / 2.0))
+            if len(norm) < 2:
+                continue
+            cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+            # A word drawn twice at the same spot (fake bold by overprinting) is one word.
+            if any(o.text == norm and abs(o.x - cx) <= 1.5 and abs(o.y - cy) <= 1.0 for o in out[-40:]):
+                continue
+            out.append(WordBox(norm, cx, cy))
     return out
 
 

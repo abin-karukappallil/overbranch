@@ -12,6 +12,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from .base_provider import LLMProvider, LLMProviderError
+from .errors import classify
 from .multimodal import has_image_parts, strip_image_parts
 from .web2api_keys import get_web2api_base_url, load_web2api_keys
 
@@ -348,8 +349,13 @@ class GeminiProvider(LLMProvider):
                 next_slot = (current_slot + 1) % total_keys
                 self._active_key_index = next_slot
 
+        # Classified, so the router can tell a rate limit / outage (fall back to
+        # OpenRouter) from a malformed request (fails everywhere; do not).
+        kind, retry_after = classify(last_status_code, str(last_error or ""))
         raise LLMProviderError(
             f"All {total_keys} Gemini Web2API keys failed. Last error: {last_error}",
             status_code=last_status_code,
             provider="Gemini",
+            kind=kind,
+            retry_after=retry_after,
         )

@@ -24,6 +24,12 @@ Apply contract (version 2)
 5. **Line-addressed.** ``orig_start_line`` / ``orig_end_line`` (1-based,
    inclusive) allow positional application when the document is unchanged.
 
+6. **Node-addressed (v3, additive).** ``node_id`` / ``node_path`` name the
+   innermost structural node (document_index.index_nodes) enclosing the anchor
+   in the original. A client that cannot find the anchor by text — because the
+   document changed under it — can send the item to ``/api/agent/resolve-edits``,
+   which re-locates it by node, then normalised text, then similarity.
+
 ``compute_final_diff`` additionally carries ``proposed_code`` plus
 ``original_sha256``: that pair is *authoritative*. A client holding it should
 write ``proposed_code`` directly when the live document still matches
@@ -44,7 +50,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from edit_validator import clean_latex_for_validation
 
-APPLY_CONTRACT_VERSION = 2
+APPLY_CONTRACT_VERSION = 3
 
 _RE_ENV_TAG = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z@*][A-Za-z0-9@*]*)\s*\}")
 _RE_ESCAPED_BRACE = re.compile(r"(?<!\\)(?:\\\\)*\\[{}]")
@@ -247,10 +253,44 @@ def compute_edit_items(
             })
 
         if failed_at is None:
-            return items
+            return _annotate_nodes(original, items)
 
         if len(hunks) == 1 or not merge_at(hunks, failed_at):
             return [_full_document_item(original, modified, explanation, n_orig, n_mod)]
+
+
+def _annotate_nodes(original: str, items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Adds node_id / node_path of the innermost node enclosing each item's lines."""
+    try:
+        from document_index import index_nodes
+        nodes = index_nodes(original)
+    except Exception:
+        return items
+    by_id = {n.node_id: n for n in nodes}
+    for item in items:
+        # The changed lines, without the context added to make the anchor unique.
+        a = item.get("orig_start_line", 0) + item.get("context_before", 0)
+        b = item.get("orig_end_line", 0) - item.get("context_after", 0)
+        if b < a:  # pure insertion: it sits between two lines
+            a = b = max(1, a - 1)
+        inner = None
+        for n in nodes:
+            if n.kind != "preamble" and n.start_line <= a and b <= n.end_line:
+                if inner is None or (n.end - n.start) <= (inner.end - inner.start):
+                    inner = n
+        if inner is None:
+            pre = by_id.get("preamble")
+            inner = pre if pre and b <= pre.end_line else None
+        if inner is None:
+            continue
+        path = [inner.node_id]
+        parent = inner.parent_id
+        while parent and parent in by_id and len(path) < 6:
+            path.append(parent)
+            parent = by_id[parent].parent_id
+        item["node_id"] = inner.node_id
+        item["node_path"] = list(reversed(path))
+    return items
 
 
 def compute_final_diff(

@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import time
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from .base_provider import LLMProvider, LLMProviderError
+from .errors import FALLBACK_KINDS, classify_exception
 from .groq_provider import GroqProvider
 from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
 from .openrouter_provider import OpenRouterProvider
@@ -50,6 +53,35 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
     TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
     TaskType.VISION_DIFF: "minimax/minimax-01",
 }
+
+
+DEFAULT_FALLBACK_CHAIN = "openrouter:minimax/minimax-m3"
+
+
+def _fallback_entries() -> List[str]:
+    raw = os.getenv("LLM_FALLBACK_CHAIN", DEFAULT_FALLBACK_CHAIN)
+    if not raw.strip():
+        return []
+    return [e.strip() for e in raw.split(",") if e.strip()]
+
+
+def _is_configured(provider: LLMProvider, name: str, api_keys: Optional[Dict[str, str]]) -> bool:
+    """A fallback is only worth trying when it has a key: server-side or the user's own."""
+    if api_keys and (api_keys.get(name) or "").strip():
+        return True
+    candidates = getattr(provider, "candidates", None)
+    if candidates is None:
+        return True
+    return bool(candidates)
+
+
+def _notify(observer: Optional[Callable[[Dict[str, Any]], None]], attempt: Dict[str, Any]) -> None:
+    if observer is None:
+        return
+    try:
+        observer(attempt)
+    except Exception as e:  # tracing must never break a call
+        logger.debug(f"LLM attempt observer failed: {e}")
 
 
 def validate_json_schema(payload: Any, required_fields: List[str]) -> Tuple[bool, str]:
@@ -114,7 +146,7 @@ class ProviderRouter:
         return self.openrouter
 
     def get_fallback_model(self) -> str:
-        return "minimax/minimax-01"
+        return self.openrouter.default_model
 
     def get_fast_model(self) -> str:
         return "llama-3.1-8b-instant"
@@ -160,6 +192,37 @@ class ProviderRouter:
             "default_model": DEFAULT_MODEL,
         }
 
+    # ------------------------------------------------------------------
+    # Fallback chain
+    # ------------------------------------------------------------------
+
+    def register_provider(self, name: str, provider: LLMProvider) -> None:
+        """Adds a provider that LLM_FALLBACK_CHAIN entries can name."""
+        self._providers[name] = provider
+
+    def fallback_chain(self, model: str, api_keys: Optional[Dict[str, str]] = None) -> List[Tuple[str, LLMProvider, str]]:
+        """
+        [(provider_name, provider, model)] to try in order: the provider that
+        serves ``model`` first, then every configured fallback that is not the
+        same provider+model. Fallbacks come from LLM_FALLBACK_CHAIN
+        ("provider:model,provider:model"), default OpenRouter + MiniMax M3.
+        """
+        primary = self.route(model)
+        primary_name = next((n for n, p in self._providers.items() if p is primary), primary.get_provider_name())
+        chain: List[Tuple[str, LLMProvider, str]] = [(primary_name, primary, model)]
+        for entry in _fallback_entries():
+            name, _, fb_model = entry.partition(":")
+            provider = self._providers.get(name.strip().lower())
+            if provider is None:
+                continue
+            fb_model = fb_model.strip() or (self.get_fallback_model() if provider is self.openrouter else model)
+            if provider is primary and fb_model == model:
+                continue
+            if not _is_configured(provider, name.strip().lower(), api_keys):
+                continue
+            chain.append((name.strip().lower(), provider, fb_model))
+        return chain
+
     def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -168,51 +231,78 @@ class ProviderRouter:
         max_tokens: int = 4096,
         api_keys: Optional[Dict[str, str]] = None,
         cancel_token: Optional[Any] = None,
+        observer: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        """
+        Calls the provider for ``model`` and walks the fallback chain on provider
+        failures (rate limit, quota, timeout, outage, unavailable model). A user
+        cancellation or a malformed request is raised immediately — another
+        provider would not do better.
+
+        The response carries ``provider``, ``model_used``, ``key_id`` (never a
+        key), ``is_fallback`` and ``attempts``. ``observer`` receives one dict per
+        attempt, for tracing.
+        """
+        from cancellation import LLMOperationCancelled
+
         clean_model = (model or "").strip().lower()
         if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
             model = DEFAULT_MODEL
 
-        provider = self.route(model)
-        logger.info(f"Routing model '{model}' → {provider.get_provider_name()}")
+        chain = self.fallback_chain(model, api_keys)
         cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
-        try:
-            return provider.chat(
-                messages=messages,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_keys=api_keys,
-                **cancel_kwargs,
-            )
-        except Exception as primary_err:
-            # If user explicit cancellation was requested, re-raise immediately
-            from cancellation import LLMOperationCancelled
-            if isinstance(primary_err, LLMOperationCancelled):
-                raise
+        attempts: List[Dict[str, Any]] = []
 
-            # Automatic fallback to OpenRouter (MiniMax M3) if Gemini Web2API / Groq fails or times out
-            if provider != self.openrouter and (self.openrouter.candidates or (api_keys and api_keys.get("openrouter"))):
-                fallback_model = self.get_fallback_model()  # "minimax/minimax-01" (MiniMax M3)
-                logger.warning(
-                    f"Primary provider '{provider.get_provider_name()}' failed/timed out ({primary_err}). "
-                    f"Auto-falling back to OpenRouter MiniMax M3 ({fallback_model})..."
+        for idx, (name, provider, target_model) in enumerate(chain):
+            if cancel_token is not None and cancel_token.is_cancelled():
+                raise LLMOperationCancelled("LLM call cancelled.")
+            t0 = time.time()
+            try:
+                resp = provider.chat(
+                    messages=messages,
+                    model=target_model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    api_keys=api_keys,
+                    **cancel_kwargs,
                 )
-                try:
-                    fallback_resp = self.openrouter.chat(
-                        messages=messages,
-                        model=fallback_model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        api_keys=api_keys,
-                        **cancel_kwargs,
-                    )
-                    fallback_resp["is_fallback"] = True
-                    return fallback_resp
-                except Exception as fb_err:
-                    logger.error(f"Fallback to OpenRouter MiniMax M3 ({fallback_model}) also failed: {fb_err}")
+            except LLMOperationCancelled:
+                raise
+            except Exception as err:
+                kind, _retry_after = classify_exception(err)
+                attempt = {
+                    "provider": name, "model": target_model, "ok": False, "failure": kind.value,
+                    "status_code": getattr(err, "status_code", None),
+                    "latency_ms": round((time.time() - t0) * 1000, 1),
+                }
+                attempts.append(attempt)
+                _notify(observer, attempt)
+                is_last = idx == len(chain) - 1
+                if kind not in FALLBACK_KINDS or is_last:
+                    logger.error(f"LLM call failed on {name} ({kind.value}); "
+                                 f"{'no fallback for this failure' if not is_last else 'fallback chain exhausted'}")
+                    setattr(err, "attempts", attempts)
+                    raise
+                logger.warning(f"Provider '{name}' failed ({kind.value}); falling back to "
+                               f"{chain[idx + 1][0]}:{chain[idx + 1][2]}")
+                continue
 
-            raise primary_err
+            resp = dict(resp)
+            resp["provider"] = name
+            resp.setdefault("model_used", target_model)
+            resp.setdefault("key_id", None)
+            resp["is_fallback"] = idx > 0
+            attempt = {
+                "provider": name, "model": resp.get("model_used") or target_model, "ok": True,
+                "key_id": resp.get("key_id"), "latency_ms": round((time.time() - t0) * 1000, 1),
+                "usage": resp.get("usage") or {},
+            }
+            attempts.append(attempt)
+            _notify(observer, attempt)
+            resp["attempts"] = attempts
+            return resp
+
+        raise LLMProviderError("No LLM provider is configured.", provider="router")
 
     def chat_fast_tier(
         self,

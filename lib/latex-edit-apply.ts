@@ -9,6 +9,11 @@
  * Python mirror of this file that asserts a full replay reproduces
  * `proposed_code` byte-for-byte; keep the two in step.
  *
+ * When this exact/positional pass skips anything, the editor sends the live
+ * document and the items to `/api/agent/resolve-edits` (lib/latex-validate.ts),
+ * which re-locates them by structural node, normalised text and similarity and
+ * applies all of them or none.
+ *
  * Two rules matter above all:
  *   1. `proposed_code` is authoritative. Prefer writing it verbatim, but only
  *      when the live document still matches `original_code` — the editor is not
@@ -43,6 +48,11 @@ export interface AppliedEditItem {
   op?: string;
   anchor_unique?: boolean;
   is_full_document?: boolean;
+  // Apply-contract v3: the structural node enclosing the edit in the original,
+  // used by the server-side fallback (/api/agent/resolve-edits) to re-locate an
+  // edit whose anchor text no longer occurs verbatim.
+  node_id?: string;
+  node_path?: string[];
 }
 
 export interface SkippedEdit {
@@ -65,6 +75,9 @@ export interface ApplyOptions {
 }
 
 export const normalizeNewlines = (s: string): string => s.replace(/\r\n/g, "\n");
+
+/** What the user sees when an accepted change cannot be placed safely. */
+export const SAFE_APPLY_FAILURE = "Couldn't safely apply this change. The document was not modified.";
 
 export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   "no-anchor": "no anchor in the document",

@@ -13,11 +13,13 @@ text-free background page{n}_bg.png placed behind the real text.
 """
 
 import logging
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import pymupdf
 
+from .fontmap import outline_stroke_bold
 from .models import BBox, DocExtract, Drawing, ImageRef, Line, PageExtract, Span
 
 logger = logging.getLogger("pdf2latex.extract")
@@ -124,10 +126,14 @@ def _invisible_text_keys(page: "pymupdf.Page") -> set:
     return keys
 
 
-def _extract_lines(page: "pymupdf.Page") -> List[Line]:
+def _extract_lines(page: "pymupdf.Page", outline_bold: Optional[set] = None) -> List[Line]:
+    from .fontmap import descriptor_bold_fonts, synthetic_bold_origins
+
     flags = pymupdf.TEXT_PRESERVE_WHITESPACE | pymupdf.TEXT_MEDIABOX_CLIP
     raw = page.get_text("dict", flags=flags)
     invisible = _invisible_text_keys(page)
+    desc_bold = descriptor_bold_fonts(page.parent, page)
+    fake_bold = synthetic_bold_origins(page) | (outline_bold or set())
     lines: List[Line] = []
     for b_idx, block in enumerate(raw.get("blocks", [])):
         if block.get("type", 0) != 0:
@@ -143,18 +149,67 @@ def _extract_lines(page: "pymupdf.Page") -> List[Line]:
                 hidden = (round(origin[0], 1), round(origin[1], 1)) in invisible or sp.get("alpha", 255) == 0
                 if not hidden:
                     all_invisible = False
+                font = sp.get("font", "")
                 spans.append(Span(
                     text=text,
-                    font=sp.get("font", ""),
+                    font=font,
                     size=float(sp.get("size", 10.0)),
                     color=_rgb_from_int(int(sp.get("color", 0))),
                     flags=int(sp.get("flags", 0)),
                     bbox=tuple(sp["bbox"]),
                     origin=(float(origin[0]), float(origin[1])),
+                    force_bold=(re.sub(r"^[A-Z]{6}\+", "", font) in desc_bold
+                                or (round(origin[0]), round(origin[1])) in fake_bold),
                 ))
             if spans and any(s.text.strip() for s in spans):
                 lines.append(Line(spans=spans, bbox=tuple(ln["bbox"]), block=b_idx, invisible=all_invisible))
-    return order_lines(lines)
+    return order_lines(collapse_overprint(lines))
+
+
+def _overprint_tolerance(size: float) -> Tuple[float, float]:
+    """How far apart (dx, dy) two copies of a run may be and still be one overprinted run."""
+    return max(1.0, 0.12 * size), max(0.6, 0.06 * size)
+
+
+def collapse_overprint(lines: List[Line]) -> List[Line]:
+    """
+    Removes the extra copies of text a producer drew more than once at (almost)
+    the same spot, and marks the surviving run bold.
+
+    Many PDF producers fake bold by drawing a run twice — fill then stroke, or
+    two fills a fraction of a point apart. PyMuPDF reports every copy as its own
+    line, so each bold label used to reach the facts (and the word-coverage gate,
+    which counts words as a multiset) twice: the converter then had to typeset it
+    twice, and the two copies — set in a real bold of slightly different width —
+    showed up as "double-layered" text.
+    """
+    kept: List[Span] = []
+    out: List[Line] = []
+    for ln in lines:
+        survivors: List[Span] = []
+        for sp in ln.spans:
+            text = sp.text.strip()
+            if not text:
+                survivors.append(sp)
+                continue
+            dx_tol, dy_tol = _overprint_tolerance(sp.size)
+            twin = next((k for k in kept if k.text.strip() == text
+                         and abs(k.origin[0] - sp.origin[0]) <= dx_tol
+                         and abs(k.origin[1] - sp.origin[1]) <= dy_tol
+                         and abs(k.size - sp.size) <= 0.5), None)
+            if twin is not None:
+                twin.force_bold = True
+                continue
+            kept.append(sp)
+            survivors.append(sp)
+        if any(s.text.strip() for s in survivors):
+            if len(survivors) != len(ln.spans):
+                xs = [s.bbox for s in survivors if s.text.strip()]
+                ln = Line(spans=survivors, bbox=(min(b[0] for b in xs), min(b[1] for b in xs),
+                                                 max(b[2] for b in xs), max(b[3] for b in xs)),
+                          block=ln.block, invisible=ln.invisible, column=ln.column)
+            out.append(ln)
+    return out
 
 
 # --- reading order ---------------------------------------------------------
@@ -329,15 +384,23 @@ def _rect_or_rule(b: BBox, stroke, fill, width: float) -> Drawing:
     return Drawing(rect=b, kind="rect", stroke=stroke, fill=fill, width=width)
 
 
-def _extract_drawings(page: "pymupdf.Page") -> List[Drawing]:
+def _page_paths(page: "pymupdf.Page") -> List[Dict]:
     try:
-        paths = page.get_drawings()
+        return page.get_drawings()
     except Exception as e:
         logger.warning(f"get_drawings failed on page {page.number + 1}: {e}")
         return []
+
+
+def _extract_drawings(page: "pymupdf.Page", paths: Optional[List[Dict]] = None,
+                      skip: Optional[set] = None) -> List[Drawing]:
+    """Drawings of the page; ``skip`` = indices of paths that belong to text (glyph outlines)."""
+    paths = _page_paths(page) if paths is None else paths
     page_area = page.rect.width * page.rect.height
     out: List[Drawing] = []
-    for p in paths:
+    for i, p in enumerate(paths):
+        if skip and i in skip:
+            continue
         out.extend(_split_drawing(p, page_area))
     return out
 
@@ -464,7 +527,8 @@ def _margins(page_w: float, page_h: float, boxes: List[BBox]) -> BBox:
 
 
 def _rasterize_vector_art(doc: "pymupdf.Document", page: "pymupdf.Page", pe: PageExtract,
-                          assets_root: Path, asset_prefix: str, shading: List[BBox]) -> None:
+                          assets_root: Path, asset_prefix: str, shading: List[BBox],
+                          text_paths: Optional[List[BBox]] = None) -> None:
     """Replaces vector art LaTeX rules cannot express with figure rasters or a page background."""
     n = pe.number
     page_area = pe.width * pe.height
@@ -477,7 +541,7 @@ def _rasterize_vector_art(doc: "pymupdf.Document", page: "pymupdf.Page", pe: Pag
         return
 
     if any(_area(r) >= BACKGROUND_MIN_COVERAGE * page_area for r in regions):
-        png = render_page_png(doc, n, dpi=BACKGROUND_DPI, without_text=True)
+        png = render_page_png(doc, n, dpi=BACKGROUND_DPI, without_text=True, erase=text_paths)
         name = f"page{n}_bg.png"
         (assets_root / name).write_bytes(png)
         pe.background = f"{asset_prefix}/{name}"
@@ -522,11 +586,15 @@ def extract_document(pdf_bytes: bytes, out_root: Path, asset_prefix: str,
     pages: List[PageExtract] = []
     for page in doc:
         w, h = page.rect.width, page.rect.height
-        all_lines = _extract_lines(page)
+        paths = _page_paths(page)
+        # Bold faked by stroking each glyph's outline as a separate vector path:
+        # the strokes are text, not artwork (see fontmap.outline_stroke_bold).
+        outline_bold, glyph_paths = outline_stroke_bold(page, paths)
+        all_lines = _extract_lines(page, outline_bold)
         visible = [l for l in all_lines if not l.invisible]
         images = _extract_images(doc, page, assets_root, asset_prefix, saved_images)
         pe = PageExtract(number=page.number + 1, width=w, height=h, margins=(72.0, 72.0, 72.0, 72.0),
-                         lines=visible, drawings=_extract_drawings(page), images=images)
+                         lines=visible, drawings=_extract_drawings(page, paths, glyph_paths), images=images)
 
         if _is_scanned(w, h, visible, images):
             pe.is_scanned = True
@@ -541,7 +609,8 @@ def extract_document(pdf_bytes: bytes, out_root: Path, asset_prefix: str,
             else:
                 pe.warnings.append("Scanned page without a text layer: the scan is placed as an image.")
         else:
-            _rasterize_vector_art(doc, page, pe, assets_root, asset_prefix, _shading_rects(page))
+            glyph_rects = [tuple(paths[i]["rect"]) for i in glyph_paths]
+            _rasterize_vector_art(doc, page, pe, assets_root, asset_prefix, _shading_rects(page), glyph_rects)
 
         pe.margins = _margins(w, h, [l.bbox for l in pe.lines] + [d.rect for d in pe.drawings]
                               + [i.bbox for i in pe.images])
@@ -551,13 +620,63 @@ def extract_document(pdf_bytes: bytes, out_root: Path, asset_prefix: str,
     return DocExtract(pages=pages, asset_prefix=asset_prefix, metadata=meta), doc
 
 
+def _erase_paths(page: "pymupdf.Page", rects: List[BBox]) -> None:
+    """
+    Removes the vector paths with these bounding boxes (glyph-outline strokes)
+    from a scratch copy of a page. MuPDF only removes line art a redaction
+    *touches*, which also catches anything underneath — a page fill, a coloured
+    box behind a bold label — so those collateral paths are drawn back,
+    beneath the page content, afterwards.
+    """
+    if not rects:
+        return
+    want = {tuple(round(v, 1) for v in r) for r in rects}
+    before = page.get_drawings()
+    for x0, y0, x1, y1 in rects:
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        page.add_redact_annot(pymupdf.Rect(cx - 0.2, cy - 0.2, cx + 0.2, cy + 0.2), fill=False)
+    page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
+                          graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED,
+                          text=pymupdf.PDF_REDACT_TEXT_NONE)
+    after = {(tuple(round(v, 1) for v in d["rect"]), d.get("type")) for d in page.get_drawings()}
+    collateral = [d for d in before
+                  if tuple(round(v, 1) for v in d["rect"]) not in want
+                  and (tuple(round(v, 1) for v in d["rect"]), d.get("type")) not in after]
+    if not collateral:
+        return
+    shape = page.new_shape()
+    for d in collateral:
+        for it in d.get("items", []):
+            if it[0] == "l":
+                shape.draw_line(it[1], it[2])
+            elif it[0] == "re":
+                shape.draw_rect(it[1])
+            elif it[0] == "qu":
+                shape.draw_quad(it[1])
+            elif it[0] == "c":
+                shape.draw_bezier(it[1], it[2], it[3], it[4])
+        shape.finish(fill=d.get("fill"), color=d.get("color"), width=d.get("width") or 0,
+                     even_odd=bool(d.get("even_odd")), closePath=bool(d.get("closePath")),
+                     fill_opacity=d.get("fill_opacity") or 1, stroke_opacity=d.get("stroke_opacity") or 1)
+    shape.commit(overlay=False)
+
+
 def render_page_png(doc: "pymupdf.Document", page_no: int, dpi: int = 150,
-                    clip: Optional[BBox] = None, without_text: bool = False) -> bytes:
-    """Renders a 1-based page (optionally a clip region, optionally with text removed) to PNG bytes."""
+                    clip: Optional[BBox] = None, without_text: bool = False,
+                    erase: Optional[List[BBox]] = None) -> bytes:
+    """
+    Renders a 1-based page (optionally a clip region, optionally with text removed) to PNG bytes.
+    ``erase``: bounding boxes of vector paths that belong to the text (glyph-outline strokes),
+    removed together with the text.
+    """
     if without_text:
         tmp = pymupdf.open()
         tmp.insert_pdf(doc, from_page=page_no - 1, to_page=page_no - 1)
         page = tmp[0]
+        try:
+            _erase_paths(page, list(erase or []))
+        except Exception as e:  # noqa: BLE001 — a failed erase only leaves the strokes in the image
+            logger.warning(f"Could not remove glyph-outline strokes from the background: {e}")
         page.add_redact_annot(page.rect)
         page.apply_redactions(
             images=pymupdf.PDF_REDACT_IMAGE_NONE,

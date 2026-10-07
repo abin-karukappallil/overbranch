@@ -46,23 +46,18 @@ pip install -r requirements.txt
 # Run FastAPI development server with auto-reload (Port 8000)
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
-# Run all Pytest test suites
+# Run all Pytest test suites (no network; TeX-dependent tests skip without pdflatex/pdftoppm)
 pytest tests/ -v
 
 # Run specific focused test suites
-pytest tests/test_latex_error_fixer.py -v
-pytest tests/test_ask_ai_to_fix.py -v
-pytest tests/test_document_analyzer_and_context.py -v
-pytest tests/test_attached_context.py -v
-pytest tests/test_document_environment_integrity.py -v
-pytest tests/test_edit_pipeline_integrity.py -v
-pytest tests/test_full_document_rewrite.py -v
-pytest tests/test_opencode_fixes.py -v
-pytest tests/test_ppt_templates.py -v
-pytest tests/test_performance_regression.py -v
-pytest tests/test_pdf2latex_*.py -v            # PDF → LaTeX importer (integration test needs pdflatex + pdftoppm)
-PDF2LATEX_LIVE_LLM=1 pytest tests/test_pdf2latex_integration.py -k live -s   # one conversion against the real copilot model
-pytest tests/eval_harness.py -v
+pytest tests/test_locator.py -v                 # target resolution: node IDs, exact/normalized/fuzzy, ambiguity
+pytest tests/test_transactions.py -v            # heal scoping, duplicate guard, compile rollback, provider failure
+pytest tests/test_agent_token_budget.py -v      # targeted context: prompt size independent of document length
+pytest tests/test_resolve_edits_endpoint.py -v  # POST /api/agent/resolve-edits
+pytest tests/test_provider_fallback.py -v       # fallback chain, 5-key rotation, cooldown recovery
+pytest tests/test_justify_content.py -v         # justify_content ladder, long words, overflow detection
+pytest tests/test_pdf2latex_fidelity.py -v      # bold/size preservation, metric fonts, IRCTC ticket regression
+pytest tests/test_converted_document_edits.py -v # agent edits on imported PDFs; fake-bold (overprinted) PDFs
 ```
 
 ### Full-Stack Docker Deployment
@@ -101,6 +96,9 @@ bash deploy.sh
      - [O. PDF → LaTeX Importer (pdf2latex): Local Facts, Shared Preamble, Per-Page LLM](#o-pdf--latex-importer-pdf2latex-local-facts-shared-preamble-per-page-llm)
      - [P. SyncTeX Bidirectional Navigation](#p-synctex-bidirectional-navigation)
      - [Q. Structured Observability, Tracing & Performance Telemetry](#q-structured-observability-tracing--performance-telemetry)
+     - [R. Layout Engine: justify_content & Overflow Detection](#r-layout-engine-justify_content--overflow-detection)
+     - [S. Target Resolution, Targeted Context & Transactional Edits](#s-target-resolution-targeted-context--transactional-edits)
+     - [T. Provider Fallback Chain & Key Health](#t-provider-fallback-chain--key-health)
 2. [Complete Repository & File Structure (As-Is Verbatim)](#2-complete-repository--file-structure-as-is-verbatim)
    - [Root Configuration & Deployment Files](#root-configuration--deployment-files)
    - [Frontend Application (`app/`)](#frontend-application-app)
@@ -207,18 +205,22 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 #### A. OpenCode ReAct Agent Loop & Dynamic Adaptive Step Budgeting
 1. **Interactive Tool Loop**: [`backend/opencode/agent_loop.py`](file:///home/abin/overbranch/backend/opencode/agent_loop.py) executes an iterative ReAct cycle operating on an in-memory [`ShadowWorkspace`](file:///home/abin/overbranch/backend/opencode/shadow_workspace.py).
 2. **Dynamic Step Budgeting**: Scales from **6 to 32 steps** dynamically based on detected task scope, document length, number of chapters/sections/frames, and user instruction complexity.
-3. **Deterministic Tool Suite**:
-   - `read_file_range`: Reads exact line-numbered contents without hallucinated drift (up to 300 lines per call).
-   - `grep_search`: Finds structural anchors (`\chapter`, `\section`, `\begin{frame}`, `\label`, `\cite`).
-   - `str_replace`: Performs strict character-for-character replacements with zero spatial drift.
-   - `rewrite_chunk`: Replaces entire chapters, sections, or frames using AST byte offsets (ideal for full document rewrites).
+3. **Deterministic Tool Suite** (old names `str_replace`, `grep_search`, `verify_compile`, `read_document_summary` are still accepted as aliases):
+   - `inspect_document` / `get_block(node_id)`: Outline of every block with its **stable node ID**, and one block (optionally with its parent header and the preamble lines that style it).
+   - `read_file_range`: Reads exact line-numbered contents (up to 300 lines per call); lines the model can still see unchanged are not re-sent (`ContextLedger`).
+   - `search_document`: Finds structural anchors (`\chapter`, `\section`, `\begin{frame}`, `\label`, `\cite`).
+   - `replace_text`: Replaces text located by the **target locator** (node → exact → normalized → fuzzy); `node_id` / `line_hint` scope it. A target that cannot be found confidently changes nothing and returns the region.
+   - `replace_block` / `insert_block` / `delete_block`: Node-addressed edits (before/after/start/end of a block).
+   - `rewrite_chunk` / `insert_into_chunk`: Full-rewrite chunk tools (chunk IDs or node IDs).
    - `list_assets`: Discovers available images/PDFs in `assets/` for `\includegraphics`.
-   - `verify_compile`: Triggers sandboxed compilation to capture compiler diagnostics with `infra_skip` fallback if the host lacks a TeX engine.
+   - `compile_latex`: Sandboxed compilation; **differential** — only errors the edits introduced fail it (`infra_skip` if the host lacks a TeX engine). Edits are also compiled automatically when the agent finishes.
+   - `validate_edit` / `rollback_edit`: Structural check against the original; undo the last edit.
+   - `detect_overflow` / `inspect_pdf_geometry` / `justify_content`: Horizontal layout tools (see [R](#r-layout-engine-justify_content--overflow-detection)).
    - `get_template_theme`: Retrieves curated themes (Beamer PPT themes, IEEE conference/journal papers, theses, resumes/CVs, formal letters, lab assignments) and extracts styling preambles for non-destructive redesigns.
    - `read_attached_document`: Extracts content from uploaded reference papers/PDFs stored in the multi-turn session cache.
    - `search_uploaded_references`: Searches user-attached documents for specific technical terminology, equations, and tables.
    - `convert_attached_pdf`: Starts a PDF → LaTeX import job for a PDF attached in chat; the agent then finishes without editing and the UI shows the job's progress and similarity report.
-4. **SSE Event Streaming**: Streams real-time reasoning (`thought`, `tool_call`, `tool_result`, `compile_error`, `coverage_check`, `final_diff`, `pdf_conversion`, `result`) to [`components/editor/AgentReasoningWindow.tsx`](file:///home/abin/overbranch/components/editor/AgentReasoningWindow.tsx) and [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx).
+4. **SSE Event Streaming**: Streams real-time reasoning (`thought`, `tool_call`, `tool_result`, `phase`, `compile_error`, `coverage_check`, `final_diff`, `pdf_conversion`, `result`) to [`components/editor/AgentReasoningWindow.tsx`](file:///home/abin/overbranch/components/editor/AgentReasoningWindow.tsx) and [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx).
 
 #### B. Automated LaTeX Error Diagnostics & Deterministic Auto-Healing
 1. **Log Parsing**: [`backend/latex_error_fixer.py`](file:///home/abin/overbranch/backend/latex_error_fixer.py) parses raw LaTeX compiler error logs (`! LaTeX Error: ...`, `l.<line>`) into structured `ParsedLatexError` diagnostics containing file names, line numbers, error categories, and contextual code snippets.
@@ -320,6 +322,25 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 
 #### Q. Structured Observability, Tracing & Performance Telemetry
 - [`backend/trace.py`](file:///home/abin/overbranch/backend/trace.py) provides structured telemetry (`AgentTrace` and `ConversionTrace` — per-job model, page similarity scores, fallback pages and latency), recording tool calls, latencies, node IDs, compiler feedback, and token counts for observability.
+- `AgentTrace` also records `agent_run_id`, `request_id`, `document_id`, the provider/model that answered, **key IDs** (`openrouter#2` — never keys), every provider attempt, per-edit `edit_type` + `target_resolution_method`, the context levels sent, `compile_result`, `retry_count` and `failure_reason`. Tool arguments are logged **redacted** (identifiers and numbers kept; document text reduced to its length).
+
+#### R. Layout Engine: justify_content & Overflow Detection
+[`backend/latex_layout/`](file:///home/abin/overbranch/backend/latex_layout/) is shared by the agent and the PDF importer:
+- `metrics.py` — width of a string in the **TeX font file that will set it** (located with `kpsewhich`; Base-14 fallback).
+- `blocks.py` — `TextBlock{text, x, y, width, height, font_size, font_weight, italic}` per line of a PDF page (extracted *without* the mediabox clip, so off-page text is visible), and `compare_blocks(src, out)`: words are paired with the **nearest same-text word** (both pages share coordinates), so repeated words are not mis-paired; reports `weight` / `italic` / `size` / `overflow_right` / `clipped` runs. A horizontally condensed word is not a size change (height compared too).
+- `overflow.py` — overfull boxes from the log (mapped to source lines) + lines past the inferred text-area right edge + glyphs off the page.
+- `justify.py` — `justify_content`: measures (with TeX itself — `\settowidth` in draft mode with the document's preamble — when pdflatex exists) and applies the smallest fix: alignment only → paragraph wrap with `\emergencystretch` (break points **only** inside tokens wider than the box, separators first) → ≤10% too wide: `\resizebox{W}{\height}` (horizontal condense) → more: font size down to a floor of 85%, then condense. Content inside an LR box (`\makebox`, `\mbox`, tabular cell) is always treated as one line.
+
+#### S. Target Resolution, Targeted Context & Transactional Edits
+- **Stable node IDs** ([`document_index.index_nodes`](file:///home/abin/overbranch/backend/document_index.py)): `preamble`, `meta:title`, `maketitle`, `page:2` (pages of an imported PDF, from the `OB-PAGE` markers), `sec:introduction`, `frame:results#2`, `env:table:tab-main` (label), `env:tabular@sec:results#1` — derived from kind + title/label, so they survive edits elsewhere; in memory only, never written into the LaTeX. Lookup also accepts `label:<x>`, `slide 3`, `section 2` and the legacy positional chunk IDs. A node whose own title an edit changes keeps its old ID as an alias.
+- **Locator** ([`opencode/locator.py`](file:///home/abin/overbranch/backend/opencode/locator.py)): node → exact (unique, or disambiguated by context / line hint) → normalized (CRLF, indentation, blank runs, smart quotes, `~`) → same text in another case, if unique ("jacob" → "JACOB") → fuzzy (line windows, accepted at ≥ 0.88 and ≥ 0.05 over the runner-up; never on a tie; never for snippets < 24 chars). Cheap methods run document-wide before fuzzy runs anywhere. Every attempt is recorded.
+- **Write gate** (`ShadowWorkspace._heal_and_validate` + [`opencode/edit_guard.py`](file:///home/abin/overbranch/backend/opencode/edit_guard.py)): differential validation; the healer's repairs are kept **only on lines the edit changed** (plus preamble insertions the edit itself requires — ones the original already "needed" are excluded); a heal that makes validation worse is dropped; an edit that makes a frame/section appear twice is refused.
+- **Targeted context** ([`opencode/context_builder.py`](file:///home/abin/overbranch/backend/opencode/context_builder.py)): for a targeted edit on a document over 150 lines the first message carries the outline + matched blocks (level 1), parent header (2), neighbouring lines (3) and the preamble lines that style them (4) — not the file. When no block matches (an imported PDF has no sections), the lines containing the request's own words (ignoring case) are sent; an unstructured document under 400 lines with no match at all is sent whole. `search_document` retries ignoring case when the exact case finds nothing. The prompt for a 5,000-line document is within 2× of a 70-line one.
+- **Transactions**: the whole agent run is one transaction (`begin_transaction` / `rollback_transaction`). Finishing with unverified edits triggers a compile; new errors get ≤ `SHADOW_COMPILE_MAX_RETRIES` LLM repair rounds, after which the run is **rolled back** and the result says *"Couldn't safely apply this change. The document was not modified."* with the reason and attempts. A run cut short by the LLM provider is rolled back the same way. A target that fails twice is given up rather than retried.
+
+#### T. Provider Fallback Chain & Key Health
+- [`providers/errors.py`](file:///home/abin/overbranch/backend/providers/errors.py) classifies every failure (`rate_limit`, `quota`, `auth`, `timeout`, `unavailable`, `model_unavailable`, `bad_request`, `cancelled`). `ProviderRouter.chat` walks `LLM_FALLBACK_CHAIN` (default `openrouter:minimax/minimax-m3`) only for provider-side failures — never on a cancellation or a malformed request — and returns `provider`, `model_used`, `key_id`, `is_fallback`, `attempts`. An `observer` callback feeds each attempt to the trace. New providers are added with `register_provider` + a chain entry.
+- [`providers/key_pool.py`](file:///home/abin/overbranch/backend/providers/key_pool.py): OpenRouter's five server-side keys (`OPENROUTER_API_KEY_1..5`) with per-key `{status, last_failure, cooldown_until, failure_count}`. Selection is **sticky** (the key that last worked); 429 cools down for `Retry-After` or 30 s doubling to 10 min, quota 1 h, auth 6 h, transient errors 15 s; a cooled-down key rejoins automatically. Keys never leave the server or reach logs.
 
 ---
 
@@ -385,30 +406,39 @@ overbranch/
 │   │   └── image_p1_2.png                      # Sample converted document figure 2
 │   ├── opencode/                               # OpenCode Bounded ReAct Agentic Pipeline
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_loop.py                       # ReAct loop, dynamic step budget (6-32), SSE streaming, tool dispatcher
-│   │   ├── diff_generator.py                   # Unified/split diffs + apply-contract edit items (unique, structurally-closed anchors)
-│   │   ├── shadow_compiler.py                  # Ephemeral compilation sandbox verifying code before committing
-│   │   ├── shadow_workspace.py                 # Thread-safe in-memory buffer tracking uncommitted mutations
+│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate, run-level rollback, phase events
+│   │   ├── apply_edits.py                      # Server-side all-or-nothing placement of edits the editor could not place (resolve-edits)
+│   │   ├── context_builder.py                  # Levels 1-5 targeted context, node outline, request→node matching, ContextLedger
+│   │   ├── diff_generator.py                   # Unified/split diffs + apply-contract v3 edit items (unique, structurally-closed, node-annotated)
+│   │   ├── edit_guard.py                       # Scoped healing (edited lines only) & duplicate-block guard
+│   │   ├── layout_tools.py                     # detect_overflow / inspect_pdf_geometry / justify_content agent tools
+│   │   ├── locator.py                          # Target resolution: node → exact → normalized → fuzzy, with recorded attempts
+│   │   ├── shadow_compiler.py                  # Differential (new-errors-only), cached compile of the shadow buffer (assets passed as assets/…)
+│   │   ├── shadow_workspace.py                 # In-memory buffer: locator-based edits, node ops, transactions, scoped heal
 │   │   ├── template_registry.py                # Template/theme registry (Regalia, Nordlight, Prism, IEEE, ACM)
-│   │   └── tools.py                            # Deterministic tool suite (str_replace, rewrite_chunk, grep_search, etc.)
+│   │   └── tools.py                            # Tool definitions & dispatcher (replace_text, replace_block, insert_block, compile_latex, …; old names aliased)
 │   ├── providers/                              # Multi-Provider LLM Gateway
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── base_provider.py                    # Abstract LLMProvider interface & token usage dataclasses
+│   │   ├── base_provider.py                    # Abstract LLMProvider interface; LLMProviderError carries a FailureKind
+│   │   ├── errors.py                           # Failure classification (rate_limit/quota/auth/timeout/…) & which kinds fall back
 │   │   ├── gemini_provider.py                  # Google Gemini adapter (Gemini 3.7 Flash, 2.5 Pro, 2.0 Flash)
 │   │   ├── groq_provider.py                    # High-speed Groq inference adapter (LLaMA 3.3 70B, 3.1 8B, Mixtral)
+│   │   ├── key_pool.py                         # Sticky, health-tracked key rotation with per-failure cooldowns
 │   │   ├── multimodal.py                       # OpenAI-style image content parts (build, detect, strip for text-only gateways)
-│   │   ├── openrouter_provider.py              # OpenRouter multi-model adapter (Claude 3.5 Sonnet, GPT-4o, DeepSeek)
-│   │   ├── router.py                           # ProviderRouter managing model registry, routing & API keys (optional cancel_token)
+│   │   ├── openrouter_provider.py              # OpenRouter adapter (MiniMax M3 fallback) over a 5-key KeyPool; returns key_id, never keys
+│   │   ├── router.py                           # ProviderRouter: routing + LLM_FALLBACK_CHAIN walk on provider failures, attempt observer
 │   │   └── web2api_keys.py                     # GEMINI_WEB2API_* base URL & rotating key loader used by GeminiProvider
 │   ├── pdf2latex/                              # Per-page PDF → LaTeX importer (uses the copilot's LLM)
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── config.py                           # PDF2LATEX_* non-LLM settings (concurrency, timeouts, limits, coverage target, visual floor, job dir)
 │   │   ├── extract.py                          # PyMuPDF facts + XY-cut reading order: spans, rules/rects, images, rasters, scans
-│   │   ├── facts.py                            # Per-page facts JSON (blocks, side columns, \vspace gaps) + positioned-layout fallback (TikZ)
+│   │   ├── facts.py                            # Per-page facts JSON (blocks, side columns, \vspace gaps, `fit` widths) + positioned-layout fallback (TikZ)
+│   │   ├── fontmap.py                          # Font class (metric-compatible Carlito/Caladea), bold from name/descriptor/synthetic rendering
+│   │   ├── geometry.py                         # Post-compile repair: bold/italic restored, right-edge overflow fitted with \obhfit
 │   │   ├── jobs.py                             # File-backed job state (works across uvicorn workers), purge
 │   │   ├── llm.py                              # provider_router.chat with DEFAULT_MODEL: timeouts, retries, concurrency cap, own thread pool
 │   │   ├── models.py                           # Span/Line/Drawing/ImageRef/PageExtract/PageReport/ConversionReport dataclasses
-│   │   ├── pipeline.py                         # Orchestration: per-page generate → compile/repair → SSIM → re-run → merge → write
+│   │   ├── pipeline.py                         # Orchestration: per-page generate → compile/repair → SSIM → geometry repair → re-run → merge → write
 │   │   ├── preamble.py                         # Deterministic preamble (geometry, exact colors, fonts) & page merging/markers
 │   │   ├── prompts.py                          # Page, quality re-run and compile-fix prompts
 │   │   ├── runner.py                           # Schedules jobs on the server event loop (HTTP endpoint & copilot tool)
@@ -417,7 +447,7 @@ overbranch/
 │   │   └── verify.py                           # pdftoppm render, shift-aligned SSIM, regions, word coverage & word displacement
 │   ├── routes/                                 # Modular FastAPI API Routers
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_routes.py                     # OpenCode SSE stream (POST /api/agent/opencode), abort control & POST /api/agent/validate-latex
+│   │   ├── agent_routes.py                     # OpenCode SSE stream (POST /api/agent/opencode), abort, validate-latex & resolve-edits
 │   │   └── pdf_convert.py                      # PDF import jobs (POST/GET /api/convert/pdf…), previews, guest session & migration
 │   ├── services/                               # Business Logic & Support Services
 │   │   ├── __init__.py                         # Package exports
@@ -458,35 +488,23 @@ overbranch/
 │   │   │   └── 63b810f378d656009cf7a813/       # Minimalist Res.cls Resume
 │   │   └── thesis/                             # Master's & Doctoral Thesis Templates
 │   │       └── Thesis Chapter Template/        # Multi-chapter graduate thesis template
-│   ├── tests/                                  # Pytest Comprehensive Test Suite
-│   │   ├── eval_harness.py                     # Benchmark & evaluation harness for OpenCode agent & conversion
-│   │   ├── test_ask_ai_to_fix.py               # Unit tests for "Ask AI to Fix" diagnostics & auto-healing flow
-│   │   ├── test_attached_context.py            # Multi-turn attached context tests, cache TTL & PDF extraction
-│   │   ├── test_auth_and_session.py            # Better-Auth session verification, cookies & RBAC tests
-│   │   ├── test_aux_file_diff.py               # Auxiliary .tex diffs: tuple-unpack regression & aux write validation
-│   │   ├── test_diff_generator_anchors.py      # Apply contract: unique, structurally-closed anchors & exact replay
-│   │   ├── test_document_analyzer_and_context.py# Local LaTeX document analyzer & context strategy engine tests
-│   │   ├── test_document_environment_integrity.py# Verification that \begin/\end environments remain balanced
-│   │   ├── test_edit_pipeline_integrity.py     # End-to-end edit pipeline tests, AST preservation & auto-repair
-│   │   ├── test_full_document_expansion.py     # Content expansion tests (elaborating topics, adding slides)
-│   │   ├── test_agent_json_sanitizer.py        # Model JSON -> LaTeX decoding: \nonumber, \\ line breaks, escaped/unescaped modes
-│   │   ├── test_full_document_rewrite.py       # Scope classifier, coverage check, step-budget cap & full rewrite tests
-│   │   ├── test_heal_does_not_corrupt.py       # Healer must not invent structure; every bundled template validates & survives healing
-│   │   ├── test_insert_into_chunk.py           # AST chunk insertion & surgical replacement tests
-│   │   ├── test_latex_error_fixer.py           # Automated LaTeX error parser & deterministic repair tests
-│   │   ├── test_opencode_fixes.py              # OpenCode ReAct loop, shadow workspace & tool execution tests
-│   │   ├── pdf2latex_fixtures.py               # Programmatic fixture PDFs (colors/sizes, images, table, vectors, two-column, scanned, multi-page)
-│   │   ├── test_pdf2latex_api.py               # /api/convert/pdf validation, limits, ownership & job lifecycle
-│   │   ├── test_pdf2latex_copilot.py           # convert_attached_pdf tool & prompt documentation
-│   │   ├── test_pdf2latex_extract.py           # Fact extraction: spans, colors, rules, page{n}_img{k} images, rasters, scans, multi-page
-│   │   ├── test_pdf2latex_integration.py       # Convert → pdfLaTeX → compiled page count = source page count, similarity (opt-in live LLM)
-│   │   ├── test_pdf2latex_pipeline.py          # Stubbed-LLM pipeline: agent model reuse, retries, compile repair, re-run, fallbacks, strict compile
-│   │   ├── test_pdf2latex_preamble.py          # Preamble (geometry, exact colors, fonts), facts, Unicode handling, page merging
-│   │   ├── test_provider_multimodal.py         # GeminiProvider image parts & text-only retry
-│   │   ├── test_performance_regression.py      # Latency & performance regression benchmarks
-│   │   ├── test_scope_classifier_precision.py  # Scope-inflation guards (targeted requests must not buy a 34-step budget)
-│   │   ├── test_validate_latex_endpoint.py     # POST /api/agent/validate-latex: auth, heal, 413, partial-apply rejection
-│   │   └── test_ppt_templates.py               # Tests for Beamer presentation templates & themes
+│   ├── latex_layout/                           # Horizontal geometry: measuring & fitting typeset text (agent + importer)
+│   │   ├── __init__.py                         # Package overview
+│   │   ├── blocks.py                           # TextBlocks from a PDF page; source/output comparison (weight, size, overflow)
+│   │   ├── justify.py                          # justify_content strategy ladder; TeX-measured widths (\settowidth probe)
+│   │   ├── metrics.py                          # String widths from the TeX font files (kpsewhich), latex_to_plain
+│   │   └── overflow.py                         # Overfull boxes, past-the-text-area and off-page detection
+│   ├── tests/                                  # Pytest suite (no network; TeX-dependent tests skip without pdflatex)
+│   │   ├── conftest.py                         # ScriptedLLM stub for provider_router.chat, stub shadow compiler, run_agent helpers
+│   │   ├── pdf2latex_fixtures.py               # IRCTC-like ticket PDF (Carlito, bold labels, right edge, long IDs), synthetic bold
+│   │   ├── test_agent_token_budget.py          # Targeted context: prompt size vs document size, one-call edits, ledger
+│   │   ├── test_justify_content.py             # justify_content ladder, long words, overfull parsing, compiled overflow fix
+│   │   ├── test_locator.py                     # Node IDs, exact/normalized/fuzzy, ambiguity, structured failure, legacy chunk IDs
+│   │   ├── test_pdf2latex_fidelity.py          # Bold signals, sizes, font mapping, body repair, ticket conversion regression
+│   │   ├── test_provider_fallback.py           # Fallback chain, 429 rotation, 5-key exhaustion, cooldown recovery, no key leaks
+│   │   ├── test_resolve_edits_endpoint.py      # resolve-edits endpoint, node metadata, all-or-nothing
+│   │   ├── test_converted_document_edits.py    # Agent edits on imported PDFs (text-match context, case-insensitive), fake-bold PDFs
+│   │   └── test_transactions.py                # Scoped heal, duplicate guard, compile rollback/repair, provider-failure rollback
 │   ├── attached_context.py                     # Multi-turn in-memory TTL store for user-attached reference files
 │   ├── auth.py                                 # Cross-stack Better-Auth session verification & RBAC
 │   ├── cancellation.py                         # Thread-safe cancellation tokens & HTTP stream abort manager
@@ -616,7 +634,7 @@ overbranch/
 │   ├── EditHistoryStore.ts                     # LocalStorage edit history & undo/redo tracking
 │   ├── guest-token.ts                          # Guest token cookie management & persistence
 │   ├── latex-edit-apply.ts                     # Pure applier for AI edit items (authoritative vs chunk replay, zero silent drops)
-│   ├── latex-validate.ts                       # Client for POST /api/agent/validate-latex (partial-apply safety net)
+│   ├── latex-validate.ts                       # Clients for POST /api/agent/validate-latex and /api/agent/resolve-edits
 │   ├── IndexedDBEmbeddingCache.ts              # Browser IndexedDB cache for client-side embeddings
 │   ├── pdf-thumbnail-utils.ts                  # PDF.js page canvas thumbnail rendering
 │   └── utils.ts                                # Tailwind CSS class merging utility (cn)
@@ -699,7 +717,7 @@ overbranch/
 ```
 
 - **File Implementation**: [`backend/compiler.py`](file:///home/abin/overbranch/backend/compiler.py), [`backend/compile_queue.py`](file:///home/abin/overbranch/backend/compile_queue.py), [`backend/main.py`](file:///home/abin/overbranch/backend/main.py), [`components/editor/CompileToolbar.tsx`](file:///home/abin/overbranch/components/editor/CompileToolbar.tsx)
-- **Engines Supported**: `latexmk`, `pdflatex`, `xelatex`, `lualatex`. A `% !TEX program = xelatex|lualatex` magic comment in the first 20 lines overrides the default engine; projects (including imported PDFs) default to pdflatex. On success the result also lists any TeX error lines (`errors`), since nonstopmode can produce a PDF despite errors.
+- **Engines Supported**: `latexmk`, `pdflatex`, `xelatex`, `lualatex`. A `% !TEX program = xelatex|lualatex` magic comment in the first 20 lines overrides the default engine; projects (including imported PDFs) default to pdflatex. On success the result also lists any TeX error lines (`errors`), since nonstopmode can produce a PDF despite errors, and the overfull boxes (`overfull`: amount and source lines), which never reach the truncated `log`.
 - **`compile_latex` flags**: `-synctex=1` is only passed when `persist_synctex` is set, so throwaway compiles do not write artifacts nobody reads. `allow_recovery=False` skips the patch-and-retry cascade (disable missing packages ×4, lmodern, beamercolorbox `bg`, titlesec) — up to seven extra engine runs whose output the PDF importer rejects anyway, since it treats a PDF obtained by silently disabling a package as a failure and hands the errors to the model instead.
 - **How It Works**:
   1. The client sends a `CompileRequest` containing `latex_code`, `engine`, `project_id`, `images`, and `files` (with base64 payloads).
@@ -779,6 +797,7 @@ overbranch/
 - **Agent API**:
   - `POST /api/agent/opencode` — SSE reasoning stream (`progress`, `coverage_check`, `compile_error`, `final_diff`, `result`, `pdf_conversion`, `cancelled`, `error`).
   - `POST /api/agent/stop` — cancels an in-flight run.
+  - `POST /api/agent/resolve-edits` — `{current_code, items, original_code?}` → places accepted edits the editor could not locate by exact text, using the agent's locator; all-or-nothing (`{success, code, applied[{id, method}], failed[{id, op, target, reason, attempts}], document_unchanged}`). Writes nothing. Rate limited 60/min.
   - `POST /api/agent/validate-latex` — heals and/or validates a LaTeX string without writing anything. Body `{latex_code, project_id?, file_path?, heal?}` → `{valid, errors[], fixes_applied[], healed_code, changed}`. `heal` defaults to **false**: healing hoists packages and injects theme colours, so it must never be applied without showing the user `fixes_applied`. Rate limited 60/min; bodies over 2 MB return 413.
 - **Dynamic Adaptive Step Budgeting** (`determine_adaptive_step_budget`): the budget scales with document structure and is **hard-capped at `MAX_STEP_BUDGET` (32)**.
   - `TARGETED_EDIT`: 4–12 steps (4 for a typo or citation, 10–12 for creation / redesign).
@@ -989,7 +1008,7 @@ overbranch/
   - **Google Gemini**: Gemini 3.7 Flash, 2.5 Pro, 2.0 Flash (Long context, multimodal reasoning).
   - **Groq**: LLaMA 3.3 70B Versatile, LLaMA 3.1 8B Instant (Ultra-fast inference).
   - **OpenRouter**: Claude 3.5 Sonnet, GPT-4o, DeepSeek Chat/Coder, MiniMax-01.
-- **Failover**: If a user custom API key fails or experiences rate limits, the router can failover to configured backup providers.
+- **Failover**: failures are classified (`providers/errors.py`). Rate limits, exhausted quota, timeouts, outages and unavailable models walk `LLM_FALLBACK_CHAIN` (default OpenRouter **MiniMax M3**, `minimax/minimax-m3`); a cancellation or a malformed request does not. OpenRouter's five server-side keys rotate through a health-tracked `KeyPool` (sticky selection, per-failure cooldowns, automatic recovery). See [T](#t-provider-fallback-chain--key-health).
 
 ---
 
@@ -1033,7 +1052,9 @@ overbranch/
 - **File Implementation**: [`backend/pdf2latex/preamble.py`](file:///home/abin/overbranch/backend/pdf2latex/preamble.py), [`backend/pdf2latex/texutil.py`](file:///home/abin/overbranch/backend/pdf2latex/texutil.py)
 - **How It Works**:
   1. Every distinct text, rule and fill color is defined once in the preamble with its exact RGB, named after its hex value (`c1F4E79`), so the LLM and the fallback reference the same names.
-  2. PDF font names map to pdfLaTeX font packages: Times-like → `mathptmx`, Palatino/Garamond-like → `mathpazo`, Arial/Helvetica/Calibri-like → `helvet`, Courier-like → `courier`, Computer/Latin Modern → `lmodern`; the most used family becomes the main font and secondary sans/mono families are loaded too. Exact sizes are kept with `\fontsize`.
+  2. PDF font names map to pdfLaTeX font packages ([`fontmap.py`](file:///home/abin/overbranch/backend/pdf2latex/fontmap.py)). **Metric-compatible substitutes first** — Calibri → `carlito` (`[sfdefault,lf,t]`: Calibri's tabular lining figures), Cambria → `caladea` — when installed, because a wider substitute moves every line end: Calibri set in Helvetica is 10–25% wider, which pushed the IRCTC ticket's right column past its border and made labels overprint. Otherwise Times-like → `mathptmx`, Palatino/Garamond-like → `mathpazo`, Arial/Helvetica-like → `helvet`, Courier-like → `courier`, Computer/Latin Modern → `lmodern`. The most used family becomes the main font; secondary sans/mono families are loaded too. Exact sizes are kept with `\fontsize`.
+  2a. **Overprinted text is one run.** Producers often fake bold by drawing a run twice (fill + stroke, or two fills a fraction of a point apart). PyMuPDF reports each copy as its own line, and the word-coverage gate counts words as a multiset — so every bold label had to be typeset twice and came out "double-layered". `extract.collapse_overprint` keeps one copy and marks it bold; source word boxes and TextBlocks drop the copies the same way.
+  2b. **Bold** comes from every signal a PDF offers: name tokens (`Bold`, `Semibold`, `Demi`, `Heavy`, `Black`, `,Bd`, `-B`), PyMuPDF flags, the FontDescriptor (`/FontWeight` ≥ 600, ForceBold) and **synthetic bold** (glyphs filled *and* stroked). Lines that would still come out wider than in the PDF carry a `fit` width in the facts and are wrapped in `\obhfit{w}{…}` (condenses only if needed).
   3. Text in the facts is pre-escaped; Unicode is mapped to LaTeX (quotes, dashes, bullets, math symbols, Greek, ligatures) and characters pdfLaTeX cannot typeset are reported per page.
 
 ---
@@ -1047,7 +1068,8 @@ overbranch/
   3. Renders at `PDF2LATEX_RENDER_DPI`, **aligns the render vertically** against the original, softens both, and scores SSIM + pixel diff; separately compares the words of the compiled page with the PDF's.
   4. **Why text coverage is the gate and SSIM is not.** Full-page SSIM is dominated by the white background and is exquisitely sensitive to glyph registration, so it ranks pages in the wrong order. Measured on a dense A4 page at 100 DPI: a pixel-perfect page nudged down by **1 pt** scores **0.825**; the same text at +3% leading scores **0.766**; an expertly hand-written reflow of the page scores **0.660**; a **blank** page scores **0.795**; a page **missing half its text** scores **0.891**. Gating on `PDF2LATEX_SIM_THRESHOLD` therefore failed essentially every page of every real document, bought each one a re-run that could not succeed (the prompt forbids absolute positioning, which is the only way to win on pixel registration), and then handed the page to the positioned-layout fallback — which scores **0.856** on that page by construction. The user received a wall of TikZ `\node` commands instead of editable LaTeX, after paying for two LLM calls and three compiles per page. Acceptance is now: compiles to one page, `PDF2LATEX_COVERAGE_TARGET` of the words present, ≤5% invented, above `PDF2LATEX_VISUAL_FLOOR`. On a 3-page dense document this took the job from 6 LLM calls / 10 compiles / a 78-node TikZ dump to **3 LLM calls / 4 compiles / editable LaTeX**.
   5. **Why text coverage alone is not enough either.** Coverage says every word is *present*, not that it is in the right *place*. A page whose margin-note column was woven into the running text scored **1.000 coverage and 0.86 similarity** — indistinguishable from a faithful reproduction on both existing metrics — while being visibly scrambled. `verify.displacement` therefore matches the source's words to the output's by text, greedily and in order, and reports the **median distance a word moved**. Measured: a faithful re-setting of a dense page **8.3 pt**, the same margin page laid out correctly **12.6 pt**; the scrambled version **39.2 pt**, a reflow that ignores the spacing facts **65.8 pt**. That is the signal SSIM cannot give, and it is now part of acceptance.
-  6. Only an unacceptable page is re-run, with the missing words, the invented words, the overflow, the measured vertical offset and the median word displacement. Overflowing pages are scaled to fit with `\obfit`. The positioned layout rescues a page that is still unacceptable, never one that merely reflowed differently.
+  5b. **Geometry repair (no LLM).** After a page compiles, its TextBlocks are compared with the PDF's ([`geometry.py`](file:///home/abin/overbranch/backend/pdf2latex/geometry.py), [`latex_layout/blocks.py`](file:///home/abin/overbranch/backend/latex_layout/blocks.py)). Runs that lost their bold/italic are wrapped in `\textbf`/`\textit`; lines past their original right edge are wrapped in `\obhfit`. Only text found exactly once in the body is touched (a repeated phrase is placed by reading order when the counts agree). Up to 2 rounds; a round is kept only if coverage is unchanged and visual rank does not drop. Compilation success is not visual correctness: on the ticket regression page this restores 25 bold runs and leaves 0 style mismatches and 0 overflowing lines. What cannot be fixed locally (sizes) goes into the re-run note as concrete items. Text clipped past the page edge makes a page unacceptable.
+  6. Only an unacceptable page is re-run, with the missing words, the invented words, the overflow, the measured vertical offset, the median word displacement and the remaining style / right-edge differences. Overflowing pages are scaled to fit with `\obfit`. The positioned layout rescues a page that is still unacceptable, never one that merely reflowed differently.
   7. The report lists per-page similarity (a **reference figure**, not a verdict), SSIM, text coverage, invented-word ratio, measured offset, median word displacement, LLM calls, compile repairs, the source of each page (LLM / positioned layout / page image), warnings, and the compiled vs source page count. It states that the result is best-effort and that a faithful page scores well below 100%.
 
 ---
@@ -1098,7 +1120,7 @@ overbranch/
 
 #### The Apply Contract (`apply_contract_version: 2`)
 
-`compute_edit_items` guarantees, for every emitted item:
+`compute_edit_items` guarantees, for every emitted item (contract v3 adds `node_id` / `node_path`: the structural node enclosing the edit):
 
 | Guarantee | Why |
 |---|---|
@@ -1113,8 +1135,8 @@ overbranch/
 - **How It Works**:
   1. `diff_generator.py` produces contract-compliant edit items plus the authoritative buffer.
   2. `lib/latex-edit-apply.ts` (`applyEditItems`) is the single pure applier. **"Accept All" writes `proposed_code` verbatim** — byte-identical to what passed pre-commit validation — but only when the live document still equals `original_code`. The editor is *not* locked while the agent streams, so it falls back to chunk replay (safe thanks to the contract) when the user typed mid-run, and says so.
-  3. **No edit is ever dropped silently.** Every item ends in `applied` or `skipped` with a reason (`no-anchor`, `not-found`, `not-unique`, `stale-position`, `overlap`), aggregated into one message. If nothing applies, the buffer is left untouched and nothing is saved or compiled.
-  4. A *partial* accept is re-checked through `POST /api/agent/validate-latex` before saving, since accepting edit 3 but not edit 2 can leave an orphaned tag. Validation failure rolls back inside the same undo stop; a network failure fails **open** (keeps the edit, skips auto-compile, warns).
+  3. **No edit is ever dropped silently, and no accept is half-applied.** When the exact/positional pass skips any item (the document moved under it), the editor sends the live document and *all* items of that accept to `POST /api/agent/resolve-edits`, which re-locates them with the agent's locator (node → normalized → fuzzy) and returns either the fully applied, validated document or the unchanged one with per-item attempts. The user sees *"Couldn't safely apply this change. The document was not modified."* (details in development builds and the console).
+  4. The editor keeps every contract field when it builds its edit list (it used to keep only the two chunks, which turned whole-document items into "no anchor" failures).
   5. `commitEditOutcome` in `EditorLayout.tsx` is the one place that touches Monaco, `EditHistoryStore`, `saveDocument` and `handleCompile` — previously duplicated across four handlers with diverging behaviour.
   6. `final_diff` payloads are accumulated **keyed by file**, so an auxiliary `.tex` file's diff no longer clobbers the main one, and `result` **merges** into the accumulated payload instead of replacing it.
   7. `EditHistoryStore.ts` records snapshots in browser LocalStorage for instant undo/redo.
@@ -1164,24 +1186,15 @@ overbranch/
 ### Feature 31: Comprehensive Pytest Test Suite & Evaluation Harness
 
 - **File Implementation**: [`backend/tests/`](file:///home/abin/overbranch/backend/tests/)
-- **Test Modules**:
-  1. `eval_harness.py`: Benchmark and evaluation harness for OpenCode agent and conversion pipelines.
-  2. `test_ask_ai_to_fix.py`: Unit tests for "Ask AI to Fix" compiler error diagnostics, prompt construction, and auto-healing flow.
-  3. `test_attached_context.py`: Multi-turn attached context session tests, cache TTL, and PDF text extraction.
-  4. `test_auth_and_session.py`: Cross-stack Better-Auth session verification, cookies, and RBAC tests.
-  5. `test_document_analyzer_and_context.py`: Local LaTeX document analysis and context strategy engine tests.
-  6. `test_document_environment_integrity.py`: Verification that environments (`frame`, `tikzpicture`, `itemize`, etc.) remain balanced and closed during edits.
-  7. `test_edit_pipeline_integrity.py`: End-to-end edit pipeline tests, AST preservation, and auto-repair.
-  8. `test_full_document_expansion.py`: Tests for expanding documents with new sections/chapters.
-  9. `test_full_document_rewrite.py`: Scope classifier, coverage check, leftover detection, and full document rewrite tests.
-  10. `test_insert_into_chunk.py`: AST chunk insertion and surgical replacement tests.
-  11. `test_latex_error_fixer.py`: Automated LaTeX error parser and deterministic syntax repair tests.
-  12. `test_opencode_fixes.py`: OpenCode ReAct loop, shadow workspace, and tool execution tests.
-  12b. `test_heal_does_not_corrupt.py`: the healer must not invent structure from comments, verbatim/listing bodies, macro definition bodies or class-defined list environments; healing is discarded if it raises the error count; **every** `backend/templates/**/*.tex` must validate clean and survive a heal; differential validation tolerates a pre-existing defect but still blocks a newly introduced one.
-  12c. `test_agent_json_sanitizer.py`: LaTeX survives decoding out of the model's JSON in both escaped and unescaped modes — `\nonumber` is not a newline, `\\` stays a line break, `\\[0.3em]` does not become `\[0.3em]`, and the transform is idempotent.
-  13. `test_performance_regression.py`: Benchmarks and performance regression tests for compilation and token usage.
-  14. `test_ppt_templates.py`: Tests for Beamer/PPT templates (Regalia, Nordlight, Prism, etc.) rendering and theme compilation.
-  15. `test_pdf2latex_*.py` & `test_provider_multimodal.py`: PDF → LaTeX importer — fact extraction, preamble/facts/merging, stubbed-LLM pipeline (retries, compile repair, re-run, fallbacks), the acceptance predicate (a faithful reflow is accepted without a re-run; the positioned layout rescues but never displaces a complete page), shift-tolerant page comparison, API, copilot tool, provider image parts, and an end-to-end pdfLaTeX test asserting compiled page count = source page count (skipped without pdflatex + pdftoppm; `PDF2LATEX_LIVE_LLM=1` adds a real-model run).
+- **Test Modules** (all run without network; LLM calls go through a scripted stub of `provider_router.chat`, and the agent's compile through a stub unless a test needs real TeX):
+  1. `test_locator.py`: stable node IDs and lookup forms, exact / normalized / fuzzy resolution, ambiguity refusal, structured failure with the document unchanged, node aliases after a rename, legacy chunk IDs.
+  2. `test_transactions.py`: healer repairs only edited lines, duplicate-block refusal, transaction rollback, `rollback_edit`, compile failure → bounded repair → whole-run rollback, pre-existing compile errors tolerated, provider failure leaves the document unchanged.
+  3. `test_agent_token_budget.py`: initial prompt for a targeted edit on a ~5,300-line document within 2× of a ~70-line one, one LLM call for a one-step edit, title requests pull the title and its colour definition, ledger de-duplication.
+  4. `test_resolve_edits_endpoint.py`: node metadata on items, re-location after the user typed, all-or-nothing, whole-document items.
+  5. `test_provider_fallback.py`: fallback to OpenRouter MiniMax M3 on 429/402/503/504/timeouts, none on bad request or cancel, sticky 429 rotation, five-key exhaustion, cooldown recovery, keys absent from responses/logs.
+  6. `test_justify_content.py`: the strategy ladder, break points only in over-long tokens (separators first), overfull parsing, TeX measurement, compiled end-to-end overflow fix.
+  6b. `test_converted_document_edits.py`: "change jacob to tims ittus" on a long imported PDF — the line is in the first message, lower-case search and `replace_text` still find "JACOB", nothing else changes; overprinted fake bold is extracted once and converts without double text.
+  7. `test_pdf2latex_fidelity.py`: bold from names / descriptor / synthetic rendering, sizes in the facts, Carlito mapping and fallback, body repair, and the **IRCTC ticket regression**: real pipeline with a model that drops all bold → bold restored, 0 overflowing lines, with and without Carlito; a faithful body is left untouched.
 
 ---
 
@@ -1230,7 +1243,10 @@ services:
 | `MAX_CONCURRENT_COMPILES` | Backend Compiler | Max concurrent pdflatex/latexmk compile processes (Default: `4`) |
 | `MAX_QUEUE_DEPTH` | Backend Compiler | Max wait queue depth before returning HTTP 429 (Default: `20`) |
 | `COMPILE_QUEUE_TIMEOUT` | Backend Compiler | Max seconds a compile task can wait in queue (Default: `45.0`) |
-| `SHADOW_COMPILE_MAX_RETRIES`| Backend AI | Max retries for shadow compiler self-correction (Default: `2`) |
+| `SHADOW_COMPILE_MAX_RETRIES`| Backend AI | LLM repair rounds when the agent's edits do not compile, before the whole run is rolled back (Default: `2`) |
+| `LLM_FALLBACK_CHAIN` | Backend LLM | Fallback chain `provider:model,…` walked on rate limit / quota / timeout / outage (Default: `openrouter:minimax/minimax-m3`) |
+| `OPENROUTER_API_KEY_1` … `_5` | Backend LLM | Up to five server-side OpenRouter keys, rotated with per-key cooldowns (never sent to the browser) |
+| `OPENROUTER_FALLBACK_MODEL` / `OPENROUTER_TIMEOUT` | Backend LLM | Fallback model (Default: `minimax/minimax-m3`) and request timeout in s (Default: `90`) |
 | `DB_POOL_SIZE` | Backend Database | SQLAlchemy connection pool size (Default: `10`) |
 | `DB_MAX_OVERFLOW` | Backend Database | SQLAlchemy connection pool max overflow (Default: `20`) |
 | `DB_POOL_RECYCLE` | Backend Database | SQLAlchemy connection pool recycle seconds (Default: `300`) |

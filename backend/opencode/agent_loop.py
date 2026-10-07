@@ -3,7 +3,7 @@ opencode/agent_loop.py — OpenCode-Style ReAct Agent Loop
 ==========================================================
 Replaces the RAG-based agent loop with a tool-calling loop that operates
 on a ShadowWorkspace. The agent reads the file, locates targets via grep,
-makes exact-match edits via str_replace, and verifies via shadow compilation.
+makes node-addressed edits through a robust target locator, and verifies via shadow compilation.
 
 Uses the existing ProviderRouter (Gemini, Groq, OpenRouter) for LLM calls.
 Streams SSE events for the frontend AgentReasoningWindow.
@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
 from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import provider_router
@@ -35,13 +35,38 @@ from context_strategy import (
 from latex_error_fixer import parse_compilation_errors, auto_heal_latex_code, format_compilation_fix_prompt
 
 from .shadow_workspace import ShadowWorkspace
-from .tools import TOOL_DEFINITIONS, execute_tool, get_tools_prompt_block
+from .tools import TOOL_DEFINITIONS, EDIT_TOOLS, canonical_tool_name, execute_tool, get_tools_prompt_block
+from .context_builder import SMALL_DOC_LINES, ContextLedger, build_targeted_context
 from .diff_generator import compute_final_diff, compute_edit_items
 
 logger = logging.getLogger("opencode.agent_loop")
 
 DEFAULT_MAX_STEPS = 16
 DEFAULT_MODEL = "gemini-3.7-flash"
+MAX_COMPILE_REPAIRS = int(os.getenv("SHADOW_COMPILE_MAX_RETRIES", "2"))
+MAX_TARGET_RETRIES = 1  # a target that failed is corrected once, then given up on
+SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not modified."
+_LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry"}
+
+
+def _phase(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
+    """A user-facing progress state (Finding target… / Compiling… / Done)."""
+    return {"type": "phase", "phase": phase, "message": message, **extra}
+
+
+def _friendly_llm_error(err: Exception) -> str:
+    from providers.errors import FailureKind, classify_exception
+    kind, _ = classify_exception(err)
+    tried = [a.get("provider") for a in getattr(err, "attempts", []) or []]
+    via = f" (tried: {', '.join(dict.fromkeys(t for t in tried if t))})" if tried else ""
+    return {
+        FailureKind.RATE_LIMIT: "The AI providers are rate-limited right now",
+        FailureKind.QUOTA: "The AI providers' quota is exhausted",
+        FailureKind.TIMEOUT: "The AI provider timed out",
+        FailureKind.AUTH: "The AI provider rejected the server's credentials",
+        FailureKind.MODEL_UNAVAILABLE: "The selected model is unavailable",
+        FailureKind.BAD_REQUEST: "The AI provider rejected the request",
+    }.get(kind, "The AI provider is unavailable") + via + "."
 
 
 # ============================================================================
@@ -55,12 +80,12 @@ You operate on an IN-MEMORY SHADOW BUFFER of the user's LaTeX file. You NEVER wr
 
 YOUR WORKFLOW & FAST EXECUTION MANDATE:
 1. When doing a FULL DOCUMENT REWRITE / TOPIC OVERHAUL, use `rewrite_chunk(chunk_id, new_content)` or batched `tool_calls: [...]` to replace content cleanly by chunk ID.
-2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), systematically expand chunks using `insert_into_chunk(chunk_id, content)` or `str_replace` or `rewrite_chunk(chunk_id, new_content)`. You can execute multiple chunks in a single turn using `tool_calls: [...]`.
+2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), systematically expand chunks using `insert_into_chunk(chunk_id, content)` or `replace_text` or `rewrite_chunk(chunk_id, new_content)`. You can execute multiple chunks in a single turn using `tool_calls: [...]`.
 3. To insert new bibliography entries (`\\bibitem`), citations, or list items, use `insert_into_chunk(chunk_id, content, position='end')`. This automatically places items before `\\end{{thebibliography}}` without breaking the environment.
-4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `read_file_range`/`grep_search` if line inspection is needed.
+4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `read_file_range`/`search_document` if line inspection is needed.
 5. FAST EDIT RULE: Aim to complete your edit in the minimum number of steps possible (1–2 steps for targeted edits). Set `done=true` immediately as soon as your edits are applied.
-6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `grep_search(query, file=filename)`.
-7. After editing, you may call `verify_compile` to check for LaTeX compilation errors, or set `done=true` if your edit is straightforward.
+6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `search_document(query, file=filename)`.
+7. After editing, you may call `compile_latex` to check for LaTeX compilation errors; edits are also compiled automatically when you finish.
 8. When all edits are complete, respond with the done signal.
 9. PDF IMPORT: When the user asks to convert / import / recreate an attached PDF as LaTeX, call `convert_attached_pdf()` instead of transcribing it yourself, then finish immediately with done=true (no document edits). Every page is reproduced as compilable LaTeX with the same text, images, colors, font sizes and spacing as closely as possible, then compiled and compared with the original. Results are best-effort and come with measured per-page similarity — never promise an identical copy.
 10. CRITICAL STRUCTURAL INVARIANT: NEVER remove or omit `\\begin{{document}}` or `\\end{{document}}`. Every standalone document MUST have `\\begin{{document}}` separating the preamble from the document body, and `\\end{{document}}` at the end.
@@ -103,14 +128,14 @@ B) When you are DONE (edits applied):
 CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
 
 1. USER PREFERENCE IS ABSOLUTE (EDIT MODE MANDATE):
-   - In EDIT MODE, you MUST make tangible edits to the document using `str_replace`.
-   - If the user asks to elaborate, expand, add content, write out chapters/subchapters, or detail topics, YOU MUST WRITE EXTENSIVE LATEX CONTENT directly into the document using `str_replace`.
+   - In EDIT MODE, you MUST make tangible edits to the document using `replace_text`.
+   - If the user asks to elaborate, expand, add content, write out chapters/subchapters, or detail topics, YOU MUST WRITE EXTENSIVE LATEX CONTENT directly into the document using `replace_text`.
    - NEVER refuse or claim the document already has enough content.
    - NEVER conclude with done=true without making edits when the user requested content generation, expansion, or elaboration.
    - Elaborating on topics means adding rich, detailed LaTeX paragraphs, subsections, mathematical formulations, and thorough explanations into each requested section.
 
 2. IN-PLACE EDITING & STRUCTURAL INTEGRITY:
-   - When editing existing topics/sections, locate that specific block and EDIT IT IN-PLACE using `str_replace`.
+   - When editing existing topics/sections, locate that specific block and EDIT IT IN-PLACE using `replace_text`.
    - Front-matter elements (Title Page, Certificate, Acknowledgement, Abstract, Table of Contents, Lists of Figures/Tables) are SACRED — never delete or overwrite them.
    - In Beamer presentations: The Title Slide (Slide 1 / [plain] / \\titlepage with author and metadata) is SACRED. Never overwrite the Title Slide when updating content slides.
    - Maintain hierarchical depth (\\chapter > \\section > \\subsection > \\subsubsection). Never skip levels.
@@ -125,10 +150,13 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Table consistency: In `tabular` / `tabularx`, every row must have the exact number of column dividers (`&`) matching the column specification and end with `\\\\`.
    - Image assets: Use `list_assets` to discover existing images. Reference images using `\\includegraphics[width=\\linewidth,keepaspectratio]{{assets/<filename>}}`. Never invent filenames or insert raw multi-page `.pdf` files into `\\includegraphics`.
 
-4. EXACT-MATCH STR_REPLACE:
-   - ALWAYS read the file first before attempting any `str_replace` to copy the exact lines to replace.
-   - The `old_str` in `str_replace` MUST be an EXACT copy from the file — copy it character-for-character from the `read_file_range` output.
-   - If `str_replace` fails with "EXACT MATCH FAILED", re-read the target area and try again with the correct text.
+4. TARGETING EDITS (SMALLEST EDIT, STABLE TARGETS):
+   - Every block has a stable `node_id` in the outline (e.g. `sec:introduction`, `frame:results`, `meta:title`, `env:tabular@sec:results#1`). node_ids stay valid while other blocks are edited — use them instead of line numbers or long copied anchors.
+   - Choose the smallest operation: `replace_text` for a change inside a block (pass `node_id` to scope it), `replace_block` when most of a block changes, `insert_block` for new slides/sections/items, `delete_block` to remove one. Never rewrite the whole document for a local change.
+   - `old_str` for `replace_text` should be copied from the latest content you were shown; small whitespace/quote drift is tolerated. If a target cannot be found, NOTHING is changed and the current region is returned — correct the target from that region in one step; do not retry the same text blindly.
+   - Documents without sections or frames (e.g. an imported PDF) are addressed by page (`page:1`) and by text: lines containing the words the user mentioned are already shown to you (matched ignoring case), and `search_document` also matches ignoring case when the exact case finds nothing. Copy the document's own spelling/case into `old_str`.
+   - Read only what you need: the target block is usually already in your context; otherwise `get_block(node_id)` (add include_style=true for title/colour/font changes) instead of reading large line ranges.
+   - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `detect_overflow` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
 
 5. GROUNDING IN EXISTING DOCUMENT DATA & MANDATORY EXPANSION / ELABORATION:
@@ -155,8 +183,8 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - For MULTI-CHAPTER REPORTS: Use `\\documentclass[11pt,a4paper,oneside]{{report}}`, standard geometry, setspace, amsmath, graphicx, booktabs, hyperref. Include Title, Abstract, Table of Contents, and 4-6 rich chapters with mathematical formulas, algorithms, tables, and bibliography.
    - For RESEARCH PAPERS / ARTICLES: Use `\\documentclass[conference]{{IEEEtran}}` or `\\documentclass[11pt,twocolumn]{{article}}`, abstract, keywords, numbered sections (Intro, Related Work, Methodology, Results, Conclusion), and references.
    - For RESUMES / CVs: Clean single- or two-page layout with Contact, Education, Technical Skills, Experience, and Projects.
-   - If the file is empty or contains a default template, replace the entire buffer with the complete, newly created document using `str_replace`.
-   - ALWAYS run `verify_compile` after creating the document to ensure zero compilation errors.
+   - If the file is empty or contains a default template, replace the entire buffer with the complete, newly created document using `replace_text`.
+   - ALWAYS run `compile_latex` after creating the document to ensure zero compilation errors.
 
 7. BEAMER COLOR CONTRAST & VISIBILITY (INVISIBLE TITLE / TEXT FIX):
    - When user reports that "title is not visible", "invisible text", "cannot see heading", or poor contrast:
@@ -173,7 +201,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * YOU MUST MAKE A TOOL CALL TO `get_template_theme(category="ppt", theme_name=...)` to refer to other PPT templates from the template library.
      * Available PPT themes include: 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'minimalist' (Focus clean), 'basic' (custom Madrid), 'sorbonne', 'uwm', and 'regalia'.
      * If the user asks for another design or to change template without naming one, call `get_template_theme(category="ppt", theme_name="list")` to see available themes, or select an alternative like 'nordlight' or 'prism' using `get_template_theme(category="ppt", theme_name="nordlight", extract_section="preamble")`.
-     * Then use `read_file_range` on the document's preamble and `str_replace` to swap out the styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
+     * Then use `read_file_range` on the document's preamble and `replace_text` to swap out the styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
 
 9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
    - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines.
@@ -392,9 +420,12 @@ def _build_document_outline(workspace: "ShadowWorkspace") -> str:
         return f"DOCUMENT SCALE: {total_lines} lines total."
 
     return (
-        "DOCUMENT STRUCTURE OUTLINE (Target these line numbers directly with `read_file_range` / `str_replace`):\n"
+        "DOCUMENT STRUCTURE OUTLINE (Target these line numbers directly with `read_file_range` / `replace_text`):\n"
         + "\n".join(outline_items)
     )
+
+
+_RE_TOOL_RESULT = re.compile(r"TOOL RESULT from `?([a-z_]+)`?:")
 
 
 def _compact_conversation_history(
@@ -456,60 +487,31 @@ def _compact_conversation_history(
                     continue
             compacted.append(msg)
         elif role == "user":
-            if "TOOL RESULT from `read_file_range`:" in content or "TOOL RESULT from read_file_range:" in content:
+            tool_m = _RE_TOOL_RESULT.search(content)
+            if tool_m:
                 compacted.append({
                     "role": "user",
-                    "content": "[TOOL RESULT from read_file_range: Lines read and processed in earlier step.]",
-                })
-            elif "TOOL RESULT from `rewrite_chunk`:" in content or "TOOL RESULT from rewrite_chunk:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from rewrite_chunk: Chunk updated successfully in earlier step.]",
-                })
-            elif "TOOL RESULT from `str_replace`:" in content or "TOOL RESULT from str_replace:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from str_replace: Text replaced successfully in earlier step.]",
-                })
-            elif "TOOL RESULT from `insert_into_chunk`:" in content or "TOOL RESULT from insert_into_chunk:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from insert_into_chunk: Content inserted successfully in earlier step.]",
-                })
-            elif "TOOL RESULT from `get_template_theme`:" in content or "TOOL RESULT from get_template_theme:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from get_template_theme: Template theme retrieved in earlier step.]",
-                })
-            elif "TOOL RESULT from `grep_search`:" in content or "TOOL RESULT from grep_search:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from grep_search: Search query executed in earlier step.]",
-                })
-            elif "TOOL RESULT from `search_uploaded_references`:" in content or "TOOL RESULT from search_uploaded_references:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from search_uploaded_references: Uploaded context query executed in earlier step.]",
+                    "content": f"[TOOL RESULT from {tool_m.group(1)}: processed in an earlier step.]",
                 })
             elif "BATCH TOOL RESULTS" in content:
                 compacted.append({
                     "role": "user",
-                    "content": "[BATCH TOOL RESULTS: Batched edits applied successfully in earlier step.]",
-                })
-            elif "TOOL RESULT from `verify_compile`:" in content or "TOOL RESULT from verify_compile:" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[TOOL RESULT from verify_compile: Compilation check completed in earlier step.]",
+                    "content": "[BATCH TOOL RESULTS: Batched edits applied in earlier step.]",
                 })
             elif "COVERAGE CHECK FAILED" in content:
                 compacted.append({
                     "role": "user",
                     "content": "[COVERAGE CHECK: Missing chunks reported in earlier step.]",
                 })
-            elif "COMPILATION ERRORS:" in content:
+            elif "COMPILATION ERRORS:" in content or "COMPILATION FAILED" in content:
                 compacted.append({
                     "role": "user",
                     "content": "[COMPILATION ERRORS: Compilation errors diagnosed in earlier step.]",
+                })
+            elif "EDIT FAILED" in content:
+                compacted.append({
+                    "role": "user",
+                    "content": "[EDIT FAILED in an earlier step; the document was not changed by it.]",
                 })
             elif len(content) > 400:
                 compacted.append({
@@ -878,8 +880,8 @@ def stream_opencode_agent(
             "   - If user asked to change design/template without naming one, call `get_template_theme(category='ppt', theme_name='list')` or fetch an alternative PPT template like 'nordlight' or 'prism':\n"
             "     `get_template_theme(category='ppt', theme_name='nordlight', extract_section='preamble')`.\n"
             "2. Read the current preamble with `read_file_range` from line 1 to \\begin{document}.\n"
-            "3. Use `str_replace` to update the styling, color definitions, and packages in the preamble while PRESERVING all user frames, sections, formulas, and text.\n"
-            "4. Run `verify_compile` to confirm the redesigned document compiles cleanly with 0 errors.\n"
+            "3. Use `replace_text` to update the styling, color definitions, and packages in the preamble while PRESERVING all user frames, sections, formulas, and text.\n"
+            "4. Run `compile_latex` to confirm the redesigned document compiles cleanly with 0 errors.\n"
             "=========================================================\n"
         )
 
@@ -964,7 +966,7 @@ def stream_opencode_agent(
             "2. Ensure \\setbeamercolor{title}{bg=..., fg=white} explicitly sets fg=white (or high-contrast color).\n"
             "3. If \\title{\\color{...}{...}} contains an embedded dark color macro (e.g. \\color{black} or \\color{pdfprimary}), change it to \\color{white}{...} or remove the embedded \\color and let \\setbeamercolor{title}{fg=white} control it.\n"
             "4. Also check \\setbeamercolor{frametitle}{bg=..., fg=white} for slide headers.\n"
-            "5. Apply the fix using `str_replace` and run `verify_compile`.\n"
+            "5. Apply the fix using `replace_text` and run `compile_latex`.\n"
             "=========================================================\n"
         )
 
@@ -1019,6 +1021,8 @@ def stream_opencode_agent(
 
     agent_trace = AgentTrace(
         project_id=project_id,
+        request_id=effective_session_id,
+        document_id=file_path,
         model_used=model,
         task_classification={
             "scope": scope,
@@ -1076,7 +1080,7 @@ def stream_opencode_agent(
                 "1. The user provided the above reference document(s) as PRIMARY SOURCE MATERIAL for this request.\n"
                 "2. You MUST cite, refer to, extract, and incorporate real data, section topics, algorithms, methodologies, benchmark tables, and findings from this reference document into your LaTeX output.\n"
                 "3. To inspect specific pages, use `read_attached_document(filename=..., start_page=..., end_page=...)`.\n"
-                "4. To search for specific keywords or formulas, use `search_uploaded_references(query=...)` or `grep_search(query=..., file=...)`.\n"
+                "4. To search for specific keywords or formulas, use `search_uploaded_references(query=...)` or `search_document(query=..., file=...)`.\n"
                 "5. You can also read reference document lines directly using `read_file_range(file=...)`."
             )
 
@@ -1104,13 +1108,31 @@ def stream_opencode_agent(
     # ================================================================
     # 3d. Build Smart Initial Context using Context Strategy
     # ================================================================
-    smart_document_context = build_initial_context(
-        decision=context_decision,
-        analysis=doc_analysis,
-        workspace=workspace,
-        user_instruction=user_instruction,
-        doc_outline=doc_outline,
+    # A targeted edit on anything but a small document gets the blocks it is
+    # about (levels 1-4), not the whole file: the first message is re-sent on
+    # every step, so a full document there multiplies by the step count.
+    use_node_context = (
+        mode == "edit"
+        and not (is_full_rewrite or is_expansion or is_creation_request or is_broad_request)
+        and total_lines > SMALL_DOC_LINES
     )
+    if use_node_context:
+        smart_document_context, context_info = build_targeted_context(workspace, user_instruction)
+    else:
+        smart_document_context = build_initial_context(
+            decision=context_decision,
+            analysis=doc_analysis,
+            workspace=workspace,
+            user_instruction=user_instruction,
+            doc_outline=doc_outline,
+        )
+        context_info = {"strategy": context_decision.strategy.value.lower(), "levels": [5]
+                        if context_decision.strategy == ContextStrategy.WHOLE_FILE else []}
+    context_info["initial_chars"] = len(smart_document_context)
+    agent_trace.context_info = context_info
+    ledger = ContextLedger()
+    ledger.mark_permanent(smart_document_context)
+    workspace.context_ledger = ledger
 
     # Build preservation/transformation guidance for full rewrites
     transformation_guidance = ""
@@ -1163,7 +1185,7 @@ def stream_opencode_agent(
             "2. HIGH-SPEED BATCHING MANDATE: Use batched `tool_calls: [...]` to rewrite all content chunks in a single turn (or minimum turns) rather than one round-trip per chunk!\n"
             "3. `rewrite_chunk` uses structural AST byte offsets rather than exact string matches, guaranteeing complete section replacement without needing prior `read_file_range`.\n"
             "4. Completely replace all old topic content and terminology with the new topic/source material.\n"
-            "5. After rewriting all chunks, call `verify_compile` ONCE to verify the completed document compiles cleanly.\n"
+            "5. After rewriting all chunks, call `compile_latex` ONCE to verify the completed document compiles cleanly.\n"
             "6. Coverage validation will verify that EVERY content chunk was rewritten before allowing completion.\n"
             "Start by applying your rewrites across the content chunks now using batched `tool_calls: [...]`.\n"
             "========================================================="
@@ -1189,7 +1211,7 @@ def stream_opencode_agent(
             "2. HIGH-SPEED BATCHING MANDATE: Use batched `tool_calls: [...]` with `rewrite_chunk(chunk_id, new_content)` or `insert_into_chunk(chunk_id, content)` across all chunks in a single turn to minimize agent latency.\n"
             "3. Add rich academic paragraphs, mathematical formulations, benchmarks, subtopics, and analysis to every section.\n"
             "4. To insert bibliography entries or list items, use `insert_into_chunk(chunk_id, content, position='end')`.\n"
-            "5. After expanding all chunks, call `verify_compile` ONCE to confirm zero LaTeX compilation errors before signaling done=true.\n"
+            "5. After expanding all chunks, call `compile_latex` ONCE to confirm zero LaTeX compilation errors before signaling done=true.\n"
             "6. Coverage validation will verify that EVERY content chunk was expanded before allowing completion.\n"
             "Start by expanding the chunks now using batched `tool_calls: [...]`.\n"
             "========================================================="
@@ -1285,8 +1307,8 @@ def stream_opencode_agent(
             "CREATION INSTRUCTIONS:\n"
             f"{creation_step_1}"
             "2. Generate the complete, publication-grade LaTeX code from `\\documentclass` to `\\end{document}`.\n"
-            "3. Use `str_replace` to write the newly created document into the workspace.\n"
-            "4. Call `verify_compile` to check that the newly created document compiles with 0 errors.\n"
+            "3. Use `replace_text` to write the newly created document into the workspace.\n"
+            "4. Call `compile_latex` to check that the newly created document compiles with 0 errors.\n"
             "5. If compilation succeeds, signal done=true with a summary of what you created."
         )
     elif is_broad_request and valid_chapters:
@@ -1306,8 +1328,8 @@ def stream_opencode_agent(
             f"Detected chapters in the document:\n{ch_list}\n\n"
             f"Detected sections in the document:\n{sec_list}\n\n"
             "CRITICAL REQUIREMENT: You MUST systematically iterate through EACH chapter and its subchapters.\n"
-            "HIGH-SPEED BATCHING: Use batched `tool_calls: [...]` with `rewrite_chunk` or `insert_into_chunk` or `str_replace` across chapters in minimal turns to insert extensive academic content (detailed theory, methodologies, algorithms, benchmarks, equations, and analysis).\n"
-            "After applying all edits, run `verify_compile` once and signal done=true."
+            "HIGH-SPEED BATCHING: Use batched `tool_calls: [...]` with `rewrite_chunk` or `insert_into_chunk` or `replace_text` across chapters in minimal turns to insert extensive academic content (detailed theory, methodologies, algorithms, benchmarks, equations, and analysis).\n"
+            "After applying all edits, run `compile_latex` once and signal done=true."
         )
     else:
         # Edit mode — strictly mandate document modification
@@ -1320,13 +1342,13 @@ def stream_opencode_agent(
                 "COMPILATION ERROR SURGICAL REPAIR WORKFLOW:\n"
                 "1. Focus strictly on the parsed compilation errors and flagged lines above.\n"
                 "2. If needed, inspect the code around the error lines with `read_file_range`.\n"
-                "3. Apply surgical syntax/structure corrections using `str_replace`.\n"
-                "4. MANDATORY STEP: Call `verify_compile` to confirm that all errors are resolved.\n"
-                "5. Only signal done=true after `verify_compile` succeeds."
+                "3. Apply surgical syntax/structure corrections using `replace_text`.\n"
+                "4. MANDATORY STEP: Call `compile_latex` to confirm that all errors are resolved.\n"
+                "5. Only signal done=true after `compile_latex` succeeds."
             )
         elif is_redesign_request:
             start_instruction = (
-                "Start by calling `get_template_theme` to retrieve the new template styling, then inspect the preamble with `read_file_range` and apply the theme using `str_replace`."
+                "Start by calling `get_template_theme` to retrieve the new template styling, then inspect the preamble with `read_file_range` and apply the theme using `replace_text`."
             )
         else:
             start_instruction = "Start by locating where to make your edits and apply them."
@@ -1341,7 +1363,7 @@ def stream_opencode_agent(
             f"{compilation_fix_diagnostic}\n\n"
             f"{visibility_diagnostic}\n\n"
             f"{redesign_guidance}\n\n"
-            "MANDATE: You are in EDIT MODE. User preference is absolute. You MUST make the requested changes and write detailed, comprehensive LaTeX content directly into the document using `str_replace`.\n"
+            "MANDATE: You are in EDIT MODE. User preference is absolute. You MUST make the requested changes and write detailed, comprehensive LaTeX content directly into the document using `replace_text`.\n"
             f"{ref_instruction}"
             "If the user asks to elaborate, expand, explain chapters/subchapters, or add content, locate the relevant chapters/sections and insert rich, detailed LaTeX paragraphs, explanations, equations, and subsections into the file.\n"
             "Never conclude with done=true without editing the document or verifying compilation.\n"
@@ -1360,12 +1382,54 @@ def stream_opencode_agent(
     compile_available = True
     done_rejections = 0  # Track how many times we rejected a premature done=true
     pdf_conversion_job_id: Optional[str] = None  # set when convert_attached_pdf starts a job
+    run_tx = workspace.begin_transaction()  # the whole run is one transaction
+    compile_repairs = 0
+    compile_failed_final: Optional[Dict[str, Any]] = None
+    llm_failure: Optional[str] = None
+    target_failures: Dict[str, int] = {}
+
+    def compile_gate() -> Tuple[str, Dict[str, Any]]:
+        """
+        Deterministic compile when the agent finishes with unverified edits.
+        Returns ("ok" | "skipped" | "repair" | "failed", compile result).
+        """
+        nonlocal compile_verified, compile_available, compile_repairs
+        t0 = time.time()
+        res = execute_tool("compile_latex", {}, workspace)
+        agent_trace.record_compile(latency_ms=(time.time() - t0) * 1000, success=bool(res.get("success")))
+        if res.get("infra_skip"):
+            compile_available = False
+            compile_verified = True
+            return "skipped", res
+        if res.get("success"):
+            compile_verified = True
+            return "ok", res
+        if compile_repairs < MAX_COMPILE_REPAIRS and steps_taken < actual_max_steps:
+            compile_repairs += 1
+            agent_trace.retry_count += 1
+            return "repair", res
+        return "failed", res
+
+    def compile_feedback(res: Dict[str, Any]) -> str:
+        errs = res.get("new_errors") or res.get("errors") or []
+        diag = "\n".join(
+            f"- [{'Line ' + str(e.get('line')) if e.get('line') else 'Document'}] {e.get('error')}"
+            + (f" -> Fix: {e.get('suggested_action')}" if e.get('suggested_action') else "")
+            for e in errs[:6]
+        ) or res.get("summary", "Compilation failed")
+        return (
+            f"COMPILATION FAILED after your edits (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
+            f"{(res.get('stderr') or '')[:1200]}\n\n"
+            "Fix ONLY these errors with the smallest edit (replace_text with node_id/line_hint), then set done=true. "
+            "If they cannot be fixed, the whole change is rolled back."
+        )
 
     while steps_taken < actual_max_steps:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Agent loop cancelled by user.")
 
         steps_taken += 1
+        ledger.step = steps_taken
         yield {
             "type": "status",
             "step": steps_taken,
@@ -1402,21 +1466,28 @@ def stream_opencode_agent(
                 temperature=0.1,
                 max_tokens=step_max_tokens,
                 api_keys=api_keys,
+                cancel_token=cancel_token,
+                observer=agent_trace.record_llm_attempt,
             )
             agent_trace.record_llm_call(
                 latency_ms=(time.time() - t_llm_start) * 1000,
                 usage=response.get("usage") if isinstance(response, dict) else None,
             )
+        except LLMOperationCancelled:
+            raise
         except Exception as e:
             agent_trace.record_llm_call(
                 latency_ms=(time.time() - t_llm_start) * 1000,
             )
-            logger.error(f"LLM call failed at step {steps_taken}: {e}")
+            logger.error(f"LLM call failed at step {steps_taken}: {type(e).__name__}: {str(e)[:200]}")
+            llm_failure = _friendly_llm_error(e)
+            agent_trace.failure_reason = f"llm_unavailable:{getattr(getattr(e, 'kind', None), 'value', type(e).__name__)}"
             yield {
                 "type": "status",
                 "step": steps_taken,
-                "message": f"LLM call failed: {e}",
+                "message": llm_failure,
             }
+            yield _phase("failed", llm_failure)
             break
 
         raw_content = response.get("content", "")
@@ -1438,6 +1509,8 @@ def stream_opencode_agent(
                     temperature=0.1,
                     max_tokens=4096,
                     api_keys=api_keys,
+                    cancel_token=cancel_token,
+                    observer=agent_trace.record_llm_attempt,
                 )
                 cont_text = continuation.get("content", "")
                 cont_finish = continuation.get("finish_reason", "stop")
@@ -1450,6 +1523,8 @@ def stream_opencode_agent(
                     if cont_finish not in ("length", "max_tokens") and _parse_agent_response(combined):
                         raw_content = combined
                         cont_succeeded = True
+            except LLMOperationCancelled:
+                raise
             except Exception as e:
                 logger.warning(f"Continuation chat failed: {e}")
             finally:
@@ -1501,8 +1576,8 @@ def stream_opencode_agent(
                     "role": "user",
                     "content": (
                         "REJECTED: This is a COMPILATION FIX request. You CANNOT complete without verifying compilation.\n"
-                        "You MUST run `verify_compile` to confirm that the LaTeX document compiles cleanly with 0 errors.\n"
-                        "Call `verify_compile` now."
+                        "You MUST run `compile_latex` to confirm that the LaTeX document compiles cleanly with 0 errors.\n"
+                        "Call `compile_latex` now."
                     ),
                 })
                 continue
@@ -1529,7 +1604,7 @@ def stream_opencode_agent(
                             "You MUST expand the document NOW. Here is exactly what to do:\n"
                             "1. Call `read_file_range` with start_line=1 and end_line=50 to read the document structure.\n"
                             "2. Identify the first topic/slide/section.\n"
-                            "3. Use `str_replace` to add detailed content AFTER the first section's content.\n"
+                            "3. Use `replace_text` to add detailed content AFTER the first section's content.\n"
                             "4. Repeat for each subsequent topic/section.\n"
                             "DO NOT say done=true again without making edits. The user is waiting for content."
                         )
@@ -1539,7 +1614,7 @@ def stream_opencode_agent(
                             f"The user asked: \"{user_instruction}\"\n\n"
                             "You MUST make edits NOW:\n"
                             "1. Call `read_file_range` to inspect the document.\n"
-                            "2. Use `str_replace` to apply the requested changes.\n"
+                            "2. Use `replace_text` to apply the requested changes.\n"
                             "DO NOT say done=true again without making edits."
                         )
                 else:
@@ -1553,17 +1628,17 @@ def stream_opencode_agent(
                             f"{chunk_hint}"
                             "You MUST NOT conclude without modifying the file. You MUST:\n"
                             "1. Generate rich, detailed LLM-written content for each topic/slide (e.g. an additional in-depth slide per topic).\n"
-                            "2. Use `rewrite_chunk(chunk_id, new_content)` or `str_replace(old_str, new_str)` to insert the new slides/content into main.tex.\n"
-                            "3. Call `verify_compile` to confirm 0 compilation errors.\n"
+                            "2. Use `rewrite_chunk(chunk_id, new_content)` or `replace_text(old_str, new_str)` to insert the new slides/content into main.tex.\n"
+                            "3. Call `compile_latex` to confirm 0 compilation errors.\n"
                             "Do NOT declare done=true until you have actually added content to the file."
                         )
                     else:
                         rejection_msg = (
                             f"REJECTED (attempt #{done_rejections}): You are in EDIT MODE and have made 0 edits to the document (0 lines changed).\n"
                             f"The user's prompt is: \"{user_instruction}\".\n"
-                            "User preference is absolute. You MUST modify the LaTeX file using `rewrite_chunk` or `str_replace`.\n"
+                            "User preference is absolute. You MUST modify the LaTeX file using `rewrite_chunk` or `replace_text`.\n"
                             "Do not declare the document complete without applying the requested design, expansions, or edits into the file.\n"
-                            "Use `rewrite_chunk` or `str_replace` to apply your modifications now."
+                            "Use `rewrite_chunk` or `replace_text` to apply your modifications now."
                         )
 
                 messages.append({"role": "user", "content": rejection_msg})
@@ -1609,10 +1684,27 @@ def stream_opencode_agent(
                     "role": "user",
                     "content": (
                         f"INCOMPLETE: You have only applied {workspace.get_edit_count()} edit(s) so far, but the user requested to elaborate ALL chapters and subchapters across the document.\n"
-                        "You must continue reading the remaining unedited chapters and use `rewrite_chunk` or `str_replace` to add extensive, detailed LaTeX content across all chapters before signaling done=true."
+                        "You must continue reading the remaining unedited chapters and use `rewrite_chunk` or `replace_text` to add extensive, detailed LaTeX content across all chapters before signaling done=true."
                     ),
                 })
                 continue
+
+            # 4. Edits must compile (only errors the edits introduced count).
+            if mode == "edit" and workspace.has_changed() and not compile_verified and compile_available:
+                yield _phase("compiling", "Compiling…")
+                gate, gate_res = compile_gate()
+                if gate == "repair":
+                    yield _phase("repairing", "Repairing compile errors…")
+                    yield {"type": "compile_error", "summary": gate_res.get("stderr", "Compilation failed"),
+                           "errors": gate_res.get("new_errors", []),
+                           "message": "Compilation failed after the edit. Agent will self-correct..."}
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": compile_feedback(gate_res)})
+                    continue
+                if gate == "failed":
+                    compile_failed_final = gate_res
+                    agent_explanation = parsed.get("explanation", thought or "")
+                    break
 
             agent_explanation = parsed.get("explanation", thought or "Edit completed.")
             break
@@ -1631,9 +1723,19 @@ def stream_opencode_agent(
 
         if calls:
             tool_results_list = []
+            names = {canonical_tool_name(str(c.get("name", ""))) for c in calls}
+            if names & EDIT_TOOLS:
+                yield _phase("finding_target", "Finding target…")
+                yield _phase("applying", "Applying edit…")
+            if names & _LAYOUT_TOOLS:
+                yield _phase("checking_layout", "Checking layout…")
+            if "compile_latex" in names:
+                yield _phase("compiling", "Compiling…")
             for call in calls:
-                tool_name = call.get("name", "")
+                tool_name = canonical_tool_name(str(call.get("name", "")))
                 tool_args = call.get("arguments", {})
+                if not isinstance(tool_args, dict):
+                    tool_args = {}
 
                 yield {
                     "type": "tool_call",
@@ -1651,14 +1753,36 @@ def stream_opencode_agent(
                 t_tool_ms = (time.time() - t_tool_start) * 1000
 
                 is_success = bool(tool_result.get("success", True) if isinstance(tool_result, dict) else True)
-                summary_str = str(tool_result)[:100] if isinstance(tool_result, dict) else ""
+                if isinstance(tool_result, dict) and tool_result.get("error") and "success" not in tool_result:
+                    is_success = False
+                summary_str = (
+                    json.dumps({k: tool_result.get(k) for k in ("success", "method", "node_id", "reason", "lines_affected")
+                                if k in tool_result}, default=str)
+                    if isinstance(tool_result, dict) else ""
+                )
                 agent_trace.record_tool_call(
                     name=tool_name,
                     args=tool_args,
                     result_summary=summary_str,
                     latency_ms=t_tool_ms,
                     success=is_success,
+                    node_id=(tool_result.get("node_id") if isinstance(tool_result, dict) else None)
+                    or tool_args.get("node_id") or tool_args.get("chunk_id"),
+                    edit_type=tool_name if tool_name in EDIT_TOOLS else None,
+                    target_resolution_method=tool_result.get("method") if isinstance(tool_result, dict) else None,
+                    failure_reason=None if is_success else str(
+                        tool_result.get("reason") or tool_result.get("error", ""))[:80],
                 )
+                if tool_name in EDIT_TOOLS and is_success:
+                    compile_verified = False  # a new edit needs a new compile
+                if tool_name in EDIT_TOOLS and not is_success:
+                    key = f"{tool_name}:{tool_args.get('node_id') or tool_args.get('chunk_id') or str(tool_args.get('old_str', ''))[:60]}"
+                    target_failures[key] = target_failures.get(key, 0) + 1
+                    if isinstance(tool_result, dict) and target_failures[key] > MAX_TARGET_RETRIES:
+                        tool_result["give_up"] = (
+                            "This target has now failed twice. Do not retry it: finish with done=true and say "
+                            "what could not be changed."
+                        )
 
                 yield {
                     "type": "tool_result",
@@ -1670,7 +1794,7 @@ def stream_opencode_agent(
                     pdf_conversion_job_id = tool_result["job_id"]
 
                 # Special handling for compile results
-                if tool_name == "verify_compile":
+                if tool_name == "compile_latex":
                     agent_trace.record_compile(
                         latency_ms=t_tool_ms,
                         success=bool(tool_result.get("success", False)),
@@ -1702,6 +1826,19 @@ def stream_opencode_agent(
                 tool_results_list.append((tool_name, tool_args, tool_result))
 
             # Fast 1-turn completion check: If agent signaled done=true in the same response AND tools made valid edits
+            if parsed.get("done") and workspace.has_changed() and mode == "edit" and not compile_verified \
+                    and compile_available:
+                yield _phase("compiling", "Compiling…")
+                gate, gate_res = compile_gate()
+                if gate == "repair":
+                    yield _phase("repairing", "Repairing compile errors…")
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({"role": "user", "content": compile_feedback(gate_res)})
+                    continue
+                if gate == "failed":
+                    compile_failed_final = gate_res
+                    agent_explanation = parsed.get("explanation", thought or "")
+                    break
             if parsed.get("done") and workspace.has_changed():
                 if is_compilation_fix_request and not compile_verified and steps_taken < actual_max_steps:
                     # In compilation fix mode, require verified compilation before concluding
@@ -1761,30 +1898,38 @@ def stream_opencode_agent(
                     followup_msg = (
                         f"TOOL RESULT from `get_template_theme`:\n{result_str}\n\n"
                         "ACTION REQUIRED: You have retrieved the template/theme styling. "
-                        "Now use `read_file_range` on the document's preamble (if not yet read) and call `str_replace` "
+                        "Now use `read_file_range` on the document's preamble (if not yet read) and call `replace_text` "
                         "to apply these theme/color/package changes into the document buffer. "
-                        "Do NOT call done=true until you have modified the document using `str_replace`!"
+                        "Do NOT call done=true until you have modified the document using `replace_text`!"
                     )
                 elif tool_name == "read_file_range":
                     followup_msg = (
                         f"TOOL RESULT from `read_file_range`:\n{result_str}\n\n"
-                        "Now identify the exact text to replace and use `str_replace` or `rewrite_chunk` to apply the edits. "
-                        "Remember that old_str in `str_replace` must match the file exactly character-for-character."
+                        "Now identify the exact text to replace and use `replace_text` or `rewrite_chunk` to apply the edits. "
+                        "Remember that old_str in `replace_text` must match the file exactly character-for-character."
                     )
-                elif tool_name in ("str_replace", "insert_into_chunk"):
+                elif tool_name in EDIT_TOOLS and not tool_result.get("success", False):
+                    followup_msg = (
+                        f"EDIT FAILED — TOOL RESULT from `{tool_name}` (the document was NOT changed):\n{result_str}\n\n"
+                        "Correct the target using the region shown (or address the block by node_id) and retry once. "
+                        "If the result says give_up, finish with done=true instead."
+                    )
+                elif tool_name in EDIT_TOOLS:
                     followup_msg = (
                         f"TOOL RESULT from `{tool_name}`:\n{result_str}\n\n"
-                        "Edit applied successfully to shadow buffer. If all requested changes are complete, you can now set done=true with your final explanation, or continue with additional edits if needed."
+                        "Edit applied to the shadow buffer (it is compiled automatically when you finish). "
+                        "If all requested changes are complete, set done=true with your final explanation; "
+                        "otherwise continue with the next edit."
                     )
-                elif tool_name == "verify_compile":
+                elif tool_name == "compile_latex":
                     if tool_result.get("infra_skip"):
                         followup_msg = (
-                            f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
+                            f"TOOL RESULT from `compile_latex`:\n{result_str}\n\n"
                             "Shadow compilation skipped (compiler unavailable). If all edits are complete, you can now set done=true."
                         )
                     elif tool_result.get("success"):
                         followup_msg = (
-                            f"TOOL RESULT from `verify_compile`:\n{result_str}\n\n"
+                            f"TOOL RESULT from `compile_latex`:\n{result_str}\n\n"
                             "Compilation passed cleanly! If all requested changes are complete, you can now set done=true."
                         )
                     else:
@@ -1802,13 +1947,13 @@ def stream_opencode_agent(
                             f"COMPILATION FAILED:\n{diag_str}\n\n"
                             f"Raw Log Snippet:\n{err_context[:1000]}\n\n"
                             "INSTRUCTION: Target ONLY the specific lines flagged above with compilation errors. "
-                            "Use `read_file_range` around the error line if needed, then `str_replace` to fix the syntax errors (e.g. unclosed environments, missing TikZ semicolon, missing packages) "
-                            "and then call `verify_compile` to confirm the fix."
+                            "Use `read_file_range` around the error line if needed, then `replace_text` to fix the syntax errors (e.g. unclosed environments, missing TikZ semicolon, missing packages) "
+                            "and then set done=true (the fix is compiled automatically)."
                         )
                 elif tool_name == "search_uploaded_references":
                     followup_msg = (
                         f"TOOL RESULT from `search_uploaded_references`:\n{result_str}\n\n"
-                        "Use the retrieved reference details, benchmark metrics, or citations to insert or edit the LaTeX content using `insert_into_chunk` or `str_replace`."
+                        "Use the retrieved reference details, benchmark metrics, or citations to insert or edit the LaTeX content using `insert_into_chunk` or `replace_text`."
                     )
                 else:
                     followup_msg = (
@@ -1863,6 +2008,55 @@ def stream_opencode_agent(
             ),
         })
 
+    # 4b. Transactional outcome. The run is all-or-nothing: an edit set that
+    # cannot be made to compile, or a run cut short by the LLM provider, is
+    # rolled back as a whole, so the user never receives half an edit.
+    failure_payload: Optional[Dict[str, Any]] = None
+    if compile_failed_final is not None:
+        workspace.rollback_transaction(run_tx)
+        errs = compile_failed_final.get("new_errors") or compile_failed_final.get("errors") or []
+        agent_trace.compile_result = "failed"
+        agent_trace.failure_reason = "compile_failed_after_repairs"
+        failure_payload = {
+            "message": SAFE_FAILURE_MESSAGE,
+            "operation": "edit",
+            "reason": "The edited document did not compile, and the automatic repairs did not fix it.",
+            "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
+            "errors": [str(e.get("error", ""))[:200] for e in errs[:3]],
+            "document_unchanged": True,
+        }
+        yield {"type": "compile_error", "message": SAFE_FAILURE_MESSAGE, "errors": errs[:5]}
+    elif llm_failure is not None:
+        if workspace.has_changed():
+            workspace.rollback_transaction(run_tx)
+        agent_trace.compile_result = "not_run"
+        failure_payload = {
+            "message": f"{llm_failure} The document was not modified.",
+            "operation": "llm_call",
+            "reason": llm_failure,
+            "attempts": [f"{a.get('provider')}:{a.get('failure') or 'ok'}" for a in agent_trace.llm_attempts[-6:]],
+            "document_unchanged": True,
+        }
+    else:
+        agent_trace.compile_result = (
+            "passed" if compile_verified and compile_available
+            else "skipped" if not compile_available else "not_run"
+        )
+        if not workspace.has_changed() and mode == "edit" and target_failures:
+            agent_trace.failure_reason = "target_not_resolved"
+            failure_payload = {
+                "message": SAFE_FAILURE_MESSAGE,
+                "operation": "edit",
+                "reason": "The part of the document this change targets could not be located confidently.",
+                "attempts": [f"{k} (failed {n}x)" for k, n in list(target_failures.items())[:5]],
+                "document_unchanged": True,
+            }
+    if failure_payload:
+        yield _phase("failed", failure_payload["message"], details=failure_payload)
+        if not agent_explanation or compile_failed_final is not None or llm_failure is not None:
+            agent_explanation = failure_payload["message"] + (
+                f" {failure_payload['reason']}" if failure_payload.get("reason") and failure_payload["reason"] not in failure_payload["message"] else "")
+
     # 5. Compute and yield diff & emit trace
     elapsed_ms = int((time.time() - start_time) * 1000)
     agent_trace.total_latency_ms = float(elapsed_ms)
@@ -1884,16 +2078,10 @@ def stream_opencode_agent(
         # mutate code *after* it was checked; `replace_all` re-runs the same
         # gate, so a repair that regresses anything is refused rather than
         # committed.
-        healed_final, auto_repairs = auto_heal_latex_code(workspace.get_buffer())
+        # Scoped: repairs land only on lines the agent changed (edit_guard).
+        auto_repairs = workspace.heal_touched()
         if auto_repairs:
-            heal_res = workspace.replace_all(healed_final)
-            if heal_res.get("success"):
-                logger.info(f"Auto-healed final buffer before pre-commit: {auto_repairs}")
-            else:
-                logger.warning(
-                    f"Final auto-heal rejected by pre-commit validation: "
-                    f"{heal_res.get('validation_errors', [])[:3]}"
-                )
+            logger.info(f"Auto-healed edited lines before pre-commit: {auto_repairs}")
 
         # Final gate: differential, like every write. The user's original
         # document may already contain structure this validator cannot model
@@ -1904,17 +2092,7 @@ def stream_opencode_agent(
         if not is_valid:
             logger.warning(f"Final buffer introduced new structural errors: {val_errors}. Attempting snapshot rollback...")
             while not is_valid and workspace.undo():
-                healed_candidate, _ = auto_heal_latex_code(workspace.get_buffer())
-                is_valid, val_errors = validate_edit(workspace.get_original(), healed_candidate)
-                if is_valid:
-                    heal_res = workspace.replace_all(healed_candidate)
-                    if not heal_res.get("success"):
-                        # The candidate did not survive commit-time validation;
-                        # keep unwinding instead of claiming success.
-                        is_valid = False
-                        val_errors = heal_res.get("validation_errors", val_errors)
-                        continue
-                    break
+                is_valid, val_errors = validate_edit(workspace.get_original(), workspace.get_buffer())
 
             if not is_valid:
                 logger.error(f"Buffer remains invalid after rollback: {val_errors}")
@@ -1952,6 +2130,8 @@ def stream_opencode_agent(
                 )
                 return
 
+        agent_trace.validation_result = {"valid": True}
+        yield _phase("done", "Done")
         # Generate the final_diff payload for main document
         diff_payload = compute_final_diff(
             original=workspace.get_original(),
@@ -2031,6 +2211,8 @@ def stream_opencode_agent(
         }
     else:
         # No changes — return explanation only
+        if not failure_payload:
+            yield _phase("done", "Done")
         yield {
             "type": "result",
             "data": {
@@ -2044,6 +2226,7 @@ def stream_opencode_agent(
                 "elapsed_ms": elapsed_ms,
                 "trace": trace_summary,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
+                "failure": failure_payload,
             },
         }
 

@@ -87,11 +87,13 @@ import { computeContentHash, getCachedDocumentChunks, setCachedDocumentChunks } 
 import { authFetch } from "@/lib/api-client";
 import {
   applyEditItems,
-  describeSkipped,
+  SAFE_APPLY_FAILURE,
   type AppliedEditItem,
   type ApplyOutcome,
 } from "@/lib/latex-edit-apply";
-import { healAndValidateLatex } from "@/lib/latex-validate";
+import { resolveEditsOnServer } from "@/lib/latex-validate";
+
+const SHOW_EDIT_DEBUG = process.env.NODE_ENV !== "production";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -1776,6 +1778,9 @@ export function EditorLayout({
         ? data.edits
           .filter((e: any) => e.original_chunk || e.proposed_chunk)
           .map((e: any, idx: number) => ({
+            // Keep the apply-contract fields (line range, is_full_document, node_id):
+            // the appliers need them to place the edit.
+            ...e,
             id: `edit-${Date.now()}-${idx}`,
             original_chunk: e.original_chunk || "",
             proposed_chunk: e.proposed_chunk || "",
@@ -1953,35 +1958,49 @@ export function EditorLayout({
       markMessagesApplied?: boolean;
     },
   ) => {
-    const { code: updatedCode, applied, skipped, strategy } = outcome;
+    let { code: updatedCode } = outcome;
+    const { applied, skipped } = outcome;
     const file = activeFilePath || "main.tex";
 
-    if (applied.length === 0) {
-      // Nothing landed: leave the buffer untouched, do not save, do not compile.
-      toast.error(
-        skipped.length > 0
-          ? `No edits applied — ${describeSkipped(skipped)}.`
-          : "No edits could be applied to this document.",
-      );
+    if (applied.length === 0 && skipped.length === 0) {
+      toast.error("No edits could be applied to this document.");
       return;
     }
 
-    // A partial chunk replay can leave structurally broken LaTeX (e.g. an
-    // orphaned \\end{...}) that no other check would catch. The authoritative
-    // path is already validated on the backend.
-    if (strategy === "chunks" && skipped.length > 0) {
-      const check = await healAndValidateLatex(updatedCode, projectId, file, false);
-      if (check.unavailable) {
-        toast.warning(
-          `Applied ${applied.length} of ${applied.length + skipped.length} edits. Could not verify the result — compile to check.`,
-        );
-      } else if (!check.valid) {
-        toast.error(
-          `Edits not applied: the partial selection would leave invalid LaTeX — ${check.errors
-            .slice(0, 2)
-            .join("; ")}`,
-        );
+    // Some edits could not be placed by exact text (the document moved under
+    // them). Rather than dropping them — or applying the rest and leaving a
+    // half-done change — the backend re-locates every item with the agent's
+    // locator (node → normalised text → similarity) and applies all or none.
+    if (skipped.length > 0) {
+      const allItems = [...applied, ...skipped.map((s) => s.item)];
+      const server = await resolveEditsOnServer(
+        opts.codeBeforeEdit,
+        allItems,
+        authoritativeDocRef.current?.originalCode,
+        projectId,
+        file,
+      );
+      if (!server.success) {
+        if (SHOW_EDIT_DEBUG) {
+          console.info("[edit-apply] could not place edits", {
+            skipped: skipped.map((s) => ({ reason: s.reason, node_id: s.item.node_id, op: s.item.op })),
+            server: server.unavailable ? "unreachable" : server.failed,
+          });
+        }
+        const detail = SHOW_EDIT_DEBUG
+          ? server.unavailable
+            ? "Server re-location unavailable."
+            : server.failed
+                .slice(0, 2)
+                .map((f) => `${f.op} ${f.target ?? ""}: ${f.reason} (tried ${f.attempts.map((a) => a.method).join(" → ") || "—"})`)
+                .join("; ")
+          : undefined;
+        toast.error(SAFE_APPLY_FAILURE, detail ? { description: detail, duration: 8000 } : undefined);
         return;
+      }
+      updatedCode = server.code;
+      if (SHOW_EDIT_DEBUG) {
+        console.info("[edit-apply] edits re-located on the server", server.applied);
       }
     }
 
@@ -2045,12 +2064,6 @@ export function EditorLayout({
           ),
         );
       }
-    }
-
-    if (skipped.length > 0) {
-      toast.warning(
-        `Applied ${applied.length} of ${applied.length + skipped.length} edits — ${describeSkipped(skipped)}.`,
-      );
     }
 
     saveDocument(updatedCode, true);

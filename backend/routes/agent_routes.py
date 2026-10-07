@@ -177,6 +177,56 @@ async def validate_latex_endpoint(
     }
 
 
+class ResolveEditsRequest(BaseModel):
+    current_code: str
+    items: List[Dict[str, Any]]
+    original_code: Optional[str] = None
+    project_id: Optional[str] = None
+    file_path: Optional[str] = None
+
+
+@router.post(
+    "/api/agent/resolve-edits",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_resolve_edits"))],
+)
+async def resolve_edits_endpoint(
+    req: ResolveEditsRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """
+    Places accepted agent edits that the editor could not locate by exact text
+    (the document changed under them), using the agent's target locator. Writes
+    nothing; returns the new code or, if any edit cannot be placed confidently,
+    the unchanged code and what was tried for each edit.
+    """
+    user_id = auth_info["user_id"]
+    is_guest = bool(auth_info.get("is_guest"))
+    if req.project_id:
+        try:
+            sb = get_supabase_client()
+            verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
+        except Exception as auth_err:
+            logger.warning(f"resolve-edits project authorization check: {auth_err}")
+            if req.project_id not in ("proj-default", "default", "scratchpad") and not req.project_id.startswith("proj-"):
+                raise
+
+    size = len(req.current_code.encode("utf-8")) + len((req.original_code or "").encode("utf-8"))
+    if size > 2 * MAX_VALIDATE_BYTES or len(req.items) > 200:
+        return JSONResponse(status_code=413, content={"detail": "Document or edit list too large."})
+
+    from opencode.apply_edits import resolve_and_apply
+
+    result = await asyncio.to_thread(resolve_and_apply, req.current_code, req.items, req.original_code)
+    logger.info(
+        "resolve-edits project=%s file=%s items=%d applied=%d failed=%d methods=%s",
+        req.project_id, req.file_path, len(req.items), len(result["applied"]), len(result["failed"]),
+        sorted({a["method"] for a in result["applied"]}),
+    )
+    result["file_path"] = req.file_path
+    return result
+
+
 # ============================================================================
 # SSE Endpoint
 # ============================================================================
@@ -368,6 +418,16 @@ async def agent_opencode(
                 elif event_type == "error":
                     yield sse_event("error", event)
 
+                elif event_type == "phase":
+                    phase = event.get("phase", "")
+                    yield sse_event("progress", {
+                        "step": "phase",
+                        "phase": phase,
+                        "message": event.get("message", ""),
+                        "icon": _PHASE_ICONS.get(phase, "zap"),
+                        "details": event.get("details"),
+                    })
+
                 elif event_type == "status":
                     yield sse_event("progress", {
                         "step": event.get("step", ""),
@@ -395,7 +455,10 @@ async def agent_opencode(
 
         except Exception as e:
             logger.error(f"OverBranch pipeline error: {e}", exc_info=True)
-            yield sse_event("error", {"message": f"OverBranch agent failed: {str(e)}"})
+            payload = {"message": "The AI agent hit an unexpected error. The document was not modified."}
+            if os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "")).lower() in ("development", "dev", "local"):
+                payload["detail"] = f"{type(e).__name__}: {str(e)[:300]}"
+            yield sse_event("error", payload)
 
         finally:
             if disconnect_task and not disconnect_task.done():
@@ -430,49 +493,80 @@ def _resolve_assets_dir(project_id: str) -> Optional[str]:
     return None
 
 
+_PHASE_ICONS = {
+    "finding_target": "search", "applying": "wrench", "compiling": "zap", "checking_layout": "search",
+    "repairing": "wrench", "done": "check", "failed": "alert",
+}
+
+
 def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
-    """Generates a concise summary of a tool result for the progress feed."""
+    """
+    A concise, user-facing summary of a tool result for the progress feed.
+    Internal failure detail (locator attempts, anchors) stays in the agent's own
+    context and the trace; the feed says what happened in plain words.
+    """
+    from opencode.tools import canonical_tool_name
+
+    tool_name = canonical_tool_name(tool_name)
+    edit_tools = {"replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",
+                  "insert_into_chunk", "justify_content"}
+
+    if tool_name in edit_tools:
+        if result.get("success"):
+            lines = result.get("lines_affected") or []
+            where = f" at lines {lines[0]}–{lines[1]}" if len(lines) == 2 else ""
+            method = result.get("method")
+            how = {"normalized": " (matched despite whitespace differences)",
+                   "fuzzy": " (located by similarity)",
+                   "exact+hint": "", "node": ""}.get(method or "", "")
+            if tool_name == "justify_content":
+                strategy = (result.get("justify") or {}).get("strategy", "")
+                return f"Adjusted layout ({strategy}){where}" if result.get("lines_affected") else \
+                    (result.get("message") or "Layout already fits")
+            return f"Edit applied{where}{how}"
+        if result.get("reason") == "ambiguous":
+            return "Target appears more than once — asking the agent to be more specific (document unchanged)"
+        if "validation_errors" in result:
+            return "Edit would break the LaTeX structure — not applied (document unchanged)"
+        return "Couldn't locate the edit target — re-reading that region (document unchanged)"
+
     if result.get("error"):
-        return f"`{tool_name}` error: {result['error'][:120]}"
+        return f"`{tool_name}`: {str(result['error'])[:120]}"
 
     if tool_name == "read_file_range":
         lines_read = result.get("lines_read", "?")
         total = result.get("total_lines", "?")
         return f" Read lines {lines_read} (file has {total} lines)"
 
-    elif tool_name == "grep_search":
+    elif tool_name == "search_document":
         count = result.get("match_count", 0)
         query = result.get("query", "")
         return f" Found {count} match{'es' if count != 1 else ''} for \"{query[:50]}\""
 
-    elif tool_name == "str_replace":
-        if result.get("success"):
-            lines = result.get("lines_affected", [])
-            return f"Replaced text at lines {lines[0]}–{lines[1]}" if lines else "✅ Text replaced"
-        else:
-            return f"Replace failed: {result.get('error', 'unknown')[:100]}"
-
-    elif tool_name == "rewrite_chunk":
-        if result.get("success"):
-            chunk_id = result.get("chunk_id", "chunk")
-            lines = result.get("lines_affected", [])
-            return f"Rewrote chunk `{chunk_id}` (lines {lines[0]}–{lines[1]})" if lines else f"Rewrote chunk `{chunk_id}`"
-        else:
-            return f"Rewrite chunk failed: {result.get('error', 'unknown')[:100]}"
+    elif tool_name in ("get_block", "inspect_document"):
+        return f" Read {result.get('node_id') or 'document outline'}"
 
     elif tool_name == "list_assets":
         count = result.get("count", 0)
         return f" Found {count} asset file{'s' if count != 1 else ''}"
 
-    elif tool_name == "verify_compile":
+    elif tool_name == "compile_latex":
         if result.get("infra_skip"):
             return "Compilation skipped (compiler unavailable)"
         elif result.get("success"):
             ms = result.get("compile_time_ms", 0)
-            return f"Compilation passed ({ms}ms)"
+            pre = result.get("preexisting_errors") or 0
+            return f"Compilation passed ({ms}ms)" + (f" — {pre} pre-existing issue(s) left untouched" if pre else "")
         else:
-            err_count = len(result.get("errors", []))
-            return f"Compilation failed with {err_count} error{'s' if err_count != 1 else ''}"
+            err_count = len(result.get("new_errors") or result.get("errors", []))
+            return f"Compilation failed with {err_count} new error{'s' if err_count != 1 else ''}"
+
+    elif tool_name == "detect_overflow":
+        if result.get("skipped"):
+            return "Layout check skipped (no PDF)"
+        n = len(result.get("beyond_text_area", [])) + len(result.get("beyond_page", [])) + \
+            len([o for o in result.get("overfull", []) if o.get("severe")])
+        return f"Layout check: {n} overflowing line{'s' if n != 1 else ''}" if n else "Layout check: nothing overflows"
 
     elif tool_name == "convert_attached_pdf":
         pages = result.get("page_count", "?")
