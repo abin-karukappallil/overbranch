@@ -43,7 +43,7 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self):
         self.base_url = get_web2api_base_url()
-        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "35.0"))
+        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "90.0"))
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}

@@ -277,25 +277,6 @@ async def agent_opencode(
     request_id = req.request_id or f"OverBranch-{uuid.uuid4().hex[:12]}"
     token = cancellation_manager.create_token(request_id=request_id, project_id=req.project_id)
 
-    # Disconnect monitor task
-    async def disconnect_monitor():
-        try:
-            while not token.is_cancelled():
-                await asyncio.sleep(1.5)
-                try:
-                    if await request.is_disconnected():
-                        logger.info(f"Client disconnected for OverBranch request {request_id}")
-                        token.cancel("Client disconnected")
-                        break
-                except Exception:
-                    pass
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.debug(f"Disconnect monitor error: {e}")
-
-    disconnect_task = asyncio.create_task(disconnect_monitor())
-
     def sse_event(event_type: str, data: dict) -> str:
         """Format a single SSE event."""
         return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -354,7 +335,16 @@ async def agent_opencode(
             producer_task = loop.run_in_executor(None, producer)
 
             while True:
-                item = await queue.get()
+                try:
+                    # Periodically yield SSE keep-alive comments every 3.0s so proxies,
+                    # gateways, and browsers don't drop or time out the idle connection while the LLM reasons.
+                    item = await asyncio.wait_for(queue.get(), timeout=3.0)
+                except asyncio.TimeoutError:
+                    if token.is_cancelled():
+                        break
+                    yield ": keep-alive\n\n"
+                    continue
+
                 if item is sentinel:
                     break
                 if isinstance(item, Exception):
@@ -455,14 +445,15 @@ async def agent_opencode(
 
         except Exception as e:
             logger.error(f"OverBranch pipeline error: {e}", exc_info=True)
-            payload = {"message": "The AI agent hit an unexpected error. The document was not modified."}
-            if os.getenv("ENVIRONMENT", os.getenv("NODE_ENV", "")).lower() in ("development", "dev", "local"):
-                payload["detail"] = f"{type(e).__name__}: {str(e)[:300]}"
+            err_msg = str(e).strip() or "The AI agent hit an unexpected error."
+            payload = {
+                "message": err_msg,
+                "detail": f"{type(e).__name__}: {str(e)[:300]}",
+            }
             yield sse_event("error", payload)
 
         finally:
-            if disconnect_task and not disconnect_task.done():
-                disconnect_task.cancel()
+            token.cancel("Pipeline terminated")
             cancellation_manager.cleanup(request_id)
 
     return StreamingResponse(

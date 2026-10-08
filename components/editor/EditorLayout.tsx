@@ -1628,7 +1628,18 @@ export function EditorLayout({
           throw new Error("The uploaded file is too large for the server. Try a smaller PDF or ask about the document without attaching it.");
         }
         const errText = await response.text();
-        throw new Error(errText || `AI Agent returned status ${response.status}`);
+        let errMsg = errText;
+        try {
+          const parsed = JSON.parse(errText);
+          if (parsed.detail) {
+            errMsg = typeof parsed.detail === "string" ? parsed.detail : JSON.stringify(parsed.detail);
+          } else if (parsed.message) {
+            errMsg = parsed.message;
+          }
+        } catch {
+          // not JSON, keep errText
+        }
+        throw new Error(errMsg || `AI Agent returned status ${response.status}`);
       }
 
       // Read SSE stream
@@ -1740,14 +1751,17 @@ export function EditorLayout({
                 } else if (currentEventType === "cancelled") {
                   console.log("AI Agent generation cleanly stopped by user:", parsed);
                   return;
-                } else if (currentEventType === "error" || (parsed.type === "error" && parsed.message)) {
-                  sseError = new Error(parsed.message || "AI Agent error");
+                } else if (currentEventType === "error" || (parsed.type === "error" && (parsed.message || parsed.detail || parsed.error))) {
+                  const msg = parsed.message || parsed.detail || parsed.error || "The AI agent hit an error processing your request.";
+                  const detail = parsed.detail && parsed.detail !== msg ? ` (${parsed.detail})` : "";
+                  sseError = new Error(`${msg}${detail}`);
                 }
-              } catch (parseErr: any) {
-                if (parseErr.message && !parseErr.message.includes("JSON")) {
-                  sseError = parseErr;
-                }
+              } catch {
+                // Non-JSON or fragmented data chunk: safely skip
               }
+            } else if (trimmed.startsWith(":")) {
+              // SSE keep-alive comment: safely ignore
+              continue;
             } else if (trimmed === "") {
               currentEventType = "";
             }
@@ -1904,7 +1918,9 @@ export function EditorLayout({
       if (userErrMsg.includes("input stream") || userErrMsg.includes("network") || userErrMsg.includes("Failed to fetch")) {
         userErrMsg = "Connection interrupted while streaming. Please try sending your request again.";
       }
-      const warningMsg = `AI Agent Error: ${userErrMsg}`;
+      const warningMsg = userErrMsg.toLowerCase().startsWith("ai agent error")
+        ? userErrMsg
+        : `AI Agent Error: ${userErrMsg}`;
       toast.error(warningMsg, { duration: 6000 });
       setMessages((prev) => [
         ...prev,
