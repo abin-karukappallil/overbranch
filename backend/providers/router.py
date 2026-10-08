@@ -69,6 +69,8 @@ def _is_configured(provider: LLMProvider, name: str, api_keys: Optional[Dict[str
     """A fallback is only worth trying when it has a key: server-side or the user's own."""
     if api_keys and (api_keys.get(name) or "").strip():
         return True
+    if hasattr(provider, "reload_keys"):
+        provider.reload_keys()
     candidates = getattr(provider, "candidates", None)
     if candidates is None:
         return True
@@ -283,7 +285,7 @@ class ProviderRouter:
                                  f"{'no fallback for this failure' if not is_last else 'fallback chain exhausted'}")
                     setattr(err, "attempts", attempts)
                     raise
-                logger.warning(f"Provider '{name}' failed ({kind.value}); falling back to "
+                logger.warning(f"Provider '{name}' failed or delayed ({kind.value}); falling back to "
                                f"{chain[idx + 1][0]}:{chain[idx + 1][2]}")
                 continue
 

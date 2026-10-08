@@ -36,6 +36,15 @@ _MINIMAX_M3_ALIASES = {
 
 def load_openrouter_keys() -> List[str]:
     """Up to five server-side OpenRouter keys, numbered first, then any comma list."""
+    from pathlib import Path
+    from dotenv import load_dotenv
+    _root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+    _backend_env = Path(__file__).resolve().parent.parent / ".env"
+    if _root_env.exists():
+        load_dotenv(dotenv_path=_root_env, override=False)
+    if _backend_env.exists():
+        load_dotenv(dotenv_path=_backend_env, override=False)
+
     keys: List[str] = []
     for i in range(1, MAX_KEYS + 1):
         for var in (f"OPENROUTER_API_KEY_{i}", f"OPENROUTER_{i}", f"OPENROUTER_KEY_{i}",
@@ -66,6 +75,7 @@ class OpenRouterProvider(LLMProvider):
     @property
     def candidates(self) -> List[Dict[str, str]]:
         """Backward-compatible view (truthy when keys are configured). No secrets."""
+        self.reload_keys()
         return [{"name": s["key_id"]} for s in self.pool.snapshot()]
 
     def reload_keys(self) -> None:
@@ -208,8 +218,10 @@ class OpenRouterProvider(LLMProvider):
         if data.get("error"):
             err = data["error"]
             msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            code = err.get("code") if isinstance(err, dict) and isinstance(err.get("code"), int) else None
-            kind, retry_after = classify(code, msg)
+            raw_code = err.get("code") if isinstance(err, dict) else None
+            code = raw_code if isinstance(raw_code, int) else None
+            full_err_text = f"{msg} {raw_code or ''}".strip()
+            kind, retry_after = classify(code, full_err_text)
             raise LLMProviderError(f"OpenRouter error: {msg[:160]}", status_code=code, provider="OpenRouter",
                                    kind=kind, retry_after=retry_after)
         choices = data.get("choices") or []

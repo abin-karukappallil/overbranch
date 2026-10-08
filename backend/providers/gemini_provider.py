@@ -43,7 +43,7 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self):
         self.base_url = get_web2api_base_url()
-        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "90.0"))
+        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "30.0"))
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
@@ -68,10 +68,12 @@ class GeminiProvider(LLMProvider):
         if cache_key not in self._clients:
             try:
                 from openai import OpenAI
+                max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "0"))
                 self._clients[cache_key] = OpenAI(
                     api_key=api_key,
                     base_url=target_base,
                     timeout=self.default_timeout,
+                    max_retries=max_retries,
                 )
             except ImportError:
                 raise LLMProviderError(
@@ -244,20 +246,8 @@ class GeminiProvider(LLMProvider):
                 except Exception as stream_err:
                     if cancel_token and cancel_token.is_cancelled():
                         raise LLMOperationCancelled("Gemini LLM call cancelled.")
-                    logger.warning(f"Gemini streaming failed ({stream_err}), trying non-streaming fallback...")
-                    kwargs.pop("stream", None)
-                    response = client.chat.completions.create(**kwargs)
-                    if response.choices:
-                        msg = response.choices[0].message
-                        content = msg.content or getattr(msg, "reasoning_content", "") or ""
-                        finish_reason = response.choices[0].finish_reason or "stop"
-                        actual_model = response.model or target_model
-                        if response.usage:
-                            usage = {
-                                "prompt_tokens": response.usage.prompt_tokens,
-                                "completion_tokens": response.usage.completion_tokens,
-                                "total_tokens": response.usage.total_tokens,
-                            }
+                    logger.warning(f"Gemini call failed or interrupted ({stream_err}), immediately switching to fallback...")
+                    raise stream_err
 
                 duration = round((time.time() - start_time) * 1000, 2)
 
@@ -349,11 +339,19 @@ class GeminiProvider(LLMProvider):
                 next_slot = (current_slot + 1) % total_keys
                 self._active_key_index = next_slot
 
-        # Classified, so the router can tell a rate limit / outage (fall back to
-        # OpenRouter) from a malformed request (fails everywhere; do not).
+        # Classified, so the router can tell a rate limit / outage / delay (fall back to
+        # OpenRouter MiniMax M3) from a malformed request.
         kind, retry_after = classify(last_status_code, str(last_error or ""))
+        err_lower = str(last_error or "").lower()
+        if "timeout" in err_lower or "timed out" in err_lower or "deadline" in err_lower:
+            kind = FailureKind.TIMEOUT
+        elif "rate limit" in err_lower or "quota" in err_lower or "429" in err_lower:
+            kind = FailureKind.RATE_LIMIT
+        elif kind == FailureKind.BAD_REQUEST:
+            kind = FailureKind.UNAVAILABLE
+
         raise LLMProviderError(
-            f"All {total_keys} Gemini Web2API keys failed. Last error: {last_error}",
+            f"All {total_keys} Gemini Web2API keys failed or delayed. Last error: {last_error}",
             status_code=last_status_code,
             provider="Gemini",
             kind=kind,
