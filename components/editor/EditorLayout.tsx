@@ -1795,8 +1795,8 @@ export function EditorLayout({
           }]
           : [];
 
-      // Fallback: extract LaTeX from raw explanation ONLY in Edit mode
-      if (!isAskModeResponse && editsList.length === 0) {
+      // Fallback: extract LaTeX from raw explanation ONLY in Edit mode when not an explicit no-change/failure
+      if (!isAskModeResponse && editsList.length === 0 && data.has_changes !== false && !data.document_unchanged && !data.failure) {
         const extractedCode = extractLatexFromResponse(rawExplanation);
         if (extractedCode) {
           editsList = [{

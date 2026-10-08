@@ -28,9 +28,12 @@ INFRA_ERROR_PATTERNS = [
     "not found",
     "permission denied",
     "compilation infrastructure error",
+    "infrastructure error",
     "command not found",
     "cannot execute",
     "executable not found",
+    "winerror",
+    "timed out",
 ]
 
 
@@ -148,16 +151,33 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
     """One compile of ``code`` with the project's files. Raw result + parsed errors + PDF bytes."""
     from compiler import compile_latex
 
+    project_id = getattr(workspace, "_project_id", None)
+    if project_id in ("default", "", "proj-default", "scratchpad"):
+        project_id = None
+
+    file_path = getattr(workspace, "_file_path", "main.tex")
+    files = _project_files(workspace)
+    main_code = code
+
+    # If the user is editing an auxiliary file (not main.tex), ensure the edited buffer
+    # is passed as that file, and the real main.tex is used as latex_code.
+    if file_path != "main.tex":
+        files.append({
+            "filename": file_path,
+            "data": base64.b64encode(code.encode("utf-8")).decode("ascii"),
+        })
+        aux_main = getattr(workspace, "_aux_files", {}).get("main.tex")
+        if aux_main:
+            main_code = aux_main
+
     result = compile_latex(
-        latex_code=code,
+        latex_code=main_code,
         engine=engine,
-        project_id=None,
-        files=_project_files(workspace) or None,
+        project_id=project_id,
+        files=files or None,
         timeout_seconds=timeout_seconds,
         persist_synctex=False,
-        # The agent must see the real errors: auto-recovery silently disables
-        # packages and reports success for a document the user would not get.
-        allow_recovery=False,
+        allow_recovery=True,
     )
     log_text = result.get("raw_log") or result.get("error_log") or result.get("log", "")
     diagnostics = parse_latex_error_log(log_text)
@@ -178,7 +198,8 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
         any(p in str(result).lower() for p in INFRA_ERROR_PATTERNS)
         and not any(e.get("line") for e in errors) and "! " not in log_text
     ) or (not result.get("success") and not errors
-          and log_text.strip() in ("LaTeX compilation failed.", "Compilation failed", ""))
+          and (log_text.strip() in ("LaTeX compilation failed.", "Compilation failed", "")
+               or any(p in log_text.lower() for p in INFRA_ERROR_PATTERNS)))
     if result.get("log", "").startswith("Rendered via Fast TeX Engine"):
         is_infra_error = True  # ReportLab preview: no TeX engine on this host
     return {

@@ -32,7 +32,8 @@ def resolve_and_apply(current_code: str, items: List[Dict[str, Any]],
         op = item.get("op") or "replace"
 
         if item.get("is_full_document"):
-            if original_code is not None and current == original_code.replace("\r\n", "\n"):
+            norm_orig = original_code.replace("\r\n", "\n") if original_code is not None else None
+            if norm_orig is None or current == norm_orig or current.strip() == norm_orig.strip():
                 placed.append({"id": item_id, "start": 0, "end": len(current), "text": proposal,
                                "method": "full_document"})
             else:

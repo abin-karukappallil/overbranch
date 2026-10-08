@@ -1044,7 +1044,11 @@ def compile_latex(
                 except subprocess.TimeoutExpired:
                     last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
                     continue
-                except Exception:
+                except FileNotFoundError as fnf:
+                    last_output += f"\n[INFRASTRUCTURE ERROR] Executable '{cmd[0]}' not found: {fnf}"
+                    continue
+                except Exception as exc:
+                    last_output += f"\n[INFRASTRUCTURE ERROR] Command '{cmd[0]}' failed: {exc}"
                     continue
 
             if not allow_recovery:
