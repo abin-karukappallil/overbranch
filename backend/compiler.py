@@ -48,6 +48,56 @@ def _overfull_boxes(output: str) -> List[Dict[str, Any]]:
         return []
 
 
+_UNICODE_ENGINE_MARKERS = (
+    "{fontspec}", "{unicode-math}", "{polyglossia}",
+    r"\setmainfont", r"\setsansfont", r"\setmonofont",
+    r"\setmathfont", r"\newfontface", r"\newfontfamily",
+    r"\setmainlanguage", r"\directlua", r"\luadirect",
+)
+
+
+def needs_unicode_engine(latex_code: str) -> bool:
+    """
+    True when the document can only be compiled with XeLaTeX / LuaLaTeX.
+
+    LLM-generated documents that compile on Overleaf (where the project's
+    compiler is set to XeLaTeX) routinely load `fontspec`, `unicode-math`,
+    `polyglossia`, or select a system font. Under pdfLaTeX those fail with a
+    fatal "requires XeTeX or LuaTeX" error, so when the caller left the engine
+    at its default we switch to XeLaTeX automatically.
+    """
+    code = latex_code or ""
+    return any(m in code for m in _UNICODE_ENGINE_MARKERS)
+
+
+def is_heavy_document(latex_code: str) -> bool:
+    """Documents with lots of TikZ/pgfplots or great length need a longer budget."""
+    code = latex_code or ""
+    if len(code) > 60000:
+        return True
+    if "pgfplots" in code or r"\addplot" in code:
+        return True
+    if (code.count(r"\begin{tikzpicture}") + code.count(r"\tikz")) >= 6:
+        return True
+    return False
+
+
+def _bibliography_backend(latex_code: str) -> Optional[str]:
+    """
+    Which bibliography tool a direct (non-latexmk) compile must run, or None.
+
+    `biblatex` defaults to biber unless `backend=bibtex` is set; a classic
+    `\\bibliography{...}` + `\\bibliographystyle{...}` uses bibtex.
+    """
+    code = latex_code or ""
+    has_biblatex = "biblatex" in code and r"\usepackage" in code
+    if has_biblatex or r"\addbibresource" in code or r"\printbibliography" in code:
+        return "bibtex" if "backend=bibtex" in code else "biber"
+    if r"\bibliography{" in code or r"\bibliographystyle{" in code:
+        return "bibtex"
+    return None
+
+
 def augment_path_for_latex():
     """Augments system PATH with common MiKTeX and TeX Live installation locations on Windows."""
     if sys.platform == "win32":
@@ -824,30 +874,68 @@ def compile_latex(
             existing_texinputs = comp_env.get("TEXINPUTS", "")
             comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
 
+            # Heavy TikZ/pgfplots or very long documents take far longer than a
+            # plain article; Overleaf lets them run for minutes. Give them a
+            # bigger budget than the base request so they are not killed and
+            # reported as a "failure" they never really were.
             COMPILE_TIMEOUT = timeout_seconds
+            if is_heavy_document(latex_code):
+                COMPILE_TIMEOUT = max(timeout_seconds, 90)
+
+            # Unicode-font documents (fontspec / unicode-math / system fonts /
+            # polyglossia) only compile under XeLaTeX or LuaLaTeX. Overleaf picks
+            # this from the project's compiler setting; detect it from the source
+            # when the caller asked for the default engine and no magic comment
+            # already pinned one.
+            unicode_engine = None
+            if eng_clean in _DEFAULT_ENGINES and not magic_engine and needs_unicode_engine(latex_code):
+                unicode_engine = "xelatex"
+                recovery_engine = "xelatex"
 
             # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled).
             # SyncTeX costs an extra output file per run, so it is only asked for when the
             # artifacts will actually be kept (the editor); the PDF importer compiles throwaway
             # pages and never navigates them.
             sx = ["-synctex=1"] if persist_synctex else []
+
+            def _direct(engine_bin: str) -> List[str]:
+                return [engine_bin, *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]
+
+            def _latexmk(engine_flag: Optional[str] = None) -> List[str]:
+                cmd = ["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode"]
+                if engine_flag:
+                    cmd.append(engine_flag)
+                cmd.append("main.tex")
+                return cmd
+
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [["pdflatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [_direct("pdflatex")]
             elif eng_clean in ["xelatex", "xe"]:
-                cmd_list = [["xelatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [_direct("xelatex")]
             elif eng_clean in ["lualatex", "lua"]:
-                cmd_list = [["lualatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]]
+                cmd_list = [_direct("lualatex")]
             elif eng_clean == "tectonic":
                 cmd_list = [["tectonic", "main.tex"]]
             elif eng_clean == "latexmk":
-                cmd_list = [["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]]
+                # latexmk self-manages passes + biber/bibtex. Tell it which engine
+                # to use for Unicode-font documents, and fall back to a direct
+                # engine run if latexmk is not installed (otherwise a missing
+                # latexmk surfaces as an empty, mysterious failure).
+                if unicode_engine == "xelatex":
+                    cmd_list = [_latexmk("-xelatex"), _direct("xelatex")]
+                elif unicode_engine == "lualatex":
+                    cmd_list = [_latexmk("-lualatex"), _direct("lualatex")]
+                else:
+                    cmd_list = [_latexmk(), _direct("pdflatex")]
             else:
-                cmd_list = [
-                    ["pdflatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
-                    ["xelatex", *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
-                    ["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode", "main.tex"]
-                ]
+                if unicode_engine == "xelatex":
+                    cmd_list = [_direct("xelatex"), _direct("lualatex"), _latexmk("-xelatex")]
+                else:
+                    cmd_list = [_direct("pdflatex"), _direct("xelatex"), _latexmk()]
+
+            bib_backend = _bibliography_backend(latex_code)
+            extra_pass_timeout = max(15, COMPILE_TIMEOUT // 2)
 
             last_output = ""
             for cmd in cmd_list:
@@ -865,28 +953,61 @@ def compile_latex(
 
                     pdf_path = tmpdir / "main.pdf"
 
-                    # If PDF was created, check if Pass 2 is required for cross-references/TOC/citations
-                    if pdf_path.exists():
-                        needs_pass2 = (
-                            r"\tableofcontents" in latex_code
-                            or r"\ref{" in latex_code
-                            or r"\cite{" in latex_code
-                            or r"\label{" in latex_code
-                            or "Rerun" in last_output
-                            or "undefined references" in last_output.lower()
-                        )
+                    # latexmk/tectonic self-manage passes and bibliography; a direct
+                    # engine run has to resolve cross-references/TOC/citations itself.
+                    is_direct = cmd[0] in ["pdflatex", "xelatex", "lualatex"]
 
-                        if needs_pass2 and cmd[0] in ["pdflatex", "xelatex", "lualatex"]:
-                            result2 = subprocess.run(
-                                cmd,
-                                cwd=tmpdir,
-                                capture_output=True,
-                                text=True,
-                                timeout=max(15, COMPILE_TIMEOUT // 2),
-                                env=comp_env
+                    if pdf_path.exists() and is_direct:
+                        # Bibliography: run biber/bibtex, then two more passes so the
+                        # citations and the bibliography actually resolve (Overleaf's
+                        # latexmk does this automatically).
+                        if bib_backend:
+                            try:
+                                subprocess.run(
+                                    [bib_backend, "main"],
+                                    cwd=tmpdir,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=extra_pass_timeout,
+                                    env=comp_env,
+                                )
+                            except Exception:
+                                pass
+                            for _ in range(2):
+                                try:
+                                    rb = subprocess.run(
+                                        cmd,
+                                        cwd=tmpdir,
+                                        capture_output=True,
+                                        text=True,
+                                        timeout=extra_pass_timeout,
+                                        env=comp_env,
+                                    )
+                                    last_output += "\n" + (rb.stdout or "") + "\n" + (rb.stderr or "")
+                                except Exception:
+                                    break
+                        else:
+                            needs_pass2 = (
+                                r"\tableofcontents" in latex_code
+                                or r"\ref{" in latex_code
+                                or r"\cite{" in latex_code
+                                or r"\label{" in latex_code
+                                or "Rerun" in last_output
+                                or "undefined references" in last_output.lower()
                             )
-                            last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
+                            if needs_pass2:
+                                result2 = subprocess.run(
+                                    cmd,
+                                    cwd=tmpdir,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=extra_pass_timeout,
+                                    env=comp_env
+                                )
+                                last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
 
+                    # If PDF was created, persist artifacts and return it.
+                    if pdf_path.exists():
                         if persist_synctex:
                             _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
