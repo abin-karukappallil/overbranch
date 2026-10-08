@@ -18,6 +18,41 @@ from reportlab.lib import colors
 
 logger = logging.getLogger("compiler")
 
+
+def _run_tex(cmd, *, cwd, timeout, env, capture_output=True):
+    """
+    Run a TeX engine subprocess and return its output as decoded strings.
+
+    Uses bytes mode instead of ``text=True`` because pdflatex/xelatex/lualatex
+    can emit non-UTF-8 bytes in their log output (Latin-1 font metric names,
+    Windows-1252 file paths, raw binary from corrupted aux files).  Python's
+    ``text=True`` defaults to strict UTF-8 decoding, which raises
+    ``UnicodeDecodeError`` — surfaced as ``[INFRASTRUCTURE ERROR] Command
+    'pdflatex' failed: 'utf-8' codec can't decode byte 0xed …``.  That
+    exception was caught by the generic handler and treated as a compile
+    failure, even when pdflatex had already produced a valid PDF.
+
+    By reading raw bytes and decoding with ``errors='replace'``, invalid bytes
+    become U+FFFD (�) instead of crashing, and the PDF is still picked up.
+    """
+    proc = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=capture_output,
+        timeout=timeout,
+        env=env,
+    )
+    if isinstance(proc.stdout, bytes):
+        proc.stdout = proc.stdout.decode("utf-8", errors="replace")
+    elif proc.stdout is None:
+        proc.stdout = ""
+    if isinstance(proc.stderr, bytes):
+        proc.stderr = proc.stderr.decode("utf-8", errors="replace")
+    elif proc.stderr is None:
+        proc.stderr = ""
+    return proc
+
+
 _MAGIC_PROGRAM_RE = re.compile(
     r"^\s*%\s*!\s*TEX\s+(?:TS-)?program\s*=\s*(pdflatex|xelatex|lualatex)\b",
     re.IGNORECASE | re.MULTILINE,
@@ -1102,11 +1137,9 @@ def _compile_latex_impl(
             for cmd in cmd_list:
                 try:
                     # Pass 1
-                    result = subprocess.run(
+                    result = _run_tex(
                         cmd,
                         cwd=tmpdir,
-                        capture_output=True,
-                        text=True,
                         timeout=COMPILE_TIMEOUT,
                         env=comp_env
                     )
@@ -1124,11 +1157,9 @@ def _compile_latex_impl(
                         # latexmk does this automatically).
                         if bib_backend:
                             try:
-                                subprocess.run(
+                                _run_tex(
                                     [bib_backend, "main"],
                                     cwd=tmpdir,
-                                    capture_output=True,
-                                    text=True,
                                     timeout=extra_pass_timeout,
                                     env=comp_env,
                                 )
@@ -1136,11 +1167,9 @@ def _compile_latex_impl(
                                 pass
                             for _ in range(2):
                                 try:
-                                    rb = subprocess.run(
+                                    rb = _run_tex(
                                         cmd,
                                         cwd=tmpdir,
-                                        capture_output=True,
-                                        text=True,
                                         timeout=extra_pass_timeout,
                                         env=comp_env,
                                     )
@@ -1157,11 +1186,9 @@ def _compile_latex_impl(
                                 or "undefined references" in last_output.lower()
                             )
                             if needs_pass2:
-                                result2 = subprocess.run(
+                                result2 = _run_tex(
                                     cmd,
                                     cwd=tmpdir,
-                                    capture_output=True,
-                                    text=True,
                                     timeout=extra_pass_timeout,
                                     env=comp_env
                                 )
@@ -1246,11 +1273,9 @@ def _compile_latex_impl(
 
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
-                    result = subprocess.run(
+                    result = _run_tex(
                         [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                         cwd=tmpdir,
-                        capture_output=True,
-                        text=True,
                         timeout=15,
                         env=comp_env
                     )
@@ -1282,7 +1307,7 @@ def _compile_latex_impl(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run([recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
+                        result = _run_tex([recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"], cwd=tmpdir, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
                             return _recovery_success(
@@ -1302,11 +1327,9 @@ def _compile_latex_impl(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run(
+                        result = _run_tex(
                             [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                             cwd=tmpdir,
-                            capture_output=True,
-                            text=True,
                             timeout=15,
                             env=comp_env
                         )
@@ -1342,11 +1365,9 @@ def _compile_latex_impl(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run(
+                        result = _run_tex(
                             [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                             cwd=tmpdir,
-                            capture_output=True,
-                            text=True,
                             timeout=15,
                             env=comp_env,
                         )

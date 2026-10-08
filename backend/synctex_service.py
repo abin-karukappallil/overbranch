@@ -100,10 +100,10 @@ def backward_lookup(
                 cmd,
                 cwd=str(build_dir),
                 capture_output=True,
-                text=True,
                 timeout=5,
             )
-            output = proc.stdout or ""
+            raw = proc.stdout or b""
+            output = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
 
             input_match = re.search(r"^Input:(.+)$", output, re.MULTILINE)
             line_match = re.search(r"^Line:(\d+)$", output, re.MULTILINE)
@@ -172,10 +172,10 @@ def forward_lookup(
             cmd,
             cwd=str(build_dir),
             capture_output=True,
-            text=True,
             timeout=5,
         )
-        output = proc.stdout or ""
+        raw = proc.stdout or b""
+        output = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
 
         # Parse output
         # Page:1

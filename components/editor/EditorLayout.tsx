@@ -3103,12 +3103,12 @@ export function EditorLayout({
                 )}
 
                 {/* Chat Input Form */}
-                <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-center gap-2 font-mono">
+                <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isAgentThinking}
-                    className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] transition-colors disabled:opacity-50 shrink-0 cursor-pointer"
+                    className="p-2.5 h-[38px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] transition-colors disabled:opacity-50 shrink-0 cursor-pointer flex items-center justify-center"
                     title="Upload file (text, TeX, code, image)"
                   >
                     <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
@@ -3118,13 +3118,13 @@ export function EditorLayout({
                     <textarea
                       id="ai-chat-input"
                       rows={1}
-                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
+                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document... (Shift+Enter for new line)" : "Ask agent to edit LaTeX... (Shift+Enter for new line)"}
                       value={chatInput}
                       disabled={isAgentThinking}
                       onChange={(e) => {
                         setChatInput(e.target.value);
                         e.target.style.height = "auto";
-                        e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                        e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
@@ -3134,7 +3134,7 @@ export function EditorLayout({
                           }
                         }
                       }}
-                      className="w-full min-h-[38px] max-h-40 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+                      className="w-full min-h-[38px] max-h-44 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono scrollbar-thin"
                     />
                   </div>
 
@@ -3334,12 +3334,12 @@ export function EditorLayout({
             <div ref={mobileChatEndRef} />
           </div>
 
-          <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-center gap-2 font-mono">
+          <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isAgentThinking}
-              className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] shrink-0 cursor-pointer disabled:opacity-50"
+              className="p-2.5 h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] shrink-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
               title="Upload file"
             >
               <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
@@ -3364,7 +3364,7 @@ export function EditorLayout({
                   }
                 }
               }}
-              className="flex-1 min-h-[40px] max-h-40 py-2 px-3 rounded-xl border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] placeholder:text-[#62666D] text-xs outline-none focus:ring-1 focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+              className="flex-1 min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
             />
 
             {isAgentThinking ? (

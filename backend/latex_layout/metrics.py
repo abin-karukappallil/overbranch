@@ -52,7 +52,8 @@ def kpsewhich(name: str) -> Optional[str]:
     if not shutil.which("kpsewhich"):
         return None
     try:
-        out = subprocess.run(["kpsewhich", name], capture_output=True, text=True, timeout=10).stdout.strip()
+        proc = subprocess.run(["kpsewhich", name], capture_output=True, timeout=10)
+        out = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
     except Exception:
         return None
     return out or None

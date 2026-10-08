@@ -219,3 +219,25 @@ def test_parse_keeps_file_and_drops_lines_of_packages():
         ("chapters/intro.tex", 5),
         ("/usr/share/texlive/texmf-dist/tex/latex/foo/foo.sty", None),
     ]
+
+
+def test_pdflatex_non_utf8_output_byte_0xed_does_not_raise_infra_error(monkeypatch):
+    """
+    pdflatex can emit non-UTF-8 bytes (e.g. byte 0xed) in font banners, metrics, or error logs.
+    This must NOT crash with UnicodeDecodeError or be classified as [INFRASTRUCTURE ERROR].
+    """
+    raw_non_utf8 = b"This is pdfTeX\n" + b"x" * 13840 + b"\xed" + b"invalid continuation\nOutput written on main.pdf (1 page).\n"
+
+    def run(cmd, cwd=None, **kw):
+        (Path(cwd) / "main.pdf").write_bytes(b"%PDF-1.4 simulated pdf")
+        return types.SimpleNamespace(stdout=raw_non_utf8, stderr=b"", returncode=0)
+
+    monkeypatch.setattr(compiler.subprocess, "run", run)
+    doc = "\n".join([B + "documentclass{article}", B + "begin{document}", "Hello", B + "end{document}", ""])
+    res = compiler.compile_latex(doc, engine="pdflatex", persist_synctex=False)
+
+    assert res["success"] is True
+    assert "pdf_base64" in res
+    assert "[INFRASTRUCTURE ERROR]" not in res.get("log", "")
+    assert "[INFRASTRUCTURE ERROR]" not in res.get("error_log", "")
+

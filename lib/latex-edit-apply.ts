@@ -86,6 +86,7 @@ export const SKIP_REASON_LABELS: Record<SkipReason, string> = {
   "not-unique": "target text is not unique",
   "stale-position": "the document moved under the edit",
   overlap: "overlaps another edit",
+  "document-changed": "the document was modified",
 };
 
 /** Human-readable summary of what was skipped, for a single toast. */
