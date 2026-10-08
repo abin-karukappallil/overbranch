@@ -95,8 +95,11 @@ def tex_probe(preamble: str, fragments: List[str], extra_files: Optional[Dict[st
             p.write_text(content)
         (Path(d) / "probe.tex").write_text(src)
         try:
-            out = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-draftmode", "probe.tex"],
-                                 cwd=d, capture_output=True, text=True, timeout=timeout).stdout
+            proc = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-draftmode", "probe.tex"],
+                                 cwd=d, capture_output=True, timeout=timeout)
+            out = proc.stdout
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", errors="replace")
         except Exception as e:
             logger.debug(f"TeX probe failed: {e}")
             return None

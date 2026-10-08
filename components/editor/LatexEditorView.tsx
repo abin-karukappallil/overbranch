@@ -340,15 +340,27 @@ export function LatexEditorView({ projectId }: LatexEditorViewProps) {
                   ))}
                 </div>
 
-                <form onSubmit={handleSendPrompt} className="relative">
-                  <input
-                    type="text"
+                <form onSubmit={handleSendPrompt} className="relative flex items-end">
+                  <textarea
+                    rows={1}
                     placeholder="Ask assistant to edit TeX..."
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    className="w-full h-9 pl-3 pr-8 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none"
+                    onChange={(e) => {
+                      setChatInput(e.target.value);
+                      e.target.style.height = "auto";
+                      e.target.style.height = `${Math.min(e.target.scrollHeight, 120)}px`;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatInput.trim()) {
+                          handleSendPrompt(e);
+                        }
+                      }
+                    }}
+                    className="w-full min-h-[36px] max-h-32 py-2 pl-3 pr-8 rounded-xl border border-border/60 bg-background text-foreground text-xs outline-none resize-none overflow-y-auto"
                   />
-                  <button type="submit" className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-400 hover:text-indigo-300">
+                  <button type="submit" className="absolute right-2.5 bottom-2.5 text-indigo-400 hover:text-indigo-300">
                     <Send className="w-3.5 h-3.5" />
                   </button>
                 </form>
