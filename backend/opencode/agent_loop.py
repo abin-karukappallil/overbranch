@@ -1610,6 +1610,11 @@ def stream_opencode_agent(
             "If they cannot be fixed, the whole change is rolled back."
         )
 
+    had_fallback = False
+    fallback_model_name = None
+    fallback_provider_name = None
+    fallback_key_id_name = None
+
     while steps_taken < actual_max_steps:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Agent loop cancelled by user.")
@@ -1667,6 +1672,17 @@ def stream_opencode_agent(
                 latency_ms=(time.time() - t_llm_start) * 1000,
                 usage=response.get("usage") if isinstance(response, dict) else None,
             )
+            if response.get("is_fallback"):
+                had_fallback = True
+                fallback_model_name = response.get("model_used") or "minimax/minimax-m3"
+                fallback_provider_name = response.get("provider") or "OpenRouter"
+                fallback_key_id_name = response.get("key_id")
+                key_tag = f" ({fallback_key_id_name})" if fallback_key_id_name else ""
+                yield {
+                    "type": "status",
+                    "step": steps_taken,
+                    "message": f"⚡ Switched to fallback: {fallback_model_name} via {fallback_provider_name}{key_tag}",
+                }
         except LLMOperationCancelled:
             raise
         except Exception as e:
@@ -1706,6 +1722,11 @@ def stream_opencode_agent(
                     cancel_token=cancel_token,
                     observer=agent_trace.record_llm_attempt,
                 )
+                if continuation.get("is_fallback"):
+                    had_fallback = True
+                    fallback_model_name = continuation.get("model_used") or "minimax/minimax-m3"
+                    fallback_provider_name = continuation.get("provider") or "OpenRouter"
+                    fallback_key_id_name = continuation.get("key_id")
                 cont_text = continuation.get("content", "")
                 cont_finish = continuation.get("finish_reason", "stop")
                 if cont_text:
@@ -2455,6 +2476,12 @@ def stream_opencode_agent(
                 "trace": trace_summary,
                 "modified_files": all_modified,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
+                "is_fallback": had_fallback,
+                "model_used": fallback_model_name if had_fallback else model,
+                "fallback_notice": (
+                    f"Gemini Web2API was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
+                    + (f" ({fallback_key_id_name})" if fallback_key_id_name else "")
+                ) if had_fallback else None,
             },
         }
     else:
@@ -2478,6 +2505,12 @@ def stream_opencode_agent(
                 "trace": trace_summary,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
                 "failure": failure_payload,
+                "is_fallback": had_fallback,
+                "model_used": fallback_model_name if had_fallback else model,
+                "fallback_notice": (
+                    f"Gemini Web2API was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
+                    + (f" ({fallback_key_id_name})" if fallback_key_id_name else "")
+                ) if had_fallback else None,
             },
         }
 
