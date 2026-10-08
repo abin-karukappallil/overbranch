@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-crosextra-caladea \
     fonts-texgyre \
     latexmk \
+    biber \
     ghostscript \
     poppler-utils \
     perl \

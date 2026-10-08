@@ -46,12 +46,29 @@ DEFAULT_MODEL = "gemini-3.7-flash"
 MAX_COMPILE_REPAIRS = int(os.getenv("SHADOW_COMPILE_MAX_RETRIES", "2"))
 MAX_TARGET_RETRIES = 1  # a target that failed is corrected once, then given up on
 SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not modified."
+_LAST_STEP_NOTE = (
+    "FINAL STEP: this is your last step. If your edits are complete, respond with done=true now; "
+    "they are compiled automatically and you may get a turn to repair compile errors."
+)
 _LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry"}
 
 
 def _phase(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
     """A user-facing progress state (Finding target… / Compiling… / Done)."""
     return {"type": "phase", "phase": phase, "message": message, **extra}
+
+
+def _compile_status_note(last_compile: Dict[str, Any], compile_available: bool, compile_verified: bool) -> str:
+    """One honest line about how the edited document compiled, for the final explanation."""
+    if not compile_available:
+        return "Compile check skipped: no LaTeX engine is available on the server."
+    if not compile_verified or not last_compile:
+        return ""
+    remaining = last_compile.get("errors_after") or 0
+    if not remaining:
+        return "✓ Compiles without errors."
+    return (f"No new compile errors; {remaining} error(s) that were already in the document "
+            f"remain (not caused by this change).")
 
 
 def _friendly_llm_error(err: Exception) -> str:
@@ -158,6 +175,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Read only what you need: the target block is usually already in your context; otherwise `get_block(node_id)` (add include_style=true for title/colour/font changes) instead of reading large line ranges.
    - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `detect_overflow` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
+   - JSON ESCAPING OF LaTeX (CRITICAL): inside JSON strings write EVERY LaTeX backslash as two backslashes (`\\\\begin{{itemize}}`, `\\\\item`, `\\\\textbf{{x}}`), and a LaTeX line break `\\\\` as `\\\\\\\\`. Use `\\n` only for a newline. Write `&`, `<`, `>`, `'` and every other character literally; never use `\\uXXXX` escapes.
 
 5. GROUNDING IN EXISTING DOCUMENT DATA & MANDATORY EXPANSION / ELABORATION:
    - When asked to "elaborate", "describe", "expand", "explain more", "add one more additional slide for each topic", or "make longer":
@@ -240,7 +258,34 @@ _N_LATEX_COMMANDS = (
 # Longest-first so "ne" cannot shadow "neq" / "newline".
 _N_LATEX_ALTS = "|".join(sorted(_N_LATEX_COMMANDS, key=len, reverse=True))
 _RE_N_LATEX_BODY = re.compile(r"(?:" + _N_LATEX_ALTS + r")(?![a-zA-Z])")
-_RE_SLASH_RUN = re.compile(r"(\\+)(.)")
+_RE_SLASH_RUN = re.compile(r"(\\+)(.)", re.DOTALL)
+# n-macros long enough that "\n" + body is never a newline followed by prose.
+# "\ne", "\ni", "\nu" are not: "\ne.g." and "\ni) first" are newlines in a
+# correctly escaped response, and must not be read as proof of raw LaTeX.
+_RE_N_LATEX_BODY_LONG = re.compile(
+    r"(?:" + "|".join(sorted((c for c in _N_LATEX_COMMANDS if len(c) >= 3), key=len, reverse=True))
+    + r")(?![a-zA-Z])"
+)
+_RE_JSON_UNICODE_BODY = re.compile(r"u[0-9a-fA-F]{4}")
+
+
+def _is_json_only_escape(text: str, pos: int) -> bool:
+    r"""
+    True when the single-backslash escape whose letter is at ``pos`` is one a
+    correctly escaping model writes and raw LaTeX does not: ``\uXXXX`` (Gemini
+    routinely writes ``&`` as ``\u0026``), ``\/``, and a tab / carriage return
+    that is not the start of a macro (``\t\\item``, ``\r\n``; ``\textbf`` and
+    ``\right`` are macros).
+    """
+    ch = text[pos] if pos < len(text) else ""
+    if ch == "u":
+        return bool(_RE_JSON_UNICODE_BODY.match(text, pos))
+    if ch == "/":
+        return True
+    if ch in ("t", "r"):
+        nxt = text[pos + 1] if pos + 1 < len(text) else ""
+        return not nxt.isalpha()
+    return False
 
 
 def _emits_unescaped_latex(text: str) -> bool:
@@ -248,43 +293,60 @@ def _emits_unescaped_latex(text: str) -> bool:
     True when this response writes LaTeX backslashes raw (``\begin``) instead of
     escaped for JSON (``\\begin``).
 
-    A single odd-length backslash run before anything other than a real JSON
-    escape is proof: ``\b``, ``\f`` and ``\t`` are control characters no model
-    means to put in a LaTeX string.
+    An odd-length backslash run is proof when the escape it forms is not one a
+    correctly escaping model would write: ``\b``, ``\f``, ``\textbf``, ``\item``
+    or ``\newline`` are, while ``\u0026``, ``\/``, ``\t\\item`` and a ``\n``
+    before ``e.g.`` are not. Treating those as proof used to flip a correctly
+    escaped response into "raw" mode, which then doubled every ``\\begin`` into
+    a line break followed by the word "begin".
     """
     for m in _RE_SLASH_RUN.finditer(text):
-        if len(m.group(1)) % 2 == 1 and m.group(2) not in ('"', "n"):
-            return True
-        if len(m.group(1)) % 2 == 1 and m.group(2) == "n":
-            if _RE_N_LATEX_BODY.match(text, m.start(2)):
+        if len(m.group(1)) % 2 == 0:
+            continue
+        ch = m.group(2)
+        if ch == '"':
+            continue
+        if ch == "n":
+            if _RE_N_LATEX_BODY_LONG.match(text, m.start(2)):
                 return True
+            continue
+        if _is_json_only_escape(text, m.start(2)):
+            continue
+        return True
     return False
 
 
-def sanitize_latex_json(text: str) -> str:
+_SANITIZE_MODES = ("escaped", "escaped_n", "unescaped")
+
+
+def sanitize_latex_json(text: str, mode: Optional[str] = None) -> str:
     r"""
-    Repairs raw JSON emitted by an LLM so that unescaped LaTeX survives
-    ``json.loads``.
+    Repairs raw JSON emitted by an LLM so that LaTeX survives ``json.loads``.
 
     A model that writes ``\begin`` instead of ``\\begin`` inside a JSON string
     hands the decoder escape sequences it never meant: ``\b`` becomes a
-    backspace, ``\f`` a form feed, ``\t`` a tab. Each odd-length backslash run
-    is therefore doubled.
+    backspace, ``\f`` a form feed, ``\t`` a tab, and ``\item`` is not valid JSON
+    at all. How to repair a backslash run depends on how the response escapes
+    LaTeX, so the reading is chosen by ``mode``:
 
-    Two cases are genuinely ambiguous by shape, and both are resolved by first
-    deciding whether the *response as a whole* escapes LaTeX
-    (``_emits_unescaped_latex``):
+    * ``"escaped"`` — the model escaped LaTeX for JSON (``\\begin``). Even runs
+      are already right. An odd run has one stray LaTeX backslash and gets one
+      more, unless its last backslash is a genuine JSON escape (``\n`` newline,
+      ``\uXXXX``, ``\/``, ``\t`` / ``\r`` that do not start a macro).
+    * ``"escaped_n"`` — as ``"escaped"``, but a stray unescaped n-macro
+      (``\noindent``, ``\newline``) is recognised instead of being read as a
+      newline followed by "oindent".
+    * ``"unescaped"`` — the model wrote LaTeX raw (``\begin``, ``\\`` for a line
+      break) and only used JSON escapes for newlines / unicode. Every backslash
+      in a run is literal and is doubled, except a final JSON escape:
+      ``\\\n`` is a line break then a newline (``\\\\`` + ``\n``), ``\\\hline``
+      is a line break then ``\hline``. The previous version doubled *every*
+      ``\n`` here, which put the whole edit on one line full of undefined
+      ``\n`` control sequences, and widened ``\\\hline`` to ``\\hline``.
 
-    * ``\n`` is both the JSON newline escape and the prefix of real macros. It is
-      doubled for known control words always, and for any ``\n<letters>`` when
-      the response is unescaped. A model that escapes properly writes
-      ``\\nonumber``, so there ``\n`` is left as a newline.
-    * ``\\`` is both an escaped backslash and the LaTeX line break. In an
-      unescaped response it is the line break, so a run of exactly two is
-      widened to four. Left alone, ``\\[0.3em]`` decoded to ``\[0.3em]`` --
-      opening display math where a spaced line break was meant. (That exact
-      corruption is common enough that ``auto_heal_latex_code`` carries a
-      dedicated rule to undo one symptom of it.)
+    ``mode=None`` picks ``"unescaped"`` when the response shows proof of raw
+    LaTeX (``_emits_unescaped_latex``), else ``"escaped_n"``. A run before ``"``
+    is never touched: it is the JSON quote escape or the end of the string.
 
     The whole transform runs in a single pass over the original text, so a run
     this function widens is never reconsidered and widened twice.
@@ -292,29 +354,74 @@ def sanitize_latex_json(text: str) -> str:
     if not text or "\\" not in text:
         return text
 
-    unescaped = _emits_unescaped_latex(text)
+    if mode is None:
+        mode = "unescaped" if _emits_unescaped_latex(text) else "escaped_n"
+    if mode not in _SANITIZE_MODES:
+        raise ValueError(f"unknown sanitize mode: {mode!r}")
+    unescaped = mode == "unescaped"
+    n_macros = mode != "escaped"
 
     def _fix(m: "re.Match") -> str:
         slashes, ch = m.group(1), m.group(2)
         n_slashes = len(slashes)
+        if ch == '"':
+            # Odd: the last backslash escapes the quote. In a raw reply the backslashes
+            # before it are LaTeX (a `\\` row break at the very end of a string).
+            if unescaped and n_slashes > 1:
+                return "\\" * (2 * (n_slashes - (n_slashes % 2))) + ("\\" if n_slashes % 2 else "") + ch
+            return m.group(0)
 
-        if n_slashes % 2 == 1:
-            if ch == '"':
-                return m.group(0)  # a real JSON string escape
-            if ch == "n":
-                if unescaped or _RE_N_LATEX_BODY.match(m.string, m.start(2)):
-                    return slashes + "\\" + ch
-                return m.group(0)  # genuine newline escape
-            return slashes + "\\" + ch
+        # Is the LAST backslash of the run a JSON escape the model meant?
+        if ch == "n":
+            final_is_json = not (n_macros and _RE_N_LATEX_BODY.match(m.string, m.start(2)))
+        else:
+            final_is_json = _is_json_only_escape(m.string, m.start(2))
 
-        # Even run. Only a bare pair is ambiguous, and only when this response
-        # does not escape LaTeX: there it is the LaTeX line break `\\`.
-        # `\\"` is excluded -- widening it would break the JSON string itself.
-        if n_slashes == 2 and unescaped and ch != '"':
-            return "\\\\\\\\" + ch
-        return m.group(0)
+        if unescaped:
+            if final_is_json:
+                return "\\" * (2 * (n_slashes - 1)) + "\\" + ch
+            return "\\" * (2 * n_slashes) + ch
+
+        if n_slashes % 2 == 0 or final_is_json:
+            return m.group(0)
+        return slashes + "\\" + ch
 
     return _RE_SLASH_RUN.sub(_fix, text)
+
+
+# Signatures of a JSON reading that corrupted the LaTeX, with weights. They are
+# checked on the *decoded* strings, so they judge the result, not the guess.
+_WIDENED_WORDS = (
+    "begin|end|item|section|subsection|subsubsection|chapter|paragraph|textbf|textit|texttt|"
+    "emph|frac|usepackage|documentclass|label|ref|cite|includegraphics|centering|hline|toprule|"
+    "midrule|bottomrule|frametitle|caption|vspace|hspace|newcommand|renewcommand|node|draw|"
+    "maketitle|footnote|href|url"
+)
+_N_LONG_BODIES = "|".join(sorted({c[1:] for c in _N_LATEX_COMMANDS if len(c) >= 5}, key=len, reverse=True))
+_N_ALL_BODIES = "|".join(sorted({c[1:] for c in _N_LATEX_COMMANDS}, key=len, reverse=True))
+_CORRUPTION_SIGNATURES = (
+    (re.compile(r"[\x08\x0c]"), 5),                                   # \begin / \frac read as \b / \f
+    (re.compile(r"(?<!\\)\\u[0-9a-fA-F]{4}"), 4),                     # a JSON \u0026 left in the LaTeX
+    (re.compile(r"(?<!\\)\\n(?![a-zA-Z])"), 4),                       # a newline left as a literal "\n"
+    (re.compile(r"(?<!\\)\\n[A-Z]"), 3),                              # ...before a capitalised line
+    (re.compile(r"(?<!\\)\\\\(?:" + _WIDENED_WORDS + r")(?![a-zA-Z])"), 3),  # \\begin: widened twice
+    (re.compile(r"\n(?:" + _N_LONG_BODIES + r")(?![a-zA-Z])"), 3),    # \newline read as newline + "ewline"
+    (re.compile(r"[\t\r][a-z]"), 2),                                  # \textbf / \right read as tab / CR
+    (re.compile(r"(?<!\\)\\(?=\n|$)"), 2),                            # a raw \\ row break read as one \
+    (re.compile(r"\$[^$\n]*\n(?:" + _N_ALL_BODIES + r")(?![a-zA-Z])[^$\n]*\$"), 3),  # $a \neq b$ -> newline + "eq"
+    (re.compile("\n" + r"ode\s*(?:at\b|\[|\()"), 3),                 # \node at -> newline + "ode at"
+)
+
+
+def _corruption_score(value: Any) -> int:
+    """How strongly the decoded strings in ``value`` look like mis-decoded LaTeX."""
+    if isinstance(value, str):
+        return sum(weight * len(rx.findall(value)) for rx, weight in _CORRUPTION_SIGNATURES)
+    if isinstance(value, dict):
+        return sum(_corruption_score(v) for v in value.values())
+    if isinstance(value, list):
+        return sum(_corruption_score(v) for v in value)
+    return 0
 
 
 def _parse_agent_response(text: str) -> Dict[str, Any]:
@@ -333,29 +440,46 @@ def _parse_agent_response(text: str) -> Dict[str, Any]:
         cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip()
 
-    # Apply sanitize_latex_json to protect LaTeX commands (\begin, \frac, \text, \right, etc.)
-    # from being decoded into control characters \x08, \x0c, \x09, \x0d
-    sanitized = sanitize_latex_json(cleaned)
+    # The whole response first; the outermost {...} only if that does not parse
+    # (prose around the object, a stray fence).
+    sources = [cleaned]
+    start, end = cleaned.find("{"), cleaned.rfind("}")
+    if start != -1 and end > start and (start, end) != (0, len(cleaned) - 1):
+        sources.append(cleaned[start:end + 1])
 
-    # Try direct parse
-    try:
-        data = json.loads(sanitized, strict=False)
-        if isinstance(data, dict):
-            return data
-    except Exception:
-        pass
+    # Every plausible reading is decoded and the decoded LaTeX is judged
+    # (_corruption_score); guessing the escaping style up front and committing
+    # to it is what turned whole edits into one line of "\n" and "\\begin".
+    # Order only breaks ties between equally clean readings: as written, then
+    # the reading that matches how this response appears to escape LaTeX.
+    if _emits_unescaped_latex(cleaned):
+        modes: List[Optional[str]] = [None, "unescaped", "escaped_n", "escaped"]
+    else:
+        modes = [None, "escaped_n", "escaped", "unescaped"]
 
-    # Extract outermost balanced braces
-    start = sanitized.find("{")
-    end = sanitized.rfind("}")
-    if start != -1 and end > start:
-        snippet = sanitized[start:end + 1]
-        try:
-            data = json.loads(snippet, strict=False)
-            if isinstance(data, dict):
+    for src in sources:
+        best: Optional[Dict[str, Any]] = None
+        best_score = 0
+        tried = set()
+        for mode in modes:
+            candidate = src if mode is None else sanitize_latex_json(src, mode)
+            if candidate in tried:
+                continue
+            tried.add(candidate)
+            try:
+                data = json.loads(candidate, strict=False)
+            except Exception:
+                continue
+            if not isinstance(data, dict):
+                continue
+            score = _corruption_score(data)
+            if score == 0:
                 return data
-        except Exception:
-            pass
+            if best is None or score < best_score:
+                best, best_score = data, score
+        if best is not None:
+            logger.info(f"Agent JSON parsed with residual LaTeX-corruption score {best_score}.")
+            return best
 
     return {}
 
@@ -804,6 +928,9 @@ def stream_opencode_agent(
         scope = ScopeType.TARGETED_EDIT.value
         is_full_rewrite = False
         is_expansion = False
+    # A fix request is judged on whether the document compiles, not on whether the
+    # edits added errors: the errors it was asked to fix are, by definition, pre-existing.
+    workspace.compile_strict = bool(is_compilation_fix_request)
 
     all_chunks = workspace.get_all_chunks()
     content_chunks = workspace.get_content_chunks()
@@ -980,10 +1107,8 @@ def stream_opencode_agent(
             # replace_all re-validates and may refuse; only report a heal that landed.
             heal_res = workspace.replace_all(healed_code)
             if heal_res.get("success"):
-                try:
-                    workspace.ensure_document_structure()
-                except Exception as e:
-                    logger.warning(f"ensure_document_structure note: {e}")
+                # No ensure_document_structure() here: it re-ran a whole-document heal
+                # with no validation after replace_all had validated this one.
                 logger.info(f"Auto-healed workspace buffer on compilation fix request: {fixes_applied}")
                 yield {
                     "type": "status",
@@ -1388,12 +1513,57 @@ def stream_opencode_agent(
     llm_failure: Optional[str] = None
     target_failures: Dict[str, int] = {}
 
-    def compile_gate() -> Tuple[str, Dict[str, Any]]:
+    repair_steps_granted = 0  # steps added to the budget so a compile repair can run
+    last_compile: Dict[str, Any] = {}  # the latest compile verdict, for the final explanation
+
+    def deterministic_compile_repair(res: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Error-driven deterministic fixes (latex_error_fixer.repair_from_compile_errors)
+        on the lines the agent changed — and, for a fix request, on the lines with
+        errors — before an LLM repair round is spent. Kept only when a recompile has
+        fewer errors and no more new ones; otherwise undone. Returns the new compile
+        result, or None when nothing was kept.
+        """
+        errs = [e for e in (res.get("errors") or [])
+                if isinstance(e.get("line"), int) and str(e.get("file") or file_path).lstrip("./") == file_path.lstrip("./")]
+        if not errs:
+            return None
+        try:
+            from latex_error_fixer import repair_from_compile_errors
+            from .edit_guard import changed_lines
+            buf = workspace.get_buffer()
+            allowed = {i + 1 for i in changed_lines(workspace.get_original(), buf)}
+            if getattr(workspace, "compile_strict", False):
+                allowed |= {e["line"] for e in errs}
+            patched, fixes = repair_from_compile_errors(buf, errs, allowed)
+        except Exception as e:
+            logger.warning(f"deterministic compile repair skipped: {e}")
+            return None
+        if not fixes or patched == buf or not workspace.replace_all(patched).get("success"):
+            return None
+        res2 = execute_tool("compile_latex", {}, workspace)
+        before_n = res.get("errors_after", len(res.get("errors") or []))
+        after_n = res2.get("errors_after", len(res2.get("errors") or []))
+        if not res2.get("infra_skip") and (res2.get("success") or (
+                after_n < before_n and res2.get("new_error_count", 0) <= res.get("new_error_count", 0))):
+            logger.info(f"Deterministic compile repair kept: {fixes}")
+            res2["auto_repairs"] = fixes
+            return res2
+        workspace.undo()
+        return None
+
+    def compile_gate(final: bool = False) -> Tuple[str, Dict[str, Any]]:
         """
         Deterministic compile when the agent finishes with unverified edits.
         Returns ("ok" | "skipped" | "repair" | "failed", compile result).
+
+        A repair round is granted while ``compile_repairs < MAX_COMPILE_REPAIRS``
+        even on the last step — the budget is extended for it (by at most
+        MAX_COMPILE_REPAIRS) — because an error found at the end used to roll the
+        whole run back without a single repair attempt. ``final`` is the check
+        after the loop has ended, when no LLM turn is left.
         """
-        nonlocal compile_verified, compile_available, compile_repairs
+        nonlocal compile_verified, compile_available, compile_repairs, actual_max_steps, repair_steps_granted
         t0 = time.time()
         res = execute_tool("compile_latex", {}, workspace)
         agent_trace.record_compile(latency_ms=(time.time() - t0) * 1000, success=bool(res.get("success")))
@@ -1401,24 +1571,40 @@ def stream_opencode_agent(
             compile_available = False
             compile_verified = True
             return "skipped", res
+        if not res.get("success"):
+            repaired = deterministic_compile_repair(res)
+            if repaired is not None:
+                res = repaired
+        last_compile.clear()
+        last_compile.update(res)
         if res.get("success"):
             compile_verified = True
             return "ok", res
-        if compile_repairs < MAX_COMPILE_REPAIRS and steps_taken < actual_max_steps:
-            compile_repairs += 1
-            agent_trace.retry_count += 1
-            return "repair", res
+        if not final and compile_repairs < MAX_COMPILE_REPAIRS:
+            if steps_taken >= actual_max_steps and repair_steps_granted < MAX_COMPILE_REPAIRS:
+                actual_max_steps += 1
+                repair_steps_granted += 1
+            if steps_taken < actual_max_steps:
+                compile_repairs += 1
+                agent_trace.retry_count += 1
+                return "repair", res
         return "failed", res
 
     def compile_feedback(res: Dict[str, Any]) -> str:
-        errs = res.get("new_errors") or res.get("errors") or []
+        # `errors` are the ones that fail the check: the new ones, or — for a fix
+        # request — every error still in the document.
+        errs = res.get("errors") or res.get("new_errors") or []
         diag = "\n".join(
-            f"- [{'Line ' + str(e.get('line')) if e.get('line') else 'Document'}] {e.get('error')}"
+            f"- [{('Line ' + str(e.get('line'))) if e.get('line') else 'Document'}"
+            f"{(' of ' + str(e.get('file'))) if e.get('file') and e.get('file') != file_path else ''}] "
+            f"{e.get('error')}"
             + (f" -> Fix: {e.get('suggested_action')}" if e.get('suggested_action') else "")
             for e in errs[:6]
         ) or res.get("summary", "Compilation failed")
+        what = ("The document still does not compile" if res.get("strict")
+                else "COMPILATION FAILED after your edits")
         return (
-            f"COMPILATION FAILED after your edits (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
+            f"{what} (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
             f"{(res.get('stderr') or '')[:1200]}\n\n"
             "Fix ONLY these errors with the smallest edit (replace_text with node_id/line_hint), then set done=true. "
             "If they cannot be fixed, the whole change is rolled back."
@@ -1435,6 +1621,14 @@ def stream_opencode_agent(
             "step": steps_taken,
             "message": f"Agent reasoning step {steps_taken}/{actual_max_steps}...",
         }
+
+        # Last regular step with edits nobody has compiled: ask the model to finish, so the
+        # compile gate (which can still grant repair turns) runs instead of the budget
+        # simply running out on unverified edits.
+        if (mode == "edit" and steps_taken == actual_max_steps and workspace.has_changed()
+                and not compile_verified and messages and messages[-1].get("role") == "user"
+                and _LAST_STEP_NOTE not in str(messages[-1].get("content", ""))):
+            messages[-1] = {**messages[-1], "content": f"{messages[-1].get('content', '')}\n\n{_LAST_STEP_NOTE}"}
 
         # Compact older conversation history to keep network payload lightweight and fast
         compact_messages = _compact_conversation_history(messages)
@@ -1809,13 +2003,17 @@ def stream_opencode_agent(
                         }
                     elif tool_result.get("success"):
                         compile_verified = True
+                        last_compile.clear()
+                        last_compile.update(tool_result)
                         yield {
                             "type": "status",
                             "step": steps_taken,
-                            "message": "✓ Shadow compilation passed.",
+                            "message": "✓ " + str(tool_result.get("summary") or "Shadow compilation passed."),
                         }
                     else:
                         compile_verified = False
+                        last_compile.clear()
+                        last_compile.update(tool_result)
                         yield {
                             "type": "compile_error",
                             "summary": tool_result.get("stderr", "Compilation failed"),
@@ -1930,7 +2128,8 @@ def stream_opencode_agent(
                     elif tool_result.get("success"):
                         followup_msg = (
                             f"TOOL RESULT from `compile_latex`:\n{result_str}\n\n"
-                            "Compilation passed cleanly! If all requested changes are complete, you can now set done=true."
+                            f"{tool_result.get('summary') or 'Compilation passed.'} "
+                            "If all requested changes are complete, you can now set done=true."
                         )
                     else:
                         err_context = tool_result.get("stderr", "")
@@ -2008,24 +2207,58 @@ def stream_opencode_agent(
             ),
         })
 
+    # 4a. Safety net: the loop can end without `done` (step budget exhausted, the
+    # legacy proposed_chunk reply). Those edits used to ship without ever being
+    # compiled; the gate runs here with its deterministic repairs, but no LLM turn.
+    if (mode == "edit" and compile_failed_final is None and llm_failure is None
+            and workspace.has_changed() and not compile_verified and compile_available):
+        yield _phase("compiling", "Compiling…")
+        gate, gate_res = compile_gate(final=True)
+        if gate == "failed":
+            compile_failed_final = gate_res
+
     # 4b. Transactional outcome. The run is all-or-nothing: an edit set that
     # cannot be made to compile, or a run cut short by the LLM provider, is
-    # rolled back as a whole, so the user never receives half an edit.
+    # rolled back as a whole, so the user never receives half an edit — with one
+    # exception: a compile-fix request that removed some errors, added none, and
+    # could not remove the rest keeps its progress and says what still fails.
     failure_payload: Optional[Dict[str, Any]] = None
+    partial_payload: Optional[Dict[str, Any]] = None
     if compile_failed_final is not None:
-        workspace.rollback_transaction(run_tx)
-        errs = compile_failed_final.get("new_errors") or compile_failed_final.get("errors") or []
-        agent_trace.compile_result = "failed"
-        agent_trace.failure_reason = "compile_failed_after_repairs"
-        failure_payload = {
-            "message": SAFE_FAILURE_MESSAGE,
-            "operation": "edit",
-            "reason": "The edited document did not compile, and the automatic repairs did not fix it.",
-            "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
-            "errors": [str(e.get("error", ""))[:200] for e in errs[:3]],
-            "document_unchanged": True,
-        }
-        yield {"type": "compile_error", "message": SAFE_FAILURE_MESSAGE, "errors": errs[:5]}
+        errs = compile_failed_final.get("errors") or compile_failed_final.get("new_errors") or []
+        before_n = compile_failed_final.get("errors_before")
+        after_n = compile_failed_final.get("errors_after")
+        partial = (
+            compile_failed_final.get("strict") and workspace.has_changed()
+            and compile_failed_final.get("new_error_count", 0) == 0
+            and isinstance(before_n, int) and isinstance(after_n, int) and after_n < before_n
+        )
+        if partial:
+            agent_trace.compile_result = "partial"
+            agent_trace.failure_reason = "compile_partially_fixed"
+            partial_payload = {
+                "message": (f"Fixed {before_n - after_n} of {before_n} compile error(s); "
+                            f"{after_n} still fail{'s' if after_n == 1 else ''}."),
+                "operation": "edit",
+                "reason": "The remaining errors could not be fixed automatically.",
+                "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
+                "document_unchanged": False,
+                "partial": True,
+            }
+            yield {"type": "compile_error", "message": partial_payload["message"], "errors": errs[:5]}
+        else:
+            workspace.rollback_transaction(run_tx)
+            agent_trace.compile_result = "failed"
+            agent_trace.failure_reason = "compile_failed_after_repairs"
+            failure_payload = {
+                "message": SAFE_FAILURE_MESSAGE,
+                "operation": "edit",
+                "reason": "The edited document did not compile, and the automatic repairs did not fix it.",
+                "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
+                "errors": [str(e.get("error", ""))[:200] for e in errs[:3]],
+                "document_unchanged": True,
+            }
+            yield {"type": "compile_error", "message": SAFE_FAILURE_MESSAGE, "errors": errs[:5]}
     elif llm_failure is not None:
         if workspace.has_changed():
             workspace.rollback_transaction(run_tx)
@@ -2056,6 +2289,15 @@ def stream_opencode_agent(
         if not agent_explanation or compile_failed_final is not None or llm_failure is not None:
             agent_explanation = failure_payload["message"] + (
                 f" {failure_payload['reason']}" if failure_payload.get("reason") and failure_payload["reason"] not in failure_payload["message"] else "")
+    elif partial_payload:
+        yield _phase("partial", partial_payload["message"], details=partial_payload)
+        agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + (
+            partial_payload["message"] + " Still failing: " + "; ".join(partial_payload["errors"][:3]))
+    elif mode == "edit" and workspace.has_changed():
+        # The model's own explanation tends to claim success; state what the compiler said.
+        status = _compile_status_note(last_compile, compile_available, compile_verified)
+        if status:
+            agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + status
 
     # 5. Compute and yield diff & emit trace
     elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2198,6 +2440,12 @@ def stream_opencode_agent(
             "data": {
                 "original_chunk": workspace.get_original(),
                 "proposed_chunk": workspace.get_buffer(),
+                # Authoritative pair, as on final_diff: the client writes the
+                # validated, compiled buffer when its document is still `original_code`.
+                "has_changes": True,
+                "original_code": workspace.get_original(),
+                "proposed_code": workspace.get_buffer(),
+                "partial": partial_payload,
                 "explanation": agent_explanation,
                 "edits": edit_items,
                 "steps_taken": steps_taken,
@@ -2218,6 +2466,9 @@ def stream_opencode_agent(
             "data": {
                 "original_chunk": "",
                 "proposed_chunk": "",
+                # Explicit: the editor otherwise scrapes LaTeX out of the explanation and
+                # offers it as an edit that has no anchor and can never be applied.
+                "has_changes": False,
                 "explanation": agent_explanation or "Agent completed without modifying the document.",
                 "edits": [],
                 "steps_taken": steps_taken,

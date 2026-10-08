@@ -35,23 +35,39 @@ def ensure_document_environment(code: str) -> str:
     if not re.search(r"\\documentclass\b", code):
         return code
 
+    def doc_tags(src: str) -> Tuple[List["re.Match"], List["re.Match"]]:
+        # Real \begin/\end{document} only: found on the masked view, so one mentioned in a
+        # comment ("% notes after \end{document}") or shown in a verbatim / lstlisting
+        # example is not a duplicate. Deduplicating raw text deleted the real
+        # \end{document} when a comment after it mentioned one, and stripped the lines
+        # out of listings. (Masking is length-preserving, so offsets apply to ``src``.)
+        try:
+            from edit_validator import clean_latex_for_validation
+            view = clean_latex_for_validation(src)
+            if len(view) != len(src):
+                view = src
+        except Exception:
+            view = src
+        return (list(re.finditer(r"\\begin\s*\{document\}", view)),
+                list(re.finditer(r"\\end\s*\{document\}", view)))
+
     # Deduplicate multiple \\begin{document} if present
-    begin_matches = list(re.finditer(r"\\begin\s*\{document\}", code))
+    begin_matches, _ = doc_tags(code)
     if len(begin_matches) > 1:
         # Keep the first, remove the subsequent duplicates
         for m in reversed(begin_matches[1:]):
             code = code[:m.start()] + code[m.end():]
-        begin_matches = list(re.finditer(r"\\begin\s*\{document\}", code))
 
     # Deduplicate multiple \\end{document} if present
-    end_matches = list(re.finditer(r"\\end\s*\{document\}", code))
+    begin_matches, end_matches = doc_tags(code)
     if len(end_matches) > 1:
         # Keep the last, remove earlier duplicates
         for m in reversed(end_matches[:-1]):
             code = code[:m.start()] + code[m.end():]
+        begin_matches, end_matches = doc_tags(code)
 
     has_begin_doc = len(begin_matches) > 0
-    has_end_doc = bool(re.search(r"\\end\s*\{document\}", code))
+    has_end_doc = len(end_matches) > 0
 
     if has_begin_doc and has_end_doc:
         return code

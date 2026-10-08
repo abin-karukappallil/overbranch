@@ -110,6 +110,8 @@ interface ChatMessage {
   time: string;
   mode?: ChatMode;
   edits?: EditItem[];
+  /** The file these edits were computed against; they may only be applied to it. */
+  editsFile?: string;
   isApplied?: boolean;
   isReverted?: boolean;
   historyEntryId?: string;
@@ -257,6 +259,8 @@ export function EditorLayout({
   const [isCompiling, setIsCompiling] = useState(false);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [errorLog, setErrorLog] = useState<string | null>(null);
+  // TeX error lines from a compile that still produced a PDF (shown next to the PDF).
+  const [compileErrors, setCompileErrors] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [diffData, setDiffData] = useState<DiffData | null>(null);
@@ -1154,6 +1158,11 @@ export function EditorLayout({
   const storageKey = `overbranch_code_${projectId || 'default'}_${activeFilePath}`;
 
   const handleSelectFile = useCallback((filePath: string) => {
+    // A pending AI diff belongs to the file it was computed against. Accepting it
+    // after switching files wrote main.tex's proposal into the newly opened file.
+    setDiffData(null);
+    setDiffEditsList([]);
+    authoritativeDocRef.current = null;
     setActiveFilePath(filePath);
     // Instant cache lookup for 0ms transition
     const cached = fileContentCacheRef.current.get(filePath);
@@ -1500,6 +1509,7 @@ export function EditorLayout({
     if (!targetCode) return;
     setIsCompiling(true);
     setErrorLog(null);
+    setCompileErrors([]);
     try {
       const res = await authFetch(`${BACKEND_URL}/api/compile`, {
         method: "POST",
@@ -1513,6 +1523,9 @@ export function EditorLayout({
       const data = await res.json();
       if (data.success) {
         setPdfBase64(data.pdf_base64);
+        // TeX in nonstopmode produces a PDF despite errors. They used to be dropped
+        // here, so the document looked clean and "Ask AI to Fix" never appeared.
+        setCompileErrors(Array.isArray(data.errors) ? data.errors.filter((e: unknown) => typeof e === "string" && e) : []);
       } else {
         setErrorLog(data.error_log || "Compilation failed.");
         toast.error("LaTeX compilation failed.");
@@ -1525,7 +1538,10 @@ export function EditorLayout({
     }
   };
 
-  const sendPromptMessage = async (customPrompt?: string) => {
+  const sendPromptMessage = async (customPrompt?: string, modeOverride?: ChatMode) => {
+    // "Ask AI to Fix" must run in Edit mode whatever the toggle says: in Ask mode the
+    // agent cannot change the document, so the fix could never be applied.
+    const effectiveMode: ChatMode = modeOverride ?? chatMode;
     const rawUserText = customPrompt !== undefined ? customPrompt : chatInput;
     if ((!rawUserText.trim() && !attachedFile) || isAgentThinking) return;
 
@@ -1601,7 +1617,7 @@ export function EditorLayout({
           current_code: code,
           model: activeModelName || "auto:smart",
           attached_file: filePayload,
-          mode: chatMode,
+          mode: effectiveMode,
           api_keys: customApiKeys || undefined,
         }),
       });
@@ -1663,6 +1679,22 @@ export function EditorLayout({
                     icon: currentEventType === "compile_error" ? "alert" : currentEventType === "thought" ? "brain" : currentEventType === "tool_call" ? "wrench" : "check",
                     ...parsed,
                   }]);
+                } else if (currentEventType === "result" && finalData) {
+                  // `result` arrives last and repeats the run. It carries `proposed_chunk`,
+                  // so it used to fall into the final_diff branch below and REPLACE
+                  // finalData — dropping final_diff's original_code / proposed_code, so the
+                  // backend's validated, compiled buffer was never written and every
+                  // Accept replayed anchors (any miss: "Couldn't safely apply this change").
+                  // final_diff's document fields win; run-level fields come from `result`.
+                  const base: any = finalData;
+                  finalData = {
+                    ...parsed,
+                    ...base,
+                    explanation: parsed.explanation || base.explanation || "",
+                    failure: parsed.failure,
+                    partial: parsed.partial,
+                    compile_verified: parsed.compile_verified,
+                  };
                 } else if (
                   currentEventType === "final_diff" ||
                   parsed.type === "final_diff" ||
@@ -1771,7 +1803,7 @@ export function EditorLayout({
       const rawExplanation = data.explanation || "I have processed your LaTeX request.";
       const responseText = sanitizeChunkReferences(rawExplanation);
 
-      const isAskModeResponse = chatMode === "ask" || data.mode === "ask";
+      const isAskModeResponse = effectiveMode === "ask" || data.mode === "ask";
 
       // Build explicit edits list (only in Edit mode)
       let editsList: EditItem[] = (!isAskModeResponse && data.edits && Array.isArray(data.edits) && data.edits.length > 0)
@@ -1817,8 +1849,9 @@ export function EditorLayout({
           sender: "assistant",
           text: responseText + (data.is_fallback ? `\n\n*(⚠️ Fallback Model Used: ${data.model_used})*` : ""),
           time: assistantTime,
-          mode: chatMode,
+          mode: effectiveMode,
           edits: editsList,
+          editsFile: data.file || activeFilePath || "main.tex",
           isApplied: false,
         },
       ]);
@@ -1900,7 +1933,7 @@ export function EditorLayout({
     setActiveMobileTab("ai");
     const cleanErr = error ? error.trim() : "Compilation error";
     const prompt = `Please fix this LaTeX compilation error:\n\n\`\`\`\n${cleanErr}\n\`\`\`\n\nPlease locate the error in the document, inspect the surrounding code, and apply the necessary in-place fix.`;
-    sendPromptMessage(prompt);
+    sendPromptMessage(prompt, "edit");
   };
 
   const replaceAllCaseInsensitive = (text: string, search: string, replacement: string): string => {
@@ -2097,6 +2130,12 @@ export function EditorLayout({
   };
 
   const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
+    const targetFile = msgId ? messages.find((m) => m.id === msgId)?.editsFile : undefined;
+    const activeFile = activeFilePath || "main.tex";
+    if (targetFile && targetFile !== activeFile) {
+      toast.error(`These edits were made for ${targetFile}. Open ${targetFile} to apply them.`);
+      return;
+    }
     const editor = editorRef.current;
     const model = editor?.getModel?.();
     const codeBeforeEdit = model ? model.getValue() : code;
@@ -2853,6 +2892,7 @@ export function EditorLayout({
                 onRecompile={() => handleCompile()}
                 onAskAiToFix={handleAskAiToFix}
                 errorLog={errorLog}
+                compileErrors={compileErrors}
                 projectId={projectId}
                 onReverseSync={handleReverseSyncJump}
                 onTextSelected={handlePdfTextSelected}
@@ -3203,6 +3243,7 @@ export function EditorLayout({
             onRecompile={() => handleCompile()}
             onAskAiToFix={handleAskAiToFix}
             errorLog={errorLog}
+            compileErrors={compileErrors}
             projectId={projectId}
             onReverseSync={(file, line, col) => {
               setActiveMobileTab("code");

@@ -431,20 +431,114 @@ def validate_edit(before: str, after: str) -> Tuple[bool, List[str]]:
 
     _, errors_before = validate_latex_pre_commit(before)
 
+    # Per-occurrence errors ("Line N: Unclosed \begin{itemize}") compare as a multiset.
     baseline: Dict[str, int] = {}
     for e in errors_before:
+        if _aggregate_kind(e):
+            continue
         sig = _error_signature(e)
         baseline[sig] = baseline.get(sig, 0) + 1
 
     new_errors: List[str] = []
+    aggregate_after: List[str] = []
     for e in errors_after:
+        if _aggregate_kind(e):
+            aggregate_after.append(e)
+            continue
         sig = _error_signature(e)
         if baseline.get(sig, 0) > 0:
             baseline[sig] -= 1
         else:
             new_errors.append(e)
 
+    # Whole-document checks (brace depth, $ parity, \( \) / \[ \] / \left \right counts)
+    # produce ONE message whatever the size of the imbalance, so with the numbers
+    # stripped, a document that already had one unclosed brace accepted any number of
+    # new ones. They are compared by magnitude instead; when the imbalance is unchanged
+    # but non-zero, the edit's own hunks must not change that balance.
+    if aggregate_after:
+        clean_before = clean_latex_for_validation(before)
+        clean_after = clean_latex_for_validation(after)
+        m_before = _aggregate_imbalance(clean_before)
+        m_after = _aggregate_imbalance(clean_after)
+        for e in aggregate_after:
+            kind = _aggregate_kind(e)
+            if m_after[kind] > m_before[kind]:
+                new_errors.append(e)
+            elif m_after[kind] == m_before[kind] > 0 and _hunks_change_balance(
+                    before, after, clean_before, clean_after, kind):
+                new_errors.append(f"{e} — the edited text is itself unbalanced")
+
     return len(new_errors) == 0, new_errors
+
+
+_AGGREGATE_PREFIXES = (
+    ("brace", "Unclosed '{' curly brace"),
+    ("dd", "Unbalanced '$$'"),
+    ("dollar", "Unbalanced '$' "),
+    ("paren", "Unbalanced math mode delimiters"),
+    ("bracket", "Unbalanced display math delimiters"),
+    ("leftright", "Unbalanced \\left"),
+)
+
+
+def _aggregate_kind(message: str) -> Optional[str]:
+    for kind, prefix in _AGGREGATE_PREFIXES:
+        if message.startswith(prefix):
+            return kind
+    return None
+
+
+def _signed_balance(text: str, kind: str) -> int:
+    """Signed balance of ``text`` (cleaned) in one dimension; parity for $ / $$."""
+    if kind == "brace":
+        t = _RE_ESCAPED_BRACE.sub("", text)
+        return t.count("{") - t.count("}")
+    if kind == "dd":
+        return len(_RE_DOUBLE_DOLLAR.findall(text)) % 2
+    if kind == "dollar":
+        return len(_RE_SINGLE_DOLLAR.findall(_RE_DOUBLE_DOLLAR.sub("", text))) % 2
+    if kind == "paren":
+        return len(_RE_PAREN_OPEN.findall(text)) - len(_RE_PAREN_CLOSE.findall(text))
+    if kind == "bracket":
+        return len(_RE_BRACKET_OPEN.findall(text)) - len(_RE_BRACKET_CLOSE.findall(text))
+    if kind == "leftright":
+        return len(_RE_LEFT.findall(text)) - len(_RE_RIGHT.findall(text))
+    return 0
+
+
+def _aggregate_imbalance(cleaned: str) -> Dict[str, int]:
+    """Size of each whole-document imbalance validate_latex_pre_commit reports."""
+    depth = 0
+    for line in cleaned.splitlines():
+        for char in _RE_ESCAPED_BRACE.sub("", line):
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth = max(0, depth - 1)  # extra closers are reported per line instead
+    return {
+        "brace": depth,
+        "dd": _signed_balance(cleaned, "dd"),
+        "dollar": _signed_balance(cleaned, "dollar"),
+        "paren": abs(_signed_balance(cleaned, "paren")),
+        "bracket": abs(_signed_balance(cleaned, "bracket")),
+        "leftright": abs(_signed_balance(cleaned, "leftright")),
+    }
+
+
+def _hunks_change_balance(before: str, after: str, clean_before: str, clean_after: str, kind: str) -> bool:
+    """True when some changed hunk's own balance in ``kind`` differs from the text it replaced."""
+    import difflib
+    raw_a, raw_b = before.splitlines(), after.splitlines()
+    cl_a, cl_b = clean_before.splitlines(), clean_after.splitlines()
+    if len(cl_a) != len(raw_a) or len(cl_b) != len(raw_b):
+        return False
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, raw_a, raw_b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if _signed_balance("\n".join(cl_a[i1:i2]), kind) != _signed_balance("\n".join(cl_b[j1:j2]), kind):
+            return True
+    return False
 
 
 @dataclass

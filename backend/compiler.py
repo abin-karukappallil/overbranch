@@ -706,6 +706,38 @@ def get_template_roots() -> List[Path]:
     return _TEMPLATE_ROOTS_CACHE
 
 
+def load_project_text_file(project_id: Optional[str], rel_path: str = "main.tex") -> Optional[str]:
+    """
+    Current text of one of a project's files — the uploads directory first, then
+    Supabase's ``latex_documents`` (the same two places ``compile_latex`` reads
+    project files from) — or None when it cannot be found.
+    """
+    if not project_id or not str(project_id).strip():
+        return None
+    pid = str(project_id).strip()
+    safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', pid)
+    base = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
+    project_dir = (base / safe_project).resolve()
+    candidate = (project_dir / rel_path).resolve()
+    if str(candidate).startswith(str(project_dir)) and candidate.is_file():
+        try:
+            return candidate.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            pass
+    try:
+        from project_storage import get_supabase_client
+        supabase = get_supabase_client()
+        if supabase:
+            res = (supabase.table("latex_documents").select("raw_code")
+                   .eq("project_id", pid).eq("file_path", rel_path).limit(1).execute())
+            raw = (res.data or [{}])[0].get("raw_code")
+            if raw and not str(raw).startswith("[Binary Asset:"):
+                return raw
+    except Exception:
+        pass
+    return None
+
+
 def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str]) -> None:
     """Save main.pdf, main.synctex.gz, and source .tex files to persistent build directory."""
     try:
@@ -730,16 +762,142 @@ def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str]) -> None:
         logger.debug(f"SyncTeX caching note: {synctex_err}")
 
 
+_RE_TEX_CONTEXT_LINE = re.compile(r"^l\.\d+\b")
+
+
 def _compile_failure(output: str) -> dict:
-    """Clean compilation error for the caller to show, or to hand to the AI fixer."""
+    """
+    Clean compilation error for the caller to show, or to hand to the AI fixer.
+
+    ``error_log`` keeps TeX's own error lines — ``./main.tex:42: …`` (compiles
+    run with -file-line-error) and ``! …`` — each followed by its ``l.N``
+    context line, which shows the offending code. It used to keep only lines
+    starting with ``!`` or containing ``error:``, which dropped
+    ``Undefined control sequence``, ``Missing $ inserted`` and runaway arguments
+    and left "Ask AI to Fix" with nothing but "Fatal error occurred". ``errors``
+    is the complete list from the full log (``raw_log`` is only its tail).
+    """
     clean_err = (output or "").strip() or "LaTeX compilation failed."
-    error_lines = [l for l in clean_err.split("\n")
-                   if l.strip().startswith("!") or "error:" in l.lower() or "fatal error" in l.lower()]
-    summary = "\n".join(error_lines[-12:]) if error_lines else clean_err[-1500:]
-    return {"success": False, "error_log": summary, "raw_log": clean_err[-4000:]}
+    lines = clean_err.split("\n")
+    picked: List[str] = []
+    for i, line in enumerate(lines):
+        s = line.strip()
+        low = s.lower()
+        if (_TEX_ERROR_RE.match(s) or "fatal error" in low or "emergency stop" in low
+                or s.startswith("[TIMEOUT]") or s.startswith("[INFRASTRUCTURE ERROR]")):
+            picked.append(s)
+            for nxt in lines[i + 1:i + 8]:
+                if _RE_TEX_CONTEXT_LINE.match(nxt.strip()):
+                    picked.append(nxt.strip())
+                    break
+    picked = list(dict.fromkeys(picked))
+    summary = "\n".join(picked[:20]) if picked else clean_err[-1500:]
+    return {"success": False, "error_log": summary, "raw_log": clean_err[-4000:], "errors": tex_errors(clean_err)}
+
+
+_RE_LOG_LINE_REFS = (
+    re.compile(r"(main\.tex:)(\d+)(:)"),                       # -file-line-error
+    re.compile(r"(^|\n)(l\.)(\d+)()"),                         # TeX's "l.<n> <context>"
+    re.compile(r"((?:on input line|detected at line) )(\d+)()"),
+)
+_RE_LOG_LINE_RANGE = re.compile(r"(at lines )(\d+)(--)(\d+)")
+
+
+def _healed_to_source_lines(healed: str, source: str) -> Dict[int, int]:
+    """1-based line in ``healed`` -> the line of ``source`` it came from (or was inserted at)."""
+    import difflib
+    a, b = healed.splitlines(), source.splitlines()
+    mapping: Dict[int, int] = {}
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        for k in range(i1, i2):
+            if tag == "equal":
+                mapping[k + 1] = j1 + (k - i1) + 1
+            elif tag == "replace":
+                mapping[k + 1] = min(j1 + (k - i1), j2 - 1) + 1
+            else:  # a line the heal added: report it at the source line it follows
+                mapping[k + 1] = max(1, min(j1, len(b)))
+    return mapping
+
+
+def _remap_result_lines(result: dict, healed: str, source: str) -> None:
+    """Rewrites every TeX line reference in ``result`` from ``healed`` to ``source`` numbering."""
+    mapping = _healed_to_source_lines(healed, source)
+
+    def to_src(n: str) -> str:
+        return str(mapping.get(int(n), int(n)))
+
+    def remap_text(text: str) -> str:
+        if not isinstance(text, str) or not text:
+            return text
+        text = _RE_LOG_LINE_REFS[0].sub(lambda m: m.group(1) + to_src(m.group(2)) + m.group(3), text)
+        text = _RE_LOG_LINE_REFS[1].sub(lambda m: m.group(1) + m.group(2) + to_src(m.group(3)), text)
+        text = _RE_LOG_LINE_REFS[2].sub(lambda m: m.group(1) + to_src(m.group(2)), text)
+        return _RE_LOG_LINE_RANGE.sub(
+            lambda m: m.group(1) + to_src(m.group(2)) + m.group(3) + to_src(m.group(4)), text)
+
+    for key in ("log", "error_log", "raw_log"):
+        if key in result:
+            result[key] = remap_text(result[key])
+    if isinstance(result.get("errors"), list):
+        result["errors"] = [remap_text(e) for e in result["errors"]]
+    for box in result.get("overfull") or []:
+        if isinstance(box, dict) and isinstance(box.get("lines"), list):
+            box["lines"] = [mapping.get(n, n) if isinstance(n, int) else n for n in box["lines"]]
 
 
 def compile_latex(
+    latex_code: str,
+    engine: str = "pdfLaTeX",
+    images: Optional[List[Dict[str, str]]] = None,
+    files: Optional[List[Dict[str, str]]] = None,
+    project_id: Optional[str] = None,
+    timeout_seconds: int = 30,
+    persist_synctex: bool = True,
+    allow_recovery: bool = True,
+    pre_heal: Optional[bool] = None,
+) -> dict:
+    """
+    Compiles ``latex_code`` (see ``_compile_latex_impl``), optionally healing it first.
+
+    ``pre_heal`` (default: follows ``allow_recovery``) runs the deterministic
+    whole-document healer before TeX — unclosed environments, lonely \\item, TikZ
+    semicolons, \\bottom -> \\bottomrule, bare & in frame titles, … — the same
+    speculative healer the agent runs on every write, discarded internally if it
+    raises the structural error count. The PDF importer (allow_recovery=False)
+    must see *its exact* code's errors, and the agent's shadow compiler passes
+    pre_heal=False because it heals the lines it edited itself.
+
+    A heal can insert lines (e.g. ``\\usetikzlibrary{calc}`` after
+    ``\\usepackage{tikz}``), which shifts every line TeX reports below it, so
+    the reported lines are translated back to ``latex_code``'s numbering —
+    otherwise the error panel, SyncTeX-free jumps and "Ask AI to Fix" all point
+    at the wrong line.
+    """
+    do_heal = allow_recovery if pre_heal is None else pre_heal
+    source = latex_code
+    if do_heal:
+        try:
+            from latex_error_fixer import auto_heal_latex_code
+            healed, _fixes = auto_heal_latex_code(latex_code)
+            if healed:
+                latex_code = healed
+        except Exception:
+            pass
+
+    result = _compile_latex_impl(
+        latex_code, engine=engine, images=images, files=files, project_id=project_id,
+        timeout_seconds=timeout_seconds, persist_synctex=persist_synctex,
+        allow_recovery=allow_recovery,
+    )
+    if latex_code != source:
+        try:
+            _remap_result_lines(result, latex_code, source)
+        except Exception as e:
+            logger.debug(f"line remap after pre-heal skipped: {e}")
+    return result
+
+
+def _compile_latex_impl(
     latex_code: str,
     engine: str = "pdfLaTeX",
     images: Optional[List[Dict[str, str]]] = None,
@@ -824,23 +982,6 @@ def compile_latex(
                 latex_code = ensure_document_environment(latex_code)
             except Exception:
                 pass
-
-            # 2b. Deterministic auto-heal before the TeX run (editor compiles only).
-            # This is the same safe, speculative healer the agent runs on every write
-            # (unclosed environments, lonely \item, TikZ semicolons, \bottom->\bottomrule,
-            # bare & in frame titles, …); it is discarded internally if it raises the
-            # structural error count. It is skipped when allow_recovery is False — the
-            # PDF importer compiles throwaway pages to learn whether *that exact* code
-            # compiles and does its own healing in the pipeline, so silently repairing
-            # here would hide the very errors it hands back to the model.
-            if allow_recovery:
-                try:
-                    from latex_error_fixer import auto_heal_latex_code
-                    healed, _heal_fixes = auto_heal_latex_code(latex_code)
-                    if healed:
-                        latex_code = healed
-                except Exception:
-                    pass
 
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
@@ -928,7 +1069,9 @@ def compile_latex(
 
             cmd_list = []
             if eng_clean in ["pdflatex", "pdf", "latex"]:
-                cmd_list = [_direct("pdflatex")]
+                # The editor and the agent both ask for pdfLaTeX explicitly, so the
+                # Unicode-font switch has to apply here too, not only to latexmk.
+                cmd_list = [_direct(unicode_engine or "pdflatex")]
             elif eng_clean in ["xelatex", "xe"]:
                 cmd_list = [_direct("xelatex")]
             elif eng_clean in ["lualatex", "lua"]:
@@ -1058,12 +1201,38 @@ def compile_latex(
                 # silently disabling a package is a result such a caller rejects anyway.
                 return _compile_failure(last_output)
 
+            # Every recovery run must still report the TeX errors it saw: a PDF obtained
+            # by disabling a package says nothing about the rest of the document, and
+            # the agent's compile gate reads ``errors`` to decide whether an edit broke it.
+            # A patch that inserts a line (lmodern) shifts TeX's line numbers, so they
+            # are mapped back to the code this function was given.
+            def _recovery_success(log_text: str, output_text: str, patched: str) -> dict:
+                if persist_synctex:
+                    _save_synctex_artifacts(tmpdir, project_id)
+                res = {
+                    "success": True,
+                    "pdf_base64": base64.b64encode((tmpdir / "main.pdf").read_bytes()).decode("utf-8"),
+                    "compile_time_ms": int((time.time() - start_time) * 1000),
+                    "log": log_text,
+                    "errors": tex_errors(output_text),
+                    "overfull": _overfull_boxes(output_text),
+                }
+                if patched != latex_code:
+                    try:
+                        _remap_result_lines(res, patched, latex_code)
+                    except Exception:
+                        pass
+                return res
+
             # 1. Missing LaTeX package iterative auto-recovery patch
             patched_code = latex_code
             all_disabled_pkgs = []
             cur_output = last_output
             for pass_num in range(4):
-                missing_pkgs = re.findall(r"! LaTeX Error: File [`\x27]([^\x27`]+)\.sty[`\x27] not found", cur_output)
+                # `! LaTeX Error: …` in a classic log, `./main.tex:3: LaTeX Error: …` with
+                # -file-line-error (every direct engine run) — the latter never matched before.
+                missing_pkgs = re.findall(
+                    r"(?:!|\S+\.tex:\d+:) LaTeX Error: File [`\x27]([^\x27`]+)\.sty[`\x27] not found", cur_output)
                 if not missing_pkgs:
                     break
                 for pkg in set(missing_pkgs):
@@ -1078,7 +1247,7 @@ def compile_latex(
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
                     result = subprocess.run(
-                        [recovery_engine, "-interaction=nonstopmode", "main.tex"],
+                        [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                         cwd=tmpdir,
                         capture_output=True,
                         text=True,
@@ -1088,22 +1257,15 @@ def compile_latex(
                     cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
                     pdf_path = tmpdir / "main.pdf"
                     if pdf_path.exists():
-                        if persist_synctex:
-                            _save_synctex_artifacts(tmpdir, project_id)
-                        pdf_bytes = pdf_path.read_bytes()
-                        pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                        elapsed_ms = int((time.time() - start_time) * 1000)
                         pkg_notice = (
                             f"Missing LaTeX package(s) on server: {', '.join(all_disabled_pkgs)}. "
                             f"Install on server: 'pacman -S texlive-latexextra' (Arch) / 'apt-get install texlive-latex-extra' (Ubuntu) / 'tlmgr install <pkg>'."
                         )
                         print(f"✅ [COMPILER RECOVERY] Auto-recovered by disabling missing package(s): {', '.join(all_disabled_pkgs)}")
-                        return {
-                            "success": True,
-                            "pdf_base64": pdf_base64,
-                            "compile_time_ms": elapsed_ms,
-                            "log": f"Compiled via package auto-recovery ({', '.join(all_disabled_pkgs)} disabled)\n\n[PACKAGE NOTICE]\n{pkg_notice}",
-                        }
+                        return _recovery_success(
+                            f"Compiled via package auto-recovery ({', '.join(all_disabled_pkgs)} disabled)\n\n[PACKAGE NOTICE]\n{pkg_notice}",
+                            cur_output, patched_code,
+                        )
                 except Exception:
                     break
 
@@ -1120,20 +1282,13 @@ def compile_latex(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = subprocess.run([recovery_engine, "-interaction=nonstopmode", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
+                        result = subprocess.run([recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"], cwd=tmpdir, capture_output=True, text=True, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            if persist_synctex:
-                                _save_synctex_artifacts(tmpdir, project_id)
-                            pdf_bytes = pdf_path.read_bytes()
-                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                            elapsed_ms = int((time.time() - start_time) * 1000)
-                            return {
-                                "success": True,
-                                "pdf_base64": pdf_base64,
-                                "compile_time_ms": elapsed_ms,
-                                "log": "Compiled via font auto-recovery (lmodern patch)",
-                            }
+                            return _recovery_success(
+                                "Compiled via font auto-recovery (lmodern patch)",
+                                (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
+                            )
                     except Exception:
                         pass
 
@@ -1148,7 +1303,7 @@ def compile_latex(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = subprocess.run(
-                            [recovery_engine, "-interaction=nonstopmode", "main.tex"],
+                            [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                             cwd=tmpdir,
                             capture_output=True,
                             text=True,
@@ -1157,17 +1312,10 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            if persist_synctex:
-                                _save_synctex_artifacts(tmpdir, project_id)
-                            pdf_bytes = pdf_path.read_bytes()
-                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                            elapsed_ms = int((time.time() - start_time) * 1000)
-                            return {
-                                "success": True,
-                                "pdf_base64": pdf_base64,
-                                "compile_time_ms": elapsed_ms,
-                                "log": "Compiled via beamercolorbox bg auto-recovery",
-                            }
+                            return _recovery_success(
+                                "Compiled via beamercolorbox bg auto-recovery",
+                                (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
+                            )
                     except Exception:
                         pass
 
@@ -1195,7 +1343,7 @@ def compile_latex(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = subprocess.run(
-                            [recovery_engine, "-interaction=nonstopmode", "main.tex"],
+                            [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
                             cwd=tmpdir,
                             capture_output=True,
                             text=True,
@@ -1204,17 +1352,10 @@ def compile_latex(
                         )
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
-                            if persist_synctex:
-                                _save_synctex_artifacts(tmpdir, project_id)
-                            pdf_bytes = pdf_path.read_bytes()
-                            pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
-                            elapsed_ms = int((time.time() - start_time) * 1000)
-                            return {
-                                "success": True,
-                                "pdf_base64": pdf_base64,
-                                "compile_time_ms": elapsed_ms,
-                                "log": "Compiled via titlesec/spacing auto-recovery",
-                            }
+                            return _recovery_success(
+                                "Compiled via titlesec/spacing auto-recovery",
+                                (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
+                            )
                     except Exception:
                         pass
 

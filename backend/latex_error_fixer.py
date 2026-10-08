@@ -28,8 +28,35 @@ logger = logging.getLogger("latex_error_fixer")
 # Pre-compiled hot-path patterns. auto_heal_latex_code runs on the whole buffer
 # on every single agent write, so per-line re module dispatch showed up as a
 # measurable share of edit latency.
-_RE_LINE_COMMENT = re.compile(r"%.*$")
-_RE_TRAILING_COMMENT = re.compile(r"(\s*%.*)$")
+def _comment_start(line: str) -> int:
+    r"""
+    Index of the first ``%`` that starts a comment (preceded by an even number of
+    backslashes), or -1. ``\%`` is a literal percent sign: treating it as a comment
+    turned ``{Accuracy 97\%};`` into ``{Accuracy 97\;%};`` — the closing brace and
+    the next TikZ statement commented out.
+    """
+    i = 0
+    while True:
+        j = line.find("%", i)
+        if j == -1:
+            return -1
+        k, slashes = j - 1, 0
+        while k >= 0 and line[k] == "\\":
+            slashes += 1
+            k -= 1
+        if slashes % 2 == 0:
+            return j
+        i = j + 1
+
+
+def _strip_comment(line: str) -> str:
+    k = _comment_start(line)
+    return line if k < 0 else line[:k]
+
+
+def _brace_delta(text: str) -> int:
+    t = re.sub(r"\\[{}\\]", "", text)
+    return t.count("{") - t.count("}")
 _RE_BEGIN_FRAME = re.compile(r"\\begin\s*\{frame\}")
 _RE_END_FRAME = re.compile(r"\\end\s*\{frame\}")
 _RE_END_DOCUMENT = re.compile(r"\\end\s*\{document\}")
@@ -44,6 +71,10 @@ class ParsedLatexError:
     message: str
     snippet: str = ""
     suggested_action: str = ""
+    # File TeX reported the error in ("main.tex", "chapters/intro.tex", "beamerthemex.sty");
+    # None when the log did not say. A line number only refers to the user's source
+    # when this is a .tex file.
+    file: Optional[str] = None
 
 
 # Standard Regalia / Beamer color definitions to inject if undefined
@@ -57,10 +88,62 @@ REGALIA_COLOR_DEFS = (
 )
 
 
+_RE_LOG_FILE_LINE = re.compile(
+    r"^((?:\./)?[^\s:()]*?[\w\-]+\.(tex|sty|cls|bbl|ltx|def|cfg)):(\d+):\s*(.*)$", re.IGNORECASE)
+_RE_LOG_L_NUM = re.compile(r"^l\.(\d+)\s?(.*)$")
+_RE_LOG_UNCLOSED_ENV = re.compile(
+    r"\\begin\{([^}]+)\}\s+on\s+input\s+line\s+(\d+)\s+ended\s+by\s+\\end\{([^}]+)\}", re.IGNORECASE)
+# Consequences of an earlier error, not errors of their own.
+_LOG_CONSEQUENCES = ("emergency stop", "==> fatal error occurred", "fatal error occurred, no output")
+
+
+def _classify_tex_error(msg: str) -> Tuple[str, str]:
+    """(error_type, suggested_action) for a TeX error message."""
+    low = msg.lower()
+    if "bad math environment delimiter" in low:
+        return "BAD_MATH_DELIMITER", (
+            "TikZ coordinate arithmetic $(...)$ requires \\usetikzlibrary{calc} in the preamble. "
+            "Ensure math mode delimiters ($, $$, \\(, \\)) are balanced.")
+    if "giving up on this path" in low or "did you forget a sem" in low:
+        return "TIKZ_SYNTAX_ERROR", (
+            "Ensure all TikZ path commands (\\fill, \\draw, \\node, \\path) inside \\begin{tikzpicture} "
+            "end with a semicolon (;).")
+    if "undefined control sequence" in low:
+        return "UNDEFINED_MACRO", "Check for misspelled macro name or missing package in preamble."
+    if "environment" in low and "undefined" in low:
+        return "UNDEFINED_ENVIRONMENT", "Load the package that defines this environment, or use a standard one."
+    if "undefined color" in low:
+        return "UNDEFINED_COLOR", (
+            "Define the color in preamble using \\definecolor{<name>}{HTML}{<hex>} or "
+            "\\definecolor{<name>}{RGB}{...}.")
+    if "missing $ inserted" in low:
+        return "MISSING_DOLLAR", "Escape _ and ^ in text as \\_ and \\^{}, or put math in $...$."
+    if "misplaced alignment tab" in low:
+        return "MISPLACED_AMPERSAND", "Escape & in text as \\&; & only separates columns inside tabular/align."
+    return "GENERAL_LATEX_ERROR", ""
+
+
+def _context_after(lines: List[str], idx: int) -> Tuple[Optional[int], str]:
+    """TeX's ``l.N <code>`` context line following the error at ``lines[idx]``."""
+    for nxt in lines[idx + 1:idx + 9]:
+        m = _RE_LOG_L_NUM.match(nxt.strip())
+        if m:
+            return int(m.group(1)), m.group(2).strip()
+        if nxt.strip().startswith("!") or _RE_LOG_FILE_LINE.match(nxt.strip()):
+            break  # the next error: this one has no context line
+    return None, ""
+
+
 def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
     """
     Parses a raw LaTeX compilation error log or user-submitted error report into
     structured ParsedLatexError objects with line numbers and targeted advice.
+
+    Understands both log shapes: ``./main.tex:66: <message>`` (-file-line-error,
+    used by every compile OverBranch runs) and ``! <message>`` followed by TeX's
+    ``l.66 <code>`` context (logs pasted by users, latexmk). The file is kept, so
+    an error in ``chapters/intro.tex`` is not mistaken for line 66 of main.tex;
+    errors reported against a ``.sty`` / ``.cls`` carry no source line.
     """
     if not error_text or not error_text.strip():
         return []
@@ -68,84 +151,69 @@ def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
     errors: List[ParsedLatexError] = []
     lines = error_text.splitlines()
 
-    # Pattern: ./file.tex:<line>: <error message>
-    re_file_line = re.compile(r"(?:\./)?[\w\-_./]+\.tex:(\d+):\s*(.*)", re.IGNORECASE)
-    # Pattern: l.<line> <code snippet>
-    re_l_num = re.compile(r"^l\.(\d+)\s*(.*)")
-    # Pattern: \begin{env} on input line <line> ended by \end{env}
-    re_unclosed_env = re.compile(r"\\begin\{([^}]+)\}\s+on\s+input\s+line\s+(\d+)\s+ended\s+by\s+\\end\{([^}]+)\}", re.IGNORECASE)
-
     for idx, line in enumerate(lines):
         line_str = line.strip()
         if not line_str:
             continue
 
         # 1. Check for unclosed environment mismatch (e.g. \begin{frame} on line 160 ended by \end{document})
-        m_unclosed = re_unclosed_env.search(line_str)
+        m_unclosed = _RE_LOG_UNCLOSED_ENV.search(line_str)
         if m_unclosed:
             opened_env = m_unclosed.group(1)
             line_no = int(m_unclosed.group(2))
             closed_env = m_unclosed.group(3)
+            m_fl = _RE_LOG_FILE_LINE.match(line_str)
             errors.append(ParsedLatexError(
                 line_number=line_no,
                 error_type="UNCLOSED_ENVIRONMENT",
                 message=f"\\begin{{{opened_env}}} starting on line {line_no} was ended by \\end{{{closed_env}}} without being closed.",
                 snippet=line_str,
                 suggested_action=f"Insert \\end{{{opened_env}}} before \\end{{{closed_env}}}.",
+                file=m_fl.group(1)[2:] if m_fl and m_fl.group(1).startswith("./") else (m_fl.group(1) if m_fl else None),
             ))
             continue
 
-        # 2. Check for standard ./main.tex:66: <error message>
-        m_file_line = re_file_line.match(line_str)
+        # 2. ./main.tex:66: <error message>   (-file-line-error)
+        m_file_line = _RE_LOG_FILE_LINE.match(line_str)
         if m_file_line:
-            line_no = int(m_file_line.group(1))
-            msg = m_file_line.group(2).strip()
-
-            err_type = "GENERAL_LATEX_ERROR"
-            action = ""
-
-            if "bad math environment delimiter" in msg.lower():
-                err_type = "BAD_MATH_DELIMITER"
-                action = (
-                    "TikZ coordinate arithmetic $(...)$ requires \\usetikzlibrary{calc} in the preamble. "
-                    "Ensure math mode delimiters ($, $$, \\(, \\)) are balanced."
-                )
-            elif "giving up on this path" in msg.lower() or "did you forget a sem" in msg.lower():
-                err_type = "TIKZ_SYNTAX_ERROR"
-                action = "Ensure all TikZ path commands (\\fill, \\draw, \\node, \\path) inside \\begin{tikzpicture} end with a semicolon (;)."
-            elif "undefined control sequence" in msg.lower():
-                err_type = "UNDEFINED_MACRO"
-                action = "Check for misspelled macro name or missing package in preamble."
-            elif "undefined color" in msg.lower():
-                err_type = "UNDEFINED_COLOR"
-                action = "Define the color in preamble using \\definecolor{<name>}{HTML}{<hex>} or \\definecolor{<name>}{RGB}{...}."
-            elif "emergency stop" in msg.lower():
+            fname = m_file_line.group(1)
+            fname = fname[2:] if fname.startswith("./") else fname
+            is_source = m_file_line.group(2).lower() in ("tex", "ltx")
+            msg = m_file_line.group(4).strip()
+            if any(c in msg.lower() for c in _LOG_CONSEQUENCES):
                 continue
-
+            err_type, action = _classify_tex_error(msg)
+            _ctx_line, ctx = _context_after(lines, idx)
             errors.append(ParsedLatexError(
-                line_number=line_no,
+                line_number=int(m_file_line.group(3)) if is_source else None,
+                error_type=err_type,
+                message=msg if is_source else f"{fname}:{m_file_line.group(3)}: {msg}",
+                snippet=ctx or line_str,
+                suggested_action=action,
+                file=fname,
+            ))
+            continue
+
+        # 3. ! <error message>  +  l.<line> <context>   (classic TeX log)
+        if line_str.startswith("!"):
+            msg = line_str.lstrip("!").strip()
+            if not msg or any(c in msg.lower() for c in _LOG_CONSEQUENCES):
+                continue
+            err_type, action = _classify_tex_error(msg)
+            ctx_line, ctx = _context_after(lines, idx)
+            errors.append(ParsedLatexError(
+                line_number=ctx_line,
                 error_type=err_type,
                 message=msg,
-                snippet=line_str,
+                snippet=ctx or line_str,
                 suggested_action=action,
             ))
-            continue
 
-        # 3. Check for standalone ! Package tikz Error: ...
-        if "package tikz error" in line_str.lower():
-            errors.append(ParsedLatexError(
-                line_number=None,
-                error_type="TIKZ_SYNTAX_ERROR",
-                message=line_str,
-                snippet=line_str,
-                suggested_action="Verify TikZ path statements end with a semicolon (;) and \\usetikzlibrary{calc} is loaded.",
-            ))
-
-    # Deduplicate errors by (line_number, error_type)
+    # Deduplicate errors by (file, line_number, error_type)
     seen = set()
     deduped: List[ParsedLatexError] = []
     for err in errors:
-        key = (err.line_number, err.error_type, err.message[:40])
+        key = (err.file, err.line_number, err.error_type, err.message[:40])
         if key not in seen:
             seen.add(key)
             deduped.append(err)
@@ -297,10 +365,11 @@ def fix_tikz_semicolons(code: str) -> Tuple[str, List[str]]:
         lines = block.splitlines(keepends=True)
         new_lines: List[str] = []
         in_stmt = False
+        depth = 0  # brace depth inside the current statement (a \matrix body, a multi-line node text)
 
         for idx, line in enumerate(lines):
             stripped = line.strip()
-            clean = _RE_LINE_COMMENT.sub("", stripped).rstrip()
+            clean = _strip_comment(stripped).rstrip()
 
             if not clean:
                 new_lines.append(line)
@@ -310,25 +379,33 @@ def fix_tikz_semicolons(code: str) -> Tuple[str, List[str]]:
             is_close = bool(end_env.search(clean))
 
             if in_stmt and (is_new or is_close):
-                for j in range(len(new_lines) - 1, -1, -1):
-                    prev = new_lines[j]
-                    prev_clean = _RE_LINE_COMMENT.sub("", prev.strip()).rstrip()
-                    if prev_clean:
-                        if not prev_clean.endswith(";"):
-                            m_comm = _RE_TRAILING_COMMENT.search(prev)
-                            if m_comm:
-                                new_lines[j] = prev[:m_comm.start()].rstrip() + ";" + m_comm.group(1)
-                            else:
-                                new_lines[j] = prev.rstrip("\r\n") + ";\n"
-                            fixes.append("Added missing semicolon (;) to TikZ path statement.")
-                        break
-                in_stmt = False
+                if depth <= 0:
+                    for j in range(len(new_lines) - 1, -1, -1):
+                        prev = new_lines[j]
+                        prev_clean = _strip_comment(prev.strip()).rstrip()
+                        if prev_clean:
+                            if not prev_clean.endswith(";"):
+                                content = prev.rstrip("\r\n")
+                                eol = prev[len(content):] or "\n"
+                                k = _comment_start(content)
+                                head = (content if k < 0 else content[:k]).rstrip()
+                                # The comment (if any) and the line's own newline are kept.
+                                new_lines[j] = head + ";" + content[len(head):] + eol
+                                fixes.append("Added missing semicolon (;) to TikZ path statement.")
+                            break
+                    in_stmt = False
+                elif is_close:
+                    in_stmt = False  # an open group at \end: unclear, leave it alone
+                # else: a statement inside an open group (\matrix cells) — not the end of the outer one
 
-            if is_new:
+            if is_new and not in_stmt:
                 in_stmt = True
+                depth = 0
 
-            if in_stmt and clean.endswith(";"):
-                in_stmt = False
+            if in_stmt:
+                depth += _brace_delta(clean)
+                if clean.endswith(";") and depth <= 0:
+                    in_stmt = False
 
             new_lines.append(line)
 
@@ -388,6 +465,17 @@ def balance_latex_environments(latex_code: str) -> Tuple[str, List[str]]:
 
     out_lines: List[str] = []
     env_stack: List[Tuple[str, int]] = []
+    # Environments opened somewhere the masked view hides — typically a macro body,
+    # \newcommand{\twocol}{\begin{columns}} — whose \end{...} then looks orphaned in
+    # the view. That \end is real; deleting it broke documents that compiled.
+    raw_begins: Dict[str, int] = {}
+    for m in _RE_ENV_TAG_HEAL.finditer(latex_code):
+        if m.group(1) == "begin":
+            raw_begins[m.group(2)] = raw_begins.get(m.group(2), 0) + 1
+    for m in _RE_ENV_TAG_HEAL.finditer(view):
+        if m.group(1) == "begin":
+            raw_begins[m.group(2)] = raw_begins.get(m.group(2), 0) - 1
+    hidden_begins = {env for env, n in raw_begins.items() if n > 0}
 
     def close_down_to(env: str, idx: int, reason: str) -> bool:
         """Pops inner environments above ``env`` (emitting closers), then ``env``."""
@@ -450,6 +538,8 @@ def balance_latex_environments(latex_code: str) -> Tuple[str, List[str]]:
                 if len(out_lines) > emitted_before:
                     pending_before.extend(out_lines[emitted_before:])
                     del out_lines[emitted_before:]
+            elif env in hidden_begins:
+                continue  # opened by a macro (or in text the view hides): not ours to remove
             else:
                 # Genuinely orphaned: nothing it could be closing.
                 drop_spans.append((start, end))
@@ -606,6 +696,296 @@ def fix_ampersand_in_frame_titles(code: str) -> Tuple[str, List[str]]:
     return new_code, [f"Escaped {count} bare '&' in frame title(s) to '\\&'."]
 
 
+# Commands whose (first mandatory) argument is a label, key, path or URL: `_`, `^`
+# and `&` there are literal and must never be escaped.
+_PROTECTED_ARG_CMDS = frozenset({
+    "label", "ref", "eqref", "autoref", "pageref", "cref", "Cref", "nameref", "cite", "citep",
+    "citet", "citealp", "nocite", "url", "href", "hyperref", "includegraphics", "input", "include",
+    "bibliography", "bibliographystyle", "usepackage", "RequirePackage", "documentclass",
+    "lstinputlisting", "path", "verb", "definecolor", "colorlet", "addbibresource",
+})
+_MATH_ENVS = frozenset({
+    "equation", "equation*", "align", "align*", "alignat", "alignat*", "gather", "gather*",
+    "multline", "multline*", "eqnarray", "eqnarray*", "math", "displaymath", "flalign", "flalign*",
+})
+_ALIGNMENT_ENVS = _MATH_ENVS | frozenset({
+    "tabular", "tabular*", "tabularx", "tabulary", "longtable", "array", "aligned", "split", "cases",
+    "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix", "tblr",
+    "NiceTabular", "supertabular", "xltabular",
+})
+
+
+def _enclosing_envs(view_lines: List[str], line_no: int) -> List[str]:
+    """Environments open at the start of 1-based ``line_no`` (masked view)."""
+    stack: List[str] = []
+    for vline in view_lines[:max(0, line_no - 1)]:
+        for m in _RE_ENV_TAG_HEAL.finditer(vline):
+            env = m.group(2)
+            if m.group(1) == "begin":
+                stack.append(env)
+            elif env in stack:
+                while stack and stack.pop() != env:
+                    pass
+    return stack
+
+
+def _escape_in_text(line: str, targets: str) -> Tuple[str, int]:
+    """
+    Escapes ``targets`` characters that sit in text on ``line``: not in $…$ / \\(…\\),
+    not after an unescaped %, not inside a protected argument (\\label{a_b}).
+    Returns (line, number escaped).
+    """
+    out: List[str] = []
+    i, n, in_math, count = 0, len(line), False, 0
+    while i < n:
+        ch = line[i]
+        if ch == "\\":
+            if i + 1 < n and not line[i + 1].isalpha():
+                sym = line[i + 1]
+                if sym in "([":
+                    in_math = True
+                elif sym in ")]":
+                    in_math = False
+                out.append(line[i:i + 2])
+                i += 2
+                continue
+            m = re.match(r"\\[A-Za-z]+\*?", line[i:])
+            if not m:
+                out.append(ch)
+                i += 1
+                continue
+            out.append(m.group(0))
+            i += len(m.group(0))
+            if m.group(0)[1:].rstrip("*") in _PROTECTED_ARG_CMDS:
+                j = i
+                while j < n and line[j] == " ":
+                    j += 1
+                while j < n and line[j] == "[":
+                    k = line.find("]", j)
+                    if k == -1:
+                        break
+                    j = k + 1
+                if j < n and line[j] == "{":
+                    k = _match_brace(line, j)
+                    if k is not None:
+                        out.append(line[i:k + 1])
+                        i = k + 1
+            continue
+        if ch == "%":
+            out.append(line[i:])
+            break
+        if ch == "$":
+            in_math = not in_math
+            out.append(ch)
+            i += 1
+            continue
+        if ch in targets and not in_math:
+            out.append("\\" + ch + ("{}" if ch == "^" else ""))
+            count += 1
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), count
+
+
+def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
+                               allowed_lines: Optional[Set[int]] = None) -> Tuple[str, List[str]]:
+    r"""
+    Deterministic fixes driven by TeX's own errors, on the reported line only and
+    only where ``allowed_lines`` (1-based) permits:
+
+    * ``Missing $ inserted`` — bare ``_`` / ``^`` in text (``file_name``,
+      ``x^2`` outside math) are escaped. Lines inside a math environment, math
+      on the line, and label/ref/url/path arguments are left alone.
+    * ``Misplaced alignment tab character &`` — a bare ``&`` outside any
+      tabular / align / matrix-like environment becomes ``\&``.
+
+    The caller recompiles and keeps the result only if there are fewer errors.
+    Returns ``(code, fixes)``.
+    """
+    if not code or not errors:
+        return code, []
+    lines = code.split("\n")
+    view = _structure_view(code)
+    view_lines = view.split("\n") if len(view) == len(code) else lines
+    fixes: List[str] = []
+    done: Set[Tuple[int, str]] = set()
+    for err in errors:
+        ln = err.get("line")
+        if not isinstance(ln, int) or not (1 <= ln <= len(lines)):
+            continue
+        if allowed_lines is not None and ln not in allowed_lines:
+            continue
+        msg = str(err.get("error", "")).lower()
+        if "missing $ inserted" in msg:
+            kind, targets = "dollar", "_^"
+        elif "misplaced alignment tab" in msg:
+            kind, targets = "amp", "&"
+        else:
+            continue
+        if (ln, kind) in done:
+            continue
+        done.add((ln, kind))
+        envs = set(_enclosing_envs(view_lines, ln))
+        if kind == "dollar" and envs & _MATH_ENVS:
+            continue
+        if kind == "amp" and envs & _ALIGNMENT_ENVS:
+            continue
+        new_line, count = _escape_in_text(lines[ln - 1], targets)
+        if count:
+            lines[ln - 1] = new_line
+            what = "'_'/'^'" if kind == "dollar" else "'&'"
+            fixes.append(f"Escaped {count} bare {what} in text on line {ln}.")
+    return ("\n".join(lines), fixes) if fixes else (code, [])
+
+
+_RE_PKG_LOAD = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}")
+_RE_DOCCLASS = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
+_TIKZ_LOADERS = frozenset({"tikz", "pgfplots", "circuitikz", "tikz-cd", "smartdiagram"})
+
+
+def _loaded_packages(view: str) -> Dict[str, str]:
+    """package -> its options, from every \\usepackage / \\RequirePackage (lists included)."""
+    out: Dict[str, str] = {}
+    for m in _RE_PKG_LOAD.finditer(view):
+        for name in m.group(2).split(","):
+            name = name.strip()
+            if name:
+                out[name] = ",".join(filter(None, [out.get(name, ""), (m.group(1) or "").strip()]))
+    return out
+
+
+def _preamble_insertion_point(view: str, use_pos: int) -> Optional[int]:
+    """
+    Where a \\usepackage for something first used at ``use_pos`` goes: before the
+    line of that first use when it is in the preamble (a later \\usepackage would be
+    too late), otherwise at the end of the preamble, i.e. after the document's own
+    packages — inserting right after \\documentclass made tikz load xcolor before the
+    document's \\usepackage[table]{xcolor} ("Option clash for package xcolor").
+    """
+    m_begin = _RE_BEGIN_DOCUMENT.search(view)
+    m_cls = _RE_DOCCLASS.search(view)
+    if not m_begin or not m_cls or use_pos <= m_cls.end():
+        return None
+    anchor = m_begin.start() if use_pos >= m_begin.start() else use_pos
+    return view.rfind("\n", 0, anchor) + 1
+
+
+_RE_DEFINED_MACRO = re.compile(
+    r"\\(?:newcommand|renewcommand|providecommand|DeclareRobustCommand|NewDocumentCommand|"
+    r"DeclareMathOperator|def|let|gdef|edef)\*?\s*\{?\s*\\([A-Za-z]+)")
+_RE_DEFINED_ENV = re.compile(r"\\(?:newenvironment|NewDocumentEnvironment|newtheorem)\*?\s*\{([A-Za-z*]+)\}")
+
+# (package, use pattern, packages/classes that already provide it, line to insert or None)
+_PACKAGE_NEEDS: Tuple[Tuple[str, "re.Pattern", Tuple[str, ...], Optional[str]], ...] = tuple(
+    (pkg, re.compile(pat), alts, line) for pkg, pat, alts, line in (
+        ("booktabs", r"\\(?:toprule|midrule|bottomrule|cmidrule|addlinespace)(?![A-Za-z])", (), None),
+        ("amsmath", r"\\begin\s*\{(?:align|gather|multline|alignat|flalign|split|aligned|gathered|cases|"
+                    r"pmatrix|bmatrix|Bmatrix|vmatrix|Vmatrix|smallmatrix)\*?\}|"
+                    r"\\(?:text|dfrac|tfrac|binom|dbinom|tbinom|eqref|operatorname|boxed|intertext)(?![A-Za-z])",
+         ("mathtools", "amstext"), None),
+        ("amsfonts", r"\\(?:mathbb|mathfrak)(?![A-Za-z])", ("amssymb",), None),
+        ("amssymb", r"\\(?:checkmark|therefore|because|leqslant|geqslant|varnothing|blacksquare|square|"
+                    r"lesssim|gtrsim|nexists|complement|triangleq|lozenge|blacktriangleright|"
+                    r"blacktriangleleft|boxtimes|boxplus)(?![A-Za-z])", (), None),
+        ("xcolor", r"\\(?:textcolor|colorbox|fcolorbox|definecolor|colorlet|pagecolor)(?![A-Za-z])|"
+                   r"\\color\s*[{\[]", ("color", "colortbl") + tuple(_TIKZ_LOADERS) + ("pgf",), None),
+        ("colortbl", r"\\(?:rowcolor|cellcolor|columncolor|arrayrulecolor)(?![A-Za-z])", (), None),
+        ("graphicx", r"\\(?:includegraphics|rotatebox|scalebox|resizebox|reflectbox)(?![A-Za-z])",
+         ("graphics",), None),
+        ("hyperref", r"\\(?:href|hypersetup|hyperlink|hypertarget|autoref)(?![A-Za-z])", (), None),
+        ("url", r"\\url(?![A-Za-z])", ("hyperref", "xurl"), None),
+        ("tabularx", r"\\begin\s*\{tabularx\}", ("xltabular",), None),
+        ("multirow", r"\\multirow(?![A-Za-z])", (), None),
+        ("listings", r"\\begin\s*\{lstlisting\}|\\(?:lstinputlisting|lstset|lstdefinestyle|lstinline)(?![A-Za-z])",
+         (), None),
+        ("siunitx", r"\\(?:SI|si|qty|unit|num)(?![A-Za-z])\s*[{\[]", (), None),
+        ("subcaption", r"\\begin\s*\{subfigure\}|\\(?:subcaption|subcaptionbox)(?![A-Za-z])", (), None),
+        ("caption", r"\\(?:captionsetup|captionof)(?![A-Za-z])", ("subcaption", "capt-of"), None),
+        ("ulem", r"\\(?:sout|uline|uuline|uwave|xout)(?![A-Za-z])", (), "\\usepackage[normalem]{ulem}"),
+        ("soul", r"\\hl(?![A-Za-z])\s*\{", ("soulutf8",), None),
+        ("mathtools", r"\\(?:coloneqq|eqqcolon|mathclap|mathllap|mathrlap|DeclarePairedDelimiter)(?![A-Za-z])",
+         (), None),
+        ("bm", r"\\bm(?![A-Za-z])\s*\{", (), None),
+        ("cancel", r"\\(?:cancel|bcancel|xcancel|cancelto)(?![A-Za-z])", (), None),
+        ("pifont", r"\\ding(?![A-Za-z])", (), None),
+        ("fancyhdr", r"\\(?:fancyhf|fancyhead|fancyfoot)(?![A-Za-z])|\\pagestyle\s*\{fancy\}", (), None),
+        ("titlesec", r"\\(?:titleformat|titlespacing)(?![A-Za-z])", (), None),
+        ("setspace", r"\\(?:onehalfspacing|doublespacing|singlespacing|setstretch)(?![A-Za-z])|"
+                     r"\\begin\s*\{spacing\}", (), None),
+        ("geometry", r"\\(?:geometry|newgeometry|restoregeometry)(?![A-Za-z])", (), None),
+        ("lipsum", r"\\lipsum(?![A-Za-z])", (), None),
+        ("xspace", r"\\xspace(?![A-Za-z])", (), None),
+        ("enumitem", r"\\setlist(?![A-Za-z])", (), None),
+    )
+)
+# Packages a document class already loads (only ones that are certain).
+_CLASS_PROVIDES = {"beamer": ("graphicx", "hyperref", "xcolor", "url")}
+
+
+def ensure_required_packages(code: str) -> Tuple[str, List[str]]:
+    r"""
+    Adds the ``\usepackage`` an LLM-written document forgot: ``\toprule`` without
+    booktabs, ``align`` without amsmath, ``\textcolor`` without xcolor, … — the most
+    common compile error in generated LaTeX ("Undefined control sequence",
+    "Environment align undefined"), which otherwise costs an LLM repair round.
+
+    Uses are found on the masked view (comments, verbatim and macro bodies do not
+    count); a need is skipped when the package (or one providing the same
+    commands, or the document class) is already loaded, or the document defines
+    the macro / environment itself. The line is inserted before the first use if
+    that is in the preamble, else at the end of the preamble. Loading an
+    already-loaded package again without options is a no-op, so a class that
+    loads the package itself is unaffected.
+    """
+    if not code or "\\documentclass" not in code:
+        return code, []
+    view = _structure_view(code)
+    if len(view) != len(code):
+        view = code
+    m_cls = _RE_DOCCLASS.search(view)
+    if not m_cls or not _RE_BEGIN_DOCUMENT.search(view):
+        return code, []
+    loaded = _loaded_packages(view)
+    provided = set(loaded) | set(_CLASS_PROVIDES.get(m_cls.group(1).strip(), ()))
+    if "table" in loaded.get("xcolor", ""):
+        provided.add("colortbl")
+    defined_macros = set(_RE_DEFINED_MACRO.findall(code))
+    defined_envs = set(_RE_DEFINED_ENV.findall(code))
+
+    inserts: List[Tuple[int, str, str]] = []
+    for pkg, pattern, alternatives, line in _PACKAGE_NEEDS:
+        if pkg in provided or provided.intersection(alternatives):
+            continue
+        first = None
+        for m in pattern.finditer(view):
+            used = m.group(0)
+            env = re.search(r"\\begin\s*\{([^}]*)\}", used)
+            if env and env.group(1) in defined_envs:
+                continue
+            macro = re.match(r"\\([A-Za-z]+)", used)
+            if not env and macro and macro.group(1) in defined_macros:
+                continue
+            first = m
+            break
+        if first is None:
+            continue
+        pos = _preamble_insertion_point(view, first.start())
+        if pos is None:
+            continue
+        inserts.append((pos, line or f"\\usepackage{{{pkg}}}", first.group(0).strip()))
+        provided.add(pkg)
+
+    if not inserts:
+        return code, []
+    fixes: List[str] = []
+    for pos, text, used in sorted(inserts, key=lambda t: t[0], reverse=True):
+        code = code[:pos] + text + "\n" + code[pos:]
+        fixes.append(f"Added {text} ({used} is used but its package was not loaded).")
+    return code, list(reversed(fixes))
+
+
 def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     r"""
     Applies deterministic automatic fixes to LaTeX code for common syntax and compilation issues:
@@ -683,21 +1063,37 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     fixes_applied.extend(balance_repairs)
 
     # 6. TikZ Calc & Core Libraries Fix
-    # If tikzpicture or \usepackage{tikz} is present, ALWAYS ensure calc, positioning, arrows.meta are loaded
-    has_tikz = "\\begin{tikzpicture}" in code or "\\usepackage{tikz}" in code or "tikzpicture" in code
-    if has_tikz:
-        if not re.search(r"\\usepackage(?:\[[^\]]*\])?\{tikz\}", code):
-            m_doc = re.search(r"(\\documentclass(?:\[[^\]]*\])?\{[^}]+\}\n)", code)
-            if m_doc:
-                code = code[:m_doc.end()] + "\\usepackage{tikz}\n\\usetikzlibrary{calc}\n\\usetikzlibrary{positioning,arrows.meta}\n" + code[m_doc.end():]
-                fixes_applied.append("Injected missing \\usepackage{tikz} and \\usetikzlibrary{calc} into preamble.")
-        else:
-            has_calc_lib = bool(re.search(r"\\usetikzlibrary\{[^}]*calc[^}]*\}", code))
-            if not has_calc_lib:
-                m_tikz = re.search(r"\\usepackage(?:\[[^\]]*\])?\{tikz\}", code)
-                if m_tikz:
-                    code = code[:m_tikz.end()] + "\n\\usetikzlibrary{calc}\n\\usetikzlibrary{positioning,arrows.meta}" + code[m_tikz.end():]
-                    fixes_applied.append("Injected \\usetikzlibrary{calc} into preamble.")
+    # If TikZ is used or loaded, ensure calc, positioning, arrows.meta are loaded. Detection
+    # runs on the masked view (a "tikzpicture" in a comment is not a use; tikz loaded via
+    # \usepackage{tikz,pgfplots} or \RequirePackage is loaded), and a missing \usepackage{tikz}
+    # goes before its first preamble use / at the end of the preamble, not right after
+    # \documentclass, where it loaded xcolor before the document's own xcolor options.
+    tikz_view = _structure_view(code)
+    if len(tikz_view) != len(code):
+        tikz_view = code
+    tikz_loaded = bool(_TIKZ_LOADERS.intersection(_loaded_packages(tikz_view)))
+    m_tikz_use = re.search(
+        r"\\begin\s*\{tikzpicture\}|\\(?:tikz|tikzset|usetikzlibrary)(?![A-Za-z])", tikz_view)
+    if m_tikz_use and not tikz_loaded:
+        pos = _preamble_insertion_point(tikz_view, m_tikz_use.start())
+        if pos is not None:
+            code = (code[:pos] + "\\usepackage{tikz}\n\\usetikzlibrary{calc}\n"
+                    "\\usetikzlibrary{positioning,arrows.meta}\n" + code[pos:])
+            fixes_applied.append("Injected missing \\usepackage{tikz} and \\usetikzlibrary{calc} into preamble.")
+    elif tikz_loaded and not re.search(r"\\usetikzlibrary\s*\{[^}]*\bcalc\b", tikz_view):
+        m_load = None
+        for m in _RE_PKG_LOAD.finditer(tikz_view):
+            if _TIKZ_LOADERS.intersection(p.strip() for p in m.group(2).split(",")):
+                m_load = m
+                break
+        if m_load:
+            code = (code[:m_load.end()] + "\n\\usetikzlibrary{calc}\n\\usetikzlibrary{positioning,arrows.meta}"
+                    + code[m_load.end():])
+            fixes_applied.append("Injected \\usetikzlibrary{calc} into preamble.")
+
+    # 6b. Packages the document uses but never loads (\toprule -> booktabs, align -> amsmath, ...)
+    code, package_fixes = ensure_required_packages(code)
+    fixes_applied.extend(package_fixes)
 
     # 7. TikZ Semicolon Fix
     code, tikz_fixes = fix_tikz_semicolons(code)

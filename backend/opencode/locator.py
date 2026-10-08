@@ -346,6 +346,21 @@ def _extend_to_line_ends(code: str, span: Tuple[int, int], needle: str) -> Tuple
     return s, e
 
 
+_RE_STRUCT_ESCAPE = re.compile(r"\\[{}$%\\]")
+
+
+def _structure_counts(text: str) -> Tuple[int, int, int, int, int]:
+    """({, }, \\begin, \\end, $) counts outside escapes and comments."""
+    lines = []
+    for line in text.split("\n"):
+        stripped = _RE_STRUCT_ESCAPE.sub("", line)
+        k = stripped.find("%")
+        lines.append(stripped if k < 0 else stripped[:k])
+    t = "\n".join(lines)
+    return (t.count("{"), t.count("}"), len(re.findall(r"\\begin\b", text)),
+            len(re.findall(r"\\end\b", text)), t.count("$"))
+
+
 def _fuzzy(code: str, n_needle: str, lo: int, hi: int, target: Target,
            lines: _Lines) -> Optional[Tuple[int, int, float, float]]:
     """
@@ -415,6 +430,13 @@ def _fuzzy(code: str, n_needle: str, lo: int, hi: int, target: Target,
     start_line, end_line = picked[0], picked[-1]
     s = max(lo, lines.starts[start_line - 1])
     e = min(hi, lines.starts[end_line] - 1 if end_line < len(lines.starts) else len(code))
+
+    # The window is whole lines, so a needle that covers most of a line also takes the
+    # rest of it — e.g. the `}` closing a \textcolor{gray}{...} group the model did not
+    # copy — and the edit then deletes it. Only accept a window with the same structure
+    # as the needle; otherwise nothing is replaced and the model is shown the region.
+    if _structure_counts(code[s:e]) != _structure_counts(n_needle):
+        return None
 
     # The runner-up is the best window that does not overlap the winner: two
     # overlapping windows are the same place, not a competing one.

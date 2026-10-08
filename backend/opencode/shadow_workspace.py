@@ -26,6 +26,47 @@ class ShadowWorkspaceError(Exception):
     pass
 
 
+_RE_LINE_NO_PREFIX = re.compile(r"^\s*(\d+): ?")
+
+
+def _strip_line_number_prefixes(text: str) -> Optional[str]:
+    """
+    ``text`` without the ``N: `` prefixes that read_file_range / get_block put on
+    every line, when every non-empty line carries one and the numbers are
+    consecutive (models copy them into old_str/new_str); otherwise None.
+    """
+    if not text:
+        return None
+    lines = text.split("\n")
+    numbers = []
+    for ln in lines:
+        if not ln.strip():
+            continue
+        m = _RE_LINE_NO_PREFIX.match(ln)
+        if not m:
+            return None
+        numbers.append(int(m.group(1)))
+    if not numbers or any(b != a + 1 for a, b in zip(numbers, numbers[1:])):
+        return None
+    return "\n".join(_RE_LINE_NO_PREFIX.sub("", ln, count=1) if ln.strip() else ln for ln in lines)
+
+
+def _match_trailing_newline(new_str: str, matched: str, following: str) -> str:
+    """
+    Gives ``new_str`` the trailing newline the replaced text had. A replacement
+    of ``line\\n`` by ``line`` merged it with the next line — and a trailing
+    ``% comment`` in new_str then commented that line out; the reverse inserted a
+    blank line, which ends a paragraph and breaks a tabular.
+    """
+    if not new_str:
+        return new_str
+    if matched.endswith("\n") and not new_str.endswith("\n"):
+        return new_str + "\n"
+    if not matched.endswith("\n") and new_str.endswith("\n") and following.startswith("\n"):
+        return new_str[:-1]
+    return new_str
+
+
 class ShadowWorkspace:
     """
     In-memory shadow copy of a LaTeX project for safe agentic editing.
@@ -406,6 +447,14 @@ class ShadowWorkspace:
 
             from .locator import Target, resolve
 
+            # Line numbers copied from read_file_range output ("12: \item ...").
+            unprefixed_old = _strip_line_number_prefixes(old_str)
+            if unprefixed_old is not None and old_str not in self._buffer and unprefixed_old in self._buffer:
+                old_str = unprefixed_old
+                unprefixed_new = _strip_line_number_prefixes(new_str)
+                if unprefixed_new is not None:
+                    new_str = unprefixed_new
+
             res = resolve(self._buffer, Target(node_id=node_id, text=old_str, line_hint=line_hint),
                           aliases=self._node_aliases)
             if not res.ok:
@@ -415,10 +464,11 @@ class ShadowWorkspace:
             matched = self._buffer[pos:span_end]
             line_start = self._buffer[:pos].count("\n") + 1
             line_end = line_start + matched.count("\n")
+            new_str = _match_trailing_newline(new_str, matched, self._buffer[span_end:])
 
             candidate = self._buffer[:pos] + new_str + self._buffer[span_end:]
 
-            is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+            is_valid, candidate, validation_errors, heal_fixes = self._heal_and_validate(
                 candidate, baseline=self._buffer
             )
             if not is_valid:
@@ -453,7 +503,7 @@ class ShadowWorkspace:
                 "node_id": res.node_id,
             })
 
-            return {
+            result = {
                 "success": True,
                 "occurrences_found": 1,
                 "method": res.method,
@@ -461,6 +511,11 @@ class ShadowWorkspace:
                 "lines_affected": [line_start, line_end],
                 "new_line_count": self._buffer.count("\n") + 1,
             }
+            if heal_fixes:
+                # The buffer now differs from what the model wrote; say how, so its
+                # next old_str is copied from what is really there.
+                result["auto_repairs"] = heal_fixes
+            return result
 
     def rewrite_chunk(self, chunk_id: str, new_content: str) -> Dict[str, Any]:
         """
@@ -488,7 +543,7 @@ class ShadowWorkspace:
                 new_content=new_content,
             )
 
-            is_valid, updated_code, validation_errors, _ = self._heal_and_validate(
+            is_valid, updated_code, validation_errors, heal_fixes = self._heal_and_validate(
                 updated_code, baseline=self._buffer
             )
             if not is_valid:
@@ -518,7 +573,7 @@ class ShadowWorkspace:
                 "line_range": [line_start, line_end],
             })
 
-            return {
+            result = {
                 "success": True,
                 "chunk_id": chunk_id,
                 "lines_affected": [line_start, line_end],
@@ -526,6 +581,9 @@ class ShadowWorkspace:
                 "new_length": len(new_content),
                 "new_line_count": self._buffer.count("\n") + 1,
             }
+            if heal_fixes:
+                result["auto_repairs"] = heal_fixes
+            return result
 
     def insert_into_chunk(
         self,
@@ -629,7 +687,7 @@ class ShadowWorkspace:
             to_insert = prefix + cleaned_content + suffix
             candidate = self._buffer[:abs_pos] + to_insert + self._buffer[abs_pos:]
 
-            is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+            is_valid, candidate, validation_errors, heal_fixes = self._heal_and_validate(
                 candidate, baseline=self._buffer
             )
             if not is_valid:
@@ -660,7 +718,7 @@ class ShadowWorkspace:
                 "line_range": [line_start, line_end],
             })
 
-            return {
+            result = {
                 "success": True,
                 "chunk_id": target.chunk_id,
                 "position": position,
@@ -668,6 +726,9 @@ class ShadowWorkspace:
                 "inserted_length": len(to_insert),
                 "new_line_count": self._buffer.count("\n") + 1,
             }
+            if heal_fixes:
+                result["auto_repairs"] = heal_fixes
+            return result
 
     # ------------------------------------------------------------------
     # Structural (node-addressed) operations

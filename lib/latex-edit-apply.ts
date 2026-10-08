@@ -31,7 +31,8 @@ export type SkipReason =
   | "not-found"
   | "not-unique"
   | "stale-position"
-  | "overlap";
+  | "overlap"
+  | "document-changed";
 
 export interface AppliedEditItem {
   id?: string;
@@ -204,13 +205,27 @@ export function applyEditItems(
     };
   }
 
-  // A single whole-document item is equivalent to the authoritative path.
+  // A single whole-document item is equivalent to the authoritative path — and
+  // so is held to rule 1: only when the live document is still the one the
+  // backend diffed. Writing it unconditionally replaced text typed during the
+  // run, or (after switching files) wrote main.tex's proposal into another file.
   if (items.length === 1 && items[0]?.is_full_document) {
+    const base =
+      original ??
+      (items[0].original_chunk !== undefined ? normalizeNewlines(items[0].original_chunk) : undefined);
+    if (base !== undefined && (current === base || current.trim() === base.trim())) {
+      return {
+        code: normalizeNewlines(items[0].proposed_chunk ?? current),
+        strategy: "authoritative",
+        applied: [items[0]],
+        skipped: [],
+      };
+    }
     return {
-      code: normalizeNewlines(items[0].proposed_chunk ?? current),
-      strategy: "authoritative",
-      applied: [items[0]],
-      skipped: [],
+      code: current,
+      strategy: "chunks",
+      applied: [],
+      skipped: [{ item: items[0], reason: "document-changed" }],
     };
   }
 

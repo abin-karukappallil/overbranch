@@ -44,6 +44,8 @@ interface PDFViewerProps {
   onRecompile: () => void;
   onAskAiToFix?: (errorLog: string) => void;
   errorLog?: string | null;
+  /** TeX error lines from a compile that still produced a PDF. */
+  compileErrors?: string[];
   projectId?: string;
   onReverseSync?: (file: string, line: number, column: number) => void;
   onTextSelected?: (text: string) => void;
@@ -60,6 +62,7 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       onRecompile,
       onAskAiToFix,
       errorLog,
+      compileErrors = [],
       projectId,
       onReverseSync,
       onTextSelected,
@@ -342,6 +345,31 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         {/* PDF Render Block */}
         {blobUrl && !errorLog && (
           <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-slate-100 dark:bg-[#0E0F12] overflow-hidden">
+            {/* Errors in a document that still compiled to a PDF: shown, not hidden. */}
+            {compileErrors.length > 0 && !isCompiling && (
+              <div className="w-full shrink-0 flex flex-wrap items-start gap-2 px-3 py-2 border-b border-amber-300/60 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10">
+                <details className="flex-1 min-w-0">
+                  <summary className="cursor-pointer text-xs font-mono font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    {compileErrors.length} LaTeX error{compileErrors.length === 1 ? "" : "s"} — the PDF may be incomplete
+                  </summary>
+                  <pre className="mt-1.5 text-[11px] text-slate-900 dark:text-[#E2E4E9] font-mono max-h-40 overflow-auto whitespace-pre-wrap select-all">
+                    {compileErrors.join("\n")}
+                  </pre>
+                </details>
+                {onAskAiToFix && (
+                  <Button
+                    size="sm"
+                    onClick={() => onAskAiToFix(compileErrors.join("\n"))}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-archivo font-bold rounded-xl h-7 text-xs border border-emerald-600 shadow-sm cursor-pointer flex items-center gap-1.5"
+                    title="Ask AI to fix these LaTeX errors"
+                  >
+                    <Bot className="w-3.5 h-3.5 text-white" />
+                    <span>Ask AI to Fix</span>
+                  </Button>
+                )}
+              </div>
+            )}
             <ExtendPDFViewer
               ref={extendViewerRef}
               src={blobUrl}
