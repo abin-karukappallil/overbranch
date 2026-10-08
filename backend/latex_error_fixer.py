@@ -9,6 +9,8 @@ Provides:
    - Missing \\usetikzlibrary{calc} when coordinate calculations $(...)$ are present
    - Missing semicolons in TikZ path statements (\\fill, \\draw, \\node, \\path)
    - Missing \\begin{document} / \\end{document}
+   - Truncated booktabs rule (\\bottom -> \\bottomrule)
+   - Bare '&' in frame titles (escaped to \\&)
    - Undefined standard colors in Beamer / Regalia
 3. format_compilation_fix_prompt: Generates surgical, line-targeted instructions for the
    LLM agent when interactive error repair is required.
@@ -493,6 +495,117 @@ def balance_latex_environments(latex_code: str) -> Tuple[str, List[str]]:
     return "".join(out_lines), repairs
 
 
+_RE_BOTTOM_TRUNC = re.compile(r"\\bottom\b")
+_RE_BOOKTABS_INUSE = re.compile(r"\\(?:top|mid|bottom)rule\b|\\usepackage(?:\[[^\]]*\])?\{booktabs\}")
+
+
+def fix_booktabs_truncations(code: str) -> Tuple[str, List[str]]:
+    r"""
+    Repairs a truncated booktabs rule — a bare ``\bottom`` that should be
+    ``\bottomrule`` (a recurring LLM output glitch, e.g. ``... \\ \bottom%``).
+
+    ``\bottom`` has no standard meaning, so mapping it is safe; ``\top`` and
+    ``\mid`` are deliberately **not** touched because they are valid math
+    commands (``\top`` = ⊤, ``\mid`` = the ``∣`` relation). The fix only runs
+    when booktabs rules are actually in use, and skips any ``\bottom`` that the
+    masked view shows is inside a listing / verbatim block / comment.
+    """
+    if r"\bottom" not in code or not _RE_BOOKTABS_INUSE.search(code):
+        return code, []
+
+    view = _structure_view(code)
+    if len(view) != len(code):
+        view = code
+
+    out: List[str] = []
+    cursor = 0
+    count = 0
+    for m in _RE_BOTTOM_TRUNC.finditer(code):
+        # Only rewrite real code, not an example \bottom inside a listing/comment.
+        if view[m.start():m.end()] != code[m.start():m.end()]:
+            continue
+        out.append(code[cursor:m.start()])
+        out.append(r"\bottomrule")
+        cursor = m.end()
+        count += 1
+
+    if not count:
+        return code, []
+    out.append(code[cursor:])
+    return "".join(out), [f"Corrected {count} truncated \\bottom -> \\bottomrule (booktabs)."]
+
+
+_RE_FRAME_TITLE_OPEN = re.compile(r"\\begin\s*\{frame\}\s*(?:<[^>]*>)?\s*(?:\[[^\]]*\]\s*)*\{")
+_RE_FRAMETITLE_CMD_OPEN = re.compile(r"\\frametitle\s*(?:<[^>]*>)?\s*\{")
+_RE_BARE_AMP = re.compile(r"(?<!\\)&")
+
+
+def _match_brace(text: str, open_pos: int) -> Optional[int]:
+    """Index of the ``}`` that closes the ``{`` at ``open_pos`` (``\\{`` escapes skipped)."""
+    depth = 0
+    i = open_pos
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def fix_ampersand_in_frame_titles(code: str) -> Tuple[str, List[str]]:
+    r"""
+    Escapes a bare ``&`` inside a ``\begin{frame}{...}`` / ``\frametitle{...}``
+    title to ``\&``. A bare ``&`` there is an alignment-tab character and raises
+    'Misplaced alignment tab character &', which — in a custom frametitle
+    template that typesets the title inside a TikZ node — can take down the
+    whole title. ``&`` inside the frame *body* (real tabulars) is untouched.
+    """
+    if "&" not in code or (r"\begin{frame}" not in code and r"\frametitle" not in code):
+        return code, []
+
+    view = _structure_view(code)
+    if len(view) != len(code):
+        view = code
+
+    openers: List[int] = []
+    for rx in (_RE_FRAME_TITLE_OPEN, _RE_FRAMETITLE_CMD_OPEN):
+        for m in rx.finditer(code):
+            # Ignore a \begin{frame} shown as example text in a listing/verbatim.
+            if view[m.start():m.end()] != code[m.start():m.end()]:
+                continue
+            openers.append(m.end() - 1)  # the title's opening brace
+
+    if not openers:
+        return code, []
+
+    # Rightmost-first so edits never shift the offsets still to be processed.
+    new_code = code
+    count = 0
+    for open_pos in sorted(set(openers), reverse=True):
+        close = _match_brace(new_code, open_pos)
+        if close is None:
+            continue
+        inner = new_code[open_pos + 1:close]
+        if "&" not in inner:
+            continue
+        fixed_inner, n_sub = _RE_BARE_AMP.subn(r"\\&", inner)
+        if n_sub:
+            new_code = new_code[:open_pos + 1] + fixed_inner + new_code[close:]
+            count += n_sub
+
+    if not count:
+        return code, []
+    return new_code, [f"Escaped {count} bare '&' in frame title(s) to '\\&'."]
+
+
 def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     r"""
     Applies deterministic automatic fixes to LaTeX code for common syntax and compilation issues:
@@ -503,6 +616,8 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     5. Auto-wraps lonely \\item statements in \\begin{itemize} ... \\end{itemize}.
     6. Injects \\usepackage{tikz} and \\usetikzlibrary{calc,positioning,arrows.meta} whenever TikZ is used.
     7. Fixes missing semicolons on TikZ path commands without breaking multi-line statements.
+    7b. Corrects a truncated booktabs rule (\\bottom -> \\bottomrule) when booktabs is in use.
+    7c. Escapes a bare '&' inside a frame title (\\begin{frame}{...} / \\frametitle{...}).
     8. Injects missing Regalia / Beamer color definitions.
     """
     if not code or not code.strip():
@@ -587,6 +702,14 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     # 7. TikZ Semicolon Fix
     code, tikz_fixes = fix_tikz_semicolons(code)
     fixes_applied.extend(tikz_fixes)
+
+    # 7b. Truncated booktabs rule (\bottom -> \bottomrule)
+    code, bottom_fixes = fix_booktabs_truncations(code)
+    fixes_applied.extend(bottom_fixes)
+
+    # 7c. Bare '&' in frame titles (\begin{frame}{a & b} -> a \& b)
+    code, amp_fixes = fix_ampersand_in_frame_titles(code)
+    fixes_applied.extend(amp_fixes)
 
     # 8. Injected Undefined Colors (Regalia / Beamer)
     needed_colors = []

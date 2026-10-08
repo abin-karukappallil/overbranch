@@ -824,6 +824,24 @@ def compile_latex(
                 latex_code = ensure_document_environment(latex_code)
             except Exception:
                 pass
+
+            # 2b. Deterministic auto-heal before the TeX run (editor compiles only).
+            # This is the same safe, speculative healer the agent runs on every write
+            # (unclosed environments, lonely \item, TikZ semicolons, \bottom->\bottomrule,
+            # bare & in frame titles, …); it is discarded internally if it raises the
+            # structural error count. It is skipped when allow_recovery is False — the
+            # PDF importer compiles throwaway pages to learn whether *that exact* code
+            # compiles and does its own healing in the pipeline, so silently repairing
+            # here would hide the very errors it hands back to the model.
+            if allow_recovery:
+                try:
+                    from latex_error_fixer import auto_heal_latex_code
+                    healed, _heal_fixes = auto_heal_latex_code(latex_code)
+                    if healed:
+                        latex_code = healed
+                except Exception:
+                    pass
+
             tex_path = tmpdir / "main.tex"
             tex_path.write_text(latex_code, encoding="utf-8")
 
