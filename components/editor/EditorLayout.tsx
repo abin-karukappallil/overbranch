@@ -1043,6 +1043,9 @@ export function EditorLayout({
     return (isMobileViewport() ? mobile ?? desktop : desktop ?? mobile) ?? null;
   }, []);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Last (file, content) handleCodeChange acted on, to collapse the duplicate
+  // notifications the two shared-model editors produce for one edit.
+  const lastCodeChangeRef = useRef<string | null>(null);
   const decorationsRef = useRef<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const mobileChatEndRef = useRef<HTMLDivElement>(null);
@@ -1276,6 +1279,9 @@ export function EditorLayout({
     setDiffEditsList([]);
     authoritativeDocRef.current = null;
     pendingEditsMsgIdRef.current = null;
+    // The duplicate-change guard compares against the last edit it saw; a new
+    // file starts with no history of its own.
+    lastCodeChangeRef.current = null;
     setActiveFilePath(filePath);
     // Instant cache lookup for 0ms transition
     const cached = fileContentCacheRef.current.get(filePath);
@@ -1404,8 +1410,23 @@ export function EditorLayout({
 
 
   // 3. Handle code changes with debounced auto-save
+  /**
+   * The content of the editor changed.
+   *
+   * Called more than once for a single keystroke: the desktop and mobile
+   * Monaco instances share one model (they must — see handleEditorMount), so
+   * each of their `onChange` props fires for the same edit, and several child
+   * components report document changes through here too. Everything below is
+   * idempotent, but doing it twice per character still means two localStorage
+   * writes and two debounce resets, so identical consecutive content is
+   * dropped. Keyed by file as well as text: switching between two files that
+   * happen to hold the same content is a real change.
+   */
   const handleCodeChange = (newCode: string | undefined) => {
     const updated = newCode ?? "";
+    const signature = `${activeFilePath}\u0000${updated}`;
+    if (lastCodeChangeRef.current === signature) return;
+    lastCodeChangeRef.current = signature;
     setCode(updated);
     fileContentCacheRef.current.set(activeFilePath, { content: updated, timestamp: Date.now() });
 
@@ -1527,6 +1548,32 @@ export function EditorLayout({
   };
 
   const handleEditorMount = (editor: any, monaco: any, isDesktop: boolean = true) => {
+    // The two Monaco instances (desktop + mobile) MUST share one model.
+    //
+    // They did not. @monaco-editor/react resolves a model with
+    // `getModel(Uri.parse(path)) || createModel(value, lang, path ? uri :
+    // undefined)`, and with no `path` prop that argument is `""` — falsy — so
+    // each instance quietly got its own anonymous model. The collaboration
+    // binding syncs text to the single model it was handed while attaching
+    // cursor decorations to *every* editor, so remote carets appeared and
+    // moved correctly while not one character of text ever crossed: the
+    // binding was reading and writing the hidden editor's model, and the user
+    // was typing in the visible one. Adopting the peer's model makes the
+    // binding's own stated assumption true.
+    const peer = isDesktop ? mobileEditorRef.current : desktopEditorRef.current;
+    const shared = peer?.getModel?.();
+    if (shared && !shared.isDisposed?.() && editor.getModel() !== shared) {
+      const own = editor.getModel();
+      editor.setModel(shared);
+      if (own && own !== shared) {
+        try {
+          own.dispose();
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+
     if (isDesktop) {
       desktopEditorRef.current = editor;
     } else {
@@ -1536,9 +1583,9 @@ export function EditorLayout({
     // Let effects that need an editor instance re-run now that one exists.
     setEditorsNonce((n) => n + 1);
 
-    // Hand the instance to the collaboration session. Both editors share one
-    // Monaco model (both are created with path ""), so the binding attaches to
-    // the model once and only the cursor decorations are per-editor.
+    // Hand the instance to the collaboration session. Both editors now share
+    // one model, so the binding attaches to the model once and only the
+    // cursor decorations are per-editor.
     collab.registerEditor(editor, monaco);
     editor.onDidDispose(() => collab.unregisterEditor(editor));
 

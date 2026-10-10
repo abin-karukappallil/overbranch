@@ -41,6 +41,10 @@ function DashboardContent() {
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
   useEffect(() => {
+    document.title = "OverBranch | Dashboard";
+  }, []);
+
+  useEffect(() => {
     if (searchParams.get("openPdfModal") === "true") {
       setPdfModalOpen(true);
     }
