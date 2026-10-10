@@ -114,3 +114,72 @@ def test_justify_tool_removes_right_edge_overflow():
     assert out.get("verified") is True
     assert not detect_overflow_tool(ws)["has_overflow"]
     assert "SLEEPER CLASS (SL)" in ws.get_buffer()      # text kept, not broken or shortened
+
+
+@needs_tex
+def test_justify_content_tool_exact_io():
+    """
+    Validates exact inputs and outputs of justify_content_tool:
+    - Text targeting with explicit width_pt and center alignment
+    - Exact output dictionary structure (success, lines_affected, verified, justify details)
+    - Automatic injection of required package (\\usepackage{graphicx}) into preamble
+    """
+    from opencode.layout_tools import justify_content_tool
+    from opencode.shadow_workspace import ShadowWorkspace
+
+    doc = (
+        "\\documentclass{article}\n"
+        "\\begin{document}\n"
+        "\\noindent\\mbox{VERY-LONG-DEPARTMENT-IDENTIFIER-AND-CODE}\n"
+        "\\end{document}\n"
+    )
+    ws = ShadowWorkspace(doc)
+    args = {
+        "text": "VERY-LONG-DEPARTMENT-IDENTIFIER-AND-CODE",
+        "width_pt": 120.0,
+        "alignment": "center",
+    }
+    out = justify_content_tool(ws, args)
+
+    # 1. Top-level result properties
+    assert out["success"] is True
+    assert out["lines_affected"] == [3, 3]
+    assert out["verified"] is True
+
+    # 2. Detailed justify output dictionary
+    j = out["justify"]
+    assert j["strategy"] == "shrink+condense"
+    assert j["target_w"] == 120.0
+    assert j["measured_w"] > 120.0
+    assert j["ratio"] > 1.10
+    assert j["changed"] is True
+    assert "graphicx" in j["needs_packages"]
+    assert j["measured_by"] == "tex"
+    assert "\\resizebox{120pt}{\\height}" in j["latex"]
+    assert "\\centering" in j["latex"]
+
+    # 3. Buffer transformation and package injection
+    buf = ws.get_buffer()
+    assert "\\usepackage{graphicx}" in buf
+    assert "\\resizebox{120pt}{\\height}" in buf
+
+
+def test_justify_content_exact_io():
+    """
+    Validates exact input and output structure of justify_content() from latex_layout.justify.
+    """
+    res = justify_content(
+        fragment="OVERFLOWING CELL TEXT",
+        available_w=100.0,
+        font=HELV,
+        alignment="center",
+        single_line=True,
+    )
+    data = res.as_dict()
+    assert data["strategy"] in ("condense", "shrink", "shrink+condense")
+    assert data["target_w"] == 100.0
+    assert data["changed"] is True
+    assert isinstance(data["latex"], str)
+    assert "\\centering" in data["latex"]
+    assert data["measured_by"] in ("metrics", "tex")
+

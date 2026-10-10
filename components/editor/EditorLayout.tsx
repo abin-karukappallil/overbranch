@@ -2507,7 +2507,7 @@ export function EditorLayout({
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] w-full max-w-full bg-[#F4F5F7] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] overflow-hidden selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-white flex flex-col relative z-0 transition-colors">
+    <div className="fixed inset-0 w-full max-w-full bg-[#F4F5F7] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] overflow-hidden selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-white flex flex-col z-0 transition-colors">
       {/* Guest Session Notification Banner */}
       {isGuestMode && (
         <div className="bg-amber-50 dark:bg-[#1A1C22] border-b border-amber-200 dark:border-[#282A30] px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs z-30 shrink-0 select-none">
@@ -2668,6 +2668,20 @@ export function EditorLayout({
             <span>Agent</span>
           </button>
 
+
+          {/* Find & replace — mobile only; desktop has it in the editor tab bar */}
+          <button
+            onClick={() => setSearchOpen((v) => !v)}
+            className={`md:hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors cursor-pointer flex shrink-0 ${
+              searchOpen
+                ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
+                : "bg-slate-100 dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:bg-slate-200 dark:hover:bg-[#22242C]"
+            }`}
+            title="Find & replace"
+            aria-label="Find and replace"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
 
           {/* Theme Toggle Button */}
           <button
@@ -3264,9 +3278,7 @@ export function EditorLayout({
               monaco={monacoRef.current}
               readOnly={isViewer}
               active={activeMobileTab === "code"}
-              symbols={quickSymbols}
               onOpenSearch={() => setSearchOpen(true)}
-              onInsertSymbol={insertSymbol}
               onDocumentChange={handleCodeChange}
             />
 
