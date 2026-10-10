@@ -298,6 +298,7 @@ def compute_final_diff(
     modified: str,
     file_path: str = "main.tex",
     explanation: str = "",
+    base_version: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Computes a structured diff between original and modified LaTeX code.
@@ -323,6 +324,7 @@ def compute_final_diff(
             "original_sha256": orig_sha,
             "proposed_sha256": prop_sha,
             "apply_contract_version": APPLY_CONTRACT_VERSION,
+            "base_version": base_version,
         }
 
     # Compute line-level stats
@@ -386,6 +388,7 @@ def compute_final_diff(
         "original_sha256": orig_sha,
         "proposed_sha256": prop_sha,
         "apply_contract_version": APPLY_CONTRACT_VERSION,
+        "base_version": base_version,
     }
 
 

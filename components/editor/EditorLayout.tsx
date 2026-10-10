@@ -58,6 +58,11 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu";
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
+import { CollabPresenceBar } from "@/components/editor/CollabPresenceBar";
+import { useCollaboration } from "@/lib/collab/useCollaboration";
+import { applyTextToEditor } from "@/lib/collab/text-diff";
+import { collabLog } from "@/lib/collab/log";
+import { authClient } from "@/lib/auth-client";
 import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
 import { PresentationView } from "@/components/editor/PresentationView";
 import { ModelSelector, type ProviderGroup } from "@/components/editor/ModelSelector";
@@ -311,6 +316,10 @@ export function EditorLayout({
 
   // In-memory SWR file cache for instantaneous file switching
   const fileContentCacheRef = useRef<Map<string, { content: string; timestamp: number }>>(new Map());
+  // Latest active file, readable from callbacks that must not re-subscribe
+  // every time the user switches file (the collaboration remote-change handler).
+  const activeFilePathRef = useRef(activeFilePath);
+  activeFilePathRef.current = activeFilePath;
   // The backend's authoritative healed+validated buffer for the current proposal.
   const authoritativeDocRef = useRef<AuthoritativeDoc | null>(null);
 
@@ -839,6 +848,69 @@ export function EditorLayout({
 
   const isViewer = projectDetail?.role === "Viewer";
   const isGuestMode = propIsGuest || !!(projectDetail as any)?.isGuest;
+
+  // ─── Realtime collaboration (Yjs CRDT over the backend's /ws/collab) ──────
+  // The session identity comes from the existing Better-Auth client; nothing
+  // about the user is hardcoded or supplied by the collaboration layer itself.
+  const { data: authSession } = authClient.useSession();
+  const collabUser = authSession?.user;
+
+  const collabMirrorTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  /**
+   * Remote (and AI) text that arrived through the CRDT, mirrored into React
+   * state so download / the file cache keep seeing the live document. Never
+   * flips saveStatus to "unsaved": the room persists on the server, and the
+   * save indicator is driven by `collab.savedAt` while bound.
+   */
+  const handleCollabRemoteChange = useCallback(
+    (value: string, file: string) => {
+      fileContentCacheRef.current.set(file, { content: value, timestamp: Date.now() });
+
+      // Mirroring on a trailing throttle, not per remote keystroke: setCode
+      // re-renders this whole shell, and a collaborator typing a paragraph
+      // would otherwise force a render per character. Nothing reads the mirror
+      // for correctness — `currentDocumentText()` goes to the Monaco model.
+      if (collabMirrorTimerRef.current) clearTimeout(collabMirrorTimerRef.current);
+      collabMirrorTimerRef.current = setTimeout(() => {
+        collabMirrorTimerRef.current = null;
+        if (file === activeFilePathRef.current) setCode(value);
+        try {
+          localStorage.setItem(`overbranch_code_${projectId || "default"}_${file}`, value);
+        } catch (_) {
+          // Quota or private mode: the room is still the source of truth.
+        }
+      }, 150);
+    },
+    [projectId],
+  );
+
+  useEffect(
+    () => () => {
+      if (collabMirrorTimerRef.current) clearTimeout(collabMirrorTimerRef.current);
+    },
+    [],
+  );
+
+  const collab = useCollaboration({
+    projectId,
+    filePath: activeFilePath,
+    user: collabUser
+      ? {
+          id: collabUser.id,
+          name: collabUser.name,
+          email: collabUser.email,
+          image: (collabUser as any).image ?? null,
+        }
+      : null,
+    isGuest: isGuestMode,
+    readOnly: isViewer,
+    onRemoteChange: handleCollabRemoteChange,
+  });
+
+  const collabBound = collab.bound;
+  const collabBoundRef = useRef(false);
+  collabBoundRef.current = collabBound;
   const guestExpiresAt = propExpiresAt || (projectDetail as any)?.expiresAt;
   const [guestTimeLeft, setGuestTimeLeft] = useState<string>("");
 
@@ -1120,19 +1192,33 @@ export function EditorLayout({
     }
   };
 
+  /**
+   * Undo in a shared document cannot be Monaco's undo stack: that stack also
+   * contains edits whose surroundings a collaborator has since changed, and it
+   * knows nothing about which changes were *this* user's. The Yjs UndoManager
+   * tracks only this client's own transactions, so Ctrl+Z means "undo my last
+   * edit" and never silently deletes someone else's paragraph.
+   */
   const handleUndo = () => {
     const editor = getActiveEditor();
-    if (!editor) return;
-    editor.focus();
-    editor.trigger("toolbar", "undo", null);
+    if (editor) editor.focus();
+    if (collab.undo()) return;
+    editor?.trigger("toolbar", "undo", null);
   };
 
   const handleRedo = () => {
     const editor = getActiveEditor();
-    if (!editor) return;
-    editor.focus();
-    editor.trigger("toolbar", "redo", null);
+    if (editor) editor.focus();
+    if (collab.redo()) return;
+    editor?.trigger("toolbar", "redo", null);
   };
+
+  // Monaco commands are registered once at mount, so they must reach the
+  // *current* handlers rather than the ones from the mounting render.
+  const handleUndoRef = useRef<() => void>(() => {});
+  const handleRedoRef = useRef<() => void>(() => {});
+  handleUndoRef.current = handleUndo;
+  handleRedoRef.current = handleRedo;
 
   const toggleAi = () => {
     setAiOpen((prev) => {
@@ -1233,6 +1319,14 @@ export function EditorLayout({
       try {
         const activeProj = projectId || "proj-1";
         const res = await authFetch(`${BACKEND_URL}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+        // A late-arriving REST snapshot must never win over the live
+        // collaborative document: the room already seeded itself from the same
+        // storage and may be many keystrokes ahead of it. This is the "late
+        // joiner must not overwrite the active session" rule.
+        if (collabBoundRef.current) {
+          collabLog("COLLAB_SYNC", { stage: "rest_snapshot_ignored", file: activeFilePath });
+          return;
+        }
         if (res.ok && !isCancelled) {
           const data = await res.json();
           if (data.raw_code !== undefined) {
@@ -1267,10 +1361,21 @@ export function EditorLayout({
 
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
   const saveDocument = async (newCode: string, showToast = true) => {
-    setSaveStatus("saving");
     const activeProj = projectId || "proj-1";
     fileContentCacheRef.current.set(activeFilePath, { content: newCode, timestamp: Date.now() });
 
+    // While a collaboration room is bound, the *server* persists the document
+    // (debounced, from the CRDT). Posting a whole snapshot from here as well
+    // would race the room and could reinstate text a collaborator just
+    // deleted — a full-document last-write-wins through the back door.
+    if (collabBoundRef.current) {
+      try {
+        localStorage.setItem(storageKey, newCode);
+      } catch (_) {}
+      return;
+    }
+
+    setSaveStatus("saving");
     try {
       // Always save to LocalStorage immediately for crash protection
       localStorage.setItem(storageKey, newCode);
@@ -1302,7 +1407,6 @@ export function EditorLayout({
   const handleCodeChange = (newCode: string | undefined) => {
     const updated = newCode ?? "";
     setCode(updated);
-    setSaveStatus("unsaved");
     fileContentCacheRef.current.set(activeFilePath, { content: updated, timestamp: Date.now() });
 
     // Instantly persist in LocalStorage for crash resilience
@@ -1310,6 +1414,12 @@ export function EditorLayout({
       localStorage.setItem(storageKey, updated);
     } catch (e) { }
 
+    // Bound to a collaboration room: the keystroke is already a CRDT update on
+    // its way to every peer, and the room persists it. Debouncing a whole-file
+    // POST on top of that would be both redundant and a stale-snapshot risk.
+    if (collabBoundRef.current) return;
+
+    setSaveStatus("unsaved");
     // Debounced vector sync after 1.5s inactivity
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
@@ -1426,6 +1536,12 @@ export function EditorLayout({
     // Let effects that need an editor instance re-run now that one exists.
     setEditorsNonce((n) => n + 1);
 
+    // Hand the instance to the collaboration session. Both editors share one
+    // Monaco model (both are created with path ""), so the binding attaches to
+    // the model once and only the cursor decorations are per-editor.
+    collab.registerEditor(editor, monaco);
+    editor.onDidDispose(() => collab.unregisterEditor(editor));
+
     setupDefaultLatexSyntaxAndEmeraldTheme(monaco, editor);
 
     const isCurrentlyDark = themeMounted
@@ -1499,6 +1615,31 @@ export function EditorLayout({
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
       setSearchOpen(true);
     });
+
+    // Route the keyboard through the same resolver as the toolbar buttons, so
+    // a collaborative session gets per-user undo instead of Monaco's
+    // document-wide stack (see handleUndo).
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyZ, () => {
+      if (!collabBoundRef.current) {
+        editor.trigger("keyboard", "undo", null);
+        return;
+      }
+      handleUndoRef.current?.();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyZ, () => {
+      if (!collabBoundRef.current) {
+        editor.trigger("keyboard", "redo", null);
+        return;
+      }
+      handleRedoRef.current?.();
+    });
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY, () => {
+      if (!collabBoundRef.current) {
+        editor.trigger("keyboard", "redo", null);
+        return;
+      }
+      handleRedoRef.current?.();
+    });
   };
 
   const lastSyncedHashRef = useRef<string>("");
@@ -1539,8 +1680,22 @@ export function EditorLayout({
     }
   };
 
+  /**
+   * The text to act on right now. While a collaboration room is bound, the
+   * Monaco model is the live document and the `code` state is a throttled
+   * mirror of it, so anything that must be exact (compile, the agent) reads
+   * the model instead of waiting for the mirror to catch up.
+   */
+  const currentDocumentText = (): string => {
+    if (collabBoundRef.current) {
+      const value = getActiveEditor()?.getModel?.()?.getValue?.();
+      if (typeof value === "string") return value;
+    }
+    return code;
+  };
+
   const handleCompile = async (currentCodeOverride?: string) => {
-    const targetCode = currentCodeOverride ?? code;
+    const targetCode = currentCodeOverride ?? currentDocumentText();
     if (!targetCode) return;
     setIsCompiling(true);
     setErrorLog(null);
@@ -1649,7 +1804,7 @@ export function EditorLayout({
           request_id: reqId,
           file_path: activeFilePath || "main.tex",
           user_prompt: userText,
-          current_code: code,
+          current_code: currentDocumentText(),
           model: activeModelName || "auto:smart",
           attached_file: filePayload,
           mode: effectiveMode,
@@ -2097,15 +2252,17 @@ export function EditorLayout({
     const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
-      editor.pushUndoStop();
-      editor.executeEdits(opts.source, [
-        {
-          range: model.getFullModelRange(),
-          text: updatedCode,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
+      // Minimal line edits, not a full-model replace: a replace spanning the
+      // whole document is last-write-wins over every concurrent keystroke and
+      // sends every collaborator's cursor to line 1. The surgical edits are
+      // what the Yjs binding turns into CRDT operations, so an accepted AI
+      // change reaches the other users through exactly the same path as typing.
+      const operations = applyTextToEditor(editor, monacoRef.current, updatedCode, opts.source);
+      collabLog("COLLAB_AI_EDIT", {
+        source: opts.source,
+        operations,
+        collaborative: collabBoundRef.current,
+      });
     }
     setCode(updatedCode);
 
@@ -2218,15 +2375,7 @@ export function EditorLayout({
     const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
-      editor.pushUndoStop();
-      editor.executeEdits("ai-revert", [
-        {
-          range: model.getFullModelRange(),
-          text: restoredCode,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
+      applyTextToEditor(editor, monacoRef.current, restoredCode, "ai-revert");
 
       // Restore cursor position, selection & scroll
       if (entry.cursorState) {
@@ -2271,15 +2420,7 @@ export function EditorLayout({
     const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
-      editor.pushUndoStop();
-      editor.executeEdits("ai-reapply", [
-        {
-          range: model.getFullModelRange(),
-          text: reappliedCode,
-          forceMoveMarkers: true,
-        },
-      ]);
-      editor.pushUndoStop();
+      applyTextToEditor(editor, monacoRef.current, reappliedCode, "ai-reapply");
     } else {
       setCode(reappliedCode);
     }
@@ -2618,21 +2759,41 @@ export function EditorLayout({
 
         {/* Right Column: Status & Action Toggles */}
         <div className="flex items-center gap-2 shrink-0">
-          {/* Save Status */}
+          {/* Save Status — while a collaboration room is bound this reflects
+              the room's server-side persistence (collab.savedAt), because the
+              client no longer POSTs the document itself. */}
           <span className="hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono">
-            {saveStatus === "saved" && (
+            {collabBound ? (
+              <>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    collab.status === "connected"
+                      ? "bg-emerald-600 dark:bg-[#10B981]"
+                      : "bg-[#FF9900] animate-pulse"
+                  }`}
+                />
+                <span className="text-slate-500 dark:text-[#9E9E9E]">
+                  {collab.status === "connected"
+                    ? collab.savedAt
+                      ? "Synced"
+                      : "Live"
+                    : "Local only"}
+                </span>
+              </>
+            ) : null}
+            {!collabBound && saveStatus === "saved" && (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-[#10B981]" />
                 <span className="text-slate-500 dark:text-[#9E9E9E]">Saved</span>
               </>
             )}
-            {saveStatus === "saving" && (
+            {!collabBound && saveStatus === "saving" && (
               <>
                 <RotateCw className="w-3 h-3 text-amber-600 dark:text-[#FF9900] animate-spin" />
                 <span className="text-amber-600 dark:text-[#FF9900]">Saving...</span>
               </>
             )}
-            {saveStatus === "unsaved" && (
+            {!collabBound && saveStatus === "unsaved" && (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900] animate-pulse" />
                 <span className="text-amber-600 dark:text-[#FF9900]">Unsaved</span>
@@ -2710,6 +2871,19 @@ export function EditorLayout({
             <Settings2 className="w-3.5 h-3.5" />
           </button>
 
+          {collab.enabled && (
+            <CollabPresenceBar
+              status={collab.status}
+              peers={collab.peers}
+              selfName={collabUser?.name || collabUser?.email || "You"}
+              selfColor={collab.selfColor}
+              selfImage={(collabUser as any)?.image ?? null}
+              activeFilePath={activeFilePath}
+              fatalError={collab.fatalError}
+              onRetry={collab.reconnect}
+            />
+          )}
+
           <CollaboratorAvatars projectId={projectId} />
         </div>
       </header>
@@ -2782,7 +2956,13 @@ export function EditorLayout({
                 height="100%"
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                 theme={monacoTheme}
-                value={code}
+                // Once the Yjs binding owns the model, React must stop setting
+                // `value`: @monaco-editor/react implements a value change as a
+                // full-model-range replace, which under a CRDT means "delete
+                // the whole document and insert a new one" — wiping concurrent
+                // edits and resetting every remote cursor.
+                value={collabBound ? undefined : code}
+                defaultValue={code}
                 beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
                 onMount={(editor, monaco) => handleEditorMount(editor, monaco, true)}
                 onChange={handleCodeChange}
@@ -3246,7 +3426,13 @@ export function EditorLayout({
                 height="100%"
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                 theme={monacoTheme}
-                value={code}
+                // Once the Yjs binding owns the model, React must stop setting
+                // `value`: @monaco-editor/react implements a value change as a
+                // full-model-range replace, which under a CRDT means "delete
+                // the whole document and insert a new one" — wiping concurrent
+                // edits and resetting every remote cursor.
+                value={collabBound ? undefined : code}
+                defaultValue={code}
                 beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
                 onMount={(editor, monaco) => handleEditorMount(editor, monaco, false)}
                 onChange={handleCodeChange}

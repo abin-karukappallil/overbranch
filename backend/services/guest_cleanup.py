@@ -121,6 +121,11 @@ async def start_cleanup_scheduler(interval_seconds: int = 900):
                 # Also drop PDF conversion job folders (uploads, renders, outputs) older than 24h
                 from pdf2latex.jobs import purge_old_jobs
                 await loop.run_in_executor(None, purge_old_jobs)
+                # And collaboration CRDT snapshots for projects nobody has
+                # opened in a month. The snapshot is a cache for restart
+                # safety; the document itself lives in latex_documents.
+                from collab.persistence import purge_stale_crdt_state
+                await loop.run_in_executor(None, purge_stale_crdt_state)
         except asyncio.CancelledError:
             logger.info("Guest cleanup scheduler stopped.")
             break

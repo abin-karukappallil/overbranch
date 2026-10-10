@@ -101,6 +101,87 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
         logger.warning(f"Failed to upsert latex_document ({file_path}): {e}")
 
 
+# ============================================================================
+# Reusable document read/write helpers
+# ============================================================================
+# These were previously inlined in the HTTP handlers. The realtime
+# collaboration layer (backend/collab) persists CRDT document state through the
+# exact same disk + Supabase path, so the two must not drift apart.
+
+def write_document_text(
+    project_id: str,
+    file_path: str,
+    raw_code: str,
+    from_room: bool = False,
+) -> Path:
+    """
+    Writes a text document to local disk and upserts it into Supabase
+    `latex_documents`. Returns the disk path written.
+
+    Supabase failures are logged and swallowed: local disk is the primary store
+    (`get_project_file` reads it first), and losing the mirror must not lose the
+    user's text.
+
+    If a realtime collaboration room for this project is open, the new text is
+    first applied *into* that room's CRDT (see backend/collab/inject.py), so
+    everyone currently editing receives it instead of discovering later that
+    their session and the database had diverged. `from_room=True` is how the
+    room's own flush opts out of that round trip — it is the source of the write.
+    """
+    if not from_room:
+        try:
+            from collab.inject import inject_document_text
+
+            inject_document_text(project_id, file_path, raw_code)
+        except Exception as collab_err:
+            logger.warning(f"Collaboration injection skipped for '{file_path}': {collab_err}")
+
+    target_path = get_project_disk_path(project_id, file_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(raw_code, encoding="utf-8")
+
+    try:
+        upsert_latex_document(get_supabase_client(), project_id, file_path, raw_code)
+    except Exception as db_err:
+        logger.warning(f"Supabase mirror write failed for '{file_path}': {db_err}")
+
+    return target_path
+
+
+def read_document_text(project_id: str, file_path: str) -> Optional[str]:
+    """
+    Reads a text document, disk first then the Supabase mirror. Returns None
+    when the file exists in neither — the caller decides whether that means
+    "new file" or "not found".
+    """
+    try:
+        target_path = get_project_disk_path(project_id, file_path)
+    except HTTPException:
+        raise
+    if target_path.exists():
+        try:
+            return target_path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as e:
+            logger.warning(f"Could not read '{file_path}' from disk as text: {e}")
+
+    try:
+        res = (
+            get_supabase_client()
+            .table("latex_documents")
+            .select("raw_code")
+            .eq("project_id", project_id)
+            .eq("file_path", file_path)
+            .execute()
+        )
+        rows = res.data or []
+        if rows:
+            return rows[0].get("raw_code") or ""
+    except Exception as e:
+        logger.warning(f"Supabase read failed for '{file_path}': {e}")
+
+    return None
+
+
 @router.post(
     "/api/projects/save-file",
     dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_save_file"))],
@@ -122,18 +203,11 @@ def save_project_file(
         is_guest = bool(auth_info.get("is_guest"))
         verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
-        # 1. Save to local disk
-        target_path = get_project_disk_path(req.project_id, req.file_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        target_path.write_text(req.raw_code, encoding="utf-8")
+        # 1 + 2. Local disk (primary) + Supabase latex_documents mirror.
+        # Shared with the realtime collaboration persister so both write the
+        # document exactly the same way.
+        target_path = write_document_text(req.project_id, req.file_path, req.raw_code)
         logger.info(f"Saved file to local disk: '{target_path}'")
-
-        # 2. Save / Upsert in Supabase Postgres latex_documents table safely
-        try:
-            upsert_latex_document(supabase, req.project_id, req.file_path, req.raw_code)
-            logger.info(f"Upserted document in Supabase latex_documents for project '{req.project_id}'.")
-        except Exception as db_err:
-            logger.warning(f"Supabase DB save fallback warning: {db_err}")
 
         return {
             "success": True,

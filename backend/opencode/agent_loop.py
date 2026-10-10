@@ -223,14 +223,18 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
 
 9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
    - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines.
-   - NEVER REMOVE OR ALTER \\begin{{...}} OR \\end{{...}} LINES UNLESS REPLACING THE ENTIRE ENVIRONMENT:
+   - RAW LATEX ONLY (NO MARKDOWN FENCES): NEVER wrap tool arguments (`new_str`, `content`, `new_content`) in markdown code fences (```latex ... ``` or ``` ... ```). All tool parameters must be clean, RAW LaTeX strings.
+   - DOCUMENT BOUNDARIES ARE IMMUTABLE: NEVER delete or omit `\\documentclass`, `\\begin{{document}}`, or `\\end{{document}}`. An edit that removes the document boundary will be rejected by validation.
+   - COMPLETE OPENING & CLOSING LINES ON REPLACEMENTS:
      * Never drop an opening `\\begin{{env}}` or closing `\\end{{env}}` tag.
      * When editing content INSIDE an environment (e.g. adding items inside `itemize` or paths inside `tikzpicture`), preserve the outer `\\begin{{...}}` and `\\end{{...}}` intact.
-   - COMPLETE OPENING & CLOSING LINES ON REPLACEMENTS:
-     * When replacing an environment, ALWAYS include BOTH the opening line (`\\begin{{...}}`) AND closing line (`\\end{{...}}`) in the replacement.
-   - NEVER EMIT PARTIAL ENVIRONMENTS:
+     * When replacing an entire environment, ALWAYS include BOTH the opening line (`\\begin{{...}}`) AND closing line (`\\end{{...}}`) in the replacement.
+   - NEVER EMIT PARTIAL ENVIRONMENTS OR LONELY ITEMS:
      * Never output an unclosed `\\begin{{...}}` or an unmatched `\\end{{...}}`.
      * Every environment (especially `frame`, `tikzpicture`, `itemize`, `enumerate`, `tabular`, `align`, `equation`) must be fully closed and balanced within the proposed edit.
+     * NEVER write `\\item` outside an `itemize`, `enumerate`, or `description` environment.
+   - PACKAGE DEPENDENCY INTEGRITY:
+     * When using commands or environments from LaTeX packages (e.g. `\\toprule`/`\\bottomrule` from `booktabs`, `\\includegraphics` from `graphicx`, `align`/`gather` from `amsmath`, `\\mathbb` from `amssymb`, `tikzpicture` from `tikz`), verify that the package is imported via `\\usepackage{{...}}` in the preamble.
    - BALANCED MATH DELIMITERS & BRACES:
      * Ensure all math delimiters (`$ ... $`, `$$ ... $$`, `\\( ... \\)`, `\\[ ... \\]`) and curly braces `{{ ... }}` are strictly balanced.
      * Never emit an odd number of `$` or unclosed `{{`.
@@ -825,6 +829,8 @@ def stream_opencode_agent(
     session_id: Optional[str] = None,
     project_files: Optional[Dict[str, str]] = None,
     user_context: Optional[Dict[str, Any]] = None,
+    base_version: Optional[int] = None,
+    base_sha256: Optional[str] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Generator-based OpenCode agent loop that yields SSE events.
@@ -849,6 +855,8 @@ def stream_opencode_agent(
         file_path=file_path,
         assets_dir=assets_dir,
         session_id=effective_session_id,
+        base_version=base_version,
+        base_sha256=base_sha256,
     )
     # Caller identity, used by tools that act on the user's behalf (e.g. convert_attached_pdf)
     workspace.user_context = user_context or {}
@@ -1515,6 +1523,7 @@ def stream_opencode_agent(
 
     repair_steps_granted = 0  # steps added to the budget so a compile repair can run
     last_compile: Dict[str, Any] = {}  # the latest compile verdict, for the final explanation
+    repair_states_seen: Set[str] = set()
 
     def deterministic_compile_repair(res: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -1524,8 +1533,10 @@ def stream_opencode_agent(
         fewer errors and no more new ones; otherwise undone. Returns the new compile
         result, or None when nothing was kept.
         """
-        errs = [e for e in (res.get("errors") or [])
-                if isinstance(e.get("line"), int) and str(e.get("file") or file_path).lstrip("./") == file_path.lstrip("./")]
+        errs = [
+            e for e in (res.get("errors") or res.get("new_errors") or [])
+            if str(e.get("file") or file_path).lstrip("./") == file_path.lstrip("./") or not e.get("file")
+        ]
         if not errs:
             return None
         try:
@@ -1534,7 +1545,7 @@ def stream_opencode_agent(
             buf = workspace.get_buffer()
             allowed = {i + 1 for i in changed_lines(workspace.get_original(), buf)}
             if getattr(workspace, "compile_strict", False):
-                allowed |= {e["line"] for e in errs}
+                allowed |= {e["line"] for e in errs if isinstance(e.get("line"), int)}
             patched, fixes = repair_from_compile_errors(buf, errs, allowed)
         except Exception as e:
             logger.warning(f"deterministic compile repair skipped: {e}")
@@ -1580,6 +1591,16 @@ def stream_opencode_agent(
         if res.get("success"):
             compile_verified = True
             return "ok", res
+
+        # Cycle / Repeat detection
+        import hashlib
+        current_hash = hashlib.sha256(workspace.get_buffer().encode("utf-8")).hexdigest()
+        err_signatures = tuple(sorted(str(e.get("error", ""))[:60] for e in (res.get("errors") or res.get("new_errors") or [])))
+        repair_signature = f"{current_hash}:{err_signatures}"
+        if repair_signature in repair_states_seen and compile_repairs > 0:
+            logger.warning("Cycle detected in compile repairs (repeated candidate and error signatures).")
+        repair_states_seen.add(repair_signature)
+
         if not final and compile_repairs < MAX_COMPILE_REPAIRS:
             if steps_taken >= actual_max_steps and repair_steps_granted < MAX_COMPILE_REPAIRS:
                 actual_max_steps += 1
@@ -1594,20 +1615,28 @@ def stream_opencode_agent(
         # `errors` are the ones that fail the check: the new ones, or — for a fix
         # request — every error still in the document.
         errs = res.get("errors") or res.get("new_errors") or []
-        diag = "\n".join(
-            f"- [{('Line ' + str(e.get('line'))) if e.get('line') else 'Document'}"
-            f"{(' of ' + str(e.get('file'))) if e.get('file') and e.get('file') != file_path else ''}] "
-            f"{e.get('error')}"
-            + (f" -> Fix: {e.get('suggested_action')}" if e.get('suggested_action') else "")
-            for e in errs[:6]
-        ) or res.get("summary", "Compilation failed")
+        diag_lines = []
+        for e in errs[:6]:
+            loc = f"Line {e.get('line')}" if e.get('line') else "Document / Preamble"
+            if e.get("file") and e.get("file") != file_path:
+                loc += f" ({e.get('file')})"
+            etype = f"[{e.get('type')}] " if e.get("type") else ""
+            act = f" -> Suggested action: {e.get('suggested_action')}" if e.get('suggested_action') else ""
+            diag_lines.append(f"- {loc}: {etype}{e.get('error')}{act}")
+        diag = "\n".join(diag_lines) or res.get("summary", "Compilation failed")
         what = ("The document still does not compile" if res.get("strict")
                 else "COMPILATION FAILED after your edits")
+        stderr_text = (res.get('stderr') or '')[:1200]
         return (
             f"{what} (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
-            f"{(res.get('stderr') or '')[:1200]}\n\n"
-            "Fix ONLY these errors with the smallest edit (replace_text with node_id/line_hint), then set done=true. "
-            "If they cannot be fixed, the whole change is rolled back."
+            f"ERROR CONTEXT & LOG:\n{stderr_text}\n\n"
+            f"ORIGINAL USER INSTRUCTION: \"{user_instruction}\"\n\n"
+            "MANDATORY REPAIR GUIDELINES:\n"
+            "1. Output RAW LaTeX only. NEVER use markdown code fences (```latex ... ```) in tool arguments.\n"
+            "2. If an environment or brace is unclosed, balance it with the matching closer.\n"
+            "3. If a macro is undefined (e.g. \\toprule, \\align, \\includegraphics, \\mathbb), ensure \\usepackage{...} is in the preamble.\n"
+            "4. NEVER place \\item outside of an itemize/enumerate environment.\n"
+            "5. Apply ONLY the surgical fix for the errors above using `replace_text` with node_id or line_hint, then set done=true."
         )
 
     had_fallback = False
@@ -2271,13 +2300,19 @@ def stream_opencode_agent(
             workspace.rollback_transaction(run_tx)
             agent_trace.compile_result = "failed"
             agent_trace.failure_reason = "compile_failed_after_repairs"
+            err_descs = [str(e.get("error", ""))[:120] for e in errs[:3]]
+            err_summary = "; ".join(err_descs) if err_descs else "Unknown compilation errors"
             failure_payload = {
                 "message": SAFE_FAILURE_MESSAGE,
                 "operation": "edit",
-                "reason": "The edited document did not compile, and the automatic repairs did not fix it.",
+                "reason": (
+                    f"The edited document did not compile, and the automatic repairs did not fix it "
+                    f"({compile_repairs} repair attempt(s)). Failing errors: {err_summary}"
+                ),
                 "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
-                "errors": [str(e.get("error", ""))[:200] for e in errs[:3]],
+                "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
                 "document_unchanged": True,
+                "compile_repairs": compile_repairs,
             }
             yield {"type": "compile_error", "message": SAFE_FAILURE_MESSAGE, "errors": errs[:5]}
     elif llm_failure is not None:
@@ -2401,6 +2436,7 @@ def stream_opencode_agent(
             modified=workspace.get_buffer(),
             file_path=file_path,
             explanation=agent_explanation,
+            base_version=workspace.base_version,
         )
         yield diff_payload
 
@@ -2464,6 +2500,7 @@ def stream_opencode_agent(
                 # Authoritative pair, as on final_diff: the client writes the
                 # validated, compiled buffer when its document is still `original_code`.
                 "has_changes": True,
+                "base_version": workspace.base_version,
                 "original_code": workspace.get_original(),
                 "proposed_code": workspace.get_buffer(),
                 "partial": partial_payload,
@@ -2496,6 +2533,7 @@ def stream_opencode_agent(
                 # Explicit: the editor otherwise scrapes LaTeX out of the explanation and
                 # offers it as an edit that has no anchor and can never be applied.
                 "has_changes": False,
+                "base_version": workspace.base_version,
                 "explanation": agent_explanation or "Agent completed without modifying the document.",
                 "edits": [],
                 "steps_taken": steps_taken,
@@ -2534,6 +2572,8 @@ def run_opencode_agent(
     assets_dir: Optional[str] = None,
     session_id: Optional[str] = None,
     project_files: Optional[Dict[str, str]] = None,
+    base_version: Optional[int] = None,
+    base_sha256: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Synchronous wrapper around stream_opencode_agent.
@@ -2557,6 +2597,8 @@ def run_opencode_agent(
         assets_dir=assets_dir,
         session_id=session_id,
         project_files=project_files,
+        base_version=base_version,
+        base_sha256=base_sha256,
     ):
         events.append(event)
         if event.get("type") == "result":

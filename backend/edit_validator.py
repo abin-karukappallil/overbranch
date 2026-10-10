@@ -73,6 +73,16 @@ _RE_BRACKET_OPEN = re.compile(
     r"(?<!\\)(?:\\\\)*\\\[(?!\s*-?\d+(?:\.\d+)?\s*(?:pt|mm|cm|in|ex|em|bp|dd|pc|sp)\s*\])"
 )
 _RE_BRACKET_CLOSE = re.compile(r"(?<!\\)(?:\\\\)*\\\]")
+_RE_MARKDOWN_FENCE = re.compile(r"```")
+_RE_ITEM = re.compile(r"\\item(?![a-zA-Z])")
+_LIST_ENVS = frozenset({
+    "itemize", "enumerate", "description", "list", "trivlist", "thebibliography",
+    "compactitem", "compactenum", "compactdesc", "inparaenum", "inparaitem",
+})
+_RE_DOCCLASS = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
+_RE_BEGIN_DOC = re.compile(r"\\begin\s*\{document\}")
+_RE_END_DOC = re.compile(r"\\end\s*\{document\}")
+_RE_FRAME = re.compile(r"\\begin\s*\{frame\}")
 
 
 def _match_brace(s: str, i: int) -> int:
@@ -307,10 +317,12 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
     """
     Strict pre-commit validation step for the edit pipeline.
     Validates:
-    1. Every \\begin{X} has a matching \\end{X} in correct nesting order.
-    2. $, $$, \\( \\), \\[ \\] delimiters are balanced.
-    3. Braces { } are balanced.
-    4. \\left and \\right are paired.
+    1. Markdown code fences are not accidentally embedded in LaTeX.
+    2. Every \\begin{X} has a matching \\end{X} in correct nesting order.
+    3. Lonely \\item is enclosed inside a valid list environment.
+    4. $, $$, \\( \\), \\[ \\] delimiters are balanced.
+    5. Braces { } are balanced with exact line reporting.
+    6. \\left and \\right are paired.
 
     Comments, verbatim-like environments, URL arguments and macro definition
     bodies are neutralised first (see ``clean_latex_for_validation``).
@@ -325,10 +337,22 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
     cleaned = clean_latex_for_validation(latex_code)
     lines = cleaned.splitlines(keepends=True)
 
-    # 1. Environment Matching Stack
+    # 1. Environment Matching Stack & Markdown Fences
     stack: List[Tuple[str, int]] = []
 
     for idx, line in enumerate(lines, start=1):
+        if _RE_MARKDOWN_FENCE.search(line):
+            errors.append(f"Line {idx}: Markdown code fence (```) detected in LaTeX document")
+
+        # Check for lonely \item outside list environments
+        if _RE_ITEM.search(line):
+            in_list = any(
+                e[0] in _LIST_ENVS or e[0].endswith("item") or e[0].endswith("enum") or e[0].endswith("list")
+                for e in stack
+            )
+            if not in_list:
+                errors.append(f"Line {idx}: Lonely \\item outside list environment (must be inside itemize or enumerate)")
+
         for m in _RE_ENV_TAG.finditer(line):
             tag_type = m.group(1)
             env_name = m.group(2)
@@ -337,9 +361,21 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
             elif tag_type == "end":
                 if not stack:
                     errors.append(f"Line {idx}: Unmatched \\end{{{env_name}}} (no open environment)")
+                elif stack[-1][0] == env_name:
+                    stack.pop()
                 else:
-                    top_env, top_line = stack.pop()
-                    if top_env != env_name:
+                    # Check if matching begin is further up the stack
+                    matching_idx = None
+                    for s_i in range(len(stack) - 1, -1, -1):
+                        if stack[s_i][0] == env_name:
+                            matching_idx = s_i
+                            break
+                    if matching_idx is not None:
+                        for unclosed_env, unclosed_line in stack[matching_idx + 1:]:
+                            errors.append(f"Line {idx}: \\begin{{{unclosed_env}}} from line {unclosed_line} was never closed before \\end{{{env_name}}}")
+                        stack = stack[:matching_idx]
+                    else:
+                        top_env, top_line = stack.pop()
                         errors.append(
                             f"Line {idx}: Mismatched \\end{{{env_name}}}, expected \\end{{{top_env}}} from line {top_line}"
                         )
@@ -369,19 +405,25 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
 
     # 3. Curly Braces Balance { }
     brace_depth = 0
+    brace_stack: List[int] = []
     for idx, line in enumerate(lines, start=1):
         line_clean = _RE_ESCAPED_BRACE.sub("", line)
         for char in line_clean:
             if char == "{":
                 brace_depth += 1
+                brace_stack.append(idx)
             elif char == "}":
                 brace_depth -= 1
-                if brace_depth < 0:
+                if brace_stack:
+                    brace_stack.pop()
+                else:
                     errors.append(f"Line {idx}: Extra closing brace '}}'")
+                if brace_depth < 0:
                     brace_depth = 0
 
     if brace_depth > 0:
-        errors.append(f"Unclosed '{{' curly brace(s) (nesting depth: {brace_depth})")
+        line_prefix = f"Line {brace_stack[-1]}: " if brace_stack else ""
+        errors.append(f"{line_prefix}Unclosed '{{' curly brace(s) (nesting depth: {brace_depth})")
 
     # 4. \left / \right pairing
     n_left = len(_RE_LEFT.findall(cleaned))
@@ -408,6 +450,100 @@ def _error_signature(message: str) -> str:
     return _RE_ERROR_NUMBERS.sub("#", stripped).strip()
 
 
+def validate_document_invariants(before: str, after: str) -> Tuple[bool, List[str]]:
+    """
+    Validates document structure invariants between before and after edits.
+    Guarantees that critical document boundaries, documentclass, and beamer
+    structure are preserved unless explicitly modified.
+    """
+    if not before or not before.strip():
+        errors: List[str] = []
+        if after and after.strip():
+            if _RE_MARKDOWN_FENCE.search(after):
+                errors.append("Markdown code fences (```) detected in candidate document.")
+            m_cls = _RE_DOCCLASS.search(after)
+            m_doc = _RE_BEGIN_DOC.search(after)
+            if m_cls and m_doc and m_cls.start() > m_doc.start():
+                errors.append("Document invariant: \\documentclass appears after \\begin{document}.")
+        return len(errors) == 0, errors
+
+    errors: List[str] = []
+
+    # 1. Document class preservation
+    if _RE_DOCCLASS.search(before) and not _RE_DOCCLASS.search(after):
+        errors.append("Document invariant violated: \\documentclass was removed.")
+
+    # 2. Document boundaries preservation
+    if _RE_BEGIN_DOC.search(before) and not _RE_BEGIN_DOC.search(after):
+        errors.append("Document invariant violated: \\begin{document} was removed.")
+    if _RE_END_DOC.search(before) and not _RE_END_DOC.search(after):
+        errors.append("Document invariant violated: \\end{document} was removed.")
+
+    # 3. Duplicate document boundaries
+    if len(_RE_BEGIN_DOC.findall(after)) > 1:
+        errors.append("Document invariant violated: Multiple \\begin{document} declarations.")
+    if len(_RE_END_DOC.findall(after)) > 1:
+        errors.append("Document invariant violated: Multiple \\end{document} declarations.")
+
+    # 4. Preamble order: documentclass must precede begin{document}
+    m_cls = _RE_DOCCLASS.search(after)
+    m_begin = _RE_BEGIN_DOC.search(after)
+    if m_cls and m_begin and m_cls.start() > m_begin.start():
+        errors.append("Document invariant violated: \\documentclass appears after \\begin{document}.")
+
+    # 5. Beamer frame integrity: never wipe out all frames in a Beamer document
+    frames_before = len(_RE_FRAME.findall(before))
+    frames_after = len(_RE_FRAME.findall(after))
+    if frames_before >= 1 and frames_after == 0 and len(after.strip()) > 50:
+        errors.append("Document invariant violated: All Beamer frames were removed.")
+
+    return len(errors) == 0, errors
+
+
+def classify_edit_risk(before: str, after: str) -> Dict[str, Any]:
+    """
+    Classifies the risk level of an edit (LOW, MEDIUM, HIGH) based on scope,
+    structure, and preamble changes.
+    """
+    reasons: List[str] = []
+    if not before.strip():
+        return {"risk": "high", "reasons": ["Creating new document from scratch"]}
+
+    b_lines = before.splitlines()
+    a_lines = after.splitlines()
+
+    # Preamble changes
+    m_begin_b = _RE_BEGIN_DOC.search(before)
+    m_begin_a = _RE_BEGIN_DOC.search(after)
+    preamble_changed = False
+    if m_begin_b and m_begin_a:
+        preamble_b = before[:m_begin_b.start()]
+        preamble_a = after[:m_begin_a.start()]
+        if preamble_b.strip() != preamble_a.strip():
+            preamble_changed = True
+            reasons.append("Preamble modified")
+
+    # Documentclass change
+    m_cls_b = _RE_DOCCLASS.search(before)
+    m_cls_a = _RE_DOCCLASS.search(after)
+    if m_cls_b and m_cls_a and m_cls_b.group(0).strip() != m_cls_a.group(0).strip():
+        reasons.append("Documentclass modified")
+
+    # Scale of edit
+    changed_count = abs(len(a_lines) - len(b_lines)) + sum(1 for x, y in zip(b_lines, a_lines) if x != y)
+    total = max(1, len(b_lines))
+    ratio = changed_count / total
+
+    if (ratio > 0.5 and total >= 8) or len(a_lines) > total * 2:
+        reasons.append(f"Large document replacement ({int(ratio * 100)}% lines modified)")
+
+    if any("documentclass" in r.lower() for r in reasons) or any("large" in r.lower() for r in reasons):
+        return {"risk": "high", "reasons": reasons}
+    if preamble_changed or (ratio > 0.25 and changed_count > 2):
+        return {"risk": "medium", "reasons": reasons}
+    return {"risk": "low", "reasons": reasons or ["Localized edit"]}
+
+
 def validate_edit(before: str, after: str) -> Tuple[bool, List[str]]:
     """
     Differential pre-commit validation: does ``after`` introduce structural
@@ -427,6 +563,9 @@ def validate_edit(before: str, after: str) -> Tuple[bool, List[str]]:
     """
     ok_after, errors_after = validate_latex_pre_commit(after)
     if ok_after:
+        inv_ok, inv_errors = validate_document_invariants(before, after)
+        if not inv_ok:
+            return False, inv_errors
         return True, []
 
     _, errors_before = validate_latex_pre_commit(before)
@@ -469,6 +608,10 @@ def validate_edit(before: str, after: str) -> Tuple[bool, List[str]]:
                     before, after, clean_before, clean_after, kind):
                 new_errors.append(f"{e} — the edited text is itself unbalanced")
 
+    inv_ok, inv_errors = validate_document_invariants(before, after)
+    if not inv_ok:
+        new_errors.extend(inv_errors)
+
     return len(new_errors) == 0, new_errors
 
 
@@ -483,8 +626,9 @@ _AGGREGATE_PREFIXES = (
 
 
 def _aggregate_kind(message: str) -> Optional[str]:
+    msg = _RE_ERROR_LINE_PREFIX.sub("", message)
     for kind, prefix in _AGGREGATE_PREFIXES:
-        if message.startswith(prefix):
+        if msg.startswith(prefix) or (kind == "brace" and "Unclosed '{' curly brace" in message):
             return kind
     return None
 

@@ -64,7 +64,12 @@ WORKDIR /app/backend
 
 ENV PORT=8000
 ENV HOST=0.0.0.0
-ENV WORKERS=2
+# Realtime collaboration rooms are per-process: two workers would give two
+# users two independent copies of the same document. Set WORKERS>1 only with
+# COLLAB_ENABLED=0, or behind a proxy that pins /ws/collab/<project_id> to one
+# worker. The app is async and compiles run in their own bounded thread pool,
+# so one worker is not the bottleneck it looks like.
+ENV WORKERS=1
 ENV UPLOADS_BASE_DIR=/app/uploads/projects
 
 EXPOSE 8000
@@ -75,13 +80,15 @@ VOLUME ["/app/uploads"]
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -sf http://localhost:${PORT:-8000}/api/health || exit 1
 
-# Production Uvicorn startup with multi-worker concurrency, keepalive > proxy timeout, and request recycling
+# Production Uvicorn startup. Note: --limit-max-requests recycles a worker
+# after N requests; a websocket counts as one long-lived request, so it is
+# raised here to keep collaboration sockets from being cycled mid-session.
 CMD exec python3 -m uvicorn main:app \
     --host 0.0.0.0 \
     --port ${PORT:-8000} \
-    --workers ${WORKERS:-2} \
+    --workers ${WORKERS:-1} \
     --timeout-keep-alive 65 \
     --timeout-graceful-shutdown 30 \
-    --limit-concurrency 100 \
-    --limit-max-requests 2000
+    --limit-concurrency 200 \
+    --limit-max-requests 10000
 

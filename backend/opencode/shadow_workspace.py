@@ -83,6 +83,8 @@ class ShadowWorkspace:
         file_path: str = "main.tex",
         assets_dir: Optional[str] = None,
         session_id: Optional[str] = None,
+        base_version: Optional[int] = None,
+        base_sha256: Optional[str] = None,
     ):
         self._original: str = original_code
         self._buffer: str = ensure_document_environment(original_code)
@@ -91,6 +93,8 @@ class ShadowWorkspace:
         self._file_path: str = file_path
         self._assets_dir: Optional[str] = assets_dir
         self._session_id: str = session_id or project_id or "default"
+        self._base_version: Optional[int] = base_version
+        self._base_sha256: Optional[str] = base_sha256
         self._lock = threading.RLock()
         self._edit_history: List[Dict[str, Any]] = []
         self._doc_index = DocumentIndex()
@@ -117,6 +121,14 @@ class ShadowWorkspace:
     @property
     def file_path(self) -> str:
         return self._file_path
+
+    @property
+    def base_version(self) -> Optional[int]:
+        return self._base_version
+
+    @property
+    def base_sha256(self) -> Optional[str]:
+        return self._base_sha256
 
     # ------------------------------------------------------------------
     # Snapshot & Undo operations
@@ -280,6 +292,8 @@ class ShadowWorkspace:
 
     def replace_all(self, new_content: str) -> Dict[str, Any]:
         """Replaces the entire shadow buffer with new content after pre-commit validation."""
+        from latex_error_fixer import sanitize_edit_latex
+        new_content = sanitize_edit_latex(new_content)
         with self._lock:
             passed, healed, errors, _ = self._heal_and_validate(new_content)
             if not passed:
@@ -401,6 +415,8 @@ class ShadowWorkspace:
             ShadowWorkspaceError: If ``old_str`` is not found in the buffer.
         """
         with self._lock:
+            from latex_error_fixer import sanitize_edit_latex
+            new_str = sanitize_edit_latex(new_str)
             # Handle empty buffer initialization (e.g. creating brand new document
             # from scratch). This is the single largest write in the system, so it
             # gets the same heal + validate + snapshot treatment as every other
@@ -522,6 +538,8 @@ class ShadowWorkspace:
         Replaces a chunk's full content using DocumentIndex byte/character offsets.
         This is the preferred tool when operating in full document rewrite mode.
         """
+        from latex_error_fixer import sanitize_edit_latex
+        new_content = sanitize_edit_latex(new_content)
         with self._lock:
             chunks = self._doc_index.get_chunks(self._buffer)
             target = next((c for c in chunks if c.chunk_id == chunk_id), None)
@@ -593,18 +611,9 @@ class ShadowWorkspace:
     ) -> Dict[str, Any]:
         """
         Inserts content into a specific document chunk.
-
-        When position="end" (default):
-          - If the chunk contains \\end{thebibliography}, inserts BEFORE \\end{thebibliography}.
-          - If content contains \\item or \\bibitem and the chunk contains a list environment,
-            inserts BEFORE the closing list tag.
-          - If the chunk contains \\end{frame}, inserts BEFORE \\end{frame}.
-          - Otherwise, inserts at the end of the chunk content.
-
-        When position="begin":
-          - Inserts after the opening section/chapter/frame/environment declaration line.
-          - Otherwise, inserts at the start of the chunk.
         """
+        from latex_error_fixer import sanitize_edit_latex
+        content = sanitize_edit_latex(content)
         with self._lock:
             chunks = self._doc_index.get_chunks(self._buffer)
             target = next((c for c in chunks if c.chunk_id == chunk_id), None)
@@ -811,6 +820,8 @@ class ShadowWorkspace:
     def _splice(self, start: int, end: int, new_text: str, op: str, node: Any = None,
                 method: str = "node") -> Dict[str, Any]:
         """Applies one span replacement through the shared write gate."""
+        from latex_error_fixer import sanitize_edit_latex
+        new_text = sanitize_edit_latex(new_text)
         baseline = self._buffer
         candidate = baseline[:start] + new_text + baseline[end:]
         ok, candidate, errors, fixes = self._heal_and_validate(candidate, baseline=baseline)

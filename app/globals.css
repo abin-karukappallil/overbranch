@@ -443,3 +443,36 @@ html, body {
   background: var(--border);
   border-radius: 9999px;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Realtime collaboration: remote cursors and selections in Monaco.
+
+   The per-collaborator colour and the name label live in a generated
+   stylesheet (lib/collab/monaco-binding.ts) because both depend on the user id
+   and display name at runtime. These are only the shared, static parts.
+
+   The label is an absolutely-positioned `::after` on the caret decoration, not
+   Monaco injected text: injected text takes part in layout and would push the
+   local user's own characters sideways every time a collaborator's caret moved.
+   ─────────────────────────────────────────────────────────────────────────── */
+/* The selection colour is already a low-alpha rgba (lib/collab/colors.ts), so
+   the glyphs stay readable without a blend mode — which, on a `className`
+   decoration, would blend the text itself and not just its background. */
+.ob-remote-selection {
+  border-radius: 2px;
+}
+
+.ob-remote-head {
+  /* The caret must not widen the line box, or text would reflow around it. */
+  margin-left: -1px;
+  pointer-events: none;
+}
+
+/* A caret on line 1 has nothing above it to hang the label on — the editor
+   viewport would clip it — so the binding marks that case and the label drops
+   below the caret instead. (Monaco reuses and reorders its `.view-line` DOM
+   nodes, so a `:first-child` selector could not be relied on for this.) */
+.ob-remote-head.ob-remote-head-below::after {
+  top: 1.15em;
+  border-radius: 0 4px 4px 4px;
+}

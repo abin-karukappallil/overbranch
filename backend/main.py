@@ -41,11 +41,25 @@ async def lifespan(app: FastAPI):
     from services.guest_cleanup import start_cleanup_scheduler
     _cleanup_task = asyncio.create_task(start_cleanup_scheduler(900))
 
+    # Realtime collaboration: start the idle-room reaper. Rooms themselves are
+    # created lazily by the first websocket for a project.
+    from collab import config as collab_config, room_manager, warn_if_multi_worker
+    if collab_config.enabled:
+        warn_if_multi_worker()
+        await room_manager.start_reaper()
+
     yield
 
     logger.info("OverBranch TeX Engine API shutting down gracefully...")
     if _cleanup_task and not _cleanup_task.done():
         _cleanup_task.cancel()
+
+    # Flush every live collaboration room before the process exits, so a
+    # deploy cannot drop keystrokes that were still inside the debounce window.
+    try:
+        await room_manager.shutdown()
+    except Exception as e:
+        logger.warning(f"Error shutting down collaboration rooms: {e}")
 
     from database import close_db
     try:
@@ -78,12 +92,14 @@ app.add_middleware(
 
 from routes.pdf_convert import router as pdf_convert_router
 from routes.agent_routes import router as agent_opencode_router
+from routes.collab_routes import router as collab_router
 
 app.include_router(project_storage.router)
 app.include_router(template_service.router)
 app.include_router(file_analyzer.router, prefix="/api")
 app.include_router(pdf_convert_router)
 app.include_router(agent_opencode_router)
+app.include_router(collab_router)
 
 
 class FileAsset(BaseModel):
