@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import provider_router
@@ -89,6 +89,119 @@ def _compile_status_note(last_compile: Dict[str, Any], compile_available: bool, 
         return "✓ Compiles without errors."
     return (f"No new compile errors; {remaining} error(s) that were already in the document "
             f"remain (not caused by this change).")
+
+
+# Recompiles the gate may spend on deterministic repairs before an LLM round. One
+# is nearly always enough — TeX reports every misplaced token of a run — but a
+# repair can uncover an error the first one was hiding (a cascade ends, a merged
+# table row splits), and each round must lower the error count to be kept.
+MAX_DETERMINISTIC_REPAIR_ROUNDS = 3
+
+
+def format_compile_diagnostics(errors: List[Dict[str, Any]], code: str, file_path: str = "main.tex",
+                               limit: int = 12) -> str:
+    """
+    Compile errors as the model should see them: on the line the offending token
+    is really on, with a caret under it.
+
+    The feedback used to show three lines either side of the line TeX printed. For
+    a Beamer frame that line is ``\\end{frame}`` — TeX reads the whole frame before
+    it reports anything — so the model was looking at a closing tag while the bare
+    ``&`` sat eight lines above, outside the excerpt, and it guessed. Errors are
+    listed per occurrence for the same reason: "one error" for a frame holding
+    four made the model fix one per round until the rounds ran out.
+
+    An error whose token could not be placed is shown with the whole construct TeX
+    was reading. "Somewhere in this frame" is true; a confident wrong line is not.
+    """
+    lines = code.splitlines() if code else []
+    own = file_path.replace("./", "", 1)
+    ampersands: Optional[list] = None
+    shown_blocks: Set[Tuple[int, int]] = set()
+    seen: Set[Tuple[Any, Any, Any, str]] = set()
+    entries: List[str] = []
+    actions: Dict[str, str] = {}
+    hidden = 0
+
+    def numbered(lo: int, hi: int, mark: Optional[int] = None) -> str:
+        return "\n".join(f"{'>>> ' if n == mark else '    '}{n:4d} | {lines[n - 1]}" for n in range(lo, hi + 1))
+
+    for e in errors or []:
+        msg = str(e.get("error", "")).strip()
+        ln, col = e.get("line"), e.get("col")
+        fname = str(e.get("file") or own).replace("./", "", 1)
+        key = (fname, ln, col, msg)
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(entries) >= limit:
+            hidden += 1
+            continue
+        etype = f" [{e.get('type')}]" if e.get("type") else ""
+        if e.get("type") and e.get("suggested_action"):
+            actions.setdefault(str(e["type"]), str(e["suggested_action"]))
+
+        if not (fname == own and isinstance(ln, int) and 1 <= ln <= len(lines)):
+            where = (f"Line {ln} of {fname}" if isinstance(ln, int)
+                     else fname if fname != own else "Document / preamble")
+            tex = f"\n      TeX stopped at: {e.get('context')}" if e.get("context") else ""
+            entries.append(f"- {where}: {msg}{etype}{tex}")
+            continue
+
+        span = e.get("span") if isinstance(e.get("span"), (list, tuple)) and len(e.get("span")) == 2 else None
+        if span is None and not e.get("located_by"):
+            # An error from a log that carried no context (latexmk, a pasted log): the
+            # line may still be the end of a frame, and then the frame is what to show.
+            try:
+                from latex_diagnostics import enclosing_span
+                span = enclosing_span(lines, ln)
+            except Exception:
+                span = None
+        reported = e.get("reported_line")
+        if e.get("located_by") and isinstance(col, int):
+            hint = ""
+            if "alignment tab" in msg.lower():
+                if ampersands is None:
+                    try:
+                        from latex_specials import classify_ampersands
+                        ampersands = classify_ampersands(code)
+                    except Exception:
+                        ampersands = []
+                amp = next((a for a in ampersands if a.line == ln and a.col == col), None)
+                if amp is not None:
+                    from latex_specials import describe
+                    hint = " " + describe(amp)
+            caret = " " * (col - 1) + "^" * max(1, len(str(e.get("token") or "")))
+            note = ""
+            if isinstance(reported, int) and reported != ln and 1 <= reported <= len(lines):
+                note = (f"\n      (TeX printed line {reported}, `{lines[reported - 1].strip()[:40]}`, for this error: "
+                        f"it reports where it stopped reading, not where the mistake is.)")
+            entries.append(f"- Line {ln}, column {col}: {msg}{etype}\n"
+                           f"      {ln:4d} | {lines[ln - 1]}\n"
+                           f"           | {caret}{hint}{note}")
+        elif span and span[1] > span[0] and not e.get("located_by"):
+            lo, hi = max(1, int(span[0])), min(len(lines), int(span[1]))
+            head = f"- Lines {lo}-{hi}: {msg}{etype}"
+            if (lo, hi) in shown_blocks:
+                entries.append(head + "\n      (somewhere in the block shown above)")
+                continue
+            shown_blocks.add((lo, hi))
+            last = min(hi, lo + 59)
+            more = f"\n      … ({hi - last} more line(s) of this block)" if last < hi else ""
+            tex = f"\n      TeX stopped at: {e.get('context')}" if e.get("context") else ""
+            entries.append(f"{head}\n      TeX reports every error of this block at its last line ({hi}); the "
+                           f"offending token is somewhere inside it.{tex}\n{numbered(lo, last)}{more}")
+        else:
+            entries.append(f"- Line {ln}: {msg}{etype}\n"
+                           f"{numbered(max(1, ln - 2), min(len(lines), ln + 2), mark=ln)}")
+
+    if not entries:
+        return ""
+    if hidden:
+        entries.append(f"(+ {hidden} more error(s) of the same kinds, not shown)")
+    if actions:
+        entries.append("How to fix:\n" + "\n".join(f"  [{k}] {v}" for k, v in actions.items()))
+    return "\n".join(entries)
 
 
 def _friendly_llm_error(err: Exception) -> str:
@@ -181,10 +294,12 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Exactly ONE `\\begin{{document}}` and `\\end{{document}}`.
    - Complete environment nesting: Every `\\begin{{env}}` (itemize, enumerate, tabular, tabularx, align, equation, frame, etc.) MUST be closed cleanly with `\\end{{env}}`.
    - In Beamer presentations, every frame MUST be enclosed in `\\begin{{frame}} ... \\end{{frame}}`. Never leave a frame unclosed before `\\end{{document}}` or before the next frame. Never place content outside a frame. Max 6 bullets/slide to prevent overflow.
-   - LIST & BULLET INTEGRITY: NEVER write `\\item` outside of a list environment! Every single `\\item` MUST be enclosed within `\\begin{{itemize}} ... \\end{{itemize}}` or `\\begin{{enumerate}} ... \\end{{enumerate}}`. A lonely `\\item` outside a list environment is a fatal LaTeX error!
-   - TIKZ INTEGRITY: Every statement inside `\\begin{{tikzpicture}}` (`\\draw`, `\\node`, `\\fill`, `\\path`, `\\coordinate`, `\\clip`, `\\shade`) MUST end with a semicolon (`;`). Multi-line commands must terminate with `;` on the final line. When coordinate arithmetic `($...$)` is used, ALWAYS ensure `\\usetikzlibrary{{calc}}` is in the preamble.
-   - Escape text-mode special characters: `_ % & # $` outside math mode. Wrap mathematical variables and equations in `$ ... $`, `\\[ ... \\]`, or `\\begin{{equation}} ... \\end{{equation}}`.
-   - Table consistency: In `tabular` / `tabularx`, every row must have the exact number of column dividers (`&`) matching the column specification and end with `\\\\`.
+   - LIST & BULLET INTEGRITY: NEVER write `\\item` outside of a list environment! Every single `\\item` MUST be enclosed within `\\begin{{itemize}} ... \\end{{itemize}}` or `\\begin{{enumerate}} ... \\end{{enumerate}}`. NEVER write raw introductory prose, headings, or markdown paragraphs directly inside `\\begin{{itemize}}` or `\\begin{{enumerate}}` before the first `\\item` (any introductory text MUST be placed BEFORE `\\begin{{itemize}}`). An empty list like `\\begin{{itemize}}\\end{{itemize}}` is illegal.
+   - TIKZ & MATH INTEGRITY: Every statement inside `\\begin{{tikzpicture}}` (`\\draw`, `\\node`, `\\fill`, `\\path`, `\\coordinate`, `\\clip`, `\\shade`) MUST end with a semicolon (`;`). Multi-line commands must terminate with `;` on the final line. When coordinate arithmetic `($...$)` is used, ALWAYS ensure `\\usetikzlibrary{{calc}}` is in the preamble. Inside TikZ `\\node` text or labels, all mathematical variables, formulas, fractions (`\\frac{{a}}{{b}}`), and symbols (`\\alpha`) MUST be wrapped in math mode (`$ ... $`). When using `\\blacksquare`, ensure `\\usepackage{{amssymb}}` is loaded.
+   - SPECIAL CHARACTERS IN TEXT (the most common reason a document fails to compile — check every title, bullet, caption, table cell and TikZ node label before you answer): `&` `%` `#` `_` `$` are LaTeX syntax, never plain characters. In prose write `\\&` `\\%` `\\#` `\\_` `\\$` — for example `Research \\& Development`, `Q\\&A`, `50\\%`, `C\\#`, `file\\_name`.
+   - A bare `&` is ONLY a column separator, at the top level of a `tabular` / `align` / `matrix` row. Inside `\\textbf{{...}}`, `\\multicolumn{{2}}{{c}}{{...}}`, `\\caption{{...}}`, `\\section{{...}}`, a frame title or subtitle, an `\\item`, or a TikZ `\\node {{...}};` it MUST be written `\\&`.
+   - Wrap mathematical variables and equations in `$ ... $`, `\\[ ... \\]`, or `\\begin{{equation}} ... \\end{{equation}}`. `&` and `\\\\` are NOT allowed directly inside `equation` or `\\[ ... \\]`: for aligned or multi-line equations use `align`, or `\\begin{{aligned}} ... \\end{{aligned}}` inside the equation.
+   - Table consistency: in `tabular` / `tabularx`, every row has exactly as many cells as the column specification declares (`{{lcc}}` is 3 cells, so 2 `&`) and ends with `\\\\`.
    - Image assets: Use `list_assets` to discover existing images. Reference images using `\\includegraphics[width=\\linewidth,keepaspectratio]{{assets/<filename>}}`. Never invent filenames or insert raw multi-page `.pdf` files into `\\includegraphics`.
 
 4. TARGETING EDITS (SMALLEST EDIT, STABLE TARGETS):
@@ -195,7 +310,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Read only what you need: the target block is usually already in your context; otherwise `get_block(node_id)` (add include_style=true for title/colour/font changes) instead of reading large line ranges.
    - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `detect_overflow` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
-   - JSON ESCAPING OF LaTeX (CRITICAL): inside JSON strings write EVERY LaTeX backslash as two backslashes (`\\\\begin{{itemize}}`, `\\\\item`, `\\\\textbf{{x}}`), and a LaTeX line break `\\\\` as `\\\\\\\\`. Use `\\n` only for a newline. Write `&`, `<`, `>`, `'` and every other character literally; never use `\\uXXXX` escapes.
+   - JSON ESCAPING OF LaTeX (CRITICAL): inside JSON strings write EVERY LaTeX backslash as two backslashes (`\\\\begin{{itemize}}`, `\\\\item`, `\\\\textbf{{x}}`, `Research \\\\& Development`), and a LaTeX line break `\\\\` as `\\\\\\\\` — every table row ends with those four backslashes, never two. Use `\\n` only for a newline. Write every other character as itself and never use `\\uXXXX` escapes (`&`, not `\\u0026`). JSON escaping is separate from LaTeX escaping and never replaces it: an ampersand in prose is LaTeX `\\&`, which is `\\\\&` inside a JSON string.
 
 5. GROUNDING IN EXISTING DOCUMENT DATA & MANDATORY EXPANSION / ELABORATION:
    - When asked to "elaborate", "describe", "expand", "explain more", "add one more additional slide for each topic", or "make longer":
@@ -961,6 +1076,11 @@ def stream_opencode_agent(
         r"undefined control sequence",
         r"runaway argument",
         r"missing \\begin\{document\}",
+        r"misplaced alignment tab",
+        r"extra alignment tab",
+        r"did not compile",
+        r"failing errors:",
+        r"automatic repairs did not fix it",
         r"(?:^|\s|\n)\./[\w\-./]+\.tex:\d+:",
         r"(?:^|\s|\n)[\w\-./]+\.tex:\d+:",
     ]
@@ -1088,6 +1208,8 @@ def stream_opencode_agent(
         or not current_code.strip()
         or (total_lines <= 20 and "\\documentclass" in current_code and "\\end{document}" in current_code and len(current_code.strip().splitlines()) <= 8)
     )
+    # Whether the file held anything worth protecting (see the draft outcome below).
+    was_empty_document = bool(is_empty_or_minimal)
     is_creation_intent = any(kw in user_lower for kw in creation_keywords)
     has_attachment_conversion = bool(stored_attachments) and any(
         kw in user_lower for kw in ["ppt", "presentation", "slides", "beamer", "report", "paper", "convert", "turn", "make", "create"]
@@ -1143,6 +1265,7 @@ def stream_opencode_agent(
     # 7b. Detect compilation error fix requests ("Ask AI to Fix" / raw compilation logs)
     compilation_fix_diagnostic = ""
     parsed_compilation_errors_list = []
+    preheal_fixes: List[str] = []
     if is_compilation_fix_request:
         parsed_compilation_errors_list = parse_compilation_errors(user_instruction)
         healed_code, fixes_applied = auto_heal_latex_code(workspace.get_buffer(), user_instruction)
@@ -1153,6 +1276,7 @@ def stream_opencode_agent(
                 # No ensure_document_structure() here: it re-ran a whole-document heal
                 # with no validation after replace_all had validated this one.
                 logger.info(f"Auto-healed workspace buffer on compilation fix request: {fixes_applied}")
+                preheal_fixes = list(fixes_applied)
                 yield {
                     "type": "status",
                     "step": 0,
@@ -1606,20 +1730,14 @@ def stream_opencode_agent(
     last_compile: Dict[str, Any] = {}  # the latest compile verdict, for the final explanation
     repair_states_seen: Set[str] = set()
 
-    def deterministic_compile_repair(res: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """
-        Error-driven deterministic fixes (latex_error_fixer.repair_from_compile_errors)
-        on the lines the agent changed — and, for a fix request, on the lines with
-        errors — before an LLM repair round is spent. Kept only when a recompile has
-        fewer errors and no more new ones; otherwise undone. Returns the new compile
-        result, or None when nothing was kept.
-        """
+    def _deterministic_repair_round(res: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+        """One repair + recompile. ``(new compile result, fixes)``, or ``(None, [])`` when nothing was kept."""
         errs = [
-            e for e in (res.get("errors") or res.get("new_errors") or [])
+            e for e in (res.get("failing_errors") or res.get("errors") or res.get("new_errors") or [])
             if str(e.get("file") or file_path).lstrip("./") == file_path.lstrip("./") or not e.get("file")
         ]
         if not errs:
-            return None
+            return None, []
         try:
             from latex_error_fixer import repair_from_compile_errors
             from .edit_guard import changed_lines
@@ -1630,19 +1748,47 @@ def stream_opencode_agent(
             patched, fixes = repair_from_compile_errors(buf, errs, allowed)
         except Exception as e:
             logger.warning(f"deterministic compile repair skipped: {e}")
-            return None
+            return None, []
         if not fixes or patched == buf or not workspace.replace_all(patched).get("success"):
-            return None
+            return None, []
         res2 = execute_tool("compile_latex", {}, workspace)
         before_n = res.get("errors_after", len(res.get("errors") or []))
         after_n = res2.get("errors_after", len(res2.get("errors") or []))
         if not res2.get("infra_skip") and (res2.get("success") or (
                 after_n < before_n and res2.get("new_error_count", 0) <= res.get("new_error_count", 0))):
             logger.info(f"Deterministic compile repair kept: {fixes}")
-            res2["auto_repairs"] = fixes
-            return res2
+            return res2, fixes
         workspace.undo()
-        return None
+        return None, []
+
+    def deterministic_compile_repair(res: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Error-driven deterministic fixes (latex_error_fixer.repair_from_compile_errors)
+        on the lines the agent changed — and, for a fix request, on the lines with
+        errors — before an LLM repair round is spent. Each round is kept only when
+        its recompile has fewer errors and no more new ones; otherwise it is undone.
+        Returns the latest kept compile result, or None when nothing was kept.
+
+        The errors acted on are ``failing_errors`` — every error of the compile, on
+        the line its token is really on — not the handful shown in a prompt. A
+        repair can also uncover what an error was hiding (a 100-error cascade ends,
+        a merged table row splits into rows with too many cells), so it repeats
+        while the count keeps falling, up to MAX_DETERMINISTIC_REPAIR_ROUNDS.
+        """
+        kept: Optional[Dict[str, Any]] = None
+        applied: List[str] = []
+        current = res
+        for _ in range(MAX_DETERMINISTIC_REPAIR_ROUNDS):
+            nxt, fixes = _deterministic_repair_round(current)
+            if nxt is None:
+                break
+            applied.extend(fixes)
+            kept = current = nxt
+            if nxt.get("success"):
+                break
+        if kept is not None:
+            kept["auto_repairs"] = applied
+        return kept
 
     def compile_gate(final: bool = False) -> Tuple[str, Dict[str, Any]]:
         """
@@ -1667,6 +1813,7 @@ def stream_opencode_agent(
             repaired = deterministic_compile_repair(res)
             if repaired is not None:
                 res = repaired
+        res.pop("failing_errors", None)  # for the repairer; not for prompts or events
         last_compile.clear()
         last_compile.update(res)
         if res.get("success"):
@@ -1696,28 +1843,30 @@ def stream_opencode_agent(
         # `errors` are the ones that fail the check: the new ones, or — for a fix
         # request — every error still in the document.
         errs = res.get("errors") or res.get("new_errors") or []
-        diag_lines = []
-        for e in errs[:6]:
-            loc = f"Line {e.get('line')}" if e.get('line') else "Document / Preamble"
-            if e.get("file") and e.get("file") != file_path:
-                loc += f" ({e.get('file')})"
-            etype = f"[{e.get('type')}] " if e.get("type") else ""
-            act = f" -> Suggested action: {e.get('suggested_action')}" if e.get('suggested_action') else ""
-            diag_lines.append(f"- {loc}: {etype}{e.get('error')}{act}")
-        diag = "\n".join(diag_lines) or res.get("summary", "Compilation failed")
+        diag = (format_compile_diagnostics(errs, workspace.get_buffer(), file_path)
+                or res.get("summary", "Compilation failed"))
         what = ("The document still does not compile" if res.get("strict")
                 else "COMPILATION FAILED after your edits")
-        stderr_text = (res.get('stderr') or '')[:1200]
+        tried = res.get("auto_repairs") or []
+        already = ("Already repaired automatically (do not redo these): " + "; ".join(tried[:4]) + "\n\n") if tried else ""
         return (
             f"{what} (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
-            f"ERROR CONTEXT & LOG:\n{stderr_text}\n\n"
+            f"{already}"
             f"ORIGINAL USER INSTRUCTION: \"{user_instruction}\"\n\n"
-            "MANDATORY REPAIR GUIDELINES:\n"
-            "1. Output RAW LaTeX only. NEVER use markdown code fences (```latex ... ```) in tool arguments.\n"
-            "2. If an environment or brace is unclosed, balance it with the matching closer.\n"
-            "3. If a macro is undefined (e.g. \\toprule, \\align, \\includegraphics, \\mathbb), ensure \\usepackage{...} is in the preamble.\n"
-            "4. NEVER place \\item outside of an itemize/enumerate environment.\n"
-            "5. Apply ONLY the surgical fix for the errors above using `replace_text` with node_id or line_hint, then set done=true."
+            "HOW TO REPAIR:\n"
+            "1. The lines above are where the errors really are; a caret marks the offending token. Fix EVERY "
+            "occurrence listed, in this one turn — use batched `tool_calls` when they are on different lines.\n"
+            "2. '&': in text, titles, bullets, captions, TikZ node labels and inside \\textbf{...} / "
+            "\\multicolumn{..}{..}{...} it is '\\&' (e.g. 'R\\&D'). A bare '&' is only a column separator at the top "
+            "level of a tabular/align/matrix row, and each row must have exactly as many cells as the column "
+            "specification. '&' or '\\\\' in equation / \\[ \\] needs aligned.\n"
+            "3. Every \\item is inside itemize/enumerate; no text inside a list before its first \\item.\n"
+            "4. Braces and environments are balanced; every \\begin has its \\end.\n"
+            "5. An undefined macro or environment needs its \\usepackage{...} in the preamble.\n"
+            "6. TikZ: every statement ends with ';', math in node labels is inside $...$, ($...$) needs "
+            "\\usetikzlibrary{calc}.\n"
+            "7. Output RAW LaTeX in tool arguments (no markdown fences). Use `replace_text` with `old_str` copied "
+            "from the lines shown above, then set done=true."
         )
 
     had_fallback = False
@@ -1725,7 +1874,47 @@ def stream_opencode_agent(
     fallback_provider_name = None
     fallback_key_id_name = None
 
-    while steps_taken < actual_max_steps:
+    # A fix request starts from what the compiler says now, not from the text that
+    # was pasted. The pasted error carries the line TeX printed, which for anything
+    # inside a Beamer frame is the frame's \end{frame}: the model was sent to a
+    # closing tag, changed something nearby, and the gate then failed on the same
+    # error. Compiling first gives located errors, and lets the closed set of
+    # deterministic repairs run before any LLM round — most "Ask AI to Fix" clicks
+    # are a bare & or _ that needs no model at all.
+    preflight_fixed = False
+    if is_compilation_fix_request and mode == "edit":
+        yield _phase("compiling", "Compiling…")
+        t0 = time.time()
+        pre = execute_tool("compile_latex", {}, workspace)
+        agent_trace.record_compile(latency_ms=(time.time() - t0) * 1000, success=bool(pre.get("success")))
+        if pre.get("infra_skip"):
+            compile_available = False
+        elif pre.get("success"):
+            if workspace.has_changed():  # the structural pre-heal above already fixed it
+                compile_verified, preflight_fixed = True, True
+                pre.pop("failing_errors", None)
+                last_compile.update(pre)
+                agent_explanation = ("Fixed the compile error(s) automatically"
+                                     + (": " + "; ".join(preheal_fixes[:6]) if preheal_fixes else "."))
+        else:
+            repaired = deterministic_compile_repair(pre)
+            current = repaired if repaired is not None else pre
+            current.pop("failing_errors", None)
+            last_compile.clear()
+            last_compile.update(current)
+            if repaired is not None:
+                yield {"type": "status", "step": 0,
+                       "message": "Repaired automatically: " + "; ".join((repaired.get("auto_repairs") or [])[:3])}
+            if current.get("success"):
+                compile_verified, preflight_fixed = True, True
+                agent_explanation = ("Fixed the compile error(s) automatically: "
+                                     + "; ".join((current.get("auto_repairs") or [])[:6]))
+            else:
+                messages[1]["content"] += (
+                    "\n\nCURRENT COMPILER OUTPUT (authoritative — it replaces the line numbers in the "
+                    "request above):\n" + compile_feedback(current))
+
+    while steps_taken < actual_max_steps and not preflight_fixed:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Agent loop cancelled by user.")
 
@@ -2039,9 +2228,14 @@ def stream_opencode_agent(
                 gate, gate_res = compile_gate()
                 if gate == "repair":
                     yield _phase("repairing", "Repairing compile errors…")
-                    yield {"type": "compile_error", "summary": gate_res.get("stderr", "Compilation failed"),
-                           "errors": gate_res.get("new_errors", []),
-                           "message": "Compilation failed after the edit. Agent will self-correct..."}
+                    yield {
+                        "type": "compile_error",
+                        "summary": gate_res.get("summary") or "Compilation failed",
+                        "errors": gate_res.get("new_errors", []),
+                        "detailed_errors": gate_res.get("new_errors", []) or gate_res.get("errors", []),
+                        "errored_code": workspace.get_buffer(),
+                        "message": "Compilation failed after the edit. Agent will self-correct...",
+                    }
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": compile_feedback(gate_res)})
                     continue
@@ -2106,6 +2300,15 @@ def stream_opencode_agent(
                         args=tool_args,
                         workspace=workspace,
                     )
+                    if tool_name == "compile_latex" and isinstance(tool_result, dict):
+                        # The same deterministic repairs as the gate, before the model is
+                        # asked to fix anything: a creation run calls compile_latex itself,
+                        # and used to spend its repair rounds on errors that need no model.
+                        if not tool_result.get("infra_skip") and not tool_result.get("success"):
+                            repaired = deterministic_compile_repair(tool_result)
+                            if repaired is not None:
+                                tool_result = repaired
+                        tool_result.pop("failing_errors", None)
                 t_tool_ms = (time.time() - t_tool_start) * 1000
 
                 is_success = bool(tool_result.get("success", True) if isinstance(tool_result, dict) else True)
@@ -2178,8 +2381,10 @@ def stream_opencode_agent(
                         last_compile.update(tool_result)
                         yield {
                             "type": "compile_error",
-                            "summary": tool_result.get("stderr", "Compilation failed"),
+                            "summary": tool_result.get("summary") or "Compilation failed",
                             "errors": tool_result.get("errors", []),
+                            "detailed_errors": tool_result.get("errors", []),
+                            "errored_code": workspace.get_buffer(),
                             "message": "Shadow compilation failed. Agent will self-correct...",
                         }
 
@@ -2192,6 +2397,14 @@ def stream_opencode_agent(
                 gate, gate_res = compile_gate()
                 if gate == "repair":
                     yield _phase("repairing", "Repairing compile errors…")
+                    yield {
+                        "type": "compile_error",
+                        "summary": gate_res.get("summary") or "Compilation failed",
+                        "errors": gate_res.get("new_errors", []),
+                        "detailed_errors": gate_res.get("new_errors", []) or gate_res.get("errors", []),
+                        "errored_code": workspace.get_buffer(),
+                        "message": "Compilation failed after the edit. Agent will self-correct...",
+                    }
                     messages.append({"role": "assistant", "content": content})
                     messages.append({"role": "user", "content": compile_feedback(gate_res)})
                     continue
@@ -2294,22 +2507,19 @@ def stream_opencode_agent(
                             "If all requested changes are complete, you can now set done=true."
                         )
                     else:
-                        err_context = tool_result.get("stderr", "")
-                        summary_msg = tool_result.get("summary", "Compilation failed")
-                        errors_list = tool_result.get("errors", [])
-                        diag_lines = []
-                        for e in errors_list[:6]:
-                            l_info = f"Line {e.get('line')}" if e.get('line') else "Document / Preamble"
-                            action_info = f" -> Fix: {e.get('suggested_action')}" if e.get('suggested_action') else ""
-                            diag_lines.append(f"- [{l_info}] {e.get('error')}{action_info}")
-                        diag_str = "\n".join(diag_lines) if diag_lines else summary_msg
-
+                        diag_str = (format_compile_diagnostics(tool_result.get("errors", []),
+                                                               workspace.get_buffer(), file_path)
+                                    or tool_result.get("summary", "Compilation failed"))
+                        tried = tool_result.get("auto_repairs") or []
+                        already = (("Already repaired automatically (do not redo these): "
+                                    + "; ".join(tried[:4]) + "\n\n") if tried else "")
                         followup_msg = (
-                            f"COMPILATION FAILED:\n{diag_str}\n\n"
-                            f"Raw Log Snippet:\n{err_context[:1000]}\n\n"
-                            "INSTRUCTION: Target ONLY the specific lines flagged above with compilation errors. "
-                            "Use `read_file_range` around the error line if needed, then `replace_text` to fix the syntax errors (e.g. unclosed environments, missing TikZ semicolon, missing packages) "
-                            "and then set done=true (the fix is compiled automatically)."
+                            f"COMPILATION FAILED:\n{diag_str}\n\n{already}"
+                            "INSTRUCTION: Fix EVERY occurrence listed above, in this turn (batched `tool_calls` when "
+                            "they are on different lines). The lines shown are where the errors really are; a caret "
+                            "marks the offending token. In text '&' is '\\&'; a bare '&' is only a column separator "
+                            "inside a table row. Use `replace_text` with `old_str` copied from the lines shown, "
+                            "then set done=true (the fix is compiled automatically)."
                         )
                 elif tool_name == "search_uploaded_references":
                     followup_msg = (
@@ -2386,14 +2596,52 @@ def stream_opencode_agent(
     # could not remove the rest keeps its progress and says what still fails.
     failure_payload: Optional[Dict[str, Any]] = None
     partial_payload: Optional[Dict[str, Any]] = None
+    errored_code: Optional[str] = None
+    detailed_errors: List[Dict[str, Any]] = []
+    compile_log: str = ""
     if compile_failed_final is not None:
         errs = compile_failed_final.get("errors") or compile_failed_final.get("new_errors") or []
         before_n = compile_failed_final.get("errors_before")
         after_n = compile_failed_final.get("errors_after")
+        compile_log = (
+            compile_failed_final.get("log")
+            or compile_failed_final.get("result", {}).get("error_log")
+            or compile_failed_final.get("result", {}).get("raw_log")
+            or compile_failed_final.get("result", {}).get("log")
+            or ""
+        )
+        errored_code = workspace.get_buffer()
+        code_lines = errored_code.splitlines() if errored_code else []
+        detailed_errors = []
+        for e in errs:
+            ln = e.get("line")
+            src = e.get("source")
+            if not src and isinstance(ln, int) and 1 <= ln <= len(code_lines):
+                src = code_lines[ln - 1].strip()
+            detailed_errors.append({
+                "line": ln,
+                "error": str(e.get("error", "")),
+                "context": str(e.get("context", "")),
+                "source": src or "",
+                "type": str(e.get("type", "")),
+                "suggested_action": str(e.get("suggested_action", "")),
+                "file": e.get("file"),
+            })
+
         partial = (
             compile_failed_final.get("strict") and workspace.has_changed()
             and compile_failed_final.get("new_error_count", 0) == 0
             and isinstance(before_n, int) and isinstance(after_n, int) and after_n < before_n
+        )
+        # A brand-new document that still builds is kept as a draft. Rollback exists
+        # to protect what the user had; an empty file had nothing, so discarding a
+        # whole generated document over an error TeX itself carried on past only
+        # returned "the document was not modified" after a two-minute wait. The
+        # remaining errors are listed with the result, located, ready for a fix.
+        draft = (
+            not partial and was_empty_document and workspace.has_changed()
+            and compile_failed_final.get("pdf_produced")
+            and not (bool(errs) and all("[timeout]" in str(e.get("error", "")).lower() for e in errs))
         )
         if partial:
             agent_trace.compile_result = "partial"
@@ -2404,10 +2652,42 @@ def stream_opencode_agent(
                 "operation": "edit",
                 "reason": "The remaining errors could not be fixed automatically.",
                 "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
+                "detailed_errors": detailed_errors[:10],
+                "compile_log": compile_log[-4000:] if compile_log else "",
                 "document_unchanged": False,
                 "partial": True,
             }
-            yield {"type": "compile_error", "message": partial_payload["message"], "errors": errs[:5]}
+            yield {
+                "type": "compile_error",
+                "message": partial_payload["message"],
+                "errors": errs[:5],
+                "detailed_errors": detailed_errors[:10],
+                "compile_log": compile_log[-4000:] if compile_log else "",
+            }
+        elif draft:
+            agent_trace.compile_result = "draft"
+            agent_trace.failure_reason = "compile_errors_remain_in_new_document"
+            n_left = after_n if isinstance(after_n, int) and after_n else len(errs)
+            partial_payload = {
+                "message": (f"Created the document, but {n_left} LaTeX error{'s' if n_left != 1 else ''} "
+                            f"remain{'s' if n_left == 1 else ''}."),
+                "operation": "create",
+                "reason": ("The document builds to a PDF, so it is kept as a draft instead of being discarded. "
+                           "Use \"Ask AI to Fix\" on the errors listed."),
+                "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
+                "detailed_errors": detailed_errors[:10],
+                "compile_log": compile_log[-4000:] if compile_log else "",
+                "document_unchanged": False,
+                "partial": True,
+                "draft": True,
+            }
+            yield {
+                "type": "compile_error",
+                "message": partial_payload["message"],
+                "errors": errs[:5],
+                "detailed_errors": detailed_errors[:10],
+                "compile_log": compile_log[-4000:] if compile_log else "",
+            }
         else:
             workspace.rollback_transaction(run_tx)
             agent_trace.compile_result = "failed"
@@ -2436,12 +2716,23 @@ def stream_opencode_agent(
                 "timed_out": only_timeouts,
                 "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
                 "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
+                "detailed_errors": detailed_errors[:10],
+                "errored_code": errored_code,
+                "compile_log": compile_log[-4000:] if compile_log else "",
                 "document_unchanged": True,
                 "compile_repairs": compile_repairs,
             }
-            yield {"type": "compile_error", "message": SAFE_FAILURE_MESSAGE, "errors": errs[:5]}
+            yield {
+                "type": "compile_error",
+                "message": SAFE_FAILURE_MESSAGE,
+                "errors": errs[:5],
+                "detailed_errors": detailed_errors[:10],
+                "errored_code": errored_code,
+                "compile_log": compile_log[-4000:] if compile_log else "",
+            }
     elif llm_failure is not None:
         if workspace.has_changed():
+            errored_code = workspace.get_buffer()
             workspace.rollback_transaction(run_tx)
         agent_trace.compile_result = "not_run"
         failure_payload = {
@@ -2450,6 +2741,7 @@ def stream_opencode_agent(
             "reason": llm_failure,
             "attempts": [f"{a.get('provider')}:{a.get('failure') or 'ok'}" for a in agent_trace.llm_attempts[-6:]],
             "document_unchanged": True,
+            "errored_code": errored_code,
         }
     else:
         agent_trace.compile_result = (
@@ -2468,12 +2760,36 @@ def stream_opencode_agent(
     if failure_payload:
         yield _phase("failed", failure_payload["message"], details=failure_payload)
         if not agent_explanation or compile_failed_final is not None or llm_failure is not None:
-            agent_explanation = failure_payload["message"] + (
-                f" {failure_payload['reason']}" if failure_payload.get("reason") and failure_payload["reason"] not in failure_payload["message"] else "")
+            diag_parts = [failure_payload["message"]]
+            if failure_payload.get("reason") and failure_payload["reason"] not in failure_payload["message"]:
+                diag_parts.append(f" {failure_payload['reason']}")
+
+            if detailed_errors:
+                diag_parts.append("\n\n### How It Errored (Diagnostics):")
+                for de in detailed_errors[:6]:
+                    loc = f"Line {de['line']}" if de.get("line") else "Document / Preamble"
+                    if de.get("file") and de.get("file") != file_path:
+                        loc += f" ({de['file']})"
+                    etype = f"[{de['type']}] " if de.get("type") else ""
+                    src = f"\n  - **Offending line**: `{de['source']}`" if de.get("source") else ""
+                    act = f"\n  - **Suggested fix**: {de['suggested_action']}" if de.get("suggested_action") else ""
+                    diag_parts.append(f"\n- **{loc}**: {etype}{de['error']}{src}{act}")
+
+            if errored_code:
+                diag_parts.append(f"\n\n### Candidate LaTeX Code That Failed Compilation:\n```latex\n{errored_code}\n```")
+
+            agent_explanation = "".join(diag_parts)
     elif partial_payload:
         yield _phase("partial", partial_payload["message"], details=partial_payload)
+        diag_items = []
+        for de in detailed_errors[:5]:
+            loc = f"Line {de['line']}" if de.get("line") else "Document / Preamble"
+            etype = f"[{de['type']}] " if de.get("type") else ""
+            src = f" (at `{de['source']}`)" if de.get("source") else ""
+            diag_items.append(f"{loc}: {etype}{de['error']}{src}")
+        diag_str = "; ".join(diag_items) if diag_items else "; ".join(partial_payload["errors"][:3])
         agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + (
-            partial_payload["message"] + " Still failing: " + "; ".join(partial_payload["errors"][:3]))
+            partial_payload["message"] + " Still failing: " + diag_str)
     elif mode == "edit" and workspace.has_changed():
         # The model's own explanation tends to claim success; state what the compiler said.
         status = _compile_status_note(last_compile, compile_available, compile_verified)
@@ -2514,6 +2830,7 @@ def stream_opencode_agent(
         is_valid, val_errors = validate_edit(workspace.get_original(), workspace.get_buffer())
         if not is_valid:
             logger.warning(f"Final buffer introduced new structural errors: {val_errors}. Attempting snapshot rollback...")
+            invalid_candidate_code = workspace.get_buffer()
             while not is_valid and workspace.undo():
                 is_valid, val_errors = validate_edit(workspace.get_original(), workspace.get_buffer())
 
@@ -2521,13 +2838,15 @@ def stream_opencode_agent(
                 logger.error(f"Buffer remains invalid after rollback: {val_errors}")
                 rejection_msg = (
                     f"The proposed edits could not be safely applied because they introduced LaTeX syntax errors:\n"
-                    + "\n".join(f"- {e}" for e in val_errors[:3])
+                    + "\n".join(f"- {e}" for e in val_errors[:5])
                     + "\n\nThe original document was preserved to prevent compilation failure."
+                    + "\n\n### Candidate LaTeX Code That Failed Validation:\n```latex\n" + invalid_candidate_code + "\n```"
                 )
                 yield {
                     "type": "compile_error",
                     "message": f"Pre-commit validation failed: {'; '.join(val_errors[:2])}",
                     "errors": val_errors,
+                    "errored_code": invalid_candidate_code,
                 }
                 yield {
                     "type": "result",
@@ -2543,6 +2862,7 @@ def stream_opencode_agent(
                         "elapsed_ms": elapsed_ms,
                         "trace": trace_summary,
                         "validation_errors": val_errors,
+                        "errored_code": invalid_candidate_code,
                     },
                 }
                 yield compute_final_diff(
@@ -2641,7 +2961,7 @@ def stream_opencode_agent(
                 "is_fallback": had_fallback,
                 "model_used": fallback_model_name if had_fallback else model,
                 "fallback_notice": (
-                    f"Gemini Web2API was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
+                    f"Gemini was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
                     + (f" ({fallback_key_id_name})" if fallback_key_id_name else "")
                 ) if had_fallback else None,
             },
@@ -2668,6 +2988,9 @@ def stream_opencode_agent(
                 "trace": trace_summary,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
                 "failure": failure_payload,
+                "errored_code": errored_code,
+                "detailed_errors": detailed_errors[:10],
+                "compile_log": compile_log[-4000:] if compile_log else "",
                 "is_fallback": had_fallback,
                 "model_used": fallback_model_name if had_fallback else model,
                 "fallback_notice": (

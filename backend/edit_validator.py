@@ -79,6 +79,15 @@ _LIST_ENVS = frozenset({
     "itemize", "enumerate", "description", "list", "trivlist", "thebibliography",
     "compactitem", "compactenum", "compactdesc", "inparaenum", "inparaitem",
 })
+_ITEM_LIST_ENVS = frozenset({
+    "itemize", "enumerate", "description", "compactitem", "compactenum", "compactdesc",
+    "inparaenum", "inparaitem",
+})
+_HARMLESS_LIST_MACROS = re.compile(
+    r"^\s*(?:\\(?:vspace\*?|hspace\*?|setlength|addtolength|small|footnotesize|scriptsize|"
+    r"tiny|large|Large|centering|raggedright|raggedleft|color|colorlet|label|index)"
+    r"(?:\{[^}]*\}|\[[^\]]*\])*\s*)*\s*(?:%.*)?$"
+)
 _RE_DOCCLASS = re.compile(r"\\documentclass\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}")
 _RE_BEGIN_DOC = re.compile(r"\\begin\s*\{document\}")
 _RE_END_DOC = re.compile(r"\\end\s*\{document\}")
@@ -339,29 +348,63 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
 
     # 1. Environment Matching Stack & Markdown Fences
     stack: List[Tuple[str, int]] = []
+    list_state: Dict[int, Dict[str, Any]] = {}
 
     for idx, line in enumerate(lines, start=1):
         if _RE_MARKDOWN_FENCE.search(line):
             errors.append(f"Line {idx}: Markdown code fence (```) detected in LaTeX document")
 
-        # Check for lonely \item outside list environments
-        if _RE_ITEM.search(line):
+        # Check for lonely \item outside list environments or mark items inside lists
+        has_item_match = bool(_RE_ITEM.search(line))
+        if has_item_match:
             in_list = any(
                 e[0] in _LIST_ENVS or e[0].endswith("item") or e[0].endswith("enum") or e[0].endswith("list")
                 for e in stack
             )
             if not in_list:
                 errors.append(f"Line {idx}: Lonely \\item outside list environment (must be inside itemize or enumerate)")
+            else:
+                for lvl, (e_name, _) in enumerate(stack):
+                    if e_name.rstrip("*") in _ITEM_LIST_ENVS and lvl in list_state:
+                        list_state[lvl]["has_item"] = True
+        elif stack and stack[-1][0].rstrip("*") in _ITEM_LIST_ENVS:
+            # Current innermost environment is a list, but no \item on this line
+            top_lvl = len(stack) - 1
+            if top_lvl in list_state and not list_state[top_lvl]["has_item"]:
+                stripped = line.strip()
+                if (
+                    stripped
+                    and not stripped.startswith("%")
+                    and not _HARMLESS_LIST_MACROS.match(line)
+                    and not _RE_ENV_TAG.search(line)
+                    and not list_state[top_lvl]["has_prose_before_item"]
+                ):
+                    list_state[top_lvl]["has_prose_before_item"] = True
+                    errors.append(
+                        f"Line {idx}: Text inside \\begin{{{stack[-1][0]}}} before the first \\item. "
+                        f"Move text before \\begin{{{stack[-1][0]}}} or prefix with \\item (LaTeX Error: Something's wrong--perhaps a missing \\item)."
+                    )
 
         for m in _RE_ENV_TAG.finditer(line):
             tag_type = m.group(1)
             env_name = m.group(2)
             if tag_type == "begin":
+                lvl = len(stack)
+                if env_name.rstrip("*") in _ITEM_LIST_ENVS:
+                    list_state[lvl] = {"has_item": False, "has_prose_before_item": False}
                 stack.append((env_name, idx))
             elif tag_type == "end":
                 if not stack:
                     errors.append(f"Line {idx}: Unmatched \\end{{{env_name}}} (no open environment)")
                 elif stack[-1][0] == env_name:
+                    top_lvl = len(stack) - 1
+                    if env_name.rstrip("*") in _ITEM_LIST_ENVS and top_lvl in list_state:
+                        if not list_state[top_lvl]["has_item"]:
+                            errors.append(
+                                f"Line {idx}: Empty \\begin{{{env_name}}} environment from line {stack[-1][1]} "
+                                f"with no \\item entries (LaTeX Error: Something's wrong--perhaps a missing \\item)."
+                            )
+                        list_state.pop(top_lvl, None)
                     stack.pop()
                 else:
                     # Check if matching begin is further up the stack
@@ -373,9 +416,13 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
                     if matching_idx is not None:
                         for unclosed_env, unclosed_line in stack[matching_idx + 1:]:
                             errors.append(f"Line {idx}: \\begin{{{unclosed_env}}} from line {unclosed_line} was never closed before \\end{{{env_name}}}")
+                            unclosed_lvl = len(stack) - 1
+                            list_state.pop(unclosed_lvl, None)
                         stack = stack[:matching_idx]
+                        list_state.pop(matching_idx, None)
                     else:
                         top_env, top_line = stack.pop()
+                        list_state.pop(len(stack), None)
                         errors.append(
                             f"Line {idx}: Mismatched \\end{{{env_name}}}, expected \\end{{{top_env}}} from line {top_line}"
                         )
@@ -430,6 +477,10 @@ def validate_latex_pre_commit(latex_code: str) -> Tuple[bool, List[str]]:
     n_right = len(_RE_RIGHT.findall(cleaned))
     if n_left != n_right:
         errors.append(f"Unbalanced \\left ({n_left}) vs \\right ({n_right})")
+
+    # 5. TikZ Coordinate Arithmetic Library Check
+    if re.search(r"\(\s*\$[^)]+\)", cleaned) and not re.search(r"\\usetikzlibrary\s*\{[^}]*\bcalc\b", cleaned):
+        errors.append("TikZ coordinate calculation '($...$)' requires '\\usetikzlibrary{calc}' loaded in preamble.")
 
     return len(errors) == 0, errors
 

@@ -11,6 +11,7 @@ import {
   FileCode2,
   Eye,
   Bot,
+  Columns2,
   Play,
   RotateCw,
   Send,
@@ -130,6 +131,9 @@ interface ChatMessage {
     proposed_chunk: string;
     explanation: string;
   };
+  failure?: any;
+  erroredCode?: string;
+  detailedErrors?: any[];
 }
 
 interface AuthoritativeDoc {
@@ -291,7 +295,7 @@ export function EditorLayout({
 }: EditorLayoutProps) {
   const [code, setCode] = useState(initialLatexCode);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
-  const [activeMobileTab, setActiveMobileTab] = useState<"code" | "files" | "pdf" | "ai">("code");
+  const [activeMobileTab, setActiveMobileTab] = useState<"code" | "files" | "pdf" | "ai" | "split">("code");
   const [filesOpen, setFilesOpen] = useState(() => {
     if (typeof window !== "undefined") {
       return window.innerWidth >= 1200;
@@ -2131,6 +2135,9 @@ export function EditorLayout({
           edits: editsList,
           editsFile: data.file || activeFilePath || "main.tex",
           isApplied: false,
+          failure: data.failure,
+          erroredCode: data.errored_code || data.failure?.errored_code,
+          detailedErrors: data.detailed_errors || data.failure?.detailed_errors,
         },
       ]);
 
@@ -2555,6 +2562,55 @@ export function EditorLayout({
   };
 
   const renderMessageEditsCard = (m: ChatMessage) => {
+    if ((!m.edits || m.edits.length === 0) && m.erroredCode) {
+      return (
+        <div className="mt-2.5 p-2.5 rounded-xl bg-amber-500/10 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700/40 text-xs font-mono space-y-2">
+          <div className="flex items-center justify-between font-bold text-amber-700 dark:text-amber-300">
+            <span className="flex items-center gap-1.5 text-xs">
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              Candidate LaTeX (Failed Compilation)
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/40">
+              Preserved
+            </span>
+          </div>
+          <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 font-sans">
+            The candidate LaTeX code was not auto-applied to keep your document safe. You can copy it or load it into the editor to inspect and fix it manually.
+          </p>
+          <div className="flex items-center gap-2 pt-1 font-bold">
+            <button
+              type="button"
+              onClick={() => {
+                if (m.erroredCode) {
+                  navigator.clipboard.writeText(m.erroredCode);
+                  toast.success("Candidate LaTeX code copied to clipboard!");
+                }
+              }}
+              className="flex-1 h-7 rounded-lg bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 border border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-200 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy Code</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (m.erroredCode) {
+                  handleCodeChange(m.erroredCode);
+                  toast.info("Loaded candidate LaTeX code into editor for manual inspection.");
+                  if (typeof window !== "undefined" && window.innerWidth < 768) {
+                    setActiveMobileTab("code");
+                  }
+                }
+              }}
+              className="flex-1 h-7 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-amber-700 shadow-sm cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Load into Editor</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
     if (!m.edits || m.edits.length === 0) return null;
     const firstEdit = m.edits[0];
 
@@ -2783,13 +2839,13 @@ export function EditorLayout({
           </div>
         </div>
 
-        {/* Center Column: Layout View Switcher & Primary Fast Compile Action */}
-        <div className="hidden md:flex items-center gap-1.5 lg:gap-2 shrink-0">
+        {/* Center Column: Layout View Switcher & Primary Fast Compile Action (Desktop >= xl) */}
+        <div className="hidden xl:flex items-center gap-2 shrink-0">
           {/* View Toggle */}
           <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
             <button
               onClick={() => setPdfOpen(false)}
-              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
                 !pdfOpen
                   ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
                   : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2800,7 +2856,7 @@ export function EditorLayout({
             </button>
             <button
               onClick={() => setPdfOpen(true)}
-              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
                 pdfOpen
                   ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
                   : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2815,7 +2871,7 @@ export function EditorLayout({
             size="sm"
             onClick={() => handleCompile()}
             disabled={isCompiling}
-            className="h-8 px-2.5 lg:px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
+            className="h-8 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
             title="Compile TeX (Ctrl+Enter / Cmd+Enter)"
           >
             {isCompiling ? (
@@ -2823,12 +2879,38 @@ export function EditorLayout({
             ) : (
               <Play className="w-3.5 h-3.5 fill-current text-white" />
             )}
-            <span className="hidden lg:inline">Compile</span>
+            <span>Compile</span>
           </Button>
         </div>
 
-        {/* Mobile Fast Compile Action */}
-        <div className="flex md:hidden items-center shrink-0">
+        {/* Compact & Mobile Header Actions (< xl) */}
+        <div className="flex xl:hidden items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* On tablet/congested screens (>= 600px), show Code / Split switcher */}
+          <div className="hidden sm:flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
+            <button
+              onClick={() => setActiveMobileTab("code")}
+              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+                activeMobileTab === "code"
+                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
+                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+              }`}
+              title="Code Editor View"
+            >
+              Code
+            </button>
+            <button
+              onClick={() => setActiveMobileTab("split")}
+              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+                activeMobileTab === "split"
+                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
+                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+              }`}
+              title="Split View (Code + PDF)"
+            >
+              Split
+            </button>
+          </div>
+
           <Button
             size="sm"
             onClick={() => handleCompile()}
@@ -2850,7 +2932,7 @@ export function EditorLayout({
           {/* Save Status — while a collaboration room is bound this reflects
               the room's server-side persistence (collab.savedAt), because the
               client no longer POSTs the document itself. */}
-          <span className="hidden md:flex items-center gap-1.5 px-2 lg:px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0">
+          <span className="hidden xl:flex items-center gap-1.5 px-2 lg:px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0">
             {collabBound ? (
               <>
                 <span
@@ -2892,7 +2974,7 @@ export function EditorLayout({
           {/* Files Panel Toggle */}
           <button
             onClick={handleToggleFiles}
-            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden xl:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
               filesOpen
                 ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
                 : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2906,7 +2988,7 @@ export function EditorLayout({
           {/* AI Agent Toggle Button */}
           <button
             onClick={toggleAi}
-            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden xl:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
               aiOpen
                 ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
                 : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2921,7 +3003,7 @@ export function EditorLayout({
           {/* Find & replace — mobile only; desktop has it in the editor tab bar */}
           <button
             onClick={() => setSearchOpen((v) => !v)}
-            className={`md:hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors cursor-pointer flex shrink-0 ${
+            className={`xl:hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors cursor-pointer flex shrink-0 ${
               searchOpen
                 ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
                 : "bg-slate-100 dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:bg-slate-200 dark:hover:bg-[#22242C]"
@@ -2977,7 +3059,7 @@ export function EditorLayout({
       </header>
 
       {/* Desktop Main Split Workspace */}
-      <div className="hidden md:flex flex-1 overflow-hidden relative min-h-0 min-w-0">
+      <div className="hidden xl:flex flex-1 overflow-hidden relative min-h-0 min-w-0">
         <div className="w-full h-full flex overflow-hidden min-h-0 min-w-0">
           {/* Panel 1 (Far Left): Project Files & Asset Panel */}
           <ProjectFilesPanel
@@ -3486,8 +3568,8 @@ export function EditorLayout({
         </div>
       </div>
 
-      {/* Mobile Viewports */}
-      <div className="flex md:hidden flex-1 min-h-0 overflow-hidden relative">
+      {/* Compact & Mobile Viewports */}
+      <div className="flex xl:hidden flex-1 min-h-0 overflow-hidden relative">
         <div className={`flex-1 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
           <ProjectFilesPanel
             projectId={projectId || "proj-1"}
@@ -3507,95 +3589,113 @@ export function EditorLayout({
           />
         </div>
 
-        <div className={`flex-1 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "code" ? "flex" : "hidden"}`}>
-          <div className="flex-1 min-h-0 overflow-hidden relative">
-            <EditorErrorBoundary>
-              <Editor
-                height="100%"
-                defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
-                theme={monacoTheme}
-                // Once the Yjs binding owns the model, React must stop setting
-                // `value`: @monaco-editor/react implements a value change as a
-                // full-model-range replace, which under a CRDT means "delete
-                // the whole document and insert a new one" — wiping concurrent
-                // edits and resetting every remote cursor.
-                value={collabBound ? undefined : code}
-                defaultValue={code}
-                beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
-                onMount={(editor, monaco) => handleEditorMount(editor, monaco, false)}
-                onChange={handleCodeChange}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 13,
-                  lineNumbers: "on",
-                  scrollBeyondLastLine: false,
-                  wordWrap: "on",
-                  automaticLayout: true,
-                  // Monaco's context menu is replaced by the touch callout in
-                  // MobileEditorAssist; showing both would collide on long-press.
-                  contextmenu: false,
-                  selectOnLineNumbers: true,
-                  cursorBlinking: "blink",
-                  cursorStyle: "line",
-                  cursorWidth: 2,
-                  roundedSelection: true,
-                  copyWithSyntaxHighlighting: false,
-                  // Was missing entirely, so a Viewer got an editable buffer
-                  // on mobile while the desktop editor was correctly locked.
-                  readOnly: isViewer,
-                }}
+        {/* Compact & Mobile: Code Editor View & Split View */}
+        <div className={`flex-1 flex overflow-hidden relative min-h-0 ${activeMobileTab === "code" || activeMobileTab === "split" ? "flex" : "hidden"}`}>
+          {/* Main Left: Monaco Code Editor */}
+          <div className="flex-1 min-w-0 bg-white dark:bg-[#0E0F12] flex flex-col h-full overflow-hidden relative min-h-0">
+            <div className="flex-1 min-h-0 overflow-hidden relative">
+              <EditorErrorBoundary>
+                <Editor
+                  height="100%"
+                  defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
+                  theme={monacoTheme}
+                  value={collabBound ? undefined : code}
+                  defaultValue={code}
+                  beforeMount={(monaco) => setupDefaultLatexSyntaxAndEmeraldTheme(monaco)}
+                  onMount={(editor, monaco) => handleEditorMount(editor, monaco, false)}
+                  onChange={handleCodeChange}
+                  options={{
+                    minimap: { enabled: false },
+                    fontSize: 13,
+                    lineNumbers: "on",
+                    scrollBeyondLastLine: false,
+                    wordWrap: "on",
+                    automaticLayout: true,
+                    contextmenu: false,
+                    selectOnLineNumbers: true,
+                    cursorBlinking: "blink",
+                    cursorStyle: "line",
+                    cursorWidth: 2,
+                    roundedSelection: true,
+                    copyWithSyntaxHighlighting: false,
+                    readOnly: isViewer,
+                  }}
+                />
+              </EditorErrorBoundary>
+
+              <MobileEditorAssist
+                editor={mobileEditorRef.current}
+                monaco={monacoRef.current}
+                readOnly={isViewer}
+                active={activeMobileTab === "code" || activeMobileTab === "split"}
+                onOpenSearch={() => setSearchOpen(true)}
+                onDocumentChange={handleCodeChange}
               />
-            </EditorErrorBoundary>
 
-            <MobileEditorAssist
-              editor={mobileEditorRef.current}
-              monaco={monacoRef.current}
-              readOnly={isViewer}
-              active={activeMobileTab === "code"}
-              onOpenSearch={() => setSearchOpen(true)}
-              onDocumentChange={handleCodeChange}
-            />
-
-            <EditorSearchBar
-              editor={mobileEditorRef.current}
-              monaco={monacoRef.current}
-              open={searchOpen}
-              onClose={() => setSearchOpen(false)}
-              readOnly={isViewer}
-              onDocumentChange={handleCodeChange}
-              compact
-            />
-            {diffData && diffEditsList.length > 0 && (
-              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
-                <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
-                  <span className="text-emerald-600 dark:text-[#10B981]">Pending Edit</span>
+              <EditorSearchBar
+                editor={mobileEditorRef.current}
+                monaco={monacoRef.current}
+                open={searchOpen}
+                onClose={() => setSearchOpen(false)}
+                readOnly={isViewer}
+                onDocumentChange={handleCodeChange}
+                compact
+              />
+              {diffData && diffEditsList.length > 0 && (
+                <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
+                  <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
+                    <span className="text-emerald-600 dark:text-[#10B981]">Pending Edit</span>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRejectAllEdits}
+                      className="flex-1 h-7 rounded-lg bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                      <span>Reject</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                          handleAcceptAllEdits(
+                            diffEditsList,
+                            pendingEditsMsgIdRef.current ?? undefined,
+                          )
+                        }
+                      className="flex-1 h-7 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-[#10B981]/30"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Accept</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleRejectAllEdits}
-                    className="flex-1 h-7 rounded-lg bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Reject</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                        handleAcceptAllEdits(
-                          diffEditsList,
-                          pendingEditsMsgIdRef.current ?? undefined,
-                        )
-                      }
-                    className="flex-1 h-7 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-[#10B981]/30"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Accept</span>
-                  </button>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
+
+          {/* Side Right: In Split Mode, render PDF Viewer simultaneously */}
+          {activeMobileTab === "split" && (
+            <div className="flex-1 min-w-0 bg-slate-100 dark:bg-[#0E0F12] flex flex-col h-full border-l border-slate-200 dark:border-[#282A30] overflow-hidden relative min-h-0">
+              <PDFViewer
+                ref={pdfViewerRef}
+                pdfBase64={pdfBase64}
+                isCompiling={isCompiling}
+                onRecompile={() => handleCompile()}
+                onAskAiToFix={handleAskAiToFix}
+                errorLog={errorLog}
+                compileErrors={compileErrors}
+                projectId={projectId}
+                onReverseSync={(file, line, col) => {
+                  handleReverseSyncJump(file, line, col);
+                }}
+                onTextSelected={(text) => {
+                  handlePdfTextSelected(text);
+                }}
+                onEnterPresentation={() => setIsPresentationMode(true)}
+              />
+            </div>
+          )}
         </div>
 
         <div className={`flex-1 flex flex-col bg-slate-100 dark:bg-[#0E0F12] overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
@@ -3761,45 +3861,58 @@ export function EditorLayout({
         </div>
       </div>
 
-      {/* Bottom Navigation for Mobile View */}
-      <nav className="md:hidden border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none pb-[env(safe-area-inset-bottom,0px)]">
+      {/* Bottom Navigation for Compact & Mobile View */}
+      <nav className="xl:hidden border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none pb-[env(safe-area-inset-bottom,0px)]">
         <div className="flex items-center justify-around w-full h-12 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "files" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
+              activeMobileTab === "files" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            }`}
           >
             <FolderGit2 className="w-4 h-4" />
-            <span>Files</span>
+            <span className="text-[10px]">Files</span>
           </button>
 
           <button
             onClick={() => setActiveMobileTab("code")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "code" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
+              activeMobileTab === "code" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            }`}
           >
             <FileCode2 className="w-4 h-4" />
-            <span>Code</span>
+            <span className="text-[10px]">Code</span>
+          </button>
+
+          {/* Split view tab: enabled on screens >= 540px */}
+          <button
+            onClick={() => setActiveMobileTab("split")}
+            className={`hidden sm:flex flex-1 h-full flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
+              activeMobileTab === "split" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            }`}
+          >
+            <Columns2 className="w-4 h-4" />
+            <span className="text-[10px]">Split</span>
           </button>
 
           <button
             onClick={() => setActiveMobileTab("pdf")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "pdf" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
-              }`}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
+              activeMobileTab === "pdf" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            }`}
           >
             <Eye className="w-4 h-4" />
-            <span>PDF</span>
+            <span className="text-[10px]">PDF</span>
           </button>
 
           <button
-            onClick={() => {
-              setActiveMobileTab("ai");
-            }}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs ${activeMobileTab === "ai" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E]"
-              }`}
+            onClick={() => setActiveMobileTab("ai")}
+            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
+              activeMobileTab === "ai" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            }`}
           >
             <Bot className="w-4 h-4" />
-            <span>Agent</span>
+            <span className="text-[10px]">Agent</span>
           </button>
         </div>
       </nav>

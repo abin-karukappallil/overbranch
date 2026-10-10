@@ -22,10 +22,10 @@ logger = logging.getLogger("gemini_provider")
 
 # Only these models are exposed to users
 ALLOWED_GEMINI_MODELS = [
-    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": True},
+    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": False},
     {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "default": False},
     {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash", "default": False},
-    {"id": "gemini-3.5-flash-thinking", "label": "Gemini 3.5 Flash Thinking", "default": False},
+    {"id": "gemini-3.5-flash-thinking", "label": "Gemini 3.5 Flash Thinking", "default": True},
     {"id": "gemini-3.5-flash-thinking-lite", "label": "Gemini 3.5 Flash Thinking Lite", "default": False},
 ]
 
@@ -351,7 +351,7 @@ class GeminiProvider(LLMProvider):
             kind = FailureKind.UNAVAILABLE
 
         raise LLMProviderError(
-            f"All {total_keys} Gemini Web2API keys failed or delayed. Last error: {last_error}",
+            f"All {total_keys} Gemini keys failed or delayed. Last error: {last_error}",
             status_code=last_status_code,
             provider="Gemini",
             kind=kind,

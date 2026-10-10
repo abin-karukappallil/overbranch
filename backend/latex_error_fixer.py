@@ -10,7 +10,8 @@ Provides:
    - Missing semicolons in TikZ path statements (\\fill, \\draw, \\node, \\path)
    - Missing \\begin{document} / \\end{document}
    - Truncated booktabs rule (\\bottom -> \\bottomrule)
-   - Bare '&' in frame titles (escaped to \\&)
+   - '&' used as text (escaped to \\&), '&' in display math with no alignment (aligned),
+     row breaks that arrived as a single backslash (latex_specials)
    - Undefined standard colors in Beamer / Regalia
 3. format_compilation_fix_prompt: Generates surgical, line-targeted instructions for the
    LLM agent when interactive error repair is required.
@@ -118,8 +119,11 @@ def _classify_tex_error(msg: str) -> Tuple[str, str]:
             "\\definecolor{<name>}{RGB}{...}.")
     if "missing $ inserted" in low:
         return "MISSING_DOLLAR", "Escape _ and ^ in text as \\_ and \\^{}, or put math in $...$."
-    if "misplaced alignment tab" in low:
-        return "MISPLACED_AMPERSAND", "Escape & in text as \\&; & only separates columns inside tabular/align."
+    if "misplaced alignment tab" in low or "extra alignment tab" in low:
+        return (
+            "ALIGNMENT_TAB_ERROR",
+            "In plain text, escape '&' as '\\&'. In tables (tabular, matrix, array), each row must have exactly the number of '&' column dividers matching the column specification (e.g. {c c} only allows 1 '&' per row). Reduce extra '&' or expand column specification."
+        )
     if "missing } inserted" in low or "extra }" in low or "missing \\endgroup" in low:
         return "SYNTAX_ERROR", "Check for unbalanced curly braces { } or missing closing delimiter."
     if "runaway argument" in low:
@@ -137,7 +141,7 @@ def _classify_tex_error(msg: str) -> Tuple[str, str]:
 
 def _context_after(lines: List[str], idx: int) -> Tuple[Optional[int], str]:
     """TeX's ``l.N <code>`` context line following the error at ``lines[idx]``."""
-    for nxt in lines[idx + 1:idx + 9]:
+    for nxt in lines[idx + 1:idx + 60]:
         m = _RE_LOG_L_NUM.match(nxt.strip())
         if m:
             return int(m.group(1)), m.group(2).strip()
@@ -221,6 +225,23 @@ def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
                 suggested_action=action,
             ))
 
+    # 4. Check for "Failing errors: <err1>; <err2>..." summaries from previous failed runs (when standard log has no -file-line-error / ! patterns)
+    if not errors:
+        m_fail = re.search(r"\b(?:Failing errors|Errors):\s*(.+)", error_text, re.IGNORECASE)
+        if m_fail:
+            raw_list = m_fail.group(1).split(";")
+            for item in raw_list:
+                item_clean = item.strip().rstrip(".")
+                if item_clean:
+                    err_type, action = _classify_tex_error(item_clean)
+                    errors.append(ParsedLatexError(
+                        line_number=None,
+                        error_type=err_type,
+                        message=item_clean,
+                        snippet=item_clean,
+                        suggested_action=action,
+                    ))
+
     # Deduplicate errors by (file, line_number, error_type)
     seen = set()
     deduped: List[ParsedLatexError] = []
@@ -247,6 +268,24 @@ def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
             ))
 
     return deduped
+
+
+def find_probable_alignment_tab_lines(code: str) -> List[Tuple[int, str]]:
+    """
+    Lines that will raise an alignment-tab error, with the reason — for the cases
+    where TeX's own location is not available (a pasted log, a failure summary).
+
+    Decided from the document's structure (latex_specials). The first version
+    judged each line on its own text: a row of an ``align`` or ``longtable``
+    whose ``\\begin`` is on another line counted as "bare & in text", so the
+    model was pointed at a valid line and told to break it.
+    """
+    try:
+        from latex_specials import probable_alignment_tab_lines
+        return probable_alignment_tab_lines(code)
+    except Exception as e:
+        logger.warning(f"alignment-tab analysis skipped: {e}")
+        return []
 
 
 def _structure_view(code: str) -> str:
@@ -374,6 +413,111 @@ def heal_lonely_items(code: str) -> Tuple[str, List[str]]:
         )
 
     return "".join(out_lines), repairs
+
+
+_LIST_ENVS = frozenset({
+    "itemize", "enumerate", "description", "compactitem", "compactenum", "compactdesc",
+    "inparaenum", "inparaitem", "list", "trivlist",
+})
+_RE_BEGIN_LIST = re.compile(r"\\begin\s*\{(itemize|enumerate|description)\*?\}")
+_RE_END_LIST = re.compile(r"\\end\s*\{(itemize|enumerate|description)\*?\}")
+_RE_ITEM_ANY = re.compile(r"\\item(?![a-zA-Z])")
+_HARMLESS_LIST_MACROS = re.compile(
+    r"^\s*(?:\\(?:vspace\*?|hspace\*?|setlength|addtolength|small|footnotesize|scriptsize|"
+    r"tiny|large|Large|centering|raggedright|raggedleft|color|colorlet|label|index)"
+    r"(?:\{[^}]*\}|\[[^\]]*\])*\s*)*\s*(?:%.*)?$"
+)
+
+
+def heal_list_environments(code: str) -> Tuple[str, List[str]]:
+    r"""
+    Repairs structural list environment errors that cause
+    'LaTeX Error: Something's wrong--perhaps a missing \item':
+    1. Hoists prose written inside \begin{itemize}/\begin{enumerate} before the first \item to precede \begin{...}.
+    2. Removes completely empty list environments (\begin{itemize}\end{itemize}).
+    3. Prefixes non-item prose inside a list with \item if no \item exists.
+    """
+    if not code or not any(kw in code for kw in ("itemize", "enumerate", "description")):
+        return code, []
+
+    view = _structure_view(code)
+    lines = code.splitlines(keepends=True)
+    view_lines = view.splitlines(keepends=True) if len(view) == len(code) else lines
+    repairs: List[str] = []
+    out: List[str] = []
+
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        vline = view_lines[i]
+        m_begin = _RE_BEGIN_LIST.search(vline)
+        if m_begin:
+            env_name = m_begin.group(1)
+            # Scan forward to collect lines inside this list before the first \item or \end
+            j = i + 1
+            pre_lines: List[str] = []
+            pre_vlines: List[str] = []
+            found_item = False
+            found_end = False
+            while j < n:
+                sub_line = lines[j]
+                sub_vline = view_lines[j]
+                if _RE_ITEM_ANY.search(sub_vline):
+                    found_item = True
+                    break
+                m_end = _RE_END_LIST.search(sub_vline)
+                if m_end and m_end.group(1) == env_name:
+                    found_end = True
+                    break
+                if _RE_BEGIN_LIST.search(sub_vline):
+                    break
+                pre_lines.append(sub_line)
+                pre_vlines.append(sub_vline)
+                j += 1
+
+            has_prose = any(
+                pvl.strip()
+                and not pvl.strip().startswith("%")
+                and not _HARMLESS_LIST_MACROS.match(pvl)
+                for pvl in pre_vlines
+            )
+
+            if found_item and has_prose:
+                # Hoist prose lines before \begin{...}
+                for pl, pvl in zip(pre_lines, pre_vlines):
+                    if pvl.strip() and not pvl.strip().startswith("%") and not _HARMLESS_LIST_MACROS.match(pvl):
+                        out.append(pl)
+                out.append(line)
+                for pl, pvl in zip(pre_lines, pre_vlines):
+                    if not (pvl.strip() and not pvl.strip().startswith("%") and not _HARMLESS_LIST_MACROS.match(pvl)):
+                        out.append(pl)
+                repairs.append(f"Hoisted introductory text before \\begin{{{env_name}}} to prevent missing \\item error.")
+                i = j
+                continue
+            elif found_end and not found_item:
+                if not has_prose:
+                    # Empty list: remove completely
+                    repairs.append(f"Removed empty \\begin{{{env_name}}} ... \\end{{{env_name}}} block.")
+                    i = j + 1
+                    continue
+                else:
+                    # Has prose but no \item: prefix prose lines with \item
+                    out.append(line)
+                    for pl, pvl in zip(pre_lines, pre_vlines):
+                        if pvl.strip() and not pvl.strip().startswith("%") and not _HARMLESS_LIST_MACROS.match(pvl):
+                            lead_ws = len(pl) - len(pl.lstrip())
+                            out.append(" " * lead_ws + "\\item " + pl.lstrip())
+                        else:
+                            out.append(pl)
+                    out.append(lines[j])
+                    repairs.append(f"Prefixed un-itemized text inside \\begin{{{env_name}}} with \\item.")
+                    i = j + 1
+                    continue
+        out.append(line)
+        i += 1
+
+    return "".join(out), repairs
 
 
 def fix_tikz_semicolons(code: str) -> Tuple[str, List[str]]:
@@ -653,11 +797,6 @@ def fix_booktabs_truncations(code: str) -> Tuple[str, List[str]]:
     return "".join(out), [f"Corrected {count} truncated \\bottom -> \\bottomrule (booktabs)."]
 
 
-_RE_FRAME_TITLE_OPEN = re.compile(r"\\begin\s*\{frame\}\s*(?:<[^>]*>)?\s*(?:\[[^\]]*\]\s*)*\{")
-_RE_FRAMETITLE_CMD_OPEN = re.compile(r"\\frametitle\s*(?:<[^>]*>)?\s*\{")
-_RE_BARE_AMP = re.compile(r"(?<!\\)&")
-
-
 def _match_brace(text: str, open_pos: int) -> Optional[int]:
     """Index of the ``}`` that closes the ``{`` at ``open_pos`` (``\\{`` escapes skipped)."""
     depth = 0
@@ -678,52 +817,6 @@ def _match_brace(text: str, open_pos: int) -> Optional[int]:
     return None
 
 
-def fix_ampersand_in_frame_titles(code: str) -> Tuple[str, List[str]]:
-    r"""
-    Escapes a bare ``&`` inside a ``\begin{frame}{...}`` / ``\frametitle{...}``
-    title to ``\&``. A bare ``&`` there is an alignment-tab character and raises
-    'Misplaced alignment tab character &', which — in a custom frametitle
-    template that typesets the title inside a TikZ node — can take down the
-    whole title. ``&`` inside the frame *body* (real tabulars) is untouched.
-    """
-    if "&" not in code or (r"\begin{frame}" not in code and r"\frametitle" not in code):
-        return code, []
-
-    view = _structure_view(code)
-    if len(view) != len(code):
-        view = code
-
-    openers: List[int] = []
-    for rx in (_RE_FRAME_TITLE_OPEN, _RE_FRAMETITLE_CMD_OPEN):
-        for m in rx.finditer(code):
-            # Ignore a \begin{frame} shown as example text in a listing/verbatim.
-            if view[m.start():m.end()] != code[m.start():m.end()]:
-                continue
-            openers.append(m.end() - 1)  # the title's opening brace
-
-    if not openers:
-        return code, []
-
-    # Rightmost-first so edits never shift the offsets still to be processed.
-    new_code = code
-    count = 0
-    for open_pos in sorted(set(openers), reverse=True):
-        close = _match_brace(new_code, open_pos)
-        if close is None:
-            continue
-        inner = new_code[open_pos + 1:close]
-        if "&" not in inner:
-            continue
-        fixed_inner, n_sub = _RE_BARE_AMP.subn(r"\\&", inner)
-        if n_sub:
-            new_code = new_code[:open_pos + 1] + fixed_inner + new_code[close:]
-            count += n_sub
-
-    if not count:
-        return code, []
-    return new_code, [f"Escaped {count} bare '&' in frame title(s) to '\\&'."]
-
-
 # Commands whose (first mandatory) argument is a label, key, path or URL: `_`, `^`
 # and `&` there are literal and must never be escaped.
 _PROTECTED_ARG_CMDS = frozenset({
@@ -736,11 +829,111 @@ _MATH_ENVS = frozenset({
     "equation", "equation*", "align", "align*", "alignat", "alignat*", "gather", "gather*",
     "multline", "multline*", "eqnarray", "eqnarray*", "math", "displaymath", "flalign", "flalign*",
 })
-_ALIGNMENT_ENVS = _MATH_ENVS | frozenset({
-    "tabular", "tabular*", "tabularx", "tabulary", "longtable", "array", "aligned", "split", "cases",
-    "matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "smallmatrix", "tblr",
-    "NiceTabular", "supertabular", "xltabular",
-})
+
+
+def _repair_alignment_errors(code: str, errors: List[Dict[str, Any]],
+                             allowed_lines: Optional[Set[int]]) -> Tuple[str, List[str]]:
+    r"""
+    Repairs for TeX's alignment errors. None of them adds or removes a line, so
+    the line numbers of the remaining errors stay valid.
+
+    * ``Misplaced alignment tab character &`` — the ``&`` TeX choked on is found
+      from the error's located position when there is one (``line`` + ``col``,
+      set by latex_diagnostics), otherwise among every ``&`` of the construct TeX
+      was reading: Beamer reports a whole frame's errors at its ``\end{frame}``,
+      and looking only at that line is why this repair used to change nothing.
+      Only an ``&`` that is certainly text becomes ``\&``, and one in display
+      math with no alignment gets ``aligned`` — a column separator is never
+      touched, so a wrong location cannot damage a table.
+    * ``Extra alignment tab has been changed to \cr`` / ``Misplaced \noalign`` —
+      first the row breaks that arrived as a single backslash (the rows merged),
+      then a column specification narrower than its rows.
+    """
+    misplaced = [e for e in errors if "misplaced alignment tab" in str(e.get("error", "")).lower()]
+    overflow = [e for e in errors if any(k in str(e.get("error", "")).lower()
+                                         for k in ("extra alignment tab", "misplaced \\noalign"))]
+    if not misplaced and not overflow:
+        return code, []
+    try:
+        from latex_diagnostics import enclosing_span
+        from latex_specials import (DISPLAY_MATH, TEXT, classify_ampersands, find_tabulars,
+                                    terminate_lone_backslash_rows, widen_tabular_columns,
+                                    wrap_unaligned_display_math)
+    except Exception as e:
+        logger.warning(f"alignment repair unavailable: {e}")
+        return code, []
+
+    lines = code.split("\n")
+    fixes: List[str] = []
+
+    def allowed(n: int) -> bool:
+        return allowed_lines is None or n in allowed_lines
+
+    def span_of(err: Dict[str, Any]) -> Optional[Tuple[int, int]]:
+        ln, span = err.get("line"), err.get("span")
+        if isinstance(span, (list, tuple)) and len(span) == 2 and all(isinstance(x, int) for x in span):
+            lo, hi = span
+        elif isinstance(ln, int) and 1 <= ln <= len(lines):
+            lo, hi = enclosing_span(lines, ln)
+        else:
+            return None
+        if isinstance(ln, int):
+            lo, hi = min(lo, ln), max(hi, ln)
+        return lo, hi
+
+    if misplaced:
+        amps = classify_ampersands(code, fragment_top=TEXT)
+        escape: Set[int] = set()
+        wrap: Set[int] = set()
+        for err in misplaced:
+            ln, col = err.get("line"), err.get("col")
+            if err.get("located_by") and isinstance(ln, int) and isinstance(col, int):
+                candidates = [a for a in amps if a.line == ln and a.col == col]
+            else:
+                candidates = []
+            if not candidates:
+                span = span_of(err)
+                if span is None:
+                    continue
+                on_line = [a for a in amps if a.line == ln and a.verdict in (TEXT, DISPLAY_MATH)]
+                candidates = on_line or [a for a in amps if span[0] <= a.line <= span[1]]
+            for a in candidates:
+                if not allowed(a.line):
+                    continue
+                if a.verdict == TEXT:
+                    escape.add(a.offset)
+                elif a.verdict == DISPLAY_MATH:
+                    wrap.add(a.line)
+        if escape:
+            chars = list(code)
+            for off in sorted(escape, reverse=True):
+                chars[off] = "\\&"
+            code = "".join(chars)
+            fixes.append(f"Escaped {len(escape)} '&' used as text to '\\&'.")
+        if wrap:
+            code, wrap_fixes = wrap_unaligned_display_math(code, lines=wrap)
+            fixes.extend(wrap_fixes)
+
+    if overflow:
+        target: Set[int] = set()
+        for err in overflow:
+            span = span_of(err)
+            if span:
+                target.update(range(span[0], span[1] + 1))
+        # A merged row is reported where the surplus cell is read, lines after the
+        # break that went missing: the whole table is the place to look.
+        for t in find_tabulars(code):
+            if any(t.begin_line <= n <= t.end_line for n in target):
+                target.update(range(t.begin_line, t.end_line + 1))
+        if allowed_lines is not None:
+            target &= set(allowed_lines)
+        if target:
+            code, row_fixes = terminate_lone_backslash_rows(code, lines=target)
+            fixes.extend(row_fixes)
+            code, widen_fixes = widen_tabular_columns(code, lines=target)
+            fixes.extend(widen_fixes)
+
+    return code, fixes
 
 
 def _enclosing_envs(view_lines: List[str], line_no: int) -> List[str]:
@@ -857,7 +1050,10 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
     r"""
     Deterministic fixes driven by TeX's own errors:
     * ``Missing $ inserted`` — bare ``_`` / ``^`` in text are escaped.
-    * ``Misplaced alignment tab character &`` — bare ``&`` outside tabular/align becomes ``\&``.
+    * ``Misplaced alignment tab character &`` — an ``&`` that is certainly text becomes ``\&``,
+      one in display math with no alignment gets ``aligned`` (``_repair_alignment_errors``).
+    * ``Extra alignment tab`` — row breaks written as one backslash; column spec widened.
+    * ``You can't use `macro parameter character #'`` — bare ``#`` in text is escaped.
     * ``Undefined control sequence`` / ``undefined environment`` — missing standard packages
       (amsmath, booktabs, graphicx, amssymb, tikz) are injected into the preamble.
     * ``did you forget a semicolon`` / TikZ error — missing semicolons added.
@@ -870,34 +1066,41 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
     """
     if not code or not errors:
         return code, []
+    original = code
+    fixes: List[str] = []
+    # Alignment errors first. They are repaired from the document's structure, not
+    # from "the line TeX named", and never shift a line.
+    code, alignment_fixes = _repair_alignment_errors(code, errors, allowed_lines)
+    fixes.extend(alignment_fixes)
+
     lines = code.split("\n")
     view = _structure_view(code)
     view_lines = view.split("\n") if len(view) == len(code) else lines
-    fixes: List[str] = []
     done: Set[Tuple[int, str]] = set()
 
     for err in errors:
         ln = err.get("line")
         msg = str(err.get("error", "")).lower()
 
-        # 1. Missing $ inserted (bare _ / ^ in text) & misplaced alignment tab
+        # 1. Missing $ inserted (bare _ / ^ in text) and a bare # in text. `ln` is the
+        #    located line when the compiler could place the token (latex_diagnostics).
         if isinstance(ln, int) and (1 <= ln <= len(lines)):
             if allowed_lines is None or ln in allowed_lines:
                 if "missing $ inserted" in msg:
                     kind, targets = "dollar", "_^"
-                elif "misplaced alignment tab" in msg:
-                    kind, targets = "amp", "&"
+                elif "macro parameter character" in msg:
+                    kind, targets = "hash", "#"
                 else:
                     kind, targets = None, None
 
                 if kind is not None and (ln, kind) not in done:
                     done.add((ln, kind))
                     envs = set(_enclosing_envs(view_lines, ln))
-                    if not (kind == "dollar" and envs & _MATH_ENVS) and not (kind == "amp" and envs & _ALIGNMENT_ENVS):
+                    if not (envs & _MATH_ENVS):
                         new_line, count = _escape_in_text(lines[ln - 1], targets)
                         if count:
                             lines[ln - 1] = new_line
-                            what = "'_'/'^'" if kind == "dollar" else "'&'"
+                            what = "'_'/'^'" if kind == "dollar" else "'#'"
                             fixes.append(f"Escaped {count} bare {what} in text on line {ln}.")
 
                 # 2. Missing brace or Extra brace on affected line
@@ -907,6 +1110,13 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
                     if delta > 0:
                         lines[ln - 1] += "}" * delta
                         fixes.append(f"Appended {delta} missing '}}' on line {ln}.")
+                    else:
+                        for k in range(ln - 2, max(-1, ln - 10), -1):
+                            d_k = _brace_delta(lines[k])
+                            if d_k > 0:
+                                lines[k] += "}" * d_k
+                                fixes.append(f"Appended {d_k} missing '}}' on line {k + 1}.")
+                                break
                 elif "extra }" in msg and (ln, "brace_sub") not in done:
                     done.add((ln, "brace_sub"))
                     delta = _brace_delta(lines[ln - 1])
@@ -918,9 +1128,30 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
                 # 3. Lonely \item on affected line
                 if ("lonely \\item" in msg or "something's wrong" in msg or "missing \\item" in msg) and (ln, "lonely_item") not in done:
                     done.add((ln, "lonely_item"))
-                    if r"\item" in lines[ln - 1]:
-                        lines[ln - 1] = f"\\begin{{itemize}}\n{lines[ln - 1]}\n\\end{{itemize}}"
-                        fixes.append(f"Enclosed lonely \\item on line {ln} in \\begin{{itemize}} ... \\end{{itemize}}.")
+                    envs = set(_enclosing_envs(view_lines, ln))
+                    if not (envs & _LIST_ENVS):
+                        if r"\item" in lines[ln - 1]:
+                            lines[ln - 1] = f"\\begin{{itemize}}\n{lines[ln - 1]}\n\\end{{itemize}}"
+                            fixes.append(f"Enclosed lonely \\item on line {ln} in \\begin{{itemize}} ... \\end{{itemize}}.")
+                    else:
+                        list_open_idx = None
+                        for k in range(ln - 2, -1, -1):
+                            if _RE_BEGIN_LIST.search(lines[k]):
+                                list_open_idx = k
+                                break
+                        hoisted = False
+                        if list_open_idx is not None:
+                            for k in range(list_open_idx + 1, ln - 1):
+                                lk = lines[k].strip()
+                                if lk and not lk.startswith("%") and not _HARMLESS_LIST_MACROS.match(lines[k]):
+                                    prose_line = lines.pop(k)
+                                    lines.insert(list_open_idx, prose_line)
+                                    fixes.append(f"Moved un-itemized text from line {k + 1} before \\begin{{itemize}}.")
+                                    hoisted = True
+                                    break
+                        if not hoisted and r"\item" not in lines[ln - 1]:
+                            lines[ln - 1] = "\\item " + lines[ln - 1].lstrip()
+                            fixes.append(f"Prefixed un-itemized text on line {ln} with \\item.")
 
         # 4. Unclosed environment ending with mismatch
         m_unclosed = _RE_LOG_UNCLOSED_ENV.search(str(err.get("error", ""))) or _RE_LOG_UNCLOSED_ENV.search(str(err.get("snippet", "")))
@@ -950,7 +1181,7 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
             lines = patched_code.split("\n")
             fixes.extend(pkg_fixes)
 
-    # 6. TikZ syntax error: fix missing semicolons
+    # 6. TikZ syntax error: fix missing semicolons and calc library
     has_tikz = any(
         "did you forget a sem" in str(e.get("error", "")).lower()
         or "giving up on this path" in str(e.get("error", "")).lower()
@@ -963,10 +1194,18 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
         if tikz_fixes:
             lines = patched_code.split("\n")
             fixes.extend(tikz_fixes)
+        if "\\usetikzlibrary{calc}" not in cur_code:
+            cur_code = "\n".join(lines)
+            patched_code, heal_fixes = auto_heal_latex_code(cur_code)
+            if heal_fixes:
+                lines = patched_code.split("\n")
+                fixes.extend(heal_fixes)
 
     # 7. Bad math environment delimiter in TikZ coordinate calculations
     has_calc = any(
         "bad math environment delimiter" in str(e.get("error", "")).lower()
+        or "you need to say \\usetikzlibrary{calc}" in str(e.get("error", "")).lower()
+        or "giving up on this path" in str(e.get("error", "")).lower()
         or e.get("type") == "BAD_MATH_DELIMITER"
         for e in errors
     )
@@ -977,7 +1216,7 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
             lines = patched_code.split("\n")
             fixes.extend(heal_fixes)
 
-    return ("\n".join(lines), fixes) if fixes else (code, [])
+    return ("\n".join(lines), fixes) if fixes else (original, [])
 
 
 _RE_PKG_LOAD = re.compile(r"\\(?:usepackage|RequirePackage)\s*(?:\[([^\]]*)\])?\s*\{([^}]*)\}")
@@ -1137,7 +1376,9 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     6. Injects \\usepackage{tikz} and \\usetikzlibrary{calc,positioning,arrows.meta} whenever TikZ is used.
     7. Fixes missing semicolons on TikZ path commands without breaking multi-line statements.
     7b. Corrects a truncated booktabs rule (\\bottom -> \\bottomrule) when booktabs is in use.
-    7c. Escapes a bare '&' inside a frame title (\\begin{frame}{...} / \\frametitle{...}).
+    5b. Restores row breaks written as a single backslash, escapes '&' used as text
+        (titles, bullets, captions, \\textbf / \\multicolumn in a cell, TikZ node labels),
+        and puts '&' in display math inside aligned.
     8. Injects missing Regalia / Beamer color definitions.
     """
     if not code or not code.strip():
@@ -1198,9 +1439,31 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     code, item_repairs = heal_lonely_items(code)
     fixes_applied.extend(item_repairs)
 
+    # 4b. List environment healing (hoists prose before \item, removes empty lists)
+    code, list_repairs = heal_list_environments(code)
+    fixes_applied.extend(list_repairs)
+
     # 5. Structural environment balancing (closes unclosed frames and environments, removes orphans)
     code, balance_repairs = balance_latex_environments(code)
     fixes_applied.extend(balance_repairs)
+
+    # 5b. Special characters that are structure by accident (latex_specials). These
+    # are by far the commonest way a generated document fails to compile, and the
+    # hardest to repair after the fact: Beamer reports every one of them at the
+    # frame's \end{frame}. Each pass changes only what is certain — an & that is a
+    # column separator, or sits in anything this code does not recognise, is left
+    # alone — and none adds a line, so the write gate still keeps the repair only
+    # on lines the edit changed. They run before the package pass so that
+    # `aligned` brings amsmath with it.
+    try:
+        from latex_specials import (escape_misplaced_ampersands, terminate_lone_backslash_rows,
+                                    wrap_unaligned_display_math)
+        for special_pass in (terminate_lone_backslash_rows, escape_misplaced_ampersands,
+                             wrap_unaligned_display_math):
+            code, special_fixes = special_pass(code)
+            fixes_applied.extend(special_fixes)
+    except Exception as e:
+        logger.warning(f"special-character passes skipped: {e}")
 
     # 6. TikZ Calc & Core Libraries Fix
     # If TikZ is used or loaded, ensure calc, positioning, arrows.meta are loaded. Detection
@@ -1214,21 +1477,28 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     tikz_loaded = bool(_TIKZ_LOADERS.intersection(_loaded_packages(tikz_view)))
     m_tikz_use = re.search(
         r"\\begin\s*\{tikzpicture\}|\\(?:tikz|tikzset|usetikzlibrary)(?![A-Za-z])", tikz_view)
+    has_coord_calc = bool(re.search(r"\(\s*\$[^)]+\)", tikz_view))
+    needs_calc = (tikz_loaded or m_tikz_use or has_coord_calc) and not re.search(r"\\usetikzlibrary\s*\{[^}]*\bcalc\b", tikz_view)
     if m_tikz_use and not tikz_loaded:
         pos = _preamble_insertion_point(tikz_view, m_tikz_use.start())
         if pos is not None:
             code = (code[:pos] + "\\usepackage{tikz}\n\\usetikzlibrary{calc}\n"
                     "\\usetikzlibrary{positioning,arrows.meta}\n" + code[pos:])
             fixes_applied.append("Injected missing \\usepackage{tikz} and \\usetikzlibrary{calc} into preamble.")
-    elif tikz_loaded and not re.search(r"\\usetikzlibrary\s*\{[^}]*\bcalc\b", tikz_view):
+    elif needs_calc:
         m_load = None
         for m in _RE_PKG_LOAD.finditer(tikz_view):
             if _TIKZ_LOADERS.intersection(p.strip() for p in m.group(2).split(",")):
                 m_load = m
                 break
-        if m_load:
-            code = (code[:m_load.end()] + "\n\\usetikzlibrary{calc}\n\\usetikzlibrary{positioning,arrows.meta}"
-                    + code[m_load.end():])
+        pos = m_load.end() if m_load else None
+        if pos is None:
+            m_doc = _RE_BEGIN_DOCUMENT.search(code)
+            pos = m_doc.start() if m_doc else None
+        if pos is not None:
+            tikz_import = "\\usepackage{tikz}\n" if (not tikz_loaded and "\\usepackage{tikz}" not in code) else ""
+            code = (code[:pos] + f"\n{tikz_import}\\usetikzlibrary{{calc}}\n\\usetikzlibrary{{positioning,arrows.meta}}\n"
+                    + code[pos:])
             fixes_applied.append("Injected \\usetikzlibrary{calc} into preamble.")
 
     # 6b. Packages the document uses but never loads (\toprule -> booktabs, align -> amsmath, ...)
@@ -1242,10 +1512,6 @@ def _apply_heal_passes(code: str, error_log: str = "") -> Tuple[str, List[str]]:
     # 7b. Truncated booktabs rule (\bottom -> \bottomrule)
     code, bottom_fixes = fix_booktabs_truncations(code)
     fixes_applied.extend(bottom_fixes)
-
-    # 7c. Bare '&' in frame titles (\begin{frame}{a & b} -> a \& b)
-    code, amp_fixes = fix_ampersand_in_frame_titles(code)
-    fixes_applied.extend(amp_fixes)
 
     # 8. Injected Undefined Colors (Regalia / Beamer)
     needed_colors = []
@@ -1339,13 +1605,24 @@ def format_compilation_fix_prompt(
     """
     diagnostic_blocks: List[str] = []
 
+    # If parsed_errors has errors without line numbers, attempt to resolve them from workspace buffer
+    buf = workspace.get_buffer() if hasattr(workspace, "get_buffer") else ""
+    if buf:
+        for err in parsed_errors:
+            if not err.line_number and err.error_type in ("ALIGNMENT_TAB_ERROR", "MISPLACED_AMPERSAND"):
+                prob = find_probable_alignment_tab_lines(buf)
+                if prob:
+                    err.line_number = prob[0][0]
+                    if not err.snippet or err.snippet == err.message:
+                        err.snippet = prob[0][1]
+
     for err in parsed_errors[:6]:
         line_info = f"Line {err.line_number}" if err.line_number else "Global / Preamble"
         snippet = ""
         if err.line_number and hasattr(workspace, "read_lines"):
             start_l = max(1, err.line_number - 3)
             end_l = min(workspace.get_line_count(), err.line_number + 3)
-            snippet = f"\nCode Context:\n```latex\n{workspace.read_lines(start_l, end_l)}\n```"
+            snippet = f"\nCode Context (around line {err.line_number}):\n```latex\n{workspace.read_lines(start_l, end_l)}\n```"
 
         diagnostic_blocks.append(
             f"ERROR AT {line_info} [{err.error_type}]:\n"
@@ -1354,7 +1631,7 @@ def format_compilation_fix_prompt(
             f"{snippet}"
         )
 
-    diag_text = "\n\n".join(diagnostic_blocks) if diagnostic_blocks else raw_error[:600]
+    diag_text = "\n\n".join(diagnostic_blocks) if diagnostic_blocks else raw_error[:1200]
 
     auto_fix_summary = ""
     if fixes_applied:
@@ -1362,16 +1639,17 @@ def format_compilation_fix_prompt(
 
     return (
         "=========================================================\n"
-        "COMPILATION ERROR SURGICAL REPAIR MANDATE (ASK AI TO FIX):\n"
+        "COMPILATION ERROR SURGICAL REPAIR MANDATE (USE LLM TO FIX):\n"
         "The document failed compilation. Fix the exact lines below to restore zero errors.\n\n"
         f"{auto_fix_summary}"
         f"PARSED COMPILATION DIAGNOSTICS:\n{diag_text}\n\n"
         "SURGICAL FIX INSTRUCTIONS:\n"
         "1. Focus ONLY on the flagged lines. Do not alter unrelated sections of the document.\n"
-        "2. If an environment is unclosed (e.g. \\begin{frame} ended by \\end{document}), close it with \\end{frame} before the next frame or \\end{document}.\n"
-        "3. If TikZ gives 'Bad math environment delimiter', ensure \\usetikzlibrary{calc} is loaded and TikZ path statements end with a semicolon (;).\n"
-        "4. Use `str_replace` to apply your targeted in-place fix.\n"
-        "5. MANDATORY VERIFICATION: You MUST run `verify_compile` after applying your fix to verify compilation passes with 0 errors before concluding.\n"
-        "6. If compilation passes, signal done=true with a concise explanation of what you repaired.\n"
+        "2. Alignment tabs (&): In plain text, escape '&' as '\\&'. In tables (tabular, matrix, array), ensure the number of '&' column dividers matches the column specification (e.g. {c c c} for 3 columns). Never use '&' outside alignment environments.\n"
+        "3. If an environment is unclosed (e.g. \\begin{frame} ended by \\end{document}), close it with \\end{frame} before the next frame or \\end{document}.\n"
+        "4. If TikZ gives 'Bad math environment delimiter', ensure \\usetikzlibrary{calc} is loaded and TikZ path statements end with a semicolon (;).\n"
+        "5. Use `replace_text` (specifying old_str and new_str) to apply your targeted in-place fix.\n"
+        "6. MANDATORY VERIFICATION: You MUST run `compile_latex` after applying your fix to verify compilation passes with 0 errors before concluding.\n"
+        "7. If compilation passes, signal done=true with a concise explanation of what you repaired.\n"
         "========================================================="
     )

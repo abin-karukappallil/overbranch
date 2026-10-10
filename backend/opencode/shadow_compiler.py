@@ -44,6 +44,8 @@ _FAILURE_PLACEHOLDERS = ("", "latex compilation failed.", "compilation failed")
 # not been modified, because it was big, not because anything was wrong with
 # the edit.
 SHADOW_COMPILE_TIMEOUT = int(os.getenv("SHADOW_COMPILE_TIMEOUT", "90"))
+# Errors shown to the model / the UI from one compile.
+MAX_REPORTED_ERRORS = 12
 SHADOW_COMPILE_TIMEOUT_MAX = int(os.getenv("SHADOW_COMPILE_TIMEOUT_MAX", "300"))
 
 
@@ -132,6 +134,7 @@ def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
                         "context": "",
                         "type": "SYNTAX_ERROR",
                         "suggested_action": "",
+                        "file": file_line_match.group(1),
                     })
             i += 1
 
@@ -143,6 +146,43 @@ def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
         "errors": errors,
         "summary": summary,
     }
+
+
+def _errors_from_diagnostics(diagnostics: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    The agent's error records, from the compiler's located diagnostics.
+
+    ``line`` is where the offending token really is; ``reported_line`` is what
+    TeX printed (the ``\\end{frame}`` of a Beamer frame, say). One record per
+    occurrence: four bare ``&`` in one frame are four errors, on four lines —
+    collapsed by ``file:line: message`` they were one, the model fixed one per
+    repair round, and the run was rolled back when the rounds ran out.
+    """
+    try:
+        from latex_error_fixer import _LOG_CONSEQUENCES
+    except Exception:
+        _LOG_CONSEQUENCES = ()
+    errors: List[Dict[str, Any]] = []
+    for d in diagnostics or []:
+        if not isinstance(d, dict):
+            continue
+        message = str(d.get("message") or "").strip()
+        if not message or any(c in message.lower() for c in _LOG_CONSEQUENCES):
+            continue
+        errors.append({
+            "error": message,
+            "line": d.get("line"),
+            "reported_line": d.get("reported_line"),
+            "col": d.get("col"),
+            "token": d.get("token"),
+            "located_by": d.get("located_by"),
+            "span": d.get("span"),
+            "context": d.get("context") or "",
+            "type": d.get("type") or "LATEX_ERROR",
+            "suggested_action": d.get("suggested_action") or "",
+            "file": d.get("file"),
+        })
+    return errors
 
 
 def _norm_file(path: Any) -> Optional[str]:
@@ -264,20 +304,51 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
     # TeX's own error lines (`./main.tex:12: …`, `! …`) are taken from the FULL log by
     # the compiler; the log text here is only its tail (1000 chars on success).
     tex_errs = [e for e in (result.get("errors") or []) if e]
-    if tex_errs:
+    located = _errors_from_diagnostics(result.get("diagnostics") or [])
+    if located:
+        # The compiler parsed the full output of the run and placed every error
+        # (latex_diagnostics). Re-parsing its `errors` strings here would lose the
+        # column, the token, the span — and every repeat of a message on one line.
+        errors = located
+        diagnostics = {"summary": "\n".join(e["error"] for e in errors[:5])}
+    elif not result.get("success"):
+        # The compile failed. Parse full log_text (raw_log or error_log) as primary source
+        # so l.<num> lines, file names, and snippets are parsed into line numbers.
+        diagnostics = parse_latex_error_log(log_text) if log_text else {"has_errors": False, "errors": [], "summary": ""}
+        errors = diagnostics.get("errors", [])
+        if not errors and tex_errs:
+            diagnostics = parse_latex_error_log("\n".join(tex_errs))
+            errors = diagnostics.get("errors", [])
+            if not errors:
+                errors = [{"error": e, "line": None, "context": "", "type": "LATEX_ERROR",
+                           "suggested_action": "", "file": None} for e in tex_errs]
+        elif tex_errs and errors:
+            existing = {str(e.get("error", "")).strip().lower() for e in errors}
+            for te in tex_errs:
+                te_clean = te.lstrip("!").strip().lower()
+                if not any(te_clean in ex or ex in te_clean for ex in existing):
+                    errors.append({
+                        "error": te.lstrip("!").strip(),
+                        "line": None,
+                        "context": "",
+                        "type": "LATEX_ERROR",
+                        "suggested_action": "",
+                        "file": None,
+                    })
+    elif tex_errs:
+        # Success=True (a PDF was produced in nonstopmode), but TeX recorded error lines.
         diagnostics = parse_latex_error_log("\n".join(tex_errs))
         errors = diagnostics.get("errors", [])
-        if not errors and not result.get("success"):
-            diagnostics = parse_latex_error_log(log_text)
-            errors = diagnostics.get("errors", [])
+        if any(e.get("line") is None for e in errors) and log_text:
+            log_diag = parse_latex_error_log(log_text)
+            log_errs = log_diag.get("errors", [])
+            if log_errs:
+                errors = log_errs
         if not errors:
             errors = [{"error": e, "line": None, "context": "", "type": "LATEX_ERROR",
                        "suggested_action": "", "file": None} for e in tex_errs]
-    elif result.get("success"):
-        diagnostics, errors = {"summary": ""}, []  # warnings in the tail of a clean log are not errors
     else:
-        diagnostics = parse_latex_error_log(log_text)
-        errors = diagnostics.get("errors", [])
+        diagnostics, errors = {"summary": ""}, []  # warnings in the tail of a clean log are not errors
 
     pdf_bytes = None
     if result.get("pdf_base64"):
@@ -349,9 +420,14 @@ def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
         base = workspace.__dict__.get("_original_compile")
         if base is None:
             original = workspace.get_original()
-            base = run if original == code else _run_compile(workspace, original, engine, timeout_seconds)
-            if base is not run:
-                _attach_sources(base["errors"], original, file_path)
+            if not original.strip():
+                # A document being created: an empty file has no errors of its own to
+                # subtract, and compiling it cost a full engine run for nothing.
+                base = {"errors": [], "infra": False}
+            else:
+                base = run if original == code else _run_compile(workspace, original, engine, timeout_seconds)
+                if base is not run:
+                    _attach_sources(base["errors"], original, file_path)
             workspace.__dict__["_original_compile"] = base
         # Counted, not a set: two new undefined macros next to one old one are two new errors.
         remaining = Counter(_error_signature(e) for e in base["errors"])
@@ -399,7 +475,7 @@ def compile_shadow_buffer(
     the new ones otherwise). Returns {success, errors, new_errors,
     new_error_count, preexisting_errors, errors_before, errors_after,
     remaining_errors, strict, overfull_boxes, stderr, compile_time_ms,
-    summary[, infra_skip]}.
+    summary, failing_errors, pdf_produced[, infra_skip]}.
     """
     try:
         workspace.heal_touched()
@@ -475,8 +551,15 @@ def compile_shadow_buffer(
     severe = [o for o in run["overfull"] if o.get("severe")]
     return {
         "success": not failing,
-        "errors": failing[:5],
-        "new_errors": new_errors[:5],
+        # `errors` is what a person or a prompt is shown; `failing_errors` is every
+        # error the deterministic repair may act on. Capping the latter at five
+        # meant a deck with six bare `&` could never be repaired in one pass.
+        "errors": failing[:MAX_REPORTED_ERRORS],
+        "failing_errors": failing[:100],
+        "new_errors": new_errors[:MAX_REPORTED_ERRORS],
+        # TeX carries on past most errors; whether a PDF came out decides what a
+        # brand-new document is worth keeping (agent_loop: draft outcome).
+        "pdf_produced": bool(result.get("success")),
         "new_error_count": len(new_errors),
         "preexisting_errors": run["preexisting_errors"],
         "errors_before": run.get("errors_before"),

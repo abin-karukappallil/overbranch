@@ -69,6 +69,54 @@ def detect_magic_engine(latex_code: str) -> Optional[str]:
 
 _TEX_ERROR_RE = re.compile(r"^(?:\S+\.tex:\d+: .*|! .*)$", re.MULTILINE)
 
+# What a direct engine run is given instead of the bare file name. TeX reports an
+# error at the line its reader had reached — the `\end{frame}` of a Beamer frame,
+# the `\end{tabularx}` of a table — and says where the mistake really is only in
+# the token context it prints underneath. By default that context is one level
+# deep, which for `Missing $ inserted` is just `<inserted text> $`: no position
+# at all. Raising \errorcontextlines here, on the command line, shows the levels
+# that carry the user's text without adding a line to the document, so every
+# reported line number still refers to the source as written.
+_TEX_ENTRY = r"\errorcontextlines=20 \input{main.tex}"
+# TeX truncates each context line to `half_error_line` (50 by default) and wraps
+# its output at `max_print_line` (79). Both are kpathsea settings an environment
+# variable overrides; widened, a context line holds enough of a frame to be found
+# in the source, and no file name or error is ever split across lines.
+_TEX_LOG_ENV = {"max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
+
+
+def _engine_command(engine_bin: str, *extra: str) -> List[str]:
+    return [engine_bin, *extra, "-interaction=nonstopmode", "-file-line-error", "-jobname=main", _TEX_ENTRY]
+
+
+def _attach_diagnostics(result: dict, output: str, tmpdir: Path) -> None:
+    """
+    Adds ``diagnostics`` — every error of the run, located on the line its token
+    is really on (latex_diagnostics) — and rewrites ``errors`` to carry those
+    lines. ``output`` is one complete pass; ``result["errors"]`` already holds
+    the error lines of all passes, and none of those is dropped.
+    """
+    try:
+        from latex_diagnostics import diagnose, error_lines
+        root = tmpdir.resolve()
+
+        def read_source(name: str) -> Optional[str]:
+            target = (tmpdir / name).resolve()
+            if root not in target.parents or not target.is_file():
+                return None
+            return target.read_text(encoding="utf-8", errors="replace")
+
+        diagnostics = diagnose(output, read_source)
+    except Exception as e:
+        logger.debug(f"error localisation skipped: {e}")
+        return
+    if not diagnostics:
+        return
+    result["diagnostics"] = diagnostics
+    seen = {str(d.get("raw") or "") for d in diagnostics}
+    others = [e for e in (result.get("errors") or []) if e not in seen]
+    result["errors"] = list(dict.fromkeys(error_lines(diagnostics) + others))[:20]
+
 
 def tex_errors(output: str) -> List[str]:
     """Error lines from a nonstopmode / -file-line-error TeX run (a PDF can still be produced)."""
@@ -831,13 +879,16 @@ def _compile_failure(output: str) -> dict:
         if (_TEX_ERROR_RE.match(s) or "fatal error" in low or "emergency stop" in low
                 or s.startswith("[TIMEOUT]") or s.startswith("[INFRASTRUCTURE ERROR]")):
             picked.append(s)
-            for nxt in lines[i + 1:i + 8]:
+            # \errorcontextlines puts several context pairs between an error and its l.N line.
+            for nxt in lines[i + 1:i + 60]:
                 if _RE_TEX_CONTEXT_LINE.match(nxt.strip()):
                     picked.append(nxt.strip())
                     break
+                if _TEX_ERROR_RE.match(nxt.strip()):
+                    break
     picked = list(dict.fromkeys(picked))
     summary = "\n".join(picked[:20]) if picked else clean_err[-1500:]
-    return {"success": False, "error_log": summary, "raw_log": clean_err[-4000:], "errors": tex_errors(clean_err)}
+    return {"success": False, "error_log": summary, "raw_log": clean_err[-32000:], "errors": tex_errors(clean_err)}
 
 
 _RE_LOG_LINE_REFS = (
@@ -888,6 +939,16 @@ def _remap_result_lines(result: dict, healed: str, source: str) -> None:
     for box in result.get("overfull") or []:
         if isinstance(box, dict) and isinstance(box.get("lines"), list):
             box["lines"] = [mapping.get(n, n) if isinstance(n, int) else n for n in box["lines"]]
+    for d in result.get("diagnostics") or []:
+        if not isinstance(d, dict) or str(d.get("file") or "main.tex").replace("./", "", 1) != "main.tex":
+            continue
+        for key in ("line", "reported_line"):
+            if isinstance(d.get(key), int):
+                d[key] = mapping.get(d[key], d[key])
+        if isinstance(d.get("span"), list):
+            d["span"] = [mapping.get(n, n) if isinstance(n, int) else n for n in d["span"]]
+        if isinstance(d.get("raw"), str):
+            d["raw"] = remap_text(d["raw"])
 
 
 def compile_latex(
@@ -983,6 +1044,8 @@ def _compile_latex_impl(
 
     with tempfile.TemporaryDirectory() as tmpdir_str:
         tmpdir = Path(tmpdir_str)
+        last_output = ""
+        final_pass = ""  # output of the last complete engine pass: what diagnostics are read from
         try:
             has_disk_files = False
             # 1. Copy project disk assets if project_id is provided
@@ -1077,6 +1140,8 @@ def _compile_latex_impl(
             comp_env = os.environ.copy()
             existing_texinputs = comp_env.get("TEXINPUTS", "")
             comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
+            for _key, _value in _TEX_LOG_ENV.items():
+                comp_env.setdefault(_key, _value)
 
             # Heavy TikZ/pgfplots or very long documents take far longer than a
             # plain article; Overleaf lets them run for minutes. Give them a
@@ -1115,7 +1180,7 @@ def _compile_latex_impl(
             sx = ["-synctex=1"] if persist_synctex else []
 
             def _direct(engine_bin: str) -> List[str]:
-                return [engine_bin, *sx, "-interaction=nonstopmode", "-file-line-error", "main.tex"]
+                return _engine_command(engine_bin, *sx)
 
             def _latexmk(engine_flag: Optional[str] = None) -> List[str]:
                 cmd = ["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode"]
@@ -1166,6 +1231,7 @@ def _compile_latex_impl(
                         env=comp_env
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
+                    final_pass = last_output
 
                     pdf_path = tmpdir / "main.pdf"
 
@@ -1195,7 +1261,8 @@ def _compile_latex_impl(
                                         timeout=extra_pass_timeout,
                                         env=comp_env,
                                     )
-                                    last_output += "\n" + (rb.stdout or "") + "\n" + (rb.stderr or "")
+                                    final_pass = (rb.stdout or "") + "\n" + (rb.stderr or "")
+                                    last_output += "\n" + final_pass
                                 except Exception:
                                     break
                         else:
@@ -1214,7 +1281,8 @@ def _compile_latex_impl(
                                     timeout=extra_pass_timeout,
                                     env=comp_env
                                 )
-                                last_output += "\n" + (result2.stdout or "") + "\n" + (result2.stderr or "")
+                                final_pass = (result2.stdout or "") + "\n" + (result2.stderr or "")
+                                last_output += "\n" + final_pass
 
                     # If PDF was created, persist artifacts and return it.
                     if pdf_path.exists():
@@ -1223,7 +1291,7 @@ def _compile_latex_impl(
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
-                        return {
+                        compiled = {
                             "success": True,
                             "pdf_base64": pdf_base64,
                             "compile_time_ms": elapsed_ms,
@@ -1233,6 +1301,11 @@ def _compile_latex_impl(
                             # truncated log above; keep them for layout checks.
                             "overfull": _overfull_boxes(last_output),
                         }
+                        # A PDF produced despite errors is the common case for the
+                        # errors that matter here (a misplaced & never stops TeX),
+                        # and the truncated log above holds none of their context.
+                        _attach_diagnostics(compiled, final_pass, tmpdir)
+                        return compiled
                 except subprocess.TimeoutExpired:
                     last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
                     continue
@@ -1248,7 +1321,9 @@ def _compile_latex_impl(
                 # which then hands the errors to the model) must not pay for the cascade below:
                 # every patch is another engine run, up to seven of them, and a PDF obtained by
                 # silently disabling a package is a result such a caller rejects anyway.
-                return _compile_failure(last_output)
+                failed = _compile_failure(last_output)
+                _attach_diagnostics(failed, final_pass or last_output, tmpdir)
+                return failed
 
             # Every recovery run must still report the TeX errors it saw: a PDF obtained
             # by disabling a package says nothing about the rest of the document, and
@@ -1266,6 +1341,7 @@ def _compile_latex_impl(
                     "errors": tex_errors(output_text),
                     "overfull": _overfull_boxes(output_text),
                 }
+                _attach_diagnostics(res, output_text, tmpdir)
                 if patched != latex_code:
                     try:
                         _remap_result_lines(res, patched, latex_code)
@@ -1296,7 +1372,7 @@ def _compile_latex_impl(
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
                     result = _run_tex(
-                        [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                        _engine_command(recovery_engine),
                         cwd=tmpdir,
                         timeout=15,
                         env=comp_env
@@ -1329,7 +1405,7 @@ def _compile_latex_impl(
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = _run_tex([recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"], cwd=tmpdir, timeout=15, env=comp_env)
+                        result = _run_tex(_engine_command(recovery_engine), cwd=tmpdir, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
                         if pdf_path.exists():
                             return _recovery_success(
@@ -1350,7 +1426,7 @@ def _compile_latex_impl(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = _run_tex(
-                            [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                            _engine_command(recovery_engine),
                             cwd=tmpdir,
                             timeout=15,
                             env=comp_env
@@ -1374,12 +1450,26 @@ def _compile_latex_impl(
             if any(kw in last_output for kw in titlesec_error_keywords) or (r"\titleformat" in latex_code and r"\MakeUppercase" in latex_code):
                 patched_code = latex_code
                 patched_lines = []
+                # `\\[6pt]` is a row break inside a table. Rewriting it to
+                # `\par\vspace{6pt}` there leaves the rows unterminated: they merge,
+                # and the caller is shown "Extra alignment tab" errors for a document
+                # it never wrote. The rewrite is for title pages and headings only.
+                try:
+                    from latex_specials import ALIGNMENT_ENVS as _alignment_envs
+                except Exception:
+                    _alignment_envs = frozenset({"tabular", "tabularx", "longtable", "array", "align"})
+                open_alignments = 0
                 for line in patched_code.split("\n"):
+                    begins = [e for e in re.findall(r"\\begin\s*\{([A-Za-z*]+)\}", line) if e in _alignment_envs]
+                    ends = [e for e in re.findall(r"\\end\s*\{([A-Za-z*]+)\}", line) if e in _alignment_envs]
+                    in_alignment = open_alignments > 0 or bool(begins)
+                    open_alignments = max(0, open_alignments + len(begins) - len(ends))
                     if "titleformat" in line and "\\MakeUppercase" in line:
                         line = line.replace("\\MakeUppercase", "")
                     elif "\\MakeUppercase" in line and any(k in line for k in ["centering", "normalfont", "bfseries"]):
                         line = line.replace("\\MakeUppercase", "")
-                    if "\\\\" in line and any(unit in line for unit in ["cm]", "in]", "mm]", "pt]", "em]"]):
+                    if (not in_alignment and "\\\\" in line
+                            and any(unit in line for unit in ["cm]", "in]", "mm]", "pt]", "em]"])):
                         line = re.sub(r'\\\\\s*\[(\d+(?:\.\d+)?(?:cm|in|mm|pt|em|ex))\]', r'\\par\\vspace{\1}', line)
                     patched_lines.append(line)
                 patched_code = "\n".join(patched_lines)
@@ -1388,7 +1478,7 @@ def _compile_latex_impl(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = _run_tex(
-                            [recovery_engine, "-interaction=nonstopmode", "-file-line-error", "main.tex"],
+                            _engine_command(recovery_engine),
                             cwd=tmpdir,
                             timeout=15,
                             env=comp_env,
@@ -1406,5 +1496,7 @@ def _compile_latex_impl(
             pass
 
         # No fallback PDFs — return clean compilation error directly so user can see it and ask AI to fix it
-        return _compile_failure(last_output)
+        failed = _compile_failure(last_output)
+        _attach_diagnostics(failed, final_pass or last_output, tmpdir)
+        return failed
 
