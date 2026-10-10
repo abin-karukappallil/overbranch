@@ -42,6 +42,7 @@ import {
   ChevronDown,
   PlusCircle,
   Trash2,
+  Search,
   Sparkles,
   Undo2,
   Redo2,
@@ -64,6 +65,9 @@ import type { SyncTeXForwardResult, SyncState } from "@/types/sync";
 import { ProjectFilesPanel } from "@/components/editor/ProjectFilesPanel";
 import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
 import { InlineDiffEditor, EditItem } from "@/components/editor/InlineDiffEditor";
+import { EditorSearchBar } from "@/components/editor/EditorSearchBar";
+import { MobileEditorAssist } from "@/components/editor/MobileEditorAssist";
+import { CopyButton } from "@/components/editor/CopyButton";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { ApiSettingsModal } from "@/components/editor/ApiSettingsModal";
 import { Button } from "@/components/ui/button";
@@ -92,6 +96,7 @@ import {
   type ApplyOutcome,
 } from "@/lib/latex-edit-apply";
 import { resolveEditsOnServer } from "@/lib/latex-validate";
+import { copyText, readClipboard } from "@/lib/clipboard";
 
 const SHOW_EDIT_DEBUG = process.env.NODE_ENV !== "production";
 
@@ -162,7 +167,7 @@ class EditorErrorBoundary extends React.Component<
       return (
         <div className="flex flex-col items-center justify-center h-full p-4 bg-background text-foreground text-xs font-mono space-y-3">
           <AlertTriangle className="w-8 h-8 text-amber-400" />
-          <span className="font-semibold text-amber-300">Editor Intercepted Event Exception</span>
+          <span className="font-semibold text-amber-700 dark:text-amber-300">Editor Intercepted Event Exception</span>
           <p className="text-muted-foreground text-center text-[11px] max-w-xs">
             The editor safely recovered from clipboard/input exception.
           </p>
@@ -245,6 +250,35 @@ export function extractChangesSummary(response: string): string | null {
   return response.slice(marker + "CHANGES_SUMMARY:".length).trim();
 }
 
+/**
+ * Clears the applied/reverted flags on messages that share one `historyEntryId`.
+ *
+ * Accepting from the floating diff card used to stamp every message that still
+ * carried an `edits` array with the same history id, so one Revert flipped them
+ * all. The code path is fixed, but chats already persisted in localStorage keep
+ * the corrupted flags — and would keep reproducing the symptom — until they are
+ * cleaned up once on load.
+ */
+export function repairSharedEditHistoryIds<T extends { historyEntryId?: string }>(
+  messages: T[],
+): T[] {
+  const counts = new Map<string, number>();
+  for (const m of messages) {
+    if (m.historyEntryId) {
+      counts.set(m.historyEntryId, (counts.get(m.historyEntryId) ?? 0) + 1);
+    }
+  }
+  const shared = new Set(
+    [...counts.entries()].filter(([, n]) => n > 1).map(([id]) => id),
+  );
+  if (shared.size === 0) return messages;
+  return messages.map((m) =>
+    m.historyEntryId && shared.has(m.historyEntryId)
+      ? { ...m, isApplied: false, isReverted: false, historyEntryId: undefined }
+      : m,
+  );
+}
+
 export function EditorLayout({
   projectId,
   isGuest: propIsGuest,
@@ -265,6 +299,15 @@ export function EditorLayout({
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
+  // Find & replace bar; shared by the desktop and mobile editors.
+  const [searchOpen, setSearchOpen] = useState(false);
+  /**
+   * The assistant message whose edits are currently in `diffEditsList`.
+   * The floating diff cards used to accept edits with no message id, which
+   * made commitEditOutcome mark EVERY past message as applied under one shared
+   * history id — so a single Revert flipped all of them.
+   */
+  const pendingEditsMsgIdRef = useRef<string | null>(null);
 
   // In-memory SWR file cache for instantaneous file switching
   const fileContentCacheRef = useRef<Map<string, { content: string; timestamp: number }>>(new Map());
@@ -419,7 +462,7 @@ export function EditorLayout({
 
     setActiveMobileTab("code");
 
-    const editors = [desktopEditorRef.current, mobileEditorRef.current, editorRef.current].filter(Boolean);
+    const editors = [desktopEditorRef.current, mobileEditorRef.current].filter(Boolean);
     const uniqueEditors = Array.from(new Set(editors));
 
     for (const ed of uniqueEditors) {
@@ -496,7 +539,7 @@ export function EditorLayout({
     const trimmed = selectedText.trim();
     if (!trimmed || trimmed.length < 2) return;
 
-    const editors = [desktopEditorRef.current, mobileEditorRef.current, editorRef.current].filter(Boolean);
+    const editors = [desktopEditorRef.current, mobileEditorRef.current].filter(Boolean);
     const uniqueEditors = Array.from(new Set(editors));
 
     for (const ed of uniqueEditors) {
@@ -832,7 +875,7 @@ export function EditorLayout({
       if (savedMessages) {
         const parsed = JSON.parse(savedMessages);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          setMessages(parsed);
+          setMessages(repairSharedEditHistoryIds(parsed));
         }
       }
     } catch (e) {
@@ -886,6 +929,7 @@ export function EditorLayout({
     setAttachedFile(null);
     setDiffData(null);
     setDiffEditsList([]);
+    pendingEditsMsgIdRef.current = null;
     setFallbackModelNotice(null);
     setAgentProgressSteps([]);
     try {
@@ -901,6 +945,7 @@ export function EditorLayout({
       setAttachedFile(null);
       setDiffData(null);
       setDiffEditsList([]);
+      pendingEditsMsgIdRef.current = null;
       setFallbackModelNotice(null);
       setAgentProgressSteps([]);
       try {
@@ -910,7 +955,21 @@ export function EditorLayout({
     }
   };
 
-  const editorRef = useRef<any>(null);
+  /**
+   * Both Monaco instances (desktop + mobile) are always mounted and merely
+   * hidden with CSS, so a single shared `editorRef` was always clobbered by
+   * whichever mounted last — the mobile one, which is later in the JSX. Every
+   * toolbar action was therefore driving a hidden, zero-sized editor even on
+   * desktop. Resolve the editor that is actually on screen instead.
+   */
+  const [editorsNonce, setEditorsNonce] = useState(0);
+  const isMobileViewport = () =>
+    typeof window !== "undefined" && window.innerWidth < 768;
+  const getActiveEditor = useCallback(() => {
+    const mobile = mobileEditorRef.current;
+    const desktop = desktopEditorRef.current;
+    return (isMobileViewport() ? mobile ?? desktop : desktop ?? mobile) ?? null;
+  }, []);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const decorationsRef = useRef<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -944,8 +1003,8 @@ export function EditorLayout({
 
   // Apply native line decorations (red deletion highlights) directly inside Monaco Editor
   useEffect(() => {
-    if (!editorRef.current) return;
-    const editor = editorRef.current;
+    const editor = getActiveEditor();
+    if (!editor) return;
     const model = editor.getModel();
     if (!model) return;
 
@@ -983,87 +1042,54 @@ export function EditorLayout({
     });
 
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
-  }, [diffEditsList, code]);
+    // editorsNonce: the editors mount after this effect first runs, and
+    // getActiveEditor() reads a ref, so without it the decorations never appear.
+  }, [diffEditsList, code, getActiveEditor, editorsNonce]);
 
   // Responsive Sidebar Panels
   const [aiOpen, setAiOpen] = useState(true);
   const [pdfOpen, setPdfOpen] = useState(true);
 
+  /**
+   * Copy the selection (or the whole buffer) from the visible editor.
+   *
+   * The clipboard fallbacks live in lib/clipboard.ts so this, the chat
+   * CopyButton and the mobile touch callout all behave identically.
+   *
+   * NOTE: this and the three helpers below are not wired to any control today;
+   * they are the primitives the mobile callout and accessory bar build on.
+   */
   const handleCustomCopy = async () => {
-    if (editorRef.current) {
-      const editor = editorRef.current;
-      const selection = editor.getSelection();
-      const model = editor.getModel();
-      const selectedText = selection && model && !selection.isEmpty() ? model.getValueInRange(selection) : "";
-      const textToCopy = selectedText || editor.getValue();
+    const editor = getActiveEditor();
+    const selection = editor?.getSelection?.();
+    const model = editor?.getModel?.();
+    const selected =
+      selection && model && !selection.isEmpty() ? model.getValueInRange(selection) : "";
+    const textToCopy = selected || editor?.getValue?.() || code;
+    if (!textToCopy) return;
 
-      if (!textToCopy) {
-        return;
-      }
-
-      // 1. Try modern Async Clipboard API
-      try {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          await navigator.clipboard.writeText(textToCopy);
-          return;
-        }
-      } catch (err) {
-        console.warn("navigator.clipboard.writeText error, attempting fallback:", err);
-      }
-
-      // 2. Fallback: execCommand('copy') with hidden textarea
-      try {
-        const textarea = document.createElement("textarea");
-        textarea.value = textToCopy;
-        textarea.style.position = "fixed";
-        textarea.style.left = "-9999px";
-        textarea.style.top = "-9999px";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.focus();
-        textarea.select();
-        const success = document.execCommand("copy");
-        document.body.removeChild(textarea);
-        if (success) {
-          // Restore Monaco selection
-          if (selection) editor.setSelection(selection);
-          return;
-        }
-      } catch (fallbackErr) {
-        console.warn("execCommand copy fallback error:", fallbackErr);
-      }
-    } else if (code) {
-      try {
-        await navigator.clipboard.writeText(code);
-        return;
-      } catch (err) { }
+    if (await copyText(textToCopy)) {
+      // The execCommand fallback steals the selection; put it back.
+      if (editor && selection) editor.setSelection(selection);
+      return;
     }
     toast.error("Unable to access clipboard. Use Ctrl+C or Cmd+C.");
   };
 
   const handleCustomPaste = async () => {
-    // Try Clipboard Read API
-    try {
-      if (navigator.clipboard && navigator.clipboard.readText) {
-        const text = await navigator.clipboard.readText();
-        if (text) {
-          insertSymbol(text);
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn("Direct clipboard read blocked by browser permissions:", err);
+    const text = await readClipboard();
+    if (text) {
+      insertSymbol(text);
+      return;
     }
-
-    // Focus editor so user can press Ctrl+V / Cmd+V
-    if (editorRef.current) {
-      editorRef.current.focus();
-    }
+    // iOS Safari has no readText; focus the editor so the user can paste
+    // with the keyboard or the OS callout.
+    getActiveEditor()?.focus();
   };
 
   const handleSelectAll = () => {
-    if (editorRef.current) {
-      const editor = editorRef.current;
+    const editor = getActiveEditor();
+    if (editor) {
       editor.focus();
       const model = editor.getModel();
       if (model) {
@@ -1075,8 +1101,8 @@ export function EditorLayout({
   };
 
   const handleSelectLine = () => {
-    if (editorRef.current) {
-      const editor = editorRef.current;
+    const editor = getActiveEditor();
+    if (editor) {
       editor.focus();
       const pos = lastPositionRef.current || editor.getPosition();
       if (pos) {
@@ -1095,17 +1121,17 @@ export function EditorLayout({
   };
 
   const handleUndo = () => {
-    if (editorRef.current) {
-      editorRef.current.focus();
-      editorRef.current.trigger("toolbar", "undo", null);
-    }
+    const editor = getActiveEditor();
+    if (!editor) return;
+    editor.focus();
+    editor.trigger("toolbar", "undo", null);
   };
 
   const handleRedo = () => {
-    if (editorRef.current) {
-      editorRef.current.focus();
-      editorRef.current.trigger("toolbar", "redo", null);
-    }
+    const editor = getActiveEditor();
+    if (!editor) return;
+    editor.focus();
+    editor.trigger("toolbar", "redo", null);
   };
 
   const toggleAi = () => {
@@ -1163,6 +1189,7 @@ export function EditorLayout({
     setDiffData(null);
     setDiffEditsList([]);
     authoritativeDocRef.current = null;
+    pendingEditsMsgIdRef.current = null;
     setActiveFilePath(filePath);
     // Instant cache lookup for 0ms transition
     const cached = fileContentCacheRef.current.get(filePath);
@@ -1395,8 +1422,9 @@ export function EditorLayout({
     } else {
       mobileEditorRef.current = editor;
     }
-    editorRef.current = editor;
     monacoRef.current = monaco;
+    // Let effects that need an editor instance re-run now that one exists.
+    setEditorsNonce((n) => n + 1);
 
     setupDefaultLatexSyntaxAndEmeraldTheme(monaco, editor);
 
@@ -1423,14 +1451,14 @@ export function EditorLayout({
     try {
       const isTouchDevice = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
       const containerNode = editor.getContainerDomNode();
-      if (containerNode && isTouchDevice) {
+      if (containerNode && isTouchDevice && !isDesktop) {
         containerNode.addEventListener(
           "paste",
           (e: ClipboardEvent) => {
             try {
               const pastedText = e.clipboardData?.getData("text/plain");
-              if (pastedText !== undefined && pastedText !== null && editorRef.current) {
-                const activeEd = editorRef.current;
+              if (pastedText !== undefined && pastedText !== null) {
+                const activeEd = editor;
                 const selection = activeEd.getSelection();
                 if (selection && !selection.isEmpty()) {
                   e.preventDefault();
@@ -1463,6 +1491,13 @@ export function EditorLayout({
       const currentVal = editor.getValue();
       saveDocument(currentVal, true);
       handleCompile(currentVal);
+    });
+
+    // Our own find bar deliberately replaces Monaco's built-in widget: the
+    // built-in one needs a hardware keyboard and has no UI trigger, so it is
+    // unreachable on mobile. One bar keeps both platforms identical.
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+      setSearchOpen(true);
     });
   };
 
@@ -1855,11 +1890,15 @@ export function EditorLayout({
       }
 
       const hasEdits = editsList.length > 0;
+      const assistantMsgId = `ai-${Date.now()}`;
+      // Bind the pending diff to this message so accepting it from the
+      // floating card marks exactly one card applied.
+      pendingEditsMsgIdRef.current = hasEdits ? assistantMsgId : null;
 
       setMessages((prev) => [
         ...prev,
         {
-          id: `ai-${Date.now()}`,
+          id: assistantMsgId,
           sender: "assistant",
           text: responseText + (data.is_fallback ? `\n\n*(⚠️ Fallback Model Used: ${data.model_used})*` : ""),
           time: assistantTime,
@@ -1989,11 +2028,13 @@ export function EditorLayout({
   /**
    * The single place that commits an apply outcome to the editor.
    *
-   * Previously this logic was copy-pasted across applySingleEditInPlace,
-   * handleAcceptDiff, handleAcceptSingleEdit and handleAcceptAllEdits, each with
-   * subtly different history IDs and message flags — and each silently dropping
-   * edits whose anchor was missing or ambiguous. Skips are now always surfaced,
-   * and a partial apply is re-validated before it is saved.
+   * Previously this logic was copy-pasted across several accept handlers, each
+   * with subtly different history IDs and message flags — and each silently
+   * dropping edits whose anchor was missing or ambiguous. Skips are now always
+   * surfaced, and a partial apply is re-validated before it is saved.
+   *
+   * `opts.msgId` identifies the one chat message these edits belong to; it is
+   * also the history id, so each card can revert exactly its own edit.
    */
   const commitEditOutcome = async (
     outcome: ApplyOutcome,
@@ -2053,7 +2094,7 @@ export function EditorLayout({
       }
     }
 
-    const editor = editorRef.current;
+    const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
       editor.pushUndoStop();
@@ -2095,24 +2136,19 @@ export function EditorLayout({
       });
     }
 
-    if (opts.markMessagesApplied) {
-      if (opts.msgId) {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === opts.msgId
-              ? { ...m, isApplied: true, isReverted: false, historyEntryId: opts.historyId }
-              : m,
-          ),
-        );
-      } else {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.edits && m.edits.length > 0
-              ? { ...m, isApplied: true, isReverted: false, historyEntryId: opts.historyId }
-              : m,
-          ),
-        );
-      }
+    // Only the message these edits came from is marked applied. The old
+    // `else` branch marked every message that still carried an `edits` array,
+    // badging untouched proposals as "Applied" and giving them all the same
+    // historyEntryId — which is why one Revert click flipped every card and
+    // could restore the wrong document.
+    if (opts.markMessagesApplied && opts.msgId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === opts.msgId
+            ? { ...m, isApplied: true, isReverted: false, historyEntryId: opts.historyId }
+            : m,
+        ),
+      );
     }
 
     saveDocument(updatedCode, true);
@@ -2127,24 +2163,6 @@ export function EditorLayout({
     return { originalText: doc.originalCode, authoritativeText: doc.proposedCode };
   };
 
-  const handleAcceptDiff = (originalChunk: string, proposedChunk: string) => {
-    const editor = editorRef.current;
-    const model = editor?.getModel?.();
-    const currentText = model ? model.getValue() : code;
-    const outcome = applyEditItems(
-      currentText,
-      [{ original_chunk: originalChunk, proposed_chunk: proposedChunk }],
-      authoritativeForActiveFile(),
-    );
-    void commitEditOutcome(outcome, {
-      codeBeforeEdit: currentText,
-      historyId: `diff-${Date.now()}`,
-      historyLabel: "AI Document Edit",
-      source: "ai-diff-edit",
-      clearDiffState: true,
-    });
-  };
-
   const handleAcceptAllEdits = (itemsToApply: EditItem[], msgId?: string) => {
     const targetFile = msgId ? messages.find((m) => m.id === msgId)?.editsFile : undefined;
     const activeFile = activeFilePath || "main.tex";
@@ -2152,7 +2170,7 @@ export function EditorLayout({
       toast.error(`These edits were made for ${targetFile}. Open ${targetFile} to apply them.`);
       return;
     }
-    const editor = editorRef.current;
+    const editor = getActiveEditor();
     const model = editor?.getModel?.();
     const codeBeforeEdit = model ? model.getValue() : code;
 
@@ -2185,35 +2203,7 @@ export function EditorLayout({
     setDiffData(null);
     setDiffEditsList([]);
     authoritativeDocRef.current = null;
-  };
-
-  const handleAcceptSingleEdit = (item: EditItem) => {
-    const editor = editorRef.current;
-    const model = editor?.getModel?.();
-    const codeBeforeEdit = model ? model.getValue() : code;
-
-    // A single item out of several is by definition a partial apply, so it is
-    // replayed as a chunk and re-validated rather than taking the whole-document
-    // shortcut.
-    const outcome = applyEditItems(codeBeforeEdit, [item as AppliedEditItem], {
-      originalText: authoritativeForActiveFile().originalText,
-    });
-
-    const remaining = diffEditsList.filter((e) => e.id !== item.id);
-
-    void commitEditOutcome(outcome, {
-      codeBeforeEdit,
-      historyId: item.id || `single-${Date.now()}`,
-      historyLabel: "AI Single Edit",
-      source: "ai-accept-single",
-      clearDiffState: false,
-    }).then(() => {
-      setDiffEditsList(remaining);
-      if (remaining.length === 0) {
-        setDiffData(null);
-        authoritativeDocRef.current = null;
-      }
-    });
+    pendingEditsMsgIdRef.current = null;
   };
 
   const handleRevertEdit = (editId: string) => {
@@ -2225,7 +2215,7 @@ export function EditorLayout({
     const restoredCode = entry.beforeCode[file] ?? Object.values(entry.beforeCode)[0];
     if (restoredCode === undefined) return;
 
-    const editor = editorRef.current;
+    const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
       editor.pushUndoStop();
@@ -2258,13 +2248,15 @@ export function EditorLayout({
     saveDocument(restoredCode, true);
     handleCompile(restoredCode);
 
-    setMessages((prev) =>
-      prev.map((m) =>
-        (m.historyEntryId === editId || m.id === editId)
-          ? { ...m, isReverted: true }
-          : m
-      )
-    );
+    // Exactly one card: prefer the message that owns this history entry, and
+    // fall back to an id match only when no message claims it.
+    setMessages((prev) => {
+      const target =
+        prev.find((m) => m.historyEntryId === editId) ??
+        prev.find((m) => m.id === editId);
+      if (!target) return prev;
+      return prev.map((m) => (m === target ? { ...m, isReverted: true } : m));
+    });
   };
 
   const handleReapplyEdit = (editId: string) => {
@@ -2276,7 +2268,7 @@ export function EditorLayout({
     const reappliedCode = entry.afterCode[file] ?? Object.values(entry.afterCode)[0];
     if (reappliedCode === undefined) return;
 
-    const editor = editorRef.current;
+    const editor = getActiveEditor();
     const model = editor?.getModel?.();
     if (editor && model) {
       editor.pushUndoStop();
@@ -2296,21 +2288,13 @@ export function EditorLayout({
     saveDocument(reappliedCode, true);
     handleCompile(reappliedCode);
 
-    setMessages((prev) =>
-      prev.map((m) =>
-        (m.historyEntryId === editId || m.id === editId)
-          ? { ...m, isReverted: false }
-          : m
-      )
-    );
-  };
-
-  const handleRejectSingleEdit = (itemId: string) => {
-    const remaining = diffEditsList.filter((e) => e.id !== itemId);
-    setDiffEditsList(remaining);
-    if (remaining.length === 0) {
-      setDiffData(null);
-    }
+    setMessages((prev) => {
+      const target =
+        prev.find((m) => m.historyEntryId === editId) ??
+        prev.find((m) => m.id === editId);
+      if (!target) return prev;
+      return prev.map((m) => (m === target ? { ...m, isReverted: false } : m));
+    });
   };
 
   const getEditLineRange = (
@@ -2364,31 +2348,31 @@ export function EditorLayout({
     const firstEdit = m.edits[0];
 
     return (
-      <div className="mt-2.5 p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs font-mono space-y-2">
-        <div className="flex items-center justify-between font-bold text-indigo-400">
+      <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 text-xs font-mono space-y-2">
+        <div className="flex items-center justify-between font-bold text-indigo-600 dark:text-indigo-400">
           <div className="flex items-center gap-1.5 text-xs">
             <span>Proposed TeX Edit ({m.edits.length})</span>
           </div>
           {m.isApplied ? (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 font-bold flex items-center gap-1">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-600/20 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-500/30 font-bold flex items-center gap-1">
               <Check className="w-3 h-3" /> Applied
             </span>
           ) : (
-            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-50 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-300 dark:border-amber-500/30 font-bold">
               Pending
             </span>
           )}
         </div>
 
         {firstEdit && (firstEdit.original_chunk || firstEdit.proposed_chunk) && (
-          <div className="bg-black/80 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-zinc-800 font-mono max-h-28">
+          <div className="bg-white dark:bg-black/80 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-slate-200 dark:border-zinc-800 font-mono max-h-28">
             {firstEdit.original_chunk && (
-              <div className="text-rose-300 bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
+              <div className="text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
                 - {firstEdit.original_chunk.split("\n")[0]}
               </div>
             )}
             {firstEdit.proposed_chunk && (
-              <div className="text-indigo-400 bg-indigo-600/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 truncate">
+              <div className="text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-600/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 truncate">
                 + {firstEdit.proposed_chunk.split("\n")[0]}
               </div>
             )}
@@ -2400,7 +2384,7 @@ export function EditorLayout({
             <button
               type="button"
               onClick={() => handleRejectAllEdits()}
-              className="flex-1 h-7 rounded-lg bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/40 text-rose-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
+              className="flex-1 h-7 rounded-lg bg-rose-50 dark:bg-rose-600/20 hover:bg-rose-100 dark:hover:bg-rose-600/30 border border-rose-200 dark:border-rose-500/40 text-rose-700 dark:text-rose-300 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
               <span>Reject</span>
@@ -2415,13 +2399,13 @@ export function EditorLayout({
               }}
               className="flex-1 h-7 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-indigo-700 shadow-sm shadow-indigo-500/20 cursor-pointer"
             >
-              <Check className="w-3.5 h-3.5 text-black stroke-[3]" />
+              <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
               <span>Accept Edit</span>
             </button>
           </div>
         ) : (
-          <div className="pt-1.5 border-t border-zinc-800/80 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-indigo-400">
+          <div className="pt-1.5 border-t border-slate-200 dark:border-zinc-800/80 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-indigo-600 dark:text-indigo-400">
               <Check className="w-3.5 h-3.5" />
               <span>{m.isReverted ? "Reverted" : "Applied to TeX"}</span>
             </div>
@@ -2436,12 +2420,12 @@ export function EditorLayout({
                       disabled={!hasHistory}
                       onClick={() => handleRevertEdit(targetId)}
                       className={`px-2 py-1 rounded-md border text-[10px] font-mono font-bold flex items-center gap-1 transition-all shadow-xs ${hasHistory
-                          ? "bg-zinc-900 hover:bg-zinc-800 text-amber-300 hover:text-amber-200 border-zinc-800 cursor-pointer active:scale-95"
-                          : "bg-zinc-900 border-zinc-800 opacity-35 text-zinc-500 cursor-not-allowed"
+                          ? "bg-white dark:bg-zinc-900 hover:bg-slate-100 dark:hover:bg-zinc-800 text-amber-700 dark:text-amber-300 hover:text-amber-800 dark:hover:text-amber-200 border-slate-200 dark:border-zinc-800 cursor-pointer active:scale-95"
+                          : "bg-slate-100 dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 opacity-35 text-slate-500 dark:text-zinc-500 cursor-not-allowed"
                         }`}
                       title={hasHistory ? "Revert this AI edit" : "Edit history unavailable"}
                     >
-                      <Undo2 className="w-3 h-3 text-amber-400" />
+                      <Undo2 className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                       <span>Revert</span>
                     </button>
                   );
@@ -2456,12 +2440,12 @@ export function EditorLayout({
                       disabled={!hasHistory}
                       onClick={() => handleReapplyEdit(targetId)}
                       className={`px-2 py-1 rounded-md border text-[10px] font-mono font-bold flex items-center gap-1 transition-all shadow-xs ${hasHistory
-                          ? "bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border-indigo-500/40 cursor-pointer active:scale-95"
-                          : "bg-zinc-900 border-zinc-800 opacity-35 text-zinc-500 cursor-not-allowed"
+                          ? "bg-indigo-50 dark:bg-indigo-600/20 hover:bg-indigo-100 dark:hover:bg-indigo-600/30 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-500/40 cursor-pointer active:scale-95"
+                          : "bg-slate-100 dark:bg-zinc-900 border-slate-200 dark:border-zinc-800 opacity-35 text-slate-500 dark:text-zinc-500 cursor-not-allowed"
                         }`}
                       title={hasHistory ? "Reapply this AI edit" : "Edit history unavailable"}
                     >
-                      <Redo2 className="w-3 h-3 text-indigo-400" />
+                      <Redo2 className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                       <span>Reapply</span>
                     </button>
                   );
@@ -2475,8 +2459,8 @@ export function EditorLayout({
   };
 
   const insertSymbol = (symbolInsert: string) => {
-    if (editorRef.current) {
-      const editor = editorRef.current;
+    const editor = getActiveEditor();
+    if (editor) {
       editor.focus();
 
       const lastSel = lastSelectionRef.current;
@@ -2638,20 +2622,20 @@ export function EditorLayout({
           <span className="hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono">
             {saveStatus === "saved" && (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-[#10B981]" />
                 <span className="text-slate-500 dark:text-[#9E9E9E]">Saved</span>
               </>
             )}
             {saveStatus === "saving" && (
               <>
-                <RotateCw className="w-3 h-3 text-[#FF9900] animate-spin" />
-                <span className="text-[#FF9900]">Saving...</span>
+                <RotateCw className="w-3 h-3 text-amber-600 dark:text-[#FF9900] animate-spin" />
+                <span className="text-amber-600 dark:text-[#FF9900]">Saving...</span>
               </>
             )}
             {saveStatus === "unsaved" && (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900] animate-pulse" />
-                <span className="text-[#FF9900]">Unsaved</span>
+                <span className="text-amber-600 dark:text-[#FF9900]">Unsaved</span>
               </>
             )}
           </span>
@@ -2740,13 +2724,25 @@ export function EditorLayout({
             <div className="px-3 h-9 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between font-mono text-xs shrink-0 select-none">
               <div className="flex items-center gap-2">
                 <span className="flex items-center gap-1.5 text-xs text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold">
-                  <FileCode2 className="w-3.5 h-3.5 text-[#10B981]" />
+                  <FileCode2 className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
                   <span>{activeFilePath}</span>
                 </span>
               </div>
 
-              {/* Subtle Undo & Redo Actions inside Code Editor Tab Bar */}
+              {/* Subtle Search / Undo / Redo Actions inside Code Editor Tab Bar */}
               <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSearchOpen((v) => !v)}
+                  className={`h-6 w-6 flex items-center justify-center rounded-md border transition-colors cursor-pointer shadow-xs ${
+                    searchOpen
+                      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
+                      : "bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border-slate-200 dark:border-[#282A30]"
+                  }`}
+                  title="Find & replace (Ctrl+F / Cmd+F)"
+                >
+                  <Search className="w-3 h-3" />
+                </button>
                 <button
                   type="button"
                   onClick={handleUndo}
@@ -2793,6 +2789,15 @@ export function EditorLayout({
                   copyWithSyntaxHighlighting: false,
                   readOnly: isViewer,
                 }}
+              />
+
+              <EditorSearchBar
+                editor={desktopEditorRef.current}
+                monaco={monacoRef.current}
+                open={searchOpen}
+                onClose={() => setSearchOpen(false)}
+                readOnly={isViewer}
+                onDocumentChange={handleCodeChange}
               />
 
               {/* Floating In-Editor Accept/Reject Action Bar */}
@@ -2851,7 +2856,12 @@ export function EditorLayout({
 
                     <button
                       type="button"
-                      onClick={() => handleAcceptAllEdits(diffEditsList)}
+                      onClick={() =>
+                        handleAcceptAllEdits(
+                          diffEditsList,
+                          pendingEditsMsgIdRef.current ?? undefined,
+                        )
+                      }
                       className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#10B981] dark:hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-emerald-600 dark:border-[#10B981]/30 shadow-sm cursor-pointer"
                     >
                       <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
@@ -2924,7 +2934,7 @@ export function EditorLayout({
           >
             <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[350px]">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
-                <div className="border-b border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
+                <div className="border-b border-slate-200 dark:border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
                   <div className="flex items-center justify-between gap-1.5">
                     <div className="flex items-center gap-1.5 shrink-0">
                       {/* Chat Options Dropdown */}
@@ -2933,25 +2943,25 @@ export function EditorLayout({
                           <button
                             type="button"
                             disabled={isAgentThinking}
-                            className="p-1 rounded-lg bg-[#1A1C22] hover:bg-[#22242C] text-[#10B981] border border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                            className="p-1 rounded-lg bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
                             title="Chat options"
                           >
-                            <Bot className="w-4 h-4 text-[#10B981]" />
+                            <Bot className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="bg-[#141519] border-[#282A30] text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
+                        <DropdownMenuContent align="start" className="bg-white dark:bg-[#141519] border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
                           <DropdownMenuItem
                             onClick={handleNewChat}
                             disabled={isAgentThinking}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-[#1A1C22] hover:text-white cursor-pointer rounded-md focus:bg-[#1A1C22]"
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-700 dark:text-[#E2E4E9] hover:bg-slate-100 dark:hover:bg-[#1A1C22] hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-md focus:bg-slate-100 dark:focus:bg-[#1A1C22]"
                           >
-                            <PlusCircle className="w-3.5 h-3.5 text-[#10B981]" />
+                            <PlusCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
                             <span>New Chat</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={handleClearChat}
                             disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-[#EB5757] hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-[#EB5757]/10"
+                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                             <span>Clear Chat</span>
@@ -2973,12 +2983,12 @@ export function EditorLayout({
                   </div>
 
                   {fallbackModelNotice && (
-                    <div className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono flex items-center justify-between gap-2">
+                    <div className="px-2.5 py-1.5 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-300 text-xs font-mono flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 truncate">
                         <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                         <span className="truncate">{fallbackModelNotice}</span>
                       </div>
-                      <button onClick={() => setFallbackModelNotice(null)} className="text-amber-400 hover:text-white p-0.5">
+                      <button onClick={() => setFallbackModelNotice(null)} className="text-amber-600 dark:text-amber-400 hover:text-amber-900 dark:hover:text-white p-0.5">
                         <X className="w-3 h-3" />
                       </button>
                     </div>
@@ -2990,7 +3000,7 @@ export function EditorLayout({
                   {messages.map((m) => (
                     <div
                       key={m.id}
-                      className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
+                      className={`group p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
                         ? "bg-emerald-50/80 dark:bg-[#18191B] border-emerald-200/80 dark:border-[#23252A] text-slate-900 dark:text-[#F7F8F8] ml-4 font-mono font-semibold shadow-2xs"
                         : "bg-slate-100/90 dark:bg-[#141517] border-slate-200/90 dark:border-[#23252A] text-slate-800 dark:text-[#F7F8F8] mr-4 font-sans"
                         }`}
@@ -3004,7 +3014,14 @@ export function EditorLayout({
                             </span>
                           )}
                         </div>
-                        <span>{m.time}</span>
+                        <div className="flex items-center gap-0.5">
+                          <CopyButton
+                            text={m.text}
+                            title={m.sender === "user" ? "Copy this prompt" : "Copy this reply"}
+                            className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                          />
+                          <span>{m.time}</span>
+                        </div>
                       </div>
                       {m.sender === "assistant" ? (
                         <ChatMessageContent text={m.text} />
@@ -3079,7 +3096,12 @@ export function EditorLayout({
 
                       <button
                         type="button"
-                        onClick={() => handleAcceptAllEdits(diffEditsList)}
+                        onClick={() =>
+                        handleAcceptAllEdits(
+                          diffEditsList,
+                          pendingEditsMsgIdRef.current ?? undefined,
+                        )
+                      }
                         className="flex-1 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 dark:bg-[#5E6AD2] dark:hover:bg-[#4F5BBE] text-white text-xs font-mono font-semibold flex items-center justify-center gap-1.5 transition-colors border border-indigo-600 dark:border-[#6875E5]/30 shadow-sm cursor-pointer"
                       >
                         <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
@@ -3134,7 +3156,7 @@ export function EditorLayout({
                     <textarea
                       id="ai-chat-input"
                       rows={1}
-                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document... (Shift+Enter for new line)" : "Ask agent to edit LaTeX... (Shift+Enter for new line)"}
+                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
                       value={chatInput}
                       disabled={isAgentThinking}
                       onChange={(e) => {
@@ -3170,9 +3192,9 @@ export function EditorLayout({
                       type="submit"
                       disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                       size="sm"
-                      className="h-9 px-3.5 bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] font-archivo font-bold rounded-xl border border-[#282A30] shrink-0 flex items-center justify-center text-xs disabled:opacity-40 cursor-pointer"
+                      className="h-9 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center text-xs disabled:opacity-40 cursor-pointer"
                     >
-                      <Send className="w-3.5 h-3.5 text-[#10B981]" />
+                      <Send className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
                     </Button>
                   )}
                 </form>
@@ -3184,7 +3206,7 @@ export function EditorLayout({
 
       {/* Mobile Viewports */}
       <div className="flex md:hidden flex-1 min-h-0 overflow-hidden relative">
-        <div className={`flex-1 flex flex-col bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
+        <div className={`flex-1 flex flex-col bg-white dark:bg-[#0E0F12] overflow-hidden relative min-h-0 ${activeMobileTab === "files" ? "flex" : "hidden"}`}>
           <ProjectFilesPanel
             projectId={projectId || "proj-1"}
             activeFilePath={activeFilePath}
@@ -3217,29 +3239,68 @@ export function EditorLayout({
                 options={{
                   minimap: { enabled: false },
                   fontSize: 13,
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: false,
                   wordWrap: "on",
                   automaticLayout: true,
+                  // Monaco's context menu is replaced by the touch callout in
+                  // MobileEditorAssist; showing both would collide on long-press.
                   contextmenu: false,
+                  selectOnLineNumbers: true,
+                  cursorBlinking: "blink",
+                  cursorStyle: "line",
+                  cursorWidth: 2,
+                  roundedSelection: true,
+                  copyWithSyntaxHighlighting: false,
+                  // Was missing entirely, so a Viewer got an editable buffer
+                  // on mobile while the desktop editor was correctly locked.
+                  readOnly: isViewer,
                 }}
               />
             </EditorErrorBoundary>
+
+            <MobileEditorAssist
+              editor={mobileEditorRef.current}
+              monaco={monacoRef.current}
+              readOnly={isViewer}
+              active={activeMobileTab === "code"}
+              symbols={quickSymbols}
+              onOpenSearch={() => setSearchOpen(true)}
+              onInsertSymbol={insertSymbol}
+              onDocumentChange={handleCodeChange}
+            />
+
+            <EditorSearchBar
+              editor={mobileEditorRef.current}
+              monaco={monacoRef.current}
+              open={searchOpen}
+              onClose={() => setSearchOpen(false)}
+              readOnly={isViewer}
+              onDocumentChange={handleCodeChange}
+              compact
+            />
             {diffData && diffEditsList.length > 0 && (
-              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-[#141519] border border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
-                <div className="flex items-center justify-between font-archivo font-bold text-[#E2E4E9]">
-                  <span className="text-[#10B981]">Pending Edit</span>
+              <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
+                <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
+                  <span className="text-emerald-600 dark:text-[#10B981]">Pending Edit</span>
                 </div>
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
                     onClick={handleRejectAllEdits}
-                    className="flex-1 h-7 rounded-lg bg-[#EB5757]/10 hover:bg-[#EB5757]/20 border border-[#EB5757]/30 text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
+                    className="flex-1 h-7 rounded-lg bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
                   >
                     <X className="w-3.5 h-3.5" />
                     <span>Reject</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleAcceptAllEdits(diffEditsList)}
+                    onClick={() =>
+                        handleAcceptAllEdits(
+                          diffEditsList,
+                          pendingEditsMsgIdRef.current ?? undefined,
+                        )
+                      }
                     className="flex-1 h-7 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-[#10B981]/30"
                   >
                     <Check className="w-3.5 h-3.5" />
@@ -3251,7 +3312,7 @@ export function EditorLayout({
           </div>
         </div>
 
-        <div className={`flex-1 flex flex-col bg-[#0E0F12] overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
+        <div className={`flex-1 flex flex-col bg-slate-100 dark:bg-[#0E0F12] overflow-hidden min-h-0 ${activeMobileTab === "pdf" ? "flex" : "hidden"}`}>
           <PDFViewer
             ref={pdfViewerRef}
             pdfBase64={pdfBase64}
@@ -3272,8 +3333,8 @@ export function EditorLayout({
           />
         </div>
 
-        <div className={`flex-1 flex flex-col bg-[#141519] overflow-hidden relative min-h-0 p-3 space-y-3 text-[#E2E4E9] font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
-          <div className="border-b border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
+        <div className={`flex-1 flex flex-col bg-[#FAFAFC] dark:bg-[#141519] overflow-hidden relative min-h-0 p-3 space-y-3 text-slate-900 dark:text-[#E2E4E9] font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
+          <div className="border-b border-slate-200 dark:border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
             <div className="flex items-center justify-between gap-1.5">
               <div className="flex items-center gap-1.5 shrink-0">
                 <DropdownMenu>
@@ -3331,7 +3392,13 @@ export function EditorLayout({
               >
                 <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono">
                   <span className="font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
-                  <span>{m.time}</span>
+                  <div className="flex items-center gap-0.5">
+                    <CopyButton
+                      text={m.text}
+                      title={m.sender === "user" ? "Copy this prompt" : "Copy this reply"}
+                    />
+                    <span>{m.time}</span>
+                  </div>
                 </div>
                 {m.sender === "assistant" ? (
                   <ChatMessageContent text={m.text} />
@@ -3380,7 +3447,7 @@ export function EditorLayout({
                   }
                 }
               }}
-              className="flex-1 min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+              className="flex-1 min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
             />
 
             {isAgentThinking ? (
@@ -3399,9 +3466,9 @@ export function EditorLayout({
                 type="submit"
                 disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
                 size="sm"
-                className="h-10 px-3.5 bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] font-archivo font-bold rounded-xl border border-[#282A30] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
+                className="h-10 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
               >
-                <Send className="w-4 h-4 text-[#10B981]" />
+                <Send className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
               </Button>
             )}
           </form>

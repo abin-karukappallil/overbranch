@@ -67,7 +67,7 @@ def get_settings() -> Pdf2LatexSettings:
     return Pdf2LatexSettings(
         concurrency=max(1, _env_int("PDF2LATEX_CONCURRENCY", 4)),
         page_timeout=max(10.0, _env_float("PDF2LATEX_PAGE_TIMEOUT", 180.0)),
-        page_retries=max(0, _env_int("PDF2LATEX_PAGE_RETRIES", 2)),
+        page_retries=max(0, _env_int("PDF2LATEX_PAGE_RETRIES", 0)),
         max_compile_repairs=max(0, _env_int("PDF2LATEX_MAX_COMPILE_REPAIRS", 3)),
         max_file_mb=max(1, _env_int("PDF2LATEX_MAX_FILE_MB", 50)),
         max_pages=max(1, _env_int("PDF2LATEX_MAX_PAGES", 50)),

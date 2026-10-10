@@ -202,7 +202,12 @@ class ProviderRouter:
         """Adds a provider that LLM_FALLBACK_CHAIN entries can name."""
         self._providers[name] = provider
 
-    def fallback_chain(self, model: str, api_keys: Optional[Dict[str, str]] = None) -> List[Tuple[str, LLMProvider, str]]:
+    def fallback_chain(
+        self,
+        model: str,
+        api_keys: Optional[Dict[str, str]] = None,
+        allow_fallback: bool = True,
+    ) -> List[Tuple[str, LLMProvider, str]]:
         """
         [(provider_name, provider, model)] to try in order: the provider that
         serves ``model`` first, then every configured fallback that is not the
@@ -212,6 +217,8 @@ class ProviderRouter:
         primary = self.route(model)
         primary_name = next((n for n, p in self._providers.items() if p is primary), primary.get_provider_name())
         chain: List[Tuple[str, LLMProvider, str]] = [(primary_name, primary, model)]
+        if not allow_fallback:
+            return chain
         for entry in _fallback_entries():
             name, _, fb_model = entry.partition(":")
             provider = self._providers.get(name.strip().lower())
@@ -234,6 +241,7 @@ class ProviderRouter:
         api_keys: Optional[Dict[str, str]] = None,
         cancel_token: Optional[Any] = None,
         observer: Optional[Callable[[Dict[str, Any]], None]] = None,
+        allow_fallback: bool = True,
     ) -> Dict[str, Any]:
         """
         Calls the provider for ``model`` and walks the fallback chain on provider
@@ -251,7 +259,7 @@ class ProviderRouter:
         if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
             model = DEFAULT_MODEL
 
-        chain = self.fallback_chain(model, api_keys)
+        chain = self.fallback_chain(model, api_keys, allow_fallback=allow_fallback)
         cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         attempts: List[Dict[str, Any]] = []
 
