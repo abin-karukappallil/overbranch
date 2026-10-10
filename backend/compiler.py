@@ -9,7 +9,7 @@ import shutil
 import sys
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak, Table, TableStyle
@@ -105,9 +105,19 @@ def needs_unicode_engine(latex_code: str) -> bool:
     return any(m in code for m in _UNICODE_ENGINE_MARKERS)
 
 
-def is_heavy_document(latex_code: str) -> bool:
-    """Documents with lots of TikZ/pgfplots or great length need a longer budget."""
+def is_heavy_document(latex_code: str, extra_sources: Optional[Iterable[str]] = None) -> bool:
+    """
+    Documents with lots of TikZ/pgfplots or great length need a longer budget.
+
+    ``extra_sources`` are the project's other ``.tex`` files. They matter more
+    than the main file does: a real thesis has a main.tex of thirty lines that
+    does nothing but ``\\input`` its chapters, so judged on that file alone the
+    heaviest document in the project looks like the lightest one there is, gets
+    the short budget, and times out.
+    """
     code = latex_code or ""
+    if extra_sources:
+        code = code + "\n" + "\n".join(src or "" for src in extra_sources)
     if len(code) > 60000:
         return True
     if "pgfplots" in code or r"\addplot" in code:
@@ -1073,7 +1083,19 @@ def _compile_latex_impl(
             # bigger budget than the base request so they are not killed and
             # reported as a "failure" they never really were.
             COMPILE_TIMEOUT = timeout_seconds
-            if is_heavy_document(latex_code):
+            # Judge weight on every source TeX will read. The project's other
+            # .tex files are right here in `files`; without them a thesis whose
+            # main.tex is a list of \input lines is sized as a trivial document
+            # and is given a budget it cannot possibly finish in.
+            _extra_sources = []
+            for _f in (files or []):
+                _name = str(_f.get("filename", ""))
+                if _name.rsplit(".", 1)[-1].lower() in ("tex", "sty", "cls"):
+                    try:
+                        _extra_sources.append(base64.b64decode(_f.get("data", "")).decode("utf-8", "replace"))
+                    except Exception:
+                        pass
+            if is_heavy_document(latex_code, _extra_sources):
                 COMPILE_TIMEOUT = max(timeout_seconds, 90)
 
             # Unicode-font documents (fontspec / unicode-math / system fonts /

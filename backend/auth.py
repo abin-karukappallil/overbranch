@@ -307,6 +307,27 @@ async def get_current_user_or_guest(
                 "authenticated": True,
                 "user": user,
             }
+        # A session token was presented and rejected. That is an authentication
+        # failure and must be reported as one.
+        #
+        # It used to fall through to the guest branch below, and because
+        # `getAuthHeaders` attaches `X-Guest-Token` to every request for the
+        # life of the browser — it is minted on any signed-out visit and
+        # nothing clears it at sign-in — a signed-in user was silently
+        # re-identified as an anonymous visitor. The next project check then
+        # found that guest owned nothing and was in no `project_members` row
+        # and answered "Forbidden: You do not have access to this project",
+        # blaming the permissions of a collaborator who had full access. The
+        # honest answer is 401: the session, not the membership, is the problem.
+        logger.warning(
+            "Rejected session token presented by %s %s; refusing to downgrade to guest.",
+            request.method, request.url.path,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your session is no longer valid. Please sign in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # 2. Try Guest HMAC token
     from services.guest_identity import verify_guest_token
@@ -594,9 +615,21 @@ def verify_project_ownership_or_member(
             )
             if mem_res.data and len(mem_res.data) > 0:
                 return
+            # Say which identity was refused. "You do not have access" is
+            # unactionable when the real cause is that the caller was not
+            # recognised as themselves.
+            logger.warning(
+                "Project access denied: project=%s caller=%s is_guest=%s owner=%s",
+                project_id, user_id, is_guest, owner_id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Forbidden: You do not have access to this project."
+                detail=(
+                    "Forbidden: this request was not signed in, so it has no access to this "
+                    "project. Please reload the page and sign in again."
+                    if is_guest or str(user_id).startswith("guest")
+                    else "Forbidden: You do not have access to this project."
+                ),
             )
     except HTTPException:
         raise

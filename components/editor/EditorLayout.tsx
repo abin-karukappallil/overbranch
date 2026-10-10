@@ -292,7 +292,12 @@ export function EditorLayout({
   const [code, setCode] = useState(initialLatexCode);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const [activeMobileTab, setActiveMobileTab] = useState<"code" | "files" | "pdf" | "ai">("code");
-  const [filesOpen, setFilesOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.innerWidth >= 1200;
+    }
+    return true;
+  });
   const [activeFilePath, setActiveFilePath] = useState("main.tex");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -1122,8 +1127,23 @@ export function EditorLayout({
   }, [diffEditsList, code, getActiveEditor, editorsNonce]);
 
   // Responsive Sidebar Panels
-  const [aiOpen, setAiOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(() => {
+    if (typeof window !== "undefined") {
+      return window.innerWidth >= 1280;
+    }
+    return false;
+  });
   const [pdfOpen, setPdfOpen] = useState(true);
+
+  const handleToggleFiles = () => {
+    setFilesOpen((prev) => {
+      const next = !prev;
+      if (next && typeof window !== "undefined" && window.innerWidth < 1100 && aiOpen) {
+        setAiOpen(false);
+      }
+      return next;
+    });
+  };
 
   /**
    * Copy the selection (or the whole buffer) from the visible editor.
@@ -1227,6 +1247,9 @@ export function EditorLayout({
     setAiOpen((prev) => {
       const next = !prev;
       if (next) {
+        if (typeof window !== "undefined" && window.innerWidth < 1100 && filesOpen) {
+          setFilesOpen(false);
+        }
         setTimeout(() => {
           const inputEl = document.getElementById("ai-chat-input");
           if (inputEl) inputEl.focus();
@@ -2734,12 +2757,12 @@ export function EditorLayout({
       )}
 
       {/* Main Top Navigation Header */}
-      <header className="h-12 border-b border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] px-3 sm:px-4 flex items-center justify-between gap-3 shrink-0 z-10 select-none transition-colors">
+      <header className="h-12 border-b border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 shrink-0 z-10 select-none transition-colors">
         {/* Left Column: Integrated Back to Dashboard Brand Block & Project Title */}
-        <div className="flex items-center gap-3 overflow-hidden min-w-0">
+        <div className="flex items-center gap-2 sm:gap-3 overflow-hidden min-w-0 max-w-[48%] md:max-w-none shrink">
           <Link
             href="/dashboard"
-            className="flex items-center gap-2 group hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+            className="flex items-center gap-1.5 sm:gap-2 group hover:opacity-90 transition-opacity cursor-pointer shrink-0"
             title="Return to Dashboard"
           >
             <div className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] border border-slate-200 dark:border-[#282A30] text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] transition-all">
@@ -2754,19 +2777,19 @@ export function EditorLayout({
             <h1 className="font-archivo font-bold text-xs sm:text-sm text-slate-900 dark:text-[#E2E4E9] tracking-tight truncate">
               {projectDetail?.name || (projectId ? `${projectId}.tex` : "main.tex")}
             </h1>
-            <p className="text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono truncate">
+            <p className="text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono truncate hidden xs:block">
               {activeFilePath} · {projectDetail?.template && projectDetail.template !== "None" ? projectDetail.template : "LaTeX"}
             </p>
           </div>
         </div>
 
         {/* Center Column: Layout View Switcher & Primary Fast Compile Action */}
-        <div className="hidden md:flex items-center gap-2 shrink-0">
+        <div className="hidden md:flex items-center gap-1.5 lg:gap-2 shrink-0">
           {/* View Toggle */}
           <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
             <button
               onClick={() => setPdfOpen(false)}
-              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
                 !pdfOpen
                   ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
                   : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2777,7 +2800,7 @@ export function EditorLayout({
             </button>
             <button
               onClick={() => setPdfOpen(true)}
-              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
                 pdfOpen
                   ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
                   : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2792,7 +2815,7 @@ export function EditorLayout({
             size="sm"
             onClick={() => handleCompile()}
             disabled={isCompiling}
-            className="h-8 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm"
+            className="h-8 px-2.5 lg:px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
             title="Compile TeX (Ctrl+Enter / Cmd+Enter)"
           >
             {isCompiling ? (
@@ -2800,16 +2823,34 @@ export function EditorLayout({
             ) : (
               <Play className="w-3.5 h-3.5 fill-current text-white" />
             )}
-            <span>Compile</span>
+            <span className="hidden lg:inline">Compile</span>
+          </Button>
+        </div>
+
+        {/* Mobile Fast Compile Action */}
+        <div className="flex md:hidden items-center shrink-0">
+          <Button
+            size="sm"
+            onClick={() => handleCompile()}
+            disabled={isCompiling}
+            className="h-8 px-2 sm:px-2.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1 cursor-pointer shadow-sm shrink-0"
+            title="Compile TeX"
+          >
+            {isCompiling ? (
+              <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current text-white" />
+            )}
+            <span className="hidden xs:inline text-[11px]">Compile</span>
           </Button>
         </div>
 
         {/* Right Column: Status & Action Toggles */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2 shrink-0">
           {/* Save Status — while a collaboration room is bound this reflects
               the room's server-side persistence (collab.savedAt), because the
               client no longer POSTs the document itself. */}
-          <span className="hidden sm:flex items-center gap-1.5 px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono">
+          <span className="hidden md:flex items-center gap-1.5 px-2 lg:px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0">
             {collabBound ? (
               <>
                 <span
@@ -2819,7 +2860,7 @@ export function EditorLayout({
                       : "bg-[#FF9900] animate-pulse"
                   }`}
                 />
-                <span className="text-slate-500 dark:text-[#9E9E9E]">
+                <span className="hidden lg:inline text-slate-500 dark:text-[#9E9E9E]">
                   {collab.status === "connected"
                     ? collab.savedAt
                       ? "Synced"
@@ -2831,27 +2872,27 @@ export function EditorLayout({
             {!collabBound && saveStatus === "saved" && (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-[#10B981]" />
-                <span className="text-slate-500 dark:text-[#9E9E9E]">Saved</span>
+                <span className="hidden lg:inline text-slate-500 dark:text-[#9E9E9E]">Saved</span>
               </>
             )}
             {!collabBound && saveStatus === "saving" && (
               <>
                 <RotateCw className="w-3 h-3 text-amber-600 dark:text-[#FF9900] animate-spin" />
-                <span className="text-amber-600 dark:text-[#FF9900]">Saving...</span>
+                <span className="hidden lg:inline text-amber-600 dark:text-[#FF9900]">Saving...</span>
               </>
             )}
             {!collabBound && saveStatus === "unsaved" && (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900] animate-pulse" />
-                <span className="text-amber-600 dark:text-[#FF9900]">Unsaved</span>
+                <span className="hidden lg:inline text-amber-600 dark:text-[#FF9900]">Unsaved</span>
               </>
             )}
           </span>
 
           {/* Files Panel Toggle */}
           <button
-            onClick={() => setFilesOpen(!filesOpen)}
-            className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer ${
+            onClick={handleToggleFiles}
+            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
               filesOpen
                 ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
                 : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2859,13 +2900,13 @@ export function EditorLayout({
             title={filesOpen ? "Hide Project Files" : "Show Project Files"}
           >
             <FolderGit2 className="w-3.5 h-3.5" />
-            <span>Files</span>
+            <span className="hidden xl:inline">Files</span>
           </button>
 
           {/* AI Agent Toggle Button */}
           <button
             onClick={toggleAi}
-            className={`h-8 px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer ${
+            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden md:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
               aiOpen
                 ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
                 : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
@@ -2873,7 +2914,7 @@ export function EditorLayout({
             title="Toggle AI Agent (Cmd+L / Ctrl+L)"
           >
             <Bot className="w-3.5 h-3.5" />
-            <span>Agent</span>
+            <span className="hidden xl:inline">Agent</span>
           </button>
 
 
@@ -2936,8 +2977,8 @@ export function EditorLayout({
       </header>
 
       {/* Desktop Main Split Workspace */}
-      <div className="hidden md:flex flex-1 overflow-hidden relative">
-        <div className="w-full h-full flex overflow-hidden">
+      <div className="hidden md:flex flex-1 overflow-hidden relative min-h-0 min-w-0">
+        <div className="w-full h-full flex overflow-hidden min-h-0 min-w-0">
           {/* Panel 1 (Far Left): Project Files & Asset Panel */}
           <ProjectFilesPanel
             projectId={projectId || "proj-1"}
@@ -2954,7 +2995,7 @@ export function EditorLayout({
           />
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
-          <div className="flex-1 min-w-[320px] bg-[#F8F9FA] dark:bg-[#0E0F12] flex flex-col h-full border-r border-slate-200 dark:border-[#282A30] relative overflow-hidden">
+          <div className="flex-1 min-w-0 bg-[#F8F9FA] dark:bg-[#0E0F12] flex flex-col h-full border-r border-slate-200 dark:border-[#282A30] relative overflow-hidden">
             {/* Minimalist Editor Tab Bar */}
             <div className="px-3 h-9 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between font-mono text-xs shrink-0 select-none">
               <div className="flex items-center gap-2">
@@ -3114,24 +3155,24 @@ export function EditorLayout({
             </div>
 
             {/* Bottom Status Bar */}
-            <div className="h-6 px-3 border-t border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-[#9E9E9E] shrink-0 select-none">
-              <div className="flex items-center gap-3">
-                <span className="flex items-center gap-1 text-slate-800 dark:text-[#E2E4E9]">
-                  <FileCode2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981]" />
-                  <span>{activeFilePath}</span>
+            <div className="h-6 px-2.5 sm:px-3 border-t border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-[#9E9E9E] shrink-0 select-none overflow-hidden min-w-0">
+              <div className="flex items-center gap-2 sm:gap-3 truncate min-w-0">
+                <span className="flex items-center gap-1 text-slate-800 dark:text-[#E2E4E9] truncate min-w-0">
+                  <FileCode2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981] shrink-0" />
+                  <span className="truncate">{activeFilePath}</span>
                 </span>
-                <span className="text-slate-300 dark:text-[#282A30]">|</span>
-                <span className="hidden sm:inline">SyncTeX Active</span>
+                <span className="text-slate-300 dark:text-[#282A30] hidden 2xl:inline">|</span>
+                <span className="hidden 2xl:inline">SyncTeX Active</span>
               </div>
-              <div className="flex items-center gap-3">
-                <span>UTF-8</span>
+              <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                <span className="hidden xl:inline">UTF-8</span>
                 <span>{activeFilePath.endsWith(".bib") ? "BibTeX" : "LaTeX"}</span>
-                <span className="text-slate-300 dark:text-[#282A30]">|</span>
+                <span className="text-slate-300 dark:text-[#282A30] hidden lg:inline">|</span>
                 <a
                   href="https://upzare.com"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 hover:underline text-slate-700 dark:text-[#E2E4E9] font-bold group"
+                  className="hidden lg:inline-flex items-center gap-1 hover:underline text-slate-700 dark:text-[#E2E4E9] font-bold group"
                   title="Powered By UPZARE Technologies Private Limited"
                 >
                   <span className="text-slate-400 dark:text-[#9E9E9E] font-normal">Powered By</span>
@@ -3148,7 +3189,7 @@ export function EditorLayout({
 
           {/* Panel 3 (Middle Right): PDF Viewer */}
           <div
-            className={`h-full bg-slate-100 dark:bg-[#0E0F12] transition-all duration-300 ease-in-out overflow-hidden flex flex-col min-w-0 max-w-full ${pdfOpen ? "flex-1 min-w-[280px] border-r border-slate-200 dark:border-[#282A30]" : "w-0 opacity-0 pointer-events-none border-r-0"
+            className={`h-full bg-slate-100 dark:bg-[#0E0F12] transition-all duration-300 ease-in-out overflow-hidden flex flex-col min-w-0 max-w-full ${pdfOpen ? "flex-1 min-w-0 border-r border-slate-200 dark:border-[#282A30]" : "w-0 opacity-0 pointer-events-none border-r-0"
               }`}
           >
             <div className="flex-1 h-full min-w-0 max-w-full w-full flex flex-col overflow-hidden">
@@ -3170,10 +3211,10 @@ export function EditorLayout({
 
           {/* Panel 4 (Far Right): AI Assistant Sidebar */}
           <div
-            className={`h-full border-l border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-slate-900 dark:text-[#E2E4E9] ${aiOpen ? "w-[350px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
+            className={`h-full border-l border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-slate-900 dark:text-[#E2E4E9] ${aiOpen ? "w-[300px] lg:w-[320px] xl:w-[350px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
               }`}
           >
-            <div className="flex flex-col h-full justify-between p-3 text-xs min-w-[350px]">
+            <div className="flex flex-col h-full justify-between p-2.5 sm:p-3 text-xs w-full min-w-0 overflow-hidden">
               <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
                 <div className="border-b border-slate-200 dark:border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
                   <div className="flex items-center justify-between gap-1.5">
@@ -3721,7 +3762,7 @@ export function EditorLayout({
       </div>
 
       {/* Bottom Navigation for Mobile View */}
-      <nav className="md:hidden h-12 border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none">
+      <nav className="md:hidden border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none pb-[env(safe-area-inset-bottom,0px)]">
         <div className="flex items-center justify-around w-full h-12 font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
