@@ -28,7 +28,9 @@ from collab.access import can_edit, resolve_project_role
 from collab.config import config
 from collab.events import log_error, log_event
 from collab.manager import room_manager
+from collab.presence import presence_registry, should_open_socket
 from collab.room import (
+    CLOSE_CREDENTIALS_REQUIRED,
     CLOSE_FORBIDDEN,
     CLOSE_NOT_FOUND,
     CLOSE_PROTOCOL,
@@ -47,6 +49,11 @@ router = APIRouter()
 
 class TicketRequest(BaseModel):
     project_id: str = Field(..., min_length=1)
+
+
+class PresenceRequest(BaseModel):
+    project_id: str = Field(..., min_length=1)
+    leaving: bool = False
 
 
 @router.get("/api/collab/config")
@@ -111,6 +118,49 @@ def create_collab_ticket(
         "can_edit": can_edit(role),
         "project_id": req.project_id,
     }
+
+
+@router.post(
+    "/api/collab/presence",
+    dependencies=[Depends(RateLimiter(times=240, seconds=60, key_prefix="rl_collab_presence"))],
+)
+def collab_presence(
+    req: PresenceRequest,
+    request: Request,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+) -> Dict[str, Any]:
+    """
+    Heartbeat: "I have this project open." Answers whether a realtime room is
+    worth holding right now.
+
+    This exists so that finding out whether anyone else is here does not
+    itself require a websocket. A room costs a connection, a concurrency slot,
+    an authoritative CRDT document and a persistence timer for as long as the
+    tab is open; the common case is one person editing alone, who needs none
+    of it. The caller only opens a socket when `connect` is true.
+
+    It is a hint, never an authorization: `resolve_project_role` still gates
+    the socket on connect and every re-auth tick.
+    """
+    if not config.enabled:
+        return {"enabled": False, "connect": False, "viewers": 0, "poll_interval": 0}
+    if auth_info.get("is_guest"):
+        return {"enabled": False, "connect": False, "viewers": 0, "poll_interval": 0,
+                "reason": "guest"}
+
+    user_id = auth_info.get("user_id")
+    role = resolve_project_role(req.project_id, user_id)
+    if role is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="You do not have access to this project.")
+    if req.leaving:
+        presence_registry.leave(req.project_id, user_id)
+        return {"enabled": True, "connect": False, "viewers": 0,
+                "poll_interval": 0, "reason": "left", "role": role}
+
+    connect, detail = should_open_socket(req.project_id, user_id)
+    return {"enabled": True, "connect": connect, "role": role,
+            "can_edit": can_edit(role), **detail}
 
 
 @router.get("/api/collab/rooms/{project_id}")
@@ -188,7 +238,11 @@ async def _authenticate_socket(
             break
 
     if not token:
-        return None, None, CLOSE_UNAUTHORIZED
+        # No ticket and no cookie: the browser simply did not volunteer a
+        # credential, which is the normal first attempt on a cross-site
+        # deployment. Tell the client to authenticate and come back, rather
+        # than that it was refused.
+        return None, None, CLOSE_CREDENTIALS_REQUIRED
 
     try:
         factory = get_session_factory()
@@ -238,7 +292,10 @@ async def collab_socket(websocket: WebSocket, project_id: str) -> None:
 
     user_id, display_name, close_code = await _authenticate_socket(websocket, project_id)
     if close_code is not None or not user_id:
-        await reject(close_code or CLOSE_UNAUTHORIZED, "Unauthorized", stage="handshake")
+        code = close_code or CLOSE_UNAUTHORIZED
+        await reject(code, "Authentication required" if code == CLOSE_CREDENTIALS_REQUIRED else "Unauthorized",
+                     stage="handshake",
+                     reason="no_credential" if code == CLOSE_CREDENTIALS_REQUIRED else "invalid_credential")
         return
 
     role = await asyncio.to_thread(resolve_project_role, project_id, user_id)

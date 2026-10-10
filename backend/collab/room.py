@@ -59,8 +59,19 @@ FILE_PREFIX = "file:"
 META_ROOT = "meta"
 MESSAGE_QUERY_AWARENESS = 3  # y-websocket's messageQueryAwareness
 
-# Close codes the client must NOT retry on (see lib/collab/useCollaboration.ts).
-CLOSE_UNAUTHORIZED = 4401
+# Close codes (see lib/collab/useCollaboration.ts).
+#
+# 4401 and 4402 both mean "not authenticated", and the difference between them
+# is the whole reason collaboration worked in development and failed in
+# production. The browser attaches the Better-Auth cookie to a websocket
+# upgrade only when the API is same-site with the app. In the deployed setup it
+# is not (overbranch.…dev → overapi.…dev), so the upgrade arrives with no
+# credential at all — which is not a refusal, it is the browser declining to
+# volunteer one, and the client's answer is to retry with a ticket. Sending
+# 4401 for it told the client the user had been *denied*, so it gave up and
+# showed "access revoked" to people who had access all along.
+CLOSE_CREDENTIALS_REQUIRED = 4402   # nothing was presented: authenticate and retry
+CLOSE_UNAUTHORIZED = 4401           # something was presented and it was not valid
 CLOSE_FORBIDDEN = 4403
 CLOSE_NOT_FOUND = 4404
 CLOSE_ROOM_FULL = 4429

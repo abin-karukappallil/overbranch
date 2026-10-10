@@ -159,6 +159,21 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": [],
     },
     {
+        "name": "request_more_steps",
+        "description": (
+            "Ask for more reasoning steps when you can see the task needs them. Call this as soon as you "
+            "realise the remaining steps will not cover the work — NOT on the last step. You are told your "
+            "step number and budget on every turn. Granted only if the document has actually changed since "
+            "your last request, so make progress between requests; if it is refused, finish what you have "
+            "with done=true rather than continuing. Running out of steps mid-edit discards the entire run."
+        ),
+        "parameters": {
+            "additional_steps": {"type": "integer", "description": "How many more steps you need (max 6 per request)."},
+            "reason": {"type": "string", "description": "What is left to do that needs them."},
+        },
+        "required": ["reason"],
+    },
+    {
         "name": "validate_edit",
         "description": "Check the buffer's LaTeX structure (environments, braces, math) against the original, without compiling.",
         "parameters": {},
@@ -188,16 +203,26 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "justify_content",
         "description": (
-            "Deterministically fix horizontal alignment / overflow of a block or line: measures the content "
-            "against the available width with the document's font and applies the smallest fix — alignment "
-            "only, wrapping in a fixed-width box, breaking an over-long token, slight horizontal condensing, "
-            "or a small font-size reduction. Do not hand-insert line breaks for this."
+            "Repair the document's LAYOUT by inspecting the rendered PDF. Use this for any request about "
+            "justification, formatting, alignment, overflow, text running past the margin, awkwardly broken "
+            "file paths or identifiers, or tables that are too wide or run off the page — including "
+            "'fix the justification/formatting of the whole document'. It compiles the document, measures "
+            "every page, maps each defect back to the source, applies the smallest fix (break opportunities "
+            "inside a long path or identifier, a flexible table column, looser spacing for one paragraph), "
+            "recompiles and keeps the fix only if the page measurably improved. Text is never changed and "
+            "type is never shrunk. Do NOT hand-insert \\\\ line breaks, \\small or margin changes for this."
         ),
         "parameters": {
-            "node_id": {"type": "string", "description": "Block to fix (or use text)."},
-            "text": {"type": "string", "description": "A line/phrase to fix when there is no suitable node."},
-            "width_pt": {"type": "number", "description": "Target width in pt (default: the text width)."},
-            "alignment": {"type": "string", "description": "'left', 'right', 'center' or 'justify' (default: keep)."},
+            "scope": {"type": "string",
+                      "description": "'document' (default — check and repair every page), 'page', "
+                                     "'node' or 'text' (fit one block/phrase to a width)."},
+            "page": {"type": "integer", "description": "1-based page, with scope='page'."},
+            "max_fixes": {"type": "integer", "description": "Most repairs to apply (default 12)."},
+            "dry_run": {"type": "boolean", "description": "Report the defects without changing anything."},
+            "node_id": {"type": "string", "description": "Block to fit, with scope='node'."},
+            "text": {"type": "string", "description": "Line/phrase to fit, with scope='text'."},
+            "width_pt": {"type": "number", "description": "Target width in pt for scope='node'/'text'."},
+            "alignment": {"type": "string", "description": "'left', 'right', 'center' or 'justify'."},
         },
         "required": [],
     },

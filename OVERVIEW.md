@@ -55,7 +55,8 @@ pytest tests/test_transactions.py -v            # heal scoping, duplicate guard,
 pytest tests/test_agent_token_budget.py -v      # targeted context: prompt size independent of document length
 pytest tests/test_resolve_edits_endpoint.py -v  # POST /api/agent/resolve-edits
 pytest tests/test_provider_fallback.py -v       # fallback chain, 5-key rotation, cooldown recovery
-pytest tests/test_justify_content.py -v         # justify_content ladder, long words, overflow detection
+pytest tests/test_justify_content.py -v         # fit_fragment ladder, long words, overflow detection
+pytest tests/test_layout_repair.py -v           # render-aware layout repair: detect → map → fix → verify → rollback
 pytest tests/test_pdf2latex_fidelity.py -v      # bold/size preservation, metric fonts, IRCTC ticket regression
 pytest tests/test_converted_document_edits.py -v # agent edits on imported PDFs; fake-bold (overprinted) PDFs
 pytest tests/test_agent_json_latex.py -v        # LaTeX decoded from the agent's JSON (escaped / raw / mixed)
@@ -64,6 +65,15 @@ pytest tests/test_compile_gate_truth.py -v      # compile gate never reports suc
 pytest tests/test_agent_compile_outcomes.py -v  # nothing ships uncompiled; partial fixes; repairs without an LLM round
 pytest tests/test_write_gate.py -v              # validator magnitudes, healer correctness (\%, tikz, \end{document}), locator guard
 pytest tests/test_required_packages.py -v       # missing \usepackage injection & error-driven _ / & repairs
+pytest tests/test_collab_sync.py -v             # realtime rooms: CRDT merge, late joiners, restart, persistence
+pytest tests/test_collab_auth.py -v             # realtime auth: tickets, roles, handshake, revocation, origins
+```
+
+### Realtime Collaboration Client Checks (Node, no test runner added)
+```bash
+# Yjs <-> Monaco binding (loop safety, convergence, per-user undo, cursors)
+# and the AI-apply line diff. Bundled with the esbuild already in node_modules.
+bash scripts/run-collab-tests.sh
 ```
 
 ### Full-Stack Docker Deployment
@@ -102,9 +112,10 @@ bash deploy.sh
      - [O. PDF → LaTeX Importer (pdf2latex): Local Facts, Shared Preamble, Per-Page LLM](#o-pdf--latex-importer-pdf2latex-local-facts-shared-preamble-per-page-llm)
      - [P. SyncTeX Bidirectional Navigation](#p-synctex-bidirectional-navigation)
      - [Q. Structured Observability, Tracing & Performance Telemetry](#q-structured-observability-tracing--performance-telemetry)
-     - [R. Layout Engine: justify_content & Overflow Detection](#r-layout-engine-justify_content--overflow-detection)
+     - [R. Layout Engine: justify_content, Defect Detection & Minimal Repair](#r-layout-engine-justify_content-defect-detection--minimal-repair)
      - [S. Target Resolution, Targeted Context & Transactional Edits](#s-target-resolution-targeted-context--transactional-edits)
      - [T. Provider Fallback Chain & Key Health](#t-provider-fallback-chain--key-health)
+     - [U. Realtime Collaborative Editing (Yjs CRDT over WebSocket)](#u-realtime-collaborative-editing-yjs-crdt-over-websocket)
 2. [Complete Repository & File Structure (As-Is Verbatim)](#2-complete-repository--file-structure-as-is-verbatim)
    - [Root Configuration & Deployment Files](#root-configuration--deployment-files)
    - [Frontend Application (`app/`)](#frontend-application-app)
@@ -157,6 +168,8 @@ bash deploy.sh
    - [Feature 30: Structured Observability, Tracing & Performance Telemetry](#feature-30-structured-observability-tracing--performance-telemetry)
    - [Feature 31: Comprehensive Pytest Test Suite & Evaluation Harness](#feature-31-comprehensive-pytest-test-suite--evaluation-harness)
    - [Feature 32: Mobile Touch Editing, Find & Replace & the Dual-Editor Resolver](#feature-32-mobile-touch-editing-find--replace--the-dual-editor-resolver)
+   - [Feature 33: Realtime Collaborative Editing, Presence & Remote Cursors](#feature-33-realtime-collaborative-editing-presence--remote-cursors)
+   - [Feature 34: Render-Aware Layout Repair (`justify_content`)](#feature-34-render-aware-layout-repair-justify_content)
 4. [Deployment, Infrastructure & Environment Configuration](#4-deployment-infrastructure--environment-configuration)
 
 ---
@@ -177,9 +190,10 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 │  - Diff Viewer (Side-by-side & Unified diff widgets)                   │
 │  - Agent Reasoning Window (Real-time ReAct loop step visualizer)       │
 │  - AI Interruption / Stop Generation Controls (AbortController / SSE)  │
+│  - Collaboration: Y.Doc + y-websocket, remote cursors, presence bar    │
 └──────────────────┬───────────────────────────────┬─────────────────────┘
                    │                               │
-       tRPC / Better-Auth (Next API)        HTTP / SSE / REST
+       tRPC / Better-Auth (Next API)      HTTP / SSE / REST / WebSocket
                    │                               │
 ┌──────────────────▼──────────────┐   ┌────────────▼─────────────────────┐
 │    DATABASE & AUTH SERVICE      │   │     FASTAPI PYTHON ENGINE        │
@@ -188,10 +202,10 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 │  - Better-Auth Session Tokens   │   │  - Sliding-Window Rate Limiter   │
 │  - Project & Invitation Schema  │   │  - Concurrency Compile Queue     │
 │  - Collaboration & Comments     │   │  - OpenCode ReAct Agent Loop     │
-└──────────────────┬──────────────┘   │  - Scope Classifier & Coverage   │
-                   │                  │  - Shadow Workspace & Compiler   │
-                   │ (SQLAlchemy)     │  - Structural Chunk Indexer      │
-                   │                  │  - LaTeX Error Fixer (Healer)    │
+│  - collab_doc_state (CRDT blob) │   │  - Scope Classifier & Coverage   │
+└──────────────────┬──────────────┘   │  - Shadow Workspace & Compiler   │
+                   │                  │  - Structural Chunk Indexer      │
+                   │ (SQLAlchemy)     │  - LaTeX Error Fixer (Healer)    │
                    │                  │  - Document Analyzer (Local AST) │
                    │                  │  - Attached Context Store (TTL)  │
                    │                  │  - Smart Context Strategy Engine │
@@ -200,6 +214,8 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
                    │                  │  - Compile/SSIM Verify & Repair  │
                    │                  │  - Multimodal File Analyzer      │
                    │                  │  - SyncTeX Forward/Backward View │
+                   │                  │  - Collab Rooms (Yjs CRDT / WS)  │
+                   │                  │  - Presence & Debounced Persist  │
                    │                  │  - Structured Telemetry (Trace)  │
                    └──────────────────►  - ReportLab Synthetic Fallback  │
                                       └──────────────────────────────────┘
@@ -211,7 +227,7 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 
 #### A. OpenCode ReAct Agent Loop & Dynamic Adaptive Step Budgeting
 1. **Interactive Tool Loop**: [`backend/opencode/agent_loop.py`](file:///home/abin/overbranch/backend/opencode/agent_loop.py) executes an iterative ReAct cycle operating on an in-memory [`ShadowWorkspace`](file:///home/abin/overbranch/backend/opencode/shadow_workspace.py).
-2. **Dynamic Step Budgeting**: Scales from **6 to 32 steps** dynamically based on detected task scope, document length, number of chapters/sections/frames, and user instruction complexity.
+2. **Dynamic Step Budgeting**: starts at 4–32 steps from task scope, document length and instruction complexity, and is then **extended on demand** — by the agent (`request_more_steps`) or by the loop when work is still landing at the limit — up to `ABSOLUTE_MAX_STEPS` (64). An extension requires evidence that the document moved since the last one, so a looping agent still stops. See [Feature 3](#feature-3-opencode-bounded-react-agent-loop--dynamic-step-budgeting).
 3. **Deterministic Tool Suite** (old names `str_replace`, `grep_search`, `verify_compile`, `read_document_summary` are still accepted as aliases):
    - `inspect_document` / `get_block(node_id)`: Outline of every block with its **stable node ID**, and one block (optionally with its parent header and the preamble lines that style it).
    - `read_file_range`: Reads exact line-numbered contents (up to 300 lines per call); lines the model can still see unchanged are not re-sent (`ContextLedger`).
@@ -222,7 +238,8 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
    - `list_assets`: Discovers available images/PDFs in `assets/` for `\includegraphics`.
    - `compile_latex`: Sandboxed compilation; **differential** — only errors the edits introduced fail it (`infra_skip` if the host lacks a TeX engine). Edits are also compiled automatically when the agent finishes.
    - `validate_edit` / `rollback_edit`: Structural check against the original; undo the last edit.
-   - `detect_overflow` / `inspect_pdf_geometry` / `justify_content`: Horizontal layout tools (see [R](#r-layout-engine-justify_content--overflow-detection)).
+   - `request_more_steps`: Asks for more reasoning steps when the remaining budget will not cover the work. Granted only against progress since the last request.
+   - `detect_overflow` / `inspect_pdf_geometry` / `justify_content`: Layout tools. `justify_content` with `scope="document"` is the render-aware layout repair — compile, measure every page, map each defect to its source, apply the smallest fix, recompile, keep it only if the page measurably improved (see [R](#r-layout-engine-justify_content-defect-detection--minimal-repair)).
    - `get_template_theme`: Retrieves curated themes (Beamer PPT themes, IEEE conference/journal papers, theses, resumes/CVs, formal letters, lab assignments) and extracts styling preambles for non-destructive redesigns.
    - `read_attached_document`: Extracts content from uploaded reference papers/PDFs stored in the multi-turn session cache.
    - `search_uploaded_references`: Searches user-attached documents for specific technical terminology, equations, and tables.
@@ -344,12 +361,23 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 - [`backend/trace.py`](file:///home/abin/overbranch/backend/trace.py) provides structured telemetry (`AgentTrace` and `ConversionTrace` — per-job model, page similarity scores, fallback pages and latency), recording tool calls, latencies, node IDs, compiler feedback, and token counts for observability.
 - `AgentTrace` also records `agent_run_id`, `request_id`, `document_id`, the provider/model that answered, **key IDs** (`openrouter#2` — never keys), every provider attempt, per-edit `edit_type` + `target_resolution_method`, the context levels sent, `compile_result`, `retry_count` and `failure_reason`. Tool arguments are logged **redacted** (identifiers and numbers kept; document text reduced to its length).
 
-#### R. Layout Engine: justify_content & Overflow Detection
+#### R. Layout Engine: justify_content, Defect Detection & Minimal Repair
 [`backend/latex_layout/`](file:///home/abin/overbranch/backend/latex_layout/) is shared by the agent and the PDF importer:
 - `metrics.py` — width of a string in the **TeX font file that will set it** (located with `kpsewhich`; Base-14 fallback).
 - `blocks.py` — `TextBlock{text, x, y, width, height, font_size, font_weight, italic}` per line of a PDF page (extracted *without* the mediabox clip, so off-page text is visible), and `compare_blocks(src, out)`: words are paired with the **nearest same-text word** (both pages share coordinates), so repeated words are not mis-paired; reports `weight` / `italic` / `size` / `overflow_right` / `clipped` runs. A horizontally condensed word is not a size change (height compared too).
 - `overflow.py` — overfull boxes from the log (mapped to source lines) + lines past the inferred text-area right edge + glyphs off the page.
-- `justify.py` — `justify_content`: measures (with TeX itself — `\settowidth` in draft mode with the document's preamble — when pdflatex exists) and applies the smallest fix: alignment only → paragraph wrap with `\emergencystretch` (break points **only** inside tokens wider than the box, separators first) → ≤10% too wide: `\resizebox{W}{\height}` (horizontal condense) → more: font size down to a floor of 85%, then condense. Content inside an LR box (`\makebox`, `\mbox`, tabular cell) is always treated as one line.
+- `justify.py` — `fit_fragment` (still exported as `justify_content` for callers of the old name): measures with TeX itself (`\settowidth` in draft mode with the document's preamble) and applies the smallest fix for **one fragment against one width** — alignment only → paragraph wrap with `\emergencystretch` → horizontal condense (`\resizebox{W}{\height}`), with a note when the reduction is large. Content inside an LR box (`\makebox`, `\mbox`, tabular cell) is always treated as one line. **There is no font-size rung**: making content fit by setting it smaller than the text around it is visible on the page, it spreads (the next overflow invites the same treatment), and it is never what a typesetter would do. `probe_page_geometry` asks TeX for the document's own `\textwidth` / `\textheight` and margins in big points.
+- `issues.py` — **what is wrong with the rendered pages**, measured: `LayoutIssue{page, type, severity, description, text, region, source, evidence}` over a taxonomy (`MARGIN_VIOLATION`, `VERTICAL_OVERFLOW`, `TABLE_WIDTH`, `TABLE_CELL_OVERFLOW`, `LONG_PATH`, `LONG_URL`, `LONG_IDENTIFIER`, `AWKWARD_LINE_BREAK`, `OVERFLOW`, …). Three independent signals, because each misses what the others catch: TeX's overfull warnings (exact, and already mapped to source lines), word boxes against the text area, and adjacent line pairs (a token split across a break is a defect no width measurement can see — every line *does* fit).
+- `repair.py` — **the smallest LaTeX change for one defect**, from a closed operation set. The model never writes LaTeX for these: it decides *that* a document should be tidied, `repair.py` decides *how*. Content-typed: `LONG_URL` → `\url{}`; `LONG_PATH` / `LONG_IDENTIFIER` → `\allowbreak{}` at separators or camelCase boundaries; prose → `sloppypar`; `TABLE_WIDTH` / `TABLE_CELL_OVERFLOW` → `tabularx` at `\textwidth` with a `>{\raggedright\arraybackslash}X` column; `VERTICAL_OVERFLOW` → `longtable` with `\endhead`.
+- `vision.py` — an **optional, advisory** second opinion (`JUSTIFY_VISION=1`), batched 5 pages at a time, only on pages measurement could not explain. It reports `VISUAL_INCONSISTENCY` and never repairs, because no repair in the catalogue can be chosen from a sentence of prose.
+
+**Four decisions that are load-bearing, each made after the obvious alternative failed on a real document:**
+1. **The text area comes from TeX, not from the page.** `text_right_edge` needs three lines to agree on a right edge; a page dominated by a wide table has no such agreement, so it returns `None` and every overflow check silently passes — on exactly the pages that need checking. `probe_page_geometry` asks LaTeX, which knows.
+2. **A "broken token" is confirmed against the source.** Geometry cannot distinguish "one token was split" from "a token ended the line and the next word began the following one": in the PDF both are just "line ends here, line starts there". Without the check, every paragraph whose line happens to end in a file path is reported broken.
+3. **The score counts magnitude, not issues.** A repair taking an overflow from 57 pt to 32 pt is real progress, but scored by presence it ties with the original, is rolled back, and the next repair in the ladder — which would have finished the job — is never tried. (The document write gate compares structural errors by magnitude for the same reason, see [H](#h-pre-commit-validation--deterministic-repair).)
+4. **Vertical overflow is measured from text, not from table rules.** PyMuPDF reports a path's *bounding box*, so a run of `\hline` rules can come back merged into one shape whose geometry says nothing about where the rows ended up. Lines below the text block are counted instead, and the running footer is told apart from overflowing content by **continuity** — overflow keeps coming at the body's line pitch; a footer sits alone after a wide gap. Position alone would flag every page in the document.
+
+**Repairs are forbidden, in code, from:** `\small` / `\scriptsize` / `\tiny` / `\fontsize` / `\linespread`, any `\geometry` / `\newgeometry` / `\setlength{\textwidth}`, and a bare `\\` as an overflow fix. Every operation is checked with `preserves_text`: the visible characters before and after must be equal once the inserted break commands are removed, so a repair that would drop, reword or truncate content is discarded whatever it would do for the layout. That is the mechanical form of *same information, better presentation*.
 
 #### S. Target Resolution, Targeted Context & Transactional Edits
 - **Stable node IDs** ([`document_index.index_nodes`](file:///home/abin/overbranch/backend/document_index.py)): `preamble`, `meta:title`, `maketitle`, `page:2` (pages of an imported PDF, from the `OB-PAGE` markers), `sec:introduction`, `frame:results#2`, `env:table:tab-main` (label), `env:tabular@sec:results#1` — derived from kind + title/label, so they survive edits elsewhere; in memory only, never written into the LaTeX. Lookup also accepts `label:<x>`, `slide 3`, `section 2` and the legacy positional chunk IDs. A node whose own title an edit changes keeps its old ID as an alias.
@@ -362,6 +390,22 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 - [`providers/errors.py`](file:///home/abin/overbranch/backend/providers/errors.py) classifies every failure (`rate_limit`, `quota`, `auth`, `timeout`, `unavailable`, `model_unavailable`, `bad_request`, `cancelled`). `ProviderRouter.chat` walks `LLM_FALLBACK_CHAIN` (default `openrouter:minimax/minimax-m3`) only for provider-side failures — never on a cancellation or a malformed request — and returns `provider`, `model_used`, `key_id`, `is_fallback`, `attempts`. An `observer` callback feeds each attempt to the trace. New providers are added with `register_provider` + a chain entry.
 - [`providers/key_pool.py`](file:///home/abin/overbranch/backend/providers/key_pool.py): OpenRouter's five server-side keys (`OPENROUTER_API_KEY_1..5`) with per-key `{status, last_failure, cooldown_until, failure_count}`. Selection is **sticky** (the key that last worked); 429 cools down for `Retry-After` or 30 s doubling to 10 min, quota 1 h, auth 6 h, transient errors 15 s; a cooled-down key rejoins automatically. Keys never leave the server or reach logs.
 
+#### U. Realtime Collaborative Editing (Yjs CRDT over WebSocket)
+Full architecture and rationale: [`COLLABORATION.md`](file:///home/abin/overbranch/COLLABORATION.md).
+
+1. **Transport & room**: [`backend/routes/collab_routes.py`](file:///home/abin/overbranch/backend/routes/collab_routes.py) serves `WS /ws/collab/{project_id}` speaking the **y-websocket wire protocol** unchanged (sync step1/step2/update, awareness, queryAwareness), so the browser runs the stock [`y-websocket`](file:///home/abin/overbranch/lib/collab/useCollaboration.ts) provider. [`backend/collab/room.py`](file:///home/abin/overbranch/backend/collab/room.py) holds one **authoritative `pycrdt.Doc` per project**: a `Y.Text` per open file (`file:<path>`) plus a `Y.Map` `meta` (`loaded:<path>`, `saved:<path>`).
+2. **Why the server holds a real CRDT, not a relay**: a late joiner's sync step 1 needs a step 2 from *somebody* (a relay fails when everyone has left); and rebuilding a room by inserting the stored text into a fresh doc gives that text a **new CRDT identity**, so a client reconnecting with its old doc merges both insertions and the user sees the document twice. Re-applying the stored update keeps one identity.
+3. **Authorization is OverBranch's own** — nothing the client claims is believed. Cookie (same-site deployment) or a **single-use, 60 s, HMAC** ticket from `POST /api/collab/ticket` (identity only), then `projects.owner_id` / `project_members.role` ([`collab/access.py`](file:///home/abin/overbranch/backend/collab/access.py)), re-resolved every `COLLAB_REAUTH_INTERVAL` (30 s) so a removed collaborator loses their **live** session. An **Origin allowlist** closes the cross-site-websocket-hijacking hole CORS does not cover. The socket is accepted *before* the checks and then closed with a specific code (`4401`/`4402`/`4403`/`4404`/`4429`), because a close before `accept()` reaches the browser as 1006 and the client cannot tell "forbidden" from "network blip" — `y-websocket` would reconnect forever. **`4402` (credentials required) is distinct from `4401` (credential rejected)**, and that distinction is what made collaboration work in development and fail in production: a browser attaches the Better-Auth cookie to a websocket upgrade only when the API is same-site with the app, and in the deployed setup (`overbranch.…dev` → `overapi.…dev`) it is not, so the first attempt legitimately arrives with no credential at all. Answering `4401` told the client it had been *denied*; the client treated that as fatal, never ran the ticket fallback that would have connected it, and showed “Your access to this project was revoked” to people with full access. Guests are excluded (their projects are single-session).
+4. **Monaco binding is hand-written** ([`lib/collab/monaco-binding.ts`](file:///home/abin/overbranch/lib/collab/monaco-binding.ts)): `y-monaco` peer-depends on the `monaco-editor` npm package, which this project deliberately does not bundle (it loads Monaco from a CDN). Loop safety: local `onDidChangeContent` → `Y.Text` ops in a transaction whose **origin is the binding**; remote `ytext.observe` → `model.applyEdits`, skipped when `transaction.origin === binding`. Filtering on the origin rather than `transaction.local` is required because a `Y.UndoManager` undo *is* local and Monaco must follow it; `applyEdits` (not `pushEditOperations`) keeps a collaborator's keystroke off this user's native undo stack.
+5. **React must stop driving Monaco**: `@monaco-editor/react` implements a `value` prop change as a full-model-range replace (and `setValue` outright when read-only). Under a CRDT that is "delete the document, insert a new one" — wiping concurrent edits and resetting every remote cursor — so `value={collabBound ? undefined : code}`; `code` becomes a 150 ms-throttled mirror and `currentDocumentText()` reads the live model for compile and the agent.
+6. **Presence & cursors**: `y-protocols` awareness, mirrored server-side by `pycrdt.Awareness` so a late joiner sees existing cursors at once. **Never persisted to Postgres**; `remove_awareness_states` on disconnect stops ghost cursors. Positions are Yjs **relative positions** (they survive edits earlier in the document, and a peer who switched files resolves against another `Y.Text` and is not drawn). A caret is published **only while that user's editor has focus** — Monaco fires `onDidChangeCursorSelection` whenever *remote* text shifts positions, so without the gate someone who merely had the project open broadcast a caret at line 1 and appeared, name label and all, to be sitting there in everyone else's window; blurring withdraws it while leaving them in the collaborator list. Updates throttled to 80 ms. Each caret is a decoration plus a generated CSS rule with the user's colour (derived from their id) and name as an absolutely positioned `::after` — **not** Monaco injected text, which takes part in layout and would shove the local user's characters sideways on every remote caret move. Idle 12 s → dimmed, label hidden. [`components/editor/CollabPresenceBar.tsx`](file:///home/abin/overbranch/components/editor/CollabPresenceBar.tsx) shows who is live, their file and 🟢/🟡/🔴.
+7. **Persistence is debounced and server-side**: the room writes the text to disk + Supabase `latex_documents` after 2 s of silence (and at least every 15 s under continuous typing), on last-leave and on shutdown; the CRDT snapshot goes to `uploads/collab-state/<id>.ybin` + `collab_doc_state`. The browser stops POSTing the document entirely while bound. A failed write stays dirty for the next tick. Edits made while a room was **closed** (AI commit, PDF import, template clone) are adopted on cold start by comparing the stored text against the hash recorded at the last flush — and the room's own unflushed edits win when *it* is the one that moved.
+8. **AI edits are ordinary CRDT operations**: the agent returns diffs and the user accepts them, so the accept path was made surgical — [`lib/collab/text-diff.ts`](file:///home/abin/overbranch/lib/collab/text-diff.ts) replaces the old `getFullModelRange()` replace with the minimal changed line ranges (a whole-document replace *is* last-write-wins over every concurrent keystroke). Backend writes are routed **into** the live room by [`collab/inject.py`](file:///home/abin/overbranch/backend/collab/inject.py) via `project_storage.write_document_text`, so a PDF import cannot vanish under the room's next flush.
+9. **Undo is per user**: Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z and the toolbar route to a `Y.UndoManager` scoped to `trackedOrigins: {binding}`, so undo means "undo *my* last edit" and can never delete a collaborator's paragraph.
+10. **A room is opened only when one is needed** ([`collab/presence.py`](file:///home/abin/overbranch/backend/collab/presence.py), `POST /api/collab/presence`). A room costs a websocket, a uvicorn concurrency slot, an authoritative CRDT document and a persistence timer for as long as the tab is open — spent, before this, on the overwhelmingly common case of one person editing alone, who needs none of it and is served by the REST autosave path. But "is anyone else here?" is what a room is *for*, so asking it cannot require one: the client posts a heartbeat every ~8 s and opens the socket only once the project is **actually shared** (one indexed `project_members` lookup) **and a second person has it open**. Two tabs of one person count once; a stale viewer expires after `COLLAB_PRESENCE_TTL`; an open room keeps its occupants connected as the count falls back to one, because the room's own last-leave path flushes and closes it rather than the socket being pulled out mid-keystroke. The heartbeat is a hint, never an authorization — `resolve_project_role` still gates every connect and every re-auth tick — and membership lookup failures **fail open**, since a needless room wastes a connection while a refused one silently drops a real collaborator to single-user editing. The presence bar shows this as a neutral **Solo**, not the red "Offline" the unknown status used to fall through to.
+11. **Scaling caveat**: rooms are per-process, so `entrypoint.sh` and `Dockerfile.backend` pin the backend to **one worker** while collaboration is on (`COLLAB_ENABLED=0` or `COLLAB_MULTI_WORKER=1` opt out, and `warn_if_multi_worker()` logs loudly). A websocket holds a `--limit-concurrency` slot and one `--limit-max-requests` request for its whole life, so both limits were raised.
+12. **Structured logs** ([`collab/events.py`](file:///home/abin/overbranch/backend/collab/events.py), [`lib/collab/log.ts`](file:///home/abin/overbranch/lib/collab/log.ts)): `COLLAB_CONNECT/DISCONNECT/JOIN/LEAVE/SYNC/PERSIST/RECONNECT/AUTH_FAILURE/CONFLICT/ROOM_OPEN/ROOM_CLOSE/FILE_LOAD/EXTERNAL_CHANGE/AWARENESS/UPDATE/ERROR`. Per-message events are DEBUG unless `COLLAB_DEBUG=1` so cursor traffic cannot flood production; no event carries document text or a token.
+
 ---
 
 # 2. Complete Repository & File Structure (As-Is Verbatim)
@@ -372,6 +416,7 @@ overbranch/
 ├── .env                                        # Local environment variables & secrets (ignored by git)
 ├── .env.example                                # Documented template for required environment variables
 ├── .gitignore                                  # Git repository file exclusion rules
+├── COLLABORATION.md                            # Realtime collaborative editing: architecture, auth, persistence, scaling
 ├── DOCKER_DEPLOYMENT.md                        # Production container deployment runbook
 ├── Dockerfile                                  # Production Next.js & Python full-stack multi-stage build
 ├── Dockerfile.backend                          # Production Python FastAPI standalone container build
@@ -424,6 +469,16 @@ overbranch/
 │   ├── assets/                                 # Static assets & figure placeholders
 │   │   ├── image_p1_1.png                      # Sample converted document figure 1
 │   │   └── image_p1_2.png                      # Sample converted document figure 2
+│   ├── collab/                                 # Realtime collaborative editing (authoritative Yjs CRDT rooms)
+│   │   ├── __init__.py                         # Package overview & exports (config, room_manager)
+│   │   ├── access.py                           # Project role from projects / project_members; fails closed
+│   │   ├── config.py                           # COLLAB_* settings (persistence, limits, origins, tickets, debug)
+│   │   ├── events.py                           # Structured COLLAB_* logging; per-message events DEBUG unless COLLAB_DEBUG
+│   │   ├── inject.py                           # Routes backend document writes INTO a live room (AI commit, PDF import)
+│   │   ├── manager.py                          # Room registry, idle reaping, shutdown flush, multi-worker warning
+│   │   ├── persistence.py                      # Document text (disk + latex_documents) & CRDT snapshot (.ybin + collab_doc_state)
+│   │   ├── room.py                             # One room per project: y-websocket protocol, seeding, presence, debounced persistence
+│   │   └── tickets.py                          # One-time HMAC websocket admission tickets (identity only)
 │   ├── opencode/                               # OpenCode Bounded ReAct Agentic Pipeline
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate, run-level rollback, phase events, self-validating LaTeX-in-JSON parser
@@ -431,7 +486,7 @@ overbranch/
 │   │   ├── context_builder.py                  # Levels 1-5 targeted context, node outline, request→node matching, ContextLedger
 │   │   ├── diff_generator.py                   # Unified/split diffs + apply-contract v3 edit items (unique, structurally-closed, node-annotated)
 │   │   ├── edit_guard.py                       # Scoped healing (edited lines only) & duplicate-block guard
-│   │   ├── layout_tools.py                     # detect_overflow / inspect_pdf_geometry / justify_content agent tools
+│   │   ├── layout_tools.py                     # detect_overflow / inspect_pdf_geometry / justify_content; the render→measure→repair→verify loop, per-defect rollback, stale-version guard
 │   │   ├── locator.py                          # Target resolution: node → exact → normalized → fuzzy (structure-guarded), with recorded attempts
 │   │   ├── shadow_compiler.py                  # Truthful compile verdict: explicit infra markers, (file, message, source line) multiset differential, strict fix mode, timeout retry, real main.tex for non-main files; pre_heal=False so error lines match the buffer
 │   │   ├── shadow_workspace.py                 # In-memory buffer: locator-based edits, node ops, transactions, scoped heal; line-number-prefix & trailing-newline hygiene, auto_repairs reported
@@ -468,6 +523,7 @@ overbranch/
 │   ├── routes/                                 # Modular FastAPI API Routers
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── agent_routes.py                     # OpenCode SSE stream (POST /api/agent/opencode), abort, validate-latex & resolve-edits
+│   │   ├── collab_routes.py                    # WS /ws/collab/{project_id}, POST /api/collab/ticket & /api/collab/presence, config & room introspection
 │   │   └── pdf_convert.py                      # PDF import jobs (POST/GET /api/convert/pdf…), previews, guest session & migration
 │   ├── services/                               # Business Logic & Support Services
 │   │   ├── __init__.py                         # Package exports
@@ -508,10 +564,13 @@ overbranch/
 │   │   │   └── 63b810f378d656009cf7a813/       # Minimalist Res.cls Resume
 │   │   └── thesis/                             # Master's & Doctoral Thesis Templates
 │   │       └── Thesis Chapter Template/        # Multi-chapter graduate thesis template
-│   ├── latex_layout/                           # Horizontal geometry: measuring & fitting typeset text (agent + importer)
+│   ├── latex_layout/                           # Page geometry: measuring, judging & repairing typeset layout (agent + importer)
 │   │   ├── __init__.py                         # Package overview
 │   │   ├── blocks.py                           # TextBlocks from a PDF page; source/output comparison (weight, size, overflow)
-│   │   ├── justify.py                          # justify_content strategy ladder; TeX-measured widths (\settowidth probe)
+│   │   ├── issues.py                           # LayoutIssue taxonomy + geometric detection (margins, broken tokens, tables, page bottom)
+│   │   ├── justify.py                          # fit_fragment ladder; TeX-measured widths & page geometry (\settowidth / \textwidth probes)
+│   │   ├── repair.py                           # Closed set of minimal repairs per defect; text-preservation & no-shrink guards
+│   │   ├── vision.py                           # Optional advisory vision pass on pages geometry could not explain (JUSTIFY_VISION=1)
 │   │   ├── metrics.py                          # String widths from the TeX font files (kpsewhich), latex_to_plain
 │   │   └── overflow.py                         # Overfull boxes, past-the-text-area and off-page detection
 │   ├── tests/                                  # Pytest suite (no network; TeX-dependent tests skip without pdflatex)
@@ -520,9 +579,12 @@ overbranch/
 │   │   ├── test_agent_json_latex.py            # LaTeX inside agent JSON: escaped / raw / mixed replies, &, \n, \\\hline, prompt rule
 │   │   ├── test_agent_compile_outcomes.py      # Budget exhaustion compiles, last-step repair turn, strict fix requests, partial fixes, honest explanation
 │   │   ├── test_agent_token_budget.py          # Targeted context: prompt size vs document size, one-call edits, ledger
+│   │   ├── test_collab_auth.py                 # Realtime auth: ticket signing/expiry/replay/binding, roles, handshake codes, revocation, origins
+│   │   ├── test_collab_sync.py                 # Realtime rooms: CRDT merge, same-offset concurrency, late joiners, Viewer writes, restart, persistence, external writes
 │   │   ├── test_compile_pre_heal.py            # compile_latex pre-heal gating (editor / agent / importer) & line remap to source
 │   │   ├── test_compile_gate_truth.py          # Compile gate: no false passes (infra, masked errors, timeout, fix mode), engine, failure log, parser
-│   │   ├── test_justify_content.py             # justify_content ladder, long words, overfull parsing, compiled overflow fix
+│   │   ├── test_justify_content.py             # fit_fragment ladder, long words, overfull parsing, compiled overflow fix
+│   │   ├── test_layout_repair.py               # Render-aware repair: detection, source mapping, tables, longtable, rollback, stale version, meaning preserved
 │   │   ├── test_locator.py                     # Node IDs, exact/normalized/fuzzy, ambiguity, structured failure, legacy chunk IDs
 │   │   ├── test_pdf2latex_fidelity.py          # Bold signals, sizes, font mapping, body repair, ticket conversion regression
 │   │   ├── test_provider_fallback.py           # Fallback chain, 429 rotation, 5-key exhaustion, cooldown recovery, no key leaks
@@ -571,7 +633,8 @@ overbranch/
 │   │   ├── ApiSettingsModal.tsx                # Custom user API keys dialog (Gemini, Groq, OpenRouter)
 │   │   ├── ChatMessageContent.tsx              # Markdown & LaTeX formula renderer using KaTeX
 │   │   ├── ChatModeToggle.tsx                  # Mode toggle switching between 'Ask' and 'Edit' modes
-│   │   ├── CollaboratorAvatars.tsx             # Active collaborator avatar stack & invite modal
+│   │   ├── CollabPresenceBar.tsx               # Who is live right now: avatars, their file, idle state, 🟢/🟡/🔴 link state
+│   │   ├── CollaboratorAvatars.tsx             # Invited collaborators: avatar stack, invite, remove, transfer ownership
 │   │   ├── CompileToolbar.tsx                  # Compile button, engine dropdown, error pill & "Ask AI to Fix"
 │   │   ├── CopyButton.tsx                      # Copy-to-clipboard affordance on chat messages (prompt recall)
 │   │   ├── EditorLayout.tsx                    # Master resizable split-pane editor shell & AI stream handler (getActiveEditor resolves the visible Monaco; result merged into final_diff; file-tagged edits; compile errors kept with the PDF)
@@ -642,7 +705,7 @@ overbranch/
 │
 ├── db/                                         # Database Layer (Drizzle ORM & PostgreSQL)
 │   ├── index.ts                                # Drizzle client initialization with pg connection pool
-│   └── schema.ts                               # PostgreSQL tables: user, session, projects, project_files, etc.
+│   └── schema.ts                               # PostgreSQL tables: user, session, projects, project_members, collab_doc_state, etc.
 │
 ├── drizzle/                                    # Drizzle SQL Migrations & Schema Snapshots
 │   ├── 0000_condemned_the_twelve.sql           # Initial baseline SQL schema migration
@@ -654,6 +717,12 @@ overbranch/
 │   └── useGuestMigration.ts                    # Hook managing guest cookie token & migration dispatch
 │
 ├── lib/                                        # Shared Library Utilities & Client SDKs
+│   ├── collab/                                 # Browser side of realtime collaboration
+│   │   ├── colors.ts                           # Stable per-user cursor/avatar colour derived from the user id
+│   │   ├── log.ts                              # Structured COLLAB_* console logging (NEXT_PUBLIC_COLLAB_DEBUG / localStorage)
+│   │   ├── monaco-binding.ts                   # Hand-written Yjs <-> Monaco binding + remote cursors, labels & per-user UndoManager
+│   │   ├── text-diff.ts                        # Minimal line edits + applyTextToEditor: AI output as surgical CRDT ops
+│   │   └── useCollaboration.ts                 # Session hook: Y.Doc, y-websocket provider, tickets, status, peers, file re-binding
 │   ├── hooks/
 │   │   └── use-debounce.ts                     # Debounce value hook for inputs and auto-compiles
 │   ├── ai-file-analysis.ts                     # Client helper invoking file analyzer API
@@ -682,6 +751,9 @@ overbranch/
 │   └── window.svg                              # Window graphic icon
 │
 ├── scripts/                                    # Maintenance & Diagnostics Scripts
+│   ├── run-collab-tests.sh                     # Bundles & runs the browser-side collaboration checks (esbuild from node_modules)
+│   ├── test_collab_binding.mjs                 # Yjs <-> Monaco binding: loop safety, convergence, per-user undo, cursor decorations
+│   ├── test_collab_text_diff.mjs               # computeLineEdits / applyTextToEditor round trips incl. 300 randomized cases
 │   └── test_file_analysis.py                   # Local sanity script testing multimodal file analyzer
 │
 ├── server/                                     # Server tRPC Core Layer
@@ -693,7 +765,8 @@ overbranch/
 │
 ├── supabase/                                   # Supabase Migrations & Configurations
 │   └── migrations/
-│       └── 001_initial_schema.sql              # Baseline PostgreSQL schema for standalone Supabase
+│       ├── 001_initial_schema.sql              # Baseline PostgreSQL schema for standalone Supabase
+│       └── 002_collab_doc_state.sql            # collab_doc_state table (service-role only, RLS enabled)
 │
 ├── trpc/                                       # Client-Server tRPC Router Collection
 │   ├── client.tsx                              # tRPC React Query provider component
@@ -717,6 +790,7 @@ overbranch/
 │   └── sync.ts                                 # SyncTeX coordinate packets, bounding boxes & compile errors
 │
 └── uploads/                                    # Local Isolated File System Project Storage
+    ├── collab-state/                           # <project_id>.ybin CRDT snapshots (restart safety; purged after 30 days)
     └── projects/                               # Project directories partitioned by project_id
 ```
 
@@ -831,7 +905,11 @@ overbranch/
   - `POST /api/agent/stop` — cancels an in-flight run.
   - `POST /api/agent/resolve-edits` — `{current_code, items, original_code?}` → places accepted edits the editor could not locate by exact text, using the agent's locator; all-or-nothing (`{success, code, applied[{id, method}], failed[{id, op, target, reason, attempts}], document_unchanged}`). Writes nothing. Rate limited 60/min.
   - `POST /api/agent/validate-latex` — heals and/or validates a LaTeX string without writing anything. Body `{latex_code, project_id?, file_path?, heal?}` → `{valid, errors[], fixes_applied[], healed_code, changed}`. `heal` defaults to **false**: healing hoists packages and injects theme colours, so it must never be applied without showing the user `fixes_applied`. Rate limited 60/min; bodies over 2 MB return 413.
-- **Dynamic Adaptive Step Budgeting** (`determine_adaptive_step_budget`): the budget scales with document structure and is **hard-capped at `MAX_STEP_BUDGET` (32)**.
+- **The step budget is an estimate the agent can revise, not a contract.** `determine_adaptive_step_budget` sets a *starting* budget from document structure, capped at `MAX_STEP_BUDGET` (32); from there it is extensible.
+  - **Why it cannot be fixed.** Running out mid-edit is the worst outcome the loop produces: the transaction is rolled back, so the user waits for a whole run and receives nothing, having lost work the agent had already done correctly. Guessing high instead is no answer — every step is an LLM round trip, so a generous fixed budget is a latency bill paid on every request.
+  - **The agent asks** (`request_more_steps`): it is told where it is in its budget on every turn (`[Step 3/8 · 5 remaining…]`, refreshed on the live user message rather than appended, so it never accumulates) — without that it could not judge whether to ask at all, and the tool would be inert.
+  - **The loop also grants one itself** when it reaches the limit with edits still unverified, rather than rolling back a half-finished job.
+  - **An extension is earned.** It is refused unless the document has actually changed since the last one: an agent re-reading the same block and asking again is precisely the case the ceiling exists for, and more turns make a bad run slower, not better. Bounded three ways at once — `EXTENSION_CHUNK` (6) per grant, `MAX_STEP_EXTENSIONS` (4) requested plus `MAX_AUTO_EXTENSIONS` (2) automatic, and `ABSOLUTE_MAX_STEPS` (64) overall. `AgentTrace.step_extensions` records how often it happened.
   - `TARGETED_EDIT`: 4–12 steps (4 for a typo or citation, 10–12 for creation / redesign).
   - `FULL_DOCUMENT_REWRITE` / `FULL_DOCUMENT_EXPANSION`: `8 + ceil(chunks / 2)`, capped at 32.
   - Ask mode: 4 steps.
@@ -1144,7 +1222,8 @@ overbranch/
 - **How It Works**:
   1. Project owners can invite collaborators via email with specific roles (`editor`, `viewer`).
   2. Invitee receives in-app notifications via [`NotificationsPopover.tsx`](file:///home/abin/overbranch/components/dashboard/NotificationsPopover.tsx) to accept or decline.
-  3. Active users in a project are displayed in [`CollaboratorAvatars.tsx`](file:///home/abin/overbranch/components/editor/CollaboratorAvatars.tsx).
+  3. Invited members are displayed in [`CollaboratorAvatars.tsx`](file:///home/abin/overbranch/components/editor/CollaboratorAvatars.tsx); who is **live right now** comes from the realtime layer's presence set — see [Feature 33](#feature-33-realtime-collaborative-editing-presence--remote-cursors).
+  4. The same `projects.owner_id` / `project_members.role` lookup is what gates a collaboration socket, so revoking a member also ends their live editing session (within `COLLAB_REAUTH_INTERVAL`).
 
 ---
 
@@ -1231,9 +1310,13 @@ overbranch/
   3. `test_agent_token_budget.py`: initial prompt for a targeted edit on a ~5,300-line document within 2× of a ~70-line one, one LLM call for a one-step edit, title requests pull the title and its colour definition, ledger de-duplication.
   4. `test_resolve_edits_endpoint.py`: node metadata on items, re-location after the user typed, all-or-nothing, whole-document items.
   5. `test_provider_fallback.py`: fallback to OpenRouter MiniMax M3 on 429/402/503/504/timeouts, none on bad request or cancel, sticky 429 rotation, five-key exhaustion, cooldown recovery, keys absent from responses/logs.
-  6. `test_justify_content.py`: the strategy ladder, break points only in over-long tokens (separators first), overfull parsing, TeX measurement, compiled end-to-end overflow fix.
+  6. `test_justify_content.py`: the strategy ladder, break points only in over-long tokens (separators first), overfull parsing, TeX measurement, compiled end-to-end overflow fix, and that type is never shrunk to fit.
+  6a. `test_layout_repair.py`: content typing (a path and an identifier are repaired, ordinary prose is not), breaks that add no character and no hyphen, column specs that keep their rules, detection against really-rendered pages (margin overflow, a short page that is *not* overflowing, a line merely ending in a path that is *not* a broken token), repair verified by re-rendering (`tabularx`, `longtable` with a repeated header, `\url`), and the tool's guarantees: dry run, rollback when a repair does not compile, rollback when it compiles but does not measurably help, refusal to commit against a document that moved underneath, and meaning preserved by every repair.
   6b. `test_converted_document_edits.py`: "change jacob to tims ittus" on a long imported PDF — the line is in the first message, lower-case search and `replace_text` still find "JACOB", nothing else changes; overprinted fake bold is extracted once and converts without double text.
   7. `test_pdf2latex_fidelity.py`: bold from names / descriptor / synthetic rendering, sizes in the facts, Carlito mapping and fallback, body repair, and the **IRCTC ticket regression**: real pipeline with a model that drops all bold → bold restored, 0 overflowing lines, with and without Carlito; a faithful body is left untouched.
+  8. `test_collab_sync.py`: `CollabRoom` driven with the real y-websocket protocol (one `pycrdt.Doc` per "browser") — seeding, an edit reaching the other peer, simultaneous inserts at the same offset converging, concurrent delete+insert, a late joiner getting the live state rather than the stored snapshot, a peer leaving, a Viewer's writes dropped, a role downgrade taking effect, restart **without duplicating the document**, adopting an edit made outside the session, keeping unflushed edits over stale storage, debounced persistence and flush retry, presence relay and ghost-cursor cleanup, path/size/garbage rejection, and a backend write (AI commit / PDF import) reaching live editors.
+  9. `test_collab_auth.py`: ticket round trip, single use, project binding, tampering, expiry; role resolution from `projects` / `project_members` including deleted projects and fail-closed on a database error; the websocket handshake with no credential, a forged ticket, a valid ticket for a non-member, a ticket for another project; a Viewer connecting read-only; revocation closing a live socket; a foreign `Origin` refused.
+  10. `scripts/run-collab-tests.sh` (Node, outside pytest): the Yjs ↔ Monaco binding — loop safety, two-editor convergence, offline merge, per-user undo/redo, remote cursor decorations and name labels, read-only — and `computeLineEdits` / `applyTextToEditor` round trips including 300 randomized cases.
 
 ---
 
@@ -1260,6 +1343,98 @@ overbranch/
 
 ---
 
+### Feature 33: Realtime Collaborative Editing, Presence & Remote Cursors
+
+```
++------------------------------------------------------------------------------------+
+|                        REALTIME COLLABORATION PIPELINE                             |
+|                                                                                    |
+|  Monaco (one shared model)  --onDidChangeContent-->  Y.Text ops (origin = binding)  |
+|          ^                                                    |                    |
+|          |  model.applyEdits (origin != binding)              v                    |
+|          +------------------------------  y-websocket provider / Y.Doc             |
+|                                                               |                    |
+|            wss://<backend>/ws/collab/<project_id>  -----------+                    |
+|                                 |                                                  |
+|            Origin allowlist -> cookie | one-time ticket -> project role            |
+|                                 |            (re-checked every 30s)                |
+|                                 v                                                  |
+|                CollabRoom: authoritative pycrdt Doc per project                    |
+|                  Y.Text "file:<path>"   Y.Map "meta" loaded:/saved:                |
+|                  Awareness (presence, memory only, never in Postgres)              |
+|                                 |                                                  |
+|          debounced 2s / >=15s   v   last-leave + shutdown flush                    |
+|      uploads/projects + latex_documents  (text)                                    |
+|      uploads/collab-state/<id>.ybin + collab_doc_state  (CRDT snapshot)            |
++------------------------------------------------------------------------------------+
+```
+
+- **File Implementation**: [`backend/collab/`](file:///home/abin/overbranch/backend/collab/), [`backend/routes/collab_routes.py`](file:///home/abin/overbranch/backend/routes/collab_routes.py), [`lib/collab/`](file:///home/abin/overbranch/lib/collab/), [`components/editor/CollabPresenceBar.tsx`](file:///home/abin/overbranch/components/editor/CollabPresenceBar.tsx), [`components/editor/EditorLayout.tsx`](file:///home/abin/overbranch/components/editor/EditorLayout.tsx), [`COLLABORATION.md`](file:///home/abin/overbranch/COLLABORATION.md)
+- **API**:
+  - `WS /ws/collab/{project_id}` — the y-websocket protocol (`?ticket=`, `?file=`).
+  - `POST /api/collab/ticket` — `{project_id}` → `{ticket, expires_in, role, can_edit}`; single-use, 60 s, rate limited 120/min.
+  - `GET /api/collab/config` — capability flags only (no project data).
+  - `GET /api/collab/rooms/{project_id}` — who is live, open files, pending writes; **members only**.
+- **New dependencies**: `yjs`, `y-websocket`, `y-protocols` (browser) and `pycrdt` (backend). Nothing else — notably **not** `y-monaco`, whose `monaco-editor` peer dependency would ship a second copy of an editor this project loads from a CDN.
+- **New schema**: one table, `collab_doc_state(project_id PK, state_b64, updated_at)` — [`db/schema.ts`](file:///home/abin/overbranch/db/schema.ts) (`collabDocState`) plus an idempotent [`supabase/migrations/002_collab_doc_state.sql`](file:///home/abin/overbranch/supabase/migrations/002_collab_doc_state.sql). No `drizzle/` migration: `drizzle/meta` is still at the 0000 baseline while `db/schema.ts` has grown a dozen tables since, so `drizzle-kit generate` would emit all of them at once — `npm run db:push` or the SQL file is the path. Service-role only; browsers never read it.
+- **Three things that look like details and are not**:
+  1. **`value={collabBound ? undefined : code}`.** `@monaco-editor/react` implements a `value` prop change as a replace over `getFullModelRange()` — and an unconditional `setValue` when the editor is read-only. Under a CRDT that is "delete the document, insert a new one": it discards every concurrent keystroke in the span and collapses every remote cursor to line 1. While the binding owns the model, React must not pass `value` at all. `code` becomes a 150 ms-throttled mirror (a collaborator typing a paragraph would otherwise force one shell re-render per character) and `currentDocumentText()` reads the live model wherever exactness matters (Compile, the agent).
+  2. **The AI accept path is a line diff, not a full replace.** `commitEditOutcome`, `handleRevertEdit` and `handleReapplyEdit` used to execute one edit over `getFullModelRange()`. [`lib/collab/text-diff.ts`](file:///home/abin/overbranch/lib/collab/text-diff.ts) (`computeLineEdits` → common prefix/suffix trim, then LCS, capped at 1,500 lines per side) turns the result into the minimal changed ranges. An accepted AI edit therefore enters the collaborative document through the same path as typing, and the single-user case gets one undo entry per real change instead of one giant one.
+  3. **The socket is accepted before it is authorized.** Closing an ASGI websocket before `accept()` rejects the upgrade, which a browser reports as close code 1006 with no detail — so the client cannot distinguish "forbidden, stop asking" from "network blip, retry" and `y-websocket` reconnects forever against a project the user cannot open. Nothing is sent before the checks pass, and a rejected socket closes in the same round trip with `4401` / `4403` / `4404` / `4429`.
+- **Seeding handshake**: a client announces its file (`?file=` and in awareness), the room reads it from storage and sets `meta["loaded:<path>"]`; Monaco binds **only** then. Binding to a not-yet-seeded (empty) `Y.Text` and typing into it would merge those keystrokes into offset 0 of a document that is about to arrive.
+- **Cross-site websocket hijacking**: WebSocket is exempt from CORS, so `new WebSocket(...)` from any page the user has open would carry their Better-Auth cookie. `_origin_allowed` checks `Origin` against `COLLAB_ALLOWED_ORIGINS` / `ALLOWED_ORIGINS` / `NEXT_PUBLIC_APP_URL` / `BETTER_AUTH_URL`. A request with no `Origin` is not a browser and falls through to the credential checks.
+- **Undo**: Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z and the toolbar buttons go to a `Y.UndoManager` with `trackedOrigins: {binding}` while bound, so undo is scoped to this user's own transactions. Monaco's native stack is wrong here: it contains edits whose surroundings a collaborator has since changed and does not know whose they were. Remote text is applied with `model.applyEdits` (not `pushEditOperations`) so it never lands on the local stack at all.
+- **Guests** keep the existing REST autosave path: guest projects are single-session, and `POST /api/collab/ticket` refuses them.
+- **Deployment constraint**: rooms are per-process, so `entrypoint.sh` and `Dockerfile.backend` pin the backend to **one uvicorn worker** while collaboration is enabled (`COLLAB_ENABLED=0` or `COLLAB_MULTI_WORKER=1` opt out) and `warn_if_multi_worker()` logs loudly otherwise. A websocket also holds a `--limit-concurrency` slot and counts as one `--limit-max-requests` request for its whole life, so both were raised (200 / 10000).
+- **Tests**: [`backend/tests/test_collab_sync.py`](file:///home/abin/overbranch/backend/tests/test_collab_sync.py) drives `CollabRoom` with the real wire protocol (one `pycrdt.Doc` per "browser"); [`backend/tests/test_collab_auth.py`](file:///home/abin/overbranch/backend/tests/test_collab_auth.py) covers tickets, roles, handshake codes, revocation and origins; [`scripts/run-collab-tests.sh`](file:///home/abin/overbranch/scripts/run-collab-tests.sh) bundles the browser-side binding and line-diff checks with the esbuild already in `node_modules`. Three bugs were found by these tests and fixed: a `pycrdt` callback-arity trap that filled the dirty set with transactions instead of file paths, a `reject(reason=…)` keyword collision that turned a non-member's rejection into a 500, and `applyTextToEditor` dropping an appended trailing newline.
+
+---
+
+---
+
+### Feature 34: Render-Aware Layout Repair (`justify_content`)
+
+```
++------------------------------------------------------------------------------------+
+|                      LAYOUT REPAIR LOOP (justify_content)                          |
+|                                                                                    |
+|  buffer ──► compile (cached by content) ──► PDF bytes + overfull log               |
+|                                   │                                                |
+|                     detect_layout_issues()   TeX \textwidth/\textheight            |
+|                                   │          + word boxes + adjacent line pairs    |
+|                     [LayoutIssue …] ranked worst-first                             |
+|                                   │          (+ optional advisory vision pass)     |
+|                     map_issue_to_source()    overfull `at lines a--b`              |
+|                                   │          → locator → plain-text line match     |
+|                     plan_repairs()           closed, content-typed operation set   |
+|                                   │                                                |
+|            one transaction per defect ──► recompile ──► re-measure                 |
+|                                   │                                                |
+|        new compile errors?  OR  layout score did not fall?  ──► rollback           |
+|                                   │ no                                             |
+|                                 keep                                               |
++------------------------------------------------------------------------------------+
+```
+
+- **File Implementation**: [`backend/latex_layout/issues.py`](file:///home/abin/overbranch/backend/latex_layout/issues.py), [`backend/latex_layout/repair.py`](file:///home/abin/overbranch/backend/latex_layout/repair.py), [`backend/latex_layout/vision.py`](file:///home/abin/overbranch/backend/latex_layout/vision.py), [`backend/opencode/layout_tools.py`](file:///home/abin/overbranch/backend/opencode/layout_tools.py), [`backend/tests/test_layout_repair.py`](file:///home/abin/overbranch/backend/tests/test_layout_repair.py)
+
+- **What the request actually means.** "Fix the justification of the whole document" is not a request to insert `\justifying`, and not a request to rewrite paragraphs. It means: find where the rendered pages look wrong and make the smallest edit that fixes each one. **None of that is visible in the source.** Whether a file path runs into the margin, whether a table is wider than the text block, whether a row prints over the footer — only the compiled PDF knows. So the tool closes a loop the source cannot close on its own.
+
+- **Why the previous tool could not do this.** `justify_content` was a *single-fragment width fitter*: hand it one fragment and a width in pt and it rewrote that fragment. It had no `scope`, so for a whole-document request there was nothing to call — the model had to already know which fragment was broken and what width it should fit. Detection (`detect_overflow`) and repair were unconnected tools, so each defect cost a hand-copied call out of a 4–12 step budget. It had no notion of content type, so a URL, a file path, an identifier and a prose sentence all took the same branch. Tables were invisible to it (`in_lr_box` detected "I am in a cell" only so it could force the *condense* branch — the worst possible table fix). Vertical overflow was not modelled at all. And its terminal rungs were `\resizebox` and `\fontsize` — shrinking type to fit, the one thing a layout repair must never do.
+
+- **Three properties make the loop safe to run unattended**:
+  1. **The model does not write the LaTeX.** It decides *that* the document should be tidied; `repair.py` decides *how*, from a closed operation set. There is no path by which "fix the formatting" becomes a rewrite.
+  2. **Nothing is kept on faith.** A repair survives only if the document still compiles **and** the measured layout improved. Compiling is a precondition, never evidence that a layout fix worked — the broken version compiled too.
+  3. **One defect at a time.** Each repair is its own transaction, judged alone, so a fix that makes another page worse is rolled back by itself instead of taking the good ones with it.
+
+- **A real document is not one file.** A thesis's `main.tex` holds a preamble and a list of `\input{chapters/…}`; the text that overflows lives in a chapter. Detection runs on the rendered PDF either way, but the repair has to find and edit the *file that produced* the line, so `locate_issue` searches every `.tex` the compile reads and writes back through `str_replace_file`; packages still go to the main buffer, since a `\usepackage` inside an included chapter is an error. Two things had to be fixed for this to work at all: TeX's `at lines a--b` numbers the file it was *reading*, so applying those numbers to the main buffer pointed at the preamble (the hint is dropped once there is more than one source); and `compile_workspace` keyed its cache on the main buffer alone, so a document whose main file never changes had **every chapter edit judged against the compile from before it** — a bug that affected any auxiliary-file edit the agent made, not just this tool.
+
+- **Mapping a rendered defect back to source**, best signal first: TeX's own `at lines a--b` for an overfull box; the locator (`exact → normalized → fuzzy`, the same ladder every other edit in this codebase uses); and finally a **plain-text line match** — comparing what each source line would *print* against what the page actually printed. That last step exists because the locator matches source against source, while a line read back from the PDF is neither: TeX has already stripped the markup and re-broken the text, so `…its manifests (packag` exists nowhere in a source reading `…its manifests (\texttt{package.json}`. An issue that still cannot be placed is **reported unrepaired**, never guessed at.
+
+- **Collaboration safety.** The buffer's `base_sha256` / `base_version` are read at entry and re-checked before committing. A user may be typing while the pages are being measured; a candidate built on a version that no longer exists would overwrite their work, so it is discarded with `{stale: true}` and the caller is told to run again.
+
+- **Measured end to end** on a three-page fixture reproducing all three reported defects (a path overflowing the margin, a two-column table wider than the page, a 29-row table printing over the footer): layout score **96.6 → 12.8**, four repairs — `longtable`, `tabularx`, `\allowbreak` break points and one `sloppypar` — with the body's visible text byte-identical and no `\small`, `\fontsize` or margin change anywhere in the diff.
+
 # 4. Deployment, Infrastructure & Environment Configuration
 
 ### Universal Docker Deployment
@@ -1277,6 +1452,11 @@ services:
       - "8000:8000"   # FastAPI Python Engine
     environment:
       - NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+      # Collaboration rooms are per-process: entrypoint.sh pins the backend to
+      # one uvicorn worker while COLLAB_ENABLED != 0. Set COLLAB_ENABLED=0 to
+      # keep multiple workers, or COLLAB_MULTI_WORKER=1 behind a proxy that
+      # pins /ws/collab/<project_id> to one worker.
+      - WORKERS=1
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - DATABASE_URL=${DATABASE_URL}
@@ -1323,6 +1503,25 @@ services:
 | `PDF2LATEX_RENDER_DPI` | Backend PDF import | Comparison DPI (Default: `100`) |
 | `PDF2LATEX_RATE_PER_HOUR` | Backend PDF import | Conversions per caller per hour (Default: `10`) |
 | `PDF2LATEX_JOB_DIR` | Backend PDF import | Job state/output directory shared by workers (Default: system temp `overbranch_pdf2latex_jobs`) |
+| `JUSTIFY_MAX_PAGES` | Backend Layout | Most pages `justify_content` measures in one run (Default: `40`) |
+| `JUSTIFY_VISION` | Backend Layout | `1` turns on the advisory vision pass over pages geometry could not explain. Report-only: its findings are never repaired automatically (Default: `0`) |
+| `JUSTIFY_VISION_BATCH` / `JUSTIFY_VISION_DPI` | Backend Layout | Pages per vision prompt and their render resolution (Defaults: `5`, `100`) |
+| `COLLAB_ENABLED` | Backend Collaboration | Master switch for realtime collaborative editing (Default: `1`) |
+| `COLLAB_CONNECT_THRESHOLD` | Backend Collaboration | People who must have a project open before a realtime room is held (Default: `2`). Below it, editing uses the REST autosave path |
+| `COLLAB_PRESENCE_TTL` / `COLLAB_PRESENCE_POLL` | Backend Collaboration | How long a viewer counts as present after their last heartbeat, and how often the client sends one (Defaults: `30`, `8` seconds) |
+| `NEXT_PUBLIC_COLLAB_ENABLED` | Frontend Collaboration | Turns the browser side off without touching the backend (Default: `1`) |
+| `COLLAB_MULTI_WORKER` | Backend Collaboration | `1` = "my proxy pins `/ws/collab/<project_id>` to one worker"; suppresses the one-worker pin and the startup warning (Default: `0`) |
+| `COLLAB_ALLOWED_ORIGINS` | Backend Collaboration | Origins allowed to open a collaboration socket. WebSocket is exempt from CORS, so this is what prevents cross-site websocket hijacking. Defaults to `ALLOWED_ORIGINS` + `NEXT_PUBLIC_APP_URL` + `BETTER_AUTH_URL` |
+| `COLLAB_REQUIRE_ORIGIN` | Backend Collaboration | Enforce the Origin allowlist; a request with no `Origin` is never a browser and is always allowed (Default: `1`) |
+| `COLLAB_PERSIST_DEBOUNCE` / `COLLAB_PERSIST_MAX_INTERVAL` | Backend Collaboration | Seconds of edit silence before a room writes the document, and the longest it will wait while someone types continuously (Defaults: `2.0`, `15.0`) |
+| `COLLAB_ROOM_IDLE_TTL` | Backend Collaboration | Seconds an empty room stays in memory, so a refresh rejoins the same live document (Default: `60`) |
+| `COLLAB_REAUTH_INTERVAL` | Backend Collaboration | How often an open socket's project membership is re-verified, so revocation ends the live session (Default: `30`) |
+| `COLLAB_TICKET_SECRET` / `COLLAB_TICKET_TTL` | Backend Collaboration | HMAC key for one-time websocket tickets (falls back to `BETTER_AUTH_SECRET`) and their lifetime in seconds (Default: `60`) |
+| `COLLAB_MAX_CONNECTIONS_PER_ROOM` / `COLLAB_MAX_ROOMS` / `COLLAB_MAX_FILES_PER_ROOM` | Backend Collaboration | Per-room and per-process bounds (Defaults: `32`, `500`, `64`) |
+| `COLLAB_MAX_MESSAGE_BYTES` / `COLLAB_MAX_FILE_BYTES` / `COLLAB_SEND_QUEUE_SIZE` | Backend Collaboration | Largest accepted websocket frame, largest file persisted, and the per-connection send queue beyond which a slow client is dropped (Defaults: `2 MiB`, `4 MiB`, `256`) |
+| `COLLAB_TEXT_EXTENSIONS` | Backend Collaboration | Extensions synchronized as collaborative text; binary assets keep the existing upload path (Default: `.tex,.bib,.cls,.sty,.txt,.md,.bbl`) |
+| `COLLAB_STATE_DIR` | Backend Collaboration | Where `<project_id>.ybin` CRDT snapshots are written (Default: `uploads/collab-state`) |
+| `COLLAB_DEBUG` / `NEXT_PUBLIC_COLLAB_DEBUG` | Backend & Frontend | Promote per-message `COLLAB_AWARENESS` / `COLLAB_UPDATE` events to INFO, and enable the browser console logs. A single browser can also be switched on with `localStorage.ob_collab_debug = "1"` (Default: `0`) |
 
 ---
 

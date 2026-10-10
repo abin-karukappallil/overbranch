@@ -9,7 +9,7 @@ import shutil
 
 import pytest
 
-from latex_layout.justify import FontSpec, justify_content
+from latex_layout.justify import FontSpec, fit_fragment
 from latex_layout.metrics import latex_to_plain, text_width
 from latex_layout.overflow import parse_overfull
 
@@ -22,32 +22,42 @@ PRE = "\\documentclass[10pt]{article}\n\\usepackage{helvet}\\renewcommand{\\fami
 # --- K. strategy ladder ------------------------------------------------------------
 
 def test_fitting_content_is_left_alone_or_only_aligned():
-    assert justify_content("Short text", 200, HELV).strategy == "none"
-    r = justify_content("Short text", 200, HELV, alignment="right")
+    assert fit_fragment("Short text", 200, HELV).strategy == "none"
+    r = fit_fragment("Short text", 200, HELV, alignment="right")
     assert r.strategy == "align" and r.latex == "{\\raggedleft Short text\\par}"
 
 
 def test_slightly_too_wide_line_is_condensed_not_shrunk():
     w = text_width("SLEEPER CLASS (SL)", "helvetica", 10)
-    r = justify_content("SLEEPER CLASS (SL)", w / 1.05, HELV)
+    r = fit_fragment("SLEEPER CLASS (SL)", w / 1.05, HELV)
     assert r.strategy == "condense"
     assert r.latex.startswith("\\resizebox{") and "{\\height}" in r.latex
     assert "graphicx" in r.needs_packages
 
 
-def test_much_too_wide_line_shrinks_font_within_floor_then_condenses():
+def test_much_too_wide_line_is_condensed_never_shrunk():
+    """
+    Type is never made smaller to make content fit. Shrinking is visible next
+    to text set at the document's real size and it spreads, because the next
+    overflow invites the same treatment.
+    """
     w = text_width("SLEEPER CLASS (SL)", "helvetica", 10)
-    r = justify_content("SLEEPER CLASS (SL)", w / 1.15, HELV)
-    assert r.strategy == "shrink"
-    assert "\\fontsize{8.7" in r.latex or "\\fontsize{8.6" in r.latex
-    r = justify_content("SLEEPER CLASS (SL)", w / 1.4, HELV)
-    assert r.strategy == "shrink+condense"
-    assert "\\fontsize{8.5}" in r.latex  # never below 85%
+    for divisor in (1.15, 1.4, 2.0):
+        # single_line: an unbreakable unit (a label, a heading, a table cell).
+        # A fragment free to wrap is wrapped instead, which is cheaper still.
+        r = fit_fragment("SLEEPER CLASS (SL)", w / divisor, HELV, single_line=True)
+        assert r.strategy == "condense"
+        assert "\\fontsize" not in r.latex
+        assert "\\small" not in r.latex and "\\scriptsize" not in r.latex
+        assert "SLEEPER CLASS (SL)" in r.latex          # content untouched
+    # A large reduction is reported, so a human can widen the column instead.
+    r = fit_fragment("SLEEPER CLASS (SL)", w / 2.0, HELV, single_line=True)
+    assert any("consider widening" in n for n in r.notes)
 
 
 def test_paragraph_is_wrapped_not_condensed():
     para = "This paragraph is long enough that TeX must wrap it over several lines of the box. " * 3
-    r = justify_content(para, 200, HELV, single_line=False)
+    r = fit_fragment(para, 200, HELV, single_line=False)
     assert r.strategy == "wrap"
     assert "\\emergencystretch" in r.latex
     assert "\\resizebox" not in r.latex and "\\\\" not in r.latex  # no manual line breaks
@@ -57,7 +67,7 @@ def test_paragraph_is_wrapped_not_condensed():
 
 def test_only_tokens_wider_than_the_box_get_break_points():
     text = "Invoice PS26465477199011PS26465477199011PS2646 issued to Indian Railways New Delhi office"
-    r = justify_content(text, 120, HELV, single_line=False)
+    r = fit_fragment(text, 120, HELV, single_line=False)
     assert r.strategy == "break_tokens"
     assert "Indian Railways New Delhi" in r.latex          # ordinary words untouched
     assert "\\-" in r.latex or "\\allowbreak" in r.latex
@@ -65,12 +75,12 @@ def test_only_tokens_wider_than_the_box_get_break_points():
 
 
 def test_separators_are_preferred_break_points():
-    r = justify_content("Status CNF/S5/56/SIDE/UPPER/BERTH/COACH/NUMBER/SEVENTY", 60, HELV, single_line=False)
+    r = fit_fragment("Status CNF/S5/56/SIDE/UPPER/BERTH/COACH/NUMBER/SEVENTY", 60, HELV, single_line=False)
     assert "/\\allowbreak{}" in r.latex and "\\-" not in r.latex
 
 
 def test_word_that_fits_is_never_broken():
-    r = justify_content("A reasonably sized sentence of ordinary words", 120, HELV, single_line=False)
+    r = fit_fragment("A reasonably sized sentence of ordinary words", 120, HELV, single_line=False)
     assert "\\-" not in r.latex and "\\allowbreak" not in r.latex
 
 
@@ -90,7 +100,7 @@ def test_latex_to_plain_measures_visible_text_only():
 
 @needs_tex
 def test_tex_measurement_matches_document_font():
-    r = justify_content("SLEEPER CLASS (SL)", 60, HELV, preamble=PRE)
+    r = fit_fragment("SLEEPER CLASS (SL)", 60, HELV, preamble=PRE)
     assert r.measured_by == "tex"
     assert abs(r.measured_w - text_width("SLEEPER CLASS (SL)", "helvetica", 10)) < 1.0
 
@@ -108,9 +118,9 @@ def test_justify_tool_removes_right_edge_overflow():
     before = detect_overflow_tool(ws)
     assert before["has_overflow"]
     text = "Left label\\hfill SLEEPER CLASS (SL) AND A VERY LONG RIGHT COLUMN VALUE THAT DOES NOT FIT ON THE LINE AT ALL"
-    out = justify_content_tool(ws, {"text": text})
+    out = justify_content_tool(ws, {"scope": "text", "text": text})
     assert out["success"], out
-    assert out["justify"]["strategy"] in ("condense", "shrink", "shrink+condense")
+    assert out["justify"]["strategy"] == "condense"
     assert out.get("verified") is True
     assert not detect_overflow_tool(ws)["has_overflow"]
     assert "SLEEPER CLASS (SL)" in ws.get_buffer()      # text kept, not broken or shortened
@@ -135,6 +145,7 @@ def test_justify_content_tool_exact_io():
     )
     ws = ShadowWorkspace(doc)
     args = {
+        "scope": "text",
         "text": "VERY-LONG-DEPARTMENT-IDENTIFIER-AND-CODE",
         "width_pt": 120.0,
         "alignment": "center",
@@ -148,7 +159,7 @@ def test_justify_content_tool_exact_io():
 
     # 2. Detailed justify output dictionary
     j = out["justify"]
-    assert j["strategy"] == "shrink+condense"
+    assert j["strategy"] == "condense"
     assert j["target_w"] == 120.0
     assert j["measured_w"] > 120.0
     assert j["ratio"] > 1.10
@@ -157,6 +168,7 @@ def test_justify_content_tool_exact_io():
     assert j["measured_by"] == "tex"
     assert "\\resizebox{120pt}{\\height}" in j["latex"]
     assert "\\centering" in j["latex"]
+    assert "\\fontsize" not in j["latex"]
 
     # 3. Buffer transformation and package injection
     buf = ws.get_buffer()
@@ -166,9 +178,9 @@ def test_justify_content_tool_exact_io():
 
 def test_justify_content_exact_io():
     """
-    Validates exact input and output structure of justify_content() from latex_layout.justify.
+    Validates exact input and output structure of fit_fragment() from latex_layout.justify.
     """
-    res = justify_content(
+    res = fit_fragment(
         fragment="OVERFLOWING CELL TEXT",
         available_w=100.0,
         font=HELV,
@@ -176,7 +188,7 @@ def test_justify_content_exact_io():
         single_line=True,
     )
     data = res.as_dict()
-    assert data["strategy"] in ("condense", "shrink", "shrink+condense")
+    assert data["strategy"] == "condense"
     assert data["target_w"] == 100.0
     assert data["changed"] is True
     assert isinstance(data["latex"], str)

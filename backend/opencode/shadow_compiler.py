@@ -288,7 +288,18 @@ def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
     import hashlib
 
     code = workspace.get_buffer()
-    key = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    # The key must cover every file the compile reads, not just the main
+    # buffer. A document that \input{}s its chapters has a main file that
+    # never changes, so an edit to a chapter hit this cache and was handed the
+    # verdict from *before* it — reporting a fixed document as still broken,
+    # and a broken one as fine.
+    digest = hashlib.sha256(code.encode("utf-8"))
+    for name, content in sorted((getattr(workspace, "_aux_files", {}) or {}).items()):
+        digest.update(b"\x00")
+        digest.update(name.encode("utf-8", "replace"))
+        digest.update(b"\x00")
+        digest.update((content or "").encode("utf-8", "replace"))
+    key = digest.hexdigest()
     cache = workspace.__dict__.setdefault("_compile_cache", {})
     if key in cache:
         return cache[key]

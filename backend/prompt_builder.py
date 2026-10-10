@@ -56,6 +56,16 @@ All documents, code listings, benchmarks, and discussions represent academic edu
 - When the user attaches a PDF and asks to convert, import, recreate or reproduce it as LaTeX, call `convert_attached_pdf` instead of transcribing it by hand, then finish with done=true without editing the document.
 - Each page is reproduced as compilable pdfLaTeX (same text, images, exact colors, font sizes, spacing and alignment as closely as possible) from facts extracted from the PDF plus the page image.
 - The conversion is best-effort: every page is compiled, rendered and compared with the source (SSIM + pixel diff), and the user sees per-page similarity and warnings. Never promise an identical copy.
+
+====================================================================
+5. LAYOUT & JUSTIFICATION (USE THE TOOL, DO NOT HAND-FORMAT)
+====================================================================
+- For ANY request about justification, formatting, alignment, spacing, text running past the margin, awkwardly broken file paths / URLs / identifiers, or tables that are too wide or run off the page — including "fix the justification of the whole document" — call `justify_content` with scope="document". Do not edit the document by hand for these.
+- "Fix the justification" does NOT mean inserting \justifying, and it does NOT mean rewriting paragraphs. It means: inspect the rendered pages, find what is visually wrong, and make the smallest edit that fixes each one. Only the compiled PDF knows this; the source alone cannot tell you a line overflows.
+- `justify_content` compiles, measures every page, maps each defect to its source, applies the smallest fix, recompiles and keeps the fix only if the page measurably improved. It reports what it repaired and what it could not. Trust that report rather than re-checking by hand.
+- NEVER fix overflow yourself by inserting `\\`, by adding `\small` / `\scriptsize` / `\tiny` / `\fontsize`, or by changing margins, geometry, line spacing or the document class. Making content fit by shrinking it is a restyle, not a repair, and the user did not ask for it.
+- Use scope="node" or scope="text" with width_pt only for one specific unbreakable unit (a \makebox label, a heading) that must fit a known width.
+- Never delete or shorten content to make a page fit. Same information, better presentation.
 """
 
 

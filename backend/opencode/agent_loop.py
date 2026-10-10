@@ -46,6 +46,26 @@ DEFAULT_MODEL = "gemini-3.7-flash"
 MAX_COMPILE_REPAIRS = int(os.getenv("SHADOW_COMPILE_MAX_RETRIES", "2"))
 MAX_TARGET_RETRIES = 1  # a target that failed is corrected once, then given up on
 SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not modified."
+# Where the agent is in its budget, refreshed on the live user message each
+# turn. Without it `request_more_steps` is unusable: a model cannot judge
+# whether the remaining steps cover the work if it is never told how many it
+# has. Stripped and re-added rather than appended, so it never accumulates.
+_BUDGET_RE = re.compile(r"\n*\[Step \d+/\d+[^\]]*\]\s*$")
+
+
+def _budget_note(step: int, total: int, can_extend: bool) -> str:
+    left = max(0, total - step)
+    note = f"[Step {step}/{total} \u00b7 {left} remaining."
+    if can_extend and left <= 2:
+        note += (" If that will not cover the remaining work, call request_more_steps NOW"
+                 " \u2014 running out mid-edit discards the whole run.")
+    return note + "]"
+
+
+def _with_budget_note(message: Dict[str, Any], step: int, total: int, can_extend: bool) -> Dict[str, Any]:
+    body = _BUDGET_RE.sub("", str(message.get("content", "")))
+    return {**message, "content": f"{body}\n\n{_budget_note(step, total, can_extend)}"}
+
 _LAST_STEP_NOTE = (
     "FINAL STEP: this is your last step. If your edits are complete, respond with done=true now; "
     "they are compiled automatically and you may get a turn to repair compile errors."
@@ -659,6 +679,21 @@ def _compact_conversation_history(
 # ============================================================================
 
 MAX_STEP_BUDGET = 32
+# The starting budget is an estimate, not a contract. A run that hits the
+# ceiling mid-edit is the worst outcome the loop has: the transaction is rolled
+# back and the user is told "Couldn't safely apply this change" after waiting
+# for the whole run, having lost work the agent had already done correctly.
+# Guessing high instead is no answer either — every step is an LLM round trip,
+# so a generous fixed budget is a latency bill paid on every request.
+#
+# So the budget is extensible, by the agent asking (`request_more_steps`) and
+# by the loop granting one automatically when work is visibly still landing.
+# Extensions are bounded in three ways at once: a per-grant size, a number of
+# grants, and an absolute ceiling, so a model that loops cannot run forever.
+ABSOLUTE_MAX_STEPS = 64      # hard stop however many extensions are asked for
+EXTENSION_CHUNK = 6          # steps granted per request
+MAX_STEP_EXTENSIONS = 4      # explicit grants to the model
+MAX_AUTO_EXTENSIONS = 2      # silent grants when the agent is mid-task
 
 
 def determine_adaptive_step_budget(
@@ -1510,6 +1545,52 @@ def stream_opencode_agent(
 
     # 4. Agent loop
     steps_taken = 0
+    # Extensible budget state (see ABSOLUTE_MAX_STEPS).
+    step_extensions = 0
+    auto_extensions = 0
+    edits_at_last_extension = 0
+
+    def grant_steps(requested: int, reason: str, *, automatic: bool) -> Dict[str, Any]:
+        """
+        Extends the step budget, or explains why not.
+
+        Granted only against evidence of progress: since the last extension the
+        agent must have actually changed the document. An agent that is looping
+        — re-reading the same block, retrying a target it cannot find — is the
+        case the ceiling exists for, and giving it more turns makes a bad run
+        slower, not better. The first request is free, because an agent that has
+        planned a large job can legitimately know up front that it needs room.
+        """
+        nonlocal actual_max_steps, step_extensions, auto_extensions, edits_at_last_extension
+        limit = MAX_AUTO_EXTENSIONS if automatic else MAX_STEP_EXTENSIONS
+        used = auto_extensions if automatic else step_extensions
+        edits_now = workspace.get_edit_count()
+
+        if used >= limit:
+            return {"granted": 0, "reason": "extension_limit_reached",
+                    "steps_remaining": max(0, actual_max_steps - steps_taken)}
+        if actual_max_steps >= ABSOLUTE_MAX_STEPS:
+            return {"granted": 0, "reason": "absolute_ceiling_reached",
+                    "steps_remaining": max(0, actual_max_steps - steps_taken)}
+        if (step_extensions or auto_extensions) and edits_now <= edits_at_last_extension:
+            return {"granted": 0, "reason": "no_progress_since_last_extension",
+                    "hint": ("The document has not changed since the last extension. "
+                             "Make an edit, or finish with done=true."),
+                    "steps_remaining": max(0, actual_max_steps - steps_taken)}
+
+        size = max(1, min(int(requested or EXTENSION_CHUNK), EXTENSION_CHUNK))
+        size = min(size, ABSOLUTE_MAX_STEPS - actual_max_steps)
+        actual_max_steps += size
+        edits_at_last_extension = edits_now
+        if automatic:
+            auto_extensions += 1
+        else:
+            step_extensions += 1
+        logger.info(f"Step budget extended by {size} to {actual_max_steps} "
+                    f"({'auto' if automatic else 'requested'}): {reason[:120]}")
+        agent_trace.step_extensions = step_extensions + auto_extensions
+        return {"granted": size, "new_budget": actual_max_steps,
+                "steps_remaining": actual_max_steps - steps_taken, "reason": reason[:200]}
     agent_explanation = ""
     compile_verified = False
     compile_available = True
@@ -1656,6 +1737,20 @@ def stream_opencode_agent(
             "message": f"Agent reasoning step {steps_taken}/{actual_max_steps}...",
         }
 
+        # About to run out while work is still landing: extend once rather than
+        # stopping mid-edit. Ending here rolls the whole transaction back, so
+        # the user waits for a full run and receives nothing — the single worst
+        # outcome the loop can produce, and the reason the budget is not fixed.
+        # grant_steps refuses if the document has not moved, so an agent that is
+        # merely looping still stops.
+        if (mode == "edit" and steps_taken == actual_max_steps
+                and workspace.has_changed() and not compile_verified):
+            auto = grant_steps(EXTENSION_CHUNK, "work still in progress at the budget limit",
+                               automatic=True)
+            if auto.get("granted"):
+                yield {"type": "status", "step": steps_taken,
+                       "message": f"Extending to {actual_max_steps} steps to finish the edit…"}
+
         # Last regular step with edits nobody has compiled: ask the model to finish, so the
         # compile gate (which can still grant repair turns) runs instead of the budget
         # simply running out on unverified edits.
@@ -1663,6 +1758,11 @@ def stream_opencode_agent(
                 and not compile_verified and messages and messages[-1].get("role") == "user"
                 and _LAST_STEP_NOTE not in str(messages[-1].get("content", ""))):
             messages[-1] = {**messages[-1], "content": f"{messages[-1].get('content', '')}\n\n{_LAST_STEP_NOTE}"}
+
+        if messages and messages[-1].get("role") == "user":
+            messages[-1] = _with_budget_note(
+                messages[-1], steps_taken, actual_max_steps,
+                can_extend=(mode == "edit" and actual_max_steps < ABSOLUTE_MAX_STEPS))
 
         # Compact older conversation history to keep network payload lightweight and fast
         compact_messages = _compact_conversation_history(messages)
@@ -1989,11 +2089,23 @@ def stream_opencode_agent(
 
                 # Execute tool with timing instrumentation
                 t_tool_start = time.time()
-                tool_result = execute_tool(
-                    tool_name=tool_name,
-                    args=tool_args,
-                    workspace=workspace,
-                )
+                if tool_name == "request_more_steps":
+                    # Handled here, not in tools.py: it changes loop state, not
+                    # document state, and the workspace knows nothing about budgets.
+                    tool_result = grant_steps(
+                        int(tool_args.get("additional_steps") or EXTENSION_CHUNK)
+                        if str(tool_args.get("additional_steps", "")).strip().lstrip("-").isdigit()
+                        else EXTENSION_CHUNK,
+                        str(tool_args.get("reason") or "no reason given"),
+                        automatic=False,
+                    )
+                    tool_result["success"] = tool_result.get("granted", 0) > 0
+                else:
+                    tool_result = execute_tool(
+                        tool_name=tool_name,
+                        args=tool_args,
+                        workspace=workspace,
+                    )
                 t_tool_ms = (time.time() - t_tool_start) * 1000
 
                 is_success = bool(tool_result.get("success", True) if isinstance(tool_result, dict) else True)
