@@ -18,6 +18,10 @@ export default function ProfilePage() {
   const [avatarUrl, setAvatarUrl] = useState("");
 
   useEffect(() => {
+    document.title = "OverBranch | Profile";
+  }, []);
+
+  useEffect(() => {
     if (session?.user) {
       if (session.user.name) setName(session.user.name);
       if (session.user.email) setEmail(session.user.email);

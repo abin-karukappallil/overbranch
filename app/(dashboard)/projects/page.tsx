@@ -33,6 +33,10 @@ export default function ProjectsPage() {
   const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
+  React.useEffect(() => {
+    document.title = "OverBranch | Projects";
+  }, []);
+
   const utils = trpc.useUtils();
 
   const { data: dbProjects, isLoading, refetch } = trpc.projects.listProjects.useQuery(

@@ -31,9 +31,12 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "OverBranch — 100% Free & Open-Source Agentic Latex code editor",
-  description: "Your AI. Your Code. Your Infrastructure. OverBranch is a free, open-source, self-hostable Agentic Latex code editor.",
-  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure", "pdf to latex", "Ai latex code editor","pdf to latex code generator","overleaf alternative","best pdf to latex","ai pdf to latex","free pdf to latex"],
+  title: {
+    default: "OverBranch — 100% Free & Open-Source Agentic LaTeX Code Editor",
+    template: "OverBranch | %s",
+  },
+  description: "Agentic Ai Latex code editor. Futuristic Ai Agent for Latex.",
+  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure", "pdf to latex", "Ai latex code editor","pdf to latex code generator","overleaf alternative","best pdf to latex","ai pdf to latex","free pdf to latex","Latex","Prism Ai","Prism Latex","Latex Ai","Latex agent","Overleaf better","latex editor agent","Better prism"],
   authors: [{ name: "OverBranch Team" }],
   icons: {
     icon: [

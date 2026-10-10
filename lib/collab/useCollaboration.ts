@@ -109,6 +109,33 @@ function wsBase(): string {
   return BACKEND_URL.replace(/^http/i, "ws") + "/ws/collab";
 }
 
+/**
+ * The editor whose model the binding should own.
+ *
+ * The host renders two Monaco instances (desktop and mobile) and hides one
+ * with CSS, so "the first one that registered" is a coin flip. Text is synced
+ * to this one model while cursor decorations are attached to every editor —
+ * so picking the hidden instance produces the exact symptom of remote carets
+ * moving correctly while no text ever crosses. They are supposed to share a
+ * model, in which case this choice does not matter; preferring the visible
+ * one means a future regression in that sharing degrades to "works in the
+ * editor you can see" instead of "silently syncs nothing".
+ *
+ * `offsetParent` is null for an element inside a `display: none` subtree,
+ * which is how the hidden copy of the find bar already identifies itself.
+ */
+function pickBindableEditor(editors: Iterable<any>): any {
+  const all = Array.from(editors);
+  const visible = all.find((editor) => {
+    try {
+      return editor?.getDomNode?.()?.offsetParent != null;
+    } catch {
+      return false;
+    }
+  });
+  return visible ?? all[0] ?? null;
+}
+
 export function useCollaboration(options: UseCollaborationOptions): CollabSession {
   const {
     projectId,
@@ -493,7 +520,7 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
     const doc = docRef.current;
     const provider = providerRef.current;
     const monaco = monacoRef.current;
-    const editor = Array.from(editorsRef.current)[0];
+    const editor = pickBindableEditor(editorsRef.current);
     const model = editor?.getModel?.();
     if (!doc || !provider || !monaco || !model) return;
 

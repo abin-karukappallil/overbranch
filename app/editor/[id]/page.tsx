@@ -45,6 +45,14 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     }
   );
 
+  React.useEffect(() => {
+    if (projectData?.name) {
+      document.title = `${projectData.name} — OverBranch | Editor`;
+    } else {
+      document.title = "OverBranch | Editor";
+    }
+  }, [projectData?.name]);
+
   if (isSessionLoading || isProjectLoading) {
     return (
       <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#F3F4F6] dark:bg-[#0E0F12] text-slate-500 dark:text-[#9E9E9E] gap-3 px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">

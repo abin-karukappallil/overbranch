@@ -24,6 +24,10 @@ export default function ConvertPage() {
   const router = useRouter();
   const importedProjectId = useRef<string | null>(null);
 
+  useEffect(() => {
+    document.title = "OverBranch | PDF to LaTeX Converter";
+  }, []);
+
   // Authenticated user check: logged in users should use the dashboard converter
   const { data: authSession, isPending: isAuthPending } = authClient.useSession();
 

@@ -29,6 +29,10 @@ export default function TemplatesPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<{ id: string; name: string } | null>(null);
   const [projectNameInput, setProjectNameInput] = useState("");
 
+  React.useEffect(() => {
+    document.title = "OverBranch | Templates";
+  }, []);
+
   const { data: templates, isLoading } = trpc.templates.listTemplates.useQuery({
     search,
     category: categoryFilter,

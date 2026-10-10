@@ -16,6 +16,9 @@ import { LandingCTA } from "@/components/landing/CTASection";
 import { LandingFooter } from "@/components/landing/Footer";
 
 export default function HomePage() {
+  React.useEffect(() => {
+    document.title = "OverBranch — 100% Free & Open-Source Agentic LaTeX Code Editor";
+  }, []);
   return (
     <div className="min-h-screen bg-[#00CC68] text-black selection:bg-black selection:text-[#00CC68] overflow-x-clip max-w-full font-sans antialiased">
       <LandingHeader />
