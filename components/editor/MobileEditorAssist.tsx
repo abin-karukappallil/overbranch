@@ -1,27 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  ClipboardPaste,
-  Copy,
-  IndentIncrease,
-  Redo2,
-  Scissors,
-  Search,
-  TextSelect,
-  Undo2,
-  X,
-} from "lucide-react";
+import { ClipboardPaste, Copy, Scissors, Search, TextSelect, X } from "lucide-react";
 import { copyText, readClipboard } from "@/lib/clipboard";
-
-export interface QuickSymbol {
-  label: string;
-  insert: string;
-}
 
 interface MobileEditorAssistProps {
   /** The mobile Monaco instance. Null until it mounts. */
@@ -31,9 +12,7 @@ interface MobileEditorAssistProps {
   readOnly?: boolean;
   /** Only render while this pane is the visible mobile tab. */
   active?: boolean;
-  symbols?: QuickSymbol[];
   onOpenSearch: () => void;
-  onInsertSymbol: (insert: string) => void;
   /** Called with the new buffer after an edit, so autosave still runs. */
   onDocumentChange?: (value: string) => void;
 }
@@ -64,9 +43,9 @@ const EDGE_SCROLL_ZONE = 48;
  * Monaco renders its text into non-editable DOM and keeps the real caret in an
  * off-screen textarea, so a touch device gets no native selection handles and
  * no caret the user can grab — which is why the mobile editor was unusable.
- * This overlay supplies the missing affordances the way iOS and Overleaf do:
- * a draggable caret handle, two selection handles, a floating action callout,
- * and a key accessory bar docked above the on-screen keyboard.
+ * This overlay supplies the missing affordances the way iOS does: a draggable
+ * caret handle, two selection handles, and a floating action callout. Search
+ * itself lives in the editor header, not here.
  *
  * Everything here drives Monaco through its public API (`setPosition`,
  * `setSelection`, `executeEdits`), so it stays correct under word wrap,
@@ -77,9 +56,7 @@ export function MobileEditorAssist({
   monaco,
   readOnly = false,
   active = true,
-  symbols = [],
   onOpenSearch,
-  onInsertSymbol,
   onDocumentChange,
 }: MobileEditorAssistProps) {
   const [focused, setFocused] = useState(false);
@@ -89,12 +66,10 @@ export function MobileEditorAssist({
   const [hasSelection, setHasSelection] = useState(false);
   const [calloutOpen, setCalloutOpen] = useState(false);
   const [typing, setTyping] = useState(false);
-  const [keyboardInset, setKeyboardInset] = useState(0);
   const [pasteFallbackOpen, setPasteFallbackOpen] = useState(false);
 
   const dragRef = useRef<DragState | null>(null);
   const autoScrollRef = useRef<{ dir: number; timer: NodeJS.Timeout } | null>(null);
-  const holdRef = useRef<{ delay: NodeJS.Timeout | null; repeat: NodeJS.Timeout | null } | null>(null);
   const blurTimerRef = useRef<NodeJS.Timeout | null>(null);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pasteTargetRef = useRef<HTMLTextAreaElement>(null);
@@ -212,13 +187,13 @@ export function MobileEditorAssist({
     };
   }, [editor, sync, markTyping]);
 
-  // The on-screen keyboard shrinks the visual viewport without changing
-  // layout height on iOS, so the bar is placed against the visual viewport.
+  // The on-screen keyboard shrinks the visual viewport without changing layout
+  // height on iOS, so Monaco must be re-laid-out and the handles re-measured
+  // whenever it opens or closes.
   useEffect(() => {
     const vv = typeof window !== "undefined" ? window.visualViewport : null;
     if (!vv) return;
     const onViewportChange = () => {
-      setKeyboardInset(Math.max(0, window.innerHeight - vv.height - vv.offsetTop));
       try {
         editor?.layout?.();
       } catch (_) {}
@@ -457,61 +432,6 @@ export function MobileEditorAssist({
     insertText(text);
   };
 
-  // --- Accessory bar -----------------------------------------------------
-  const moveCaret = useCallback(
-    (dx: number, dy: number) => {
-      if (!editor) return;
-      const model = editor.getModel();
-      const pos = editor.getPosition();
-      if (!model || !pos) return;
-
-      let next: { lineNumber: number; column: number };
-      if (dx !== 0) {
-        // Offset arithmetic so ◀ / ▶ step across line boundaries correctly.
-        const offset = model.getOffsetAt(pos) + dx;
-        const clamped = Math.max(0, Math.min(offset, model.getValueLength()));
-        next = model.getPositionAt(clamped);
-      } else {
-        const line = Math.max(1, Math.min(pos.lineNumber + dy, model.getLineCount()));
-        next = { lineNumber: line, column: Math.min(pos.column, model.getLineMaxColumn(line)) };
-      }
-      editor.setPosition(next);
-      editor.revealPositionInCenterIfOutsideViewport(next, 0);
-      editor.focus();
-    },
-    [editor],
-  );
-
-  const endHold = useCallback(() => {
-    if (holdRef.current?.delay) clearTimeout(holdRef.current.delay);
-    if (holdRef.current?.repeat) clearInterval(holdRef.current.repeat);
-    holdRef.current = null;
-  }, []);
-
-  const startHold = useCallback(
-    (fn: () => void) => {
-      endHold();
-      fn();
-      const delay = setTimeout(() => {
-        const repeat = setInterval(fn, 60);
-        holdRef.current = { delay: null, repeat };
-      }, 350);
-      holdRef.current = { delay, repeat: null };
-    },
-    [endHold],
-  );
-
-  useEffect(() => () => endHold(), [endHold]);
-
-  const runCommand = (id: string) => {
-    if (!editor) return;
-    editor.focus();
-    editor.trigger("mobile-assist", id, null);
-    try {
-      onDocumentChange?.(editor.getValue());
-    } catch (_) {}
-  };
-
   if (!editor || !monaco || !active) return null;
 
   const showHandles = focused && !typing;
@@ -523,296 +443,164 @@ export function MobileEditorAssist({
     "rounded-full bg-emerald-600 dark:bg-[#10B981] shadow-[0_1px_4px_rgba(0,0,0,0.45)] ring-2 ring-white/80 dark:ring-[#0E0F12]";
   const stemClass = "absolute w-0.5 bg-emerald-600 dark:bg-[#10B981]";
 
-  const barBtn =
-    "h-9 min-w-9 px-2 flex items-center justify-center rounded-lg bg-white dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-700 dark:text-[#E2E4E9] active:bg-slate-200 dark:active:bg-[#2A2C36] transition-colors shrink-0 select-none";
-
   const calloutBtn =
     "px-2.5 h-8 flex items-center gap-1 text-[11px] font-mono whitespace-nowrap text-slate-700 dark:text-[#E2E4E9] active:bg-slate-200 dark:active:bg-[#2A2C36] transition-colors first:rounded-l-lg last:rounded-r-lg";
 
   return (
-    <>
-      {/* Overlay: transparent to taps except on the handles themselves, so
-          Monaco keeps receiving every gesture it already handles. */}
-      <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
-        {showHandles && !hasSelection && caret && (
-          <div
-            className={handleBase}
-            style={{
-              left: caret.left - HANDLE_SIZE / 2,
-              top: caret.top + caret.height,
-              width: HANDLE_SIZE,
-              height: HANDLE_SIZE,
-            }}
-            onPointerDown={handlePointerDown("caret")}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            aria-hidden="true"
-          >
-            <span className={stemClass} style={{ height: 6, top: -3 }} />
-            <span className={ballClass} style={{ width: 13, height: 13 }} />
-          </div>
-        )}
-
-        {showHandles && hasSelection && selStart && (
-          <div
-            className={handleBase}
-            style={{
-              left: selStart.left - HANDLE_SIZE / 2,
-              top: selStart.top - HANDLE_SIZE,
-              width: HANDLE_SIZE,
-              height: HANDLE_SIZE,
-            }}
-            onPointerDown={handlePointerDown("start")}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            aria-hidden="true"
-          >
-            <span className={ballClass} style={{ width: 13, height: 13 }} />
-            <span className={stemClass} style={{ height: 6, bottom: -3 }} />
-          </div>
-        )}
-
-        {showHandles && hasSelection && selEnd && (
-          <div
-            className={handleBase}
-            style={{
-              left: selEnd.left - HANDLE_SIZE / 2,
-              top: selEnd.top + selEnd.height,
-              width: HANDLE_SIZE,
-              height: HANDLE_SIZE,
-            }}
-            onPointerDown={handlePointerDown("end")}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            aria-hidden="true"
-          >
-            <span className={stemClass} style={{ height: 6, top: -3 }} />
-            <span className={ballClass} style={{ width: 13, height: 13 }} />
-          </div>
-        )}
-
-        {/* Action callout */}
-        {showHandles && calloutOpen && calloutAnchor && (
-          <div
-            className="pointer-events-auto absolute flex items-stretch rounded-lg border border-slate-300 dark:border-[#383B46] bg-white dark:bg-[#22242C] shadow-2xl overflow-x-auto max-w-[94%] divide-x divide-slate-200 dark:divide-[#383B46]"
-            style={{
-              left: Math.max(6, calloutAnchor.left - 60),
-              top: Math.max(4, calloutAnchor.top - 42),
-            }}
-            onPointerDown={(e) => e.preventDefault()}
-          >
-            {!hasSelection && (
-              <button type="button" className={calloutBtn} onClick={selectWord}>
-                <TextSelect className="w-3 h-3" />
-                <span>Select</span>
-              </button>
-            )}
-            <button type="button" className={calloutBtn} onClick={selectAll}>
-              <span>Select All</span>
-            </button>
-            {hasSelection && (
-              <button type="button" className={calloutBtn} onClick={handleCopy}>
-                <Copy className="w-3 h-3" />
-                <span>Copy</span>
-              </button>
-            )}
-            {hasSelection && !readOnly && (
-              <button type="button" className={calloutBtn} onClick={handleCut}>
-                <Scissors className="w-3 h-3" />
-                <span>Cut</span>
-              </button>
-            )}
-            {!readOnly && (
-              <button type="button" className={calloutBtn} onClick={handlePaste}>
-                <ClipboardPaste className="w-3 h-3" />
-                <span>Paste</span>
-              </button>
-            )}
-            <button
-              type="button"
-              className={calloutBtn}
-              onClick={() => {
-                setCalloutOpen(false);
-                onOpenSearch();
-              }}
-            >
-              <Search className="w-3 h-3" />
-              <span>Find</span>
-            </button>
-          </div>
-        )}
-
-        {/* iOS paste fallback: readText() is unavailable there, so the only
-            route to the clipboard is a real DOM paste the user performs. */}
-        {pasteFallbackOpen && (
-          <div className="pointer-events-auto absolute inset-x-3 top-3 rounded-xl border border-slate-300 dark:border-[#383B46] bg-white dark:bg-[#141519] shadow-2xl p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-mono font-semibold text-slate-900 dark:text-[#E2E4E9]">
-                Long-press the box, then tap Paste
-              </span>
-              <button
-                type="button"
-                onClick={() => setPasteFallbackOpen(false)}
-                className="p-1 rounded-md text-slate-500 dark:text-[#9E9E9E] active:bg-slate-200 dark:active:bg-[#22242C]"
-                aria-label="Cancel paste"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <textarea
-              ref={pasteTargetRef}
-              rows={2}
-              placeholder="Paste here…"
-              spellCheck={false}
-              autoCapitalize="none"
-              autoCorrect="off"
-              onPaste={(e) => {
-                const text = e.clipboardData?.getData("text/plain");
-                if (text) {
-                  e.preventDefault();
-                  consumePastedText(text);
-                }
-              }}
-              onInput={(e) => {
-                // Some engines fire no usable `paste` event; take the value.
-                const value = (e.currentTarget as HTMLTextAreaElement).value;
-                if (value) consumePastedText(value);
-              }}
-              className="w-full rounded-lg border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] p-2 text-[11px] font-mono text-slate-900 dark:text-[#E2E4E9] outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Key accessory bar, docked against the visual viewport so it rides
-          above the on-screen keyboard instead of under it. */}
-      {focused && (
+    // Transparent to taps except on the handles themselves, so Monaco keeps
+    // receiving every gesture it already handles.
+    <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
+      {showHandles && !hasSelection && caret && (
         <div
-          className="fixed left-0 right-0 z-40 border-t border-slate-200 dark:border-[#282A30] bg-slate-50/95 dark:bg-[#141519]/95 backdrop-blur px-2 py-1.5 flex items-center gap-1.5 overflow-x-auto"
-          style={{ bottom: keyboardInset }}
+          className={handleBase}
+          style={{
+            left: caret.left - HANDLE_SIZE / 2,
+            top: caret.top + caret.height,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+          }}
+          onPointerDown={handlePointerDown("caret")}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          aria-hidden="true"
         >
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHold(() => moveCaret(-1, 0));
-            }}
-            onPointerUp={endHold}
-            onPointerLeave={endHold}
-            onPointerCancel={endHold}
-            aria-label="Move cursor left"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHold(() => moveCaret(1, 0));
-            }}
-            onPointerUp={endHold}
-            onPointerLeave={endHold}
-            onPointerCancel={endHold}
-            aria-label="Move cursor right"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHold(() => moveCaret(0, -1));
-            }}
-            onPointerUp={endHold}
-            onPointerLeave={endHold}
-            onPointerCancel={endHold}
-            aria-label="Move cursor up"
-          >
-            <ChevronUp className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHold(() => moveCaret(0, 1));
-            }}
-            onPointerUp={endHold}
-            onPointerLeave={endHold}
-            onPointerCancel={endHold}
-            aria-label="Move cursor down"
-          >
-            <ChevronDown className="w-4 h-4" />
-          </button>
-
-          <span className="w-px h-6 bg-slate-200 dark:bg-[#282A30] shrink-0" />
-
-          {!readOnly && (
-            <button
-              type="button"
-              className={barBtn}
-              onPointerDown={(e) => e.preventDefault()}
-              onClick={() => runCommand("tab")}
-              aria-label="Insert tab"
-            >
-              <IndentIncrease className="w-4 h-4" />
-            </button>
-          )}
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => runCommand("undo")}
-            aria-label="Undo"
-          >
-            <Undo2 className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => runCommand("redo")}
-            aria-label="Redo"
-          >
-            <Redo2 className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            className={barBtn}
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={onOpenSearch}
-            aria-label="Find in document"
-          >
-            <Search className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
-          </button>
-
-          {!readOnly && symbols.length > 0 && (
-            <>
-              <span className="w-px h-6 bg-slate-200 dark:bg-[#282A30] shrink-0" />
-              {symbols.map((sym) => (
-                <button
-                  key={sym.label}
-                  type="button"
-                  className={`${barBtn} font-mono text-[11px]`}
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    onInsertSymbol(sym.insert);
-                    editor?.focus?.();
-                  }}
-                >
-                  {sym.label}
-                </button>
-              ))}
-            </>
-          )}
+          <span className={stemClass} style={{ height: 6, top: -3 }} />
+          <span className={ballClass} style={{ width: 13, height: 13 }} />
         </div>
       )}
-    </>
+
+      {showHandles && hasSelection && selStart && (
+        <div
+          className={handleBase}
+          style={{
+            left: selStart.left - HANDLE_SIZE / 2,
+            top: selStart.top - HANDLE_SIZE,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+          }}
+          onPointerDown={handlePointerDown("start")}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          aria-hidden="true"
+        >
+          <span className={ballClass} style={{ width: 13, height: 13 }} />
+          <span className={stemClass} style={{ height: 6, bottom: -3 }} />
+        </div>
+      )}
+
+      {showHandles && hasSelection && selEnd && (
+        <div
+          className={handleBase}
+          style={{
+            left: selEnd.left - HANDLE_SIZE / 2,
+            top: selEnd.top + selEnd.height,
+            width: HANDLE_SIZE,
+            height: HANDLE_SIZE,
+          }}
+          onPointerDown={handlePointerDown("end")}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          aria-hidden="true"
+        >
+          <span className={stemClass} style={{ height: 6, top: -3 }} />
+          <span className={ballClass} style={{ width: 13, height: 13 }} />
+        </div>
+      )}
+
+      {/* Action callout */}
+      {showHandles && calloutOpen && calloutAnchor && (
+        <div
+          className="pointer-events-auto absolute flex items-stretch rounded-lg border border-slate-300 dark:border-[#383B46] bg-white dark:bg-[#22242C] shadow-2xl overflow-x-auto max-w-[94%] divide-x divide-slate-200 dark:divide-[#383B46]"
+          style={{
+            left: Math.max(6, calloutAnchor.left - 60),
+            top: Math.max(4, calloutAnchor.top - 42),
+          }}
+          onPointerDown={(e) => e.preventDefault()}
+        >
+          {!hasSelection && (
+            <button type="button" className={calloutBtn} onClick={selectWord}>
+              <TextSelect className="w-3 h-3" />
+              <span>Select</span>
+            </button>
+          )}
+          <button type="button" className={calloutBtn} onClick={selectAll}>
+            <span>Select All</span>
+          </button>
+          {hasSelection && (
+            <button type="button" className={calloutBtn} onClick={handleCopy}>
+              <Copy className="w-3 h-3" />
+              <span>Copy</span>
+            </button>
+          )}
+          {hasSelection && !readOnly && (
+            <button type="button" className={calloutBtn} onClick={handleCut}>
+              <Scissors className="w-3 h-3" />
+              <span>Cut</span>
+            </button>
+          )}
+          {!readOnly && (
+            <button type="button" className={calloutBtn} onClick={handlePaste}>
+              <ClipboardPaste className="w-3 h-3" />
+              <span>Paste</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={calloutBtn}
+            onClick={() => {
+              setCalloutOpen(false);
+              onOpenSearch();
+            }}
+          >
+            <Search className="w-3 h-3" />
+            <span>Find</span>
+          </button>
+        </div>
+      )}
+
+      {/* iOS paste fallback: readText() is unavailable there, so the only
+          route to the clipboard is a real DOM paste the user performs. */}
+      {pasteFallbackOpen && (
+        <div className="pointer-events-auto absolute inset-x-3 top-3 rounded-xl border border-slate-300 dark:border-[#383B46] bg-white dark:bg-[#141519] shadow-2xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono font-semibold text-slate-900 dark:text-[#E2E4E9]">
+              Long-press the box, then tap Paste
+            </span>
+            <button
+              type="button"
+              onClick={() => setPasteFallbackOpen(false)}
+              className="p-1 rounded-md text-slate-500 dark:text-[#9E9E9E] active:bg-slate-200 dark:active:bg-[#22242C]"
+              aria-label="Cancel paste"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <textarea
+            ref={pasteTargetRef}
+            rows={2}
+            placeholder="Paste here…"
+            spellCheck={false}
+            autoCapitalize="none"
+            autoCorrect="off"
+            onPaste={(e) => {
+              const text = e.clipboardData?.getData("text/plain");
+              if (text) {
+                e.preventDefault();
+                consumePastedText(text);
+              }
+            }}
+            onInput={(e) => {
+              // Some engines fire no usable `paste` event; take the value.
+              const value = (e.currentTarget as HTMLTextAreaElement).value;
+              if (value) consumePastedText(value);
+            }}
+            className="w-full rounded-lg border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] p-2 text-[11px] font-mono text-slate-900 dark:text-[#E2E4E9] outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+      )}
+    </div>
   );
 }
