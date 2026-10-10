@@ -40,6 +40,9 @@ logger = logging.getLogger("context_strategy")
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     # Gemini models
     "gemini-3.7-flash": 900_000,
+    "gemini-3.5-flash": 900_000,
+    "gemini-3.5-flash-thinking": 900_000,
+    "gemini-3.5-flash-thinking-lite": 900_000,
     "gemini-2.5-flash": 900_000,
     "gemini-2.5-pro": 900_000,
     "gemini-2.0-flash": 900_000,

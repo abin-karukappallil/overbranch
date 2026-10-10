@@ -30,7 +30,7 @@ from .openrouter_provider import OpenRouterProvider
 
 logger = logging.getLogger("provider_router")
 
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-thinking"
 
 
 class TaskType(str, Enum):
@@ -49,8 +49,8 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
     TaskType.QUERY_REWRITING: "llama-3.1-8b-instant",
     TaskType.FAST_PLAN: "llama-3.1-8b-instant",
     TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
-    TaskType.NODE_EDITING: "gemini-3.7-flash",
-    TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
+    TaskType.NODE_EDITING: "gemini-3.5-flash-thinking",
+    TaskType.DOC_RESTRUCTURING: "gemini-3.5-flash-thinking",
     TaskType.VISION_DIFF: "minimax/minimax-01",
 }
 

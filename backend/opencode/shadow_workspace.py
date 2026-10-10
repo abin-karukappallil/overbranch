@@ -425,7 +425,7 @@ class ShadowWorkspace:
             if not self._buffer.strip() and (not old_str or old_str == self._buffer):
                 # A brand new document has no baseline to be fair to, so it is
                 # held to the absolute standard.
-                is_valid, candidate, validation_errors, _ = self._heal_and_validate(
+                is_valid, candidate, validation_errors, heal_fixes = self._heal_and_validate(
                     new_str, baseline=""
                 )
                 if not is_valid:
@@ -442,17 +442,24 @@ class ShadowWorkspace:
 
                 self.push_snapshot()
                 self._buffer = candidate
+                self._refresh_indexes()
                 self._edit_history.append({
                     "old_str": old_str,
                     "new_str": candidate,
                     "line_range": [1, 1],
                 })
-                return {
+                result = {
                     "success": True,
                     "occurrences_found": 1,
                     "lines_affected": [1, candidate.count("\n") + 1],
                     "new_line_count": self._buffer.count("\n") + 1,
                 }
+                if heal_fixes:
+                    # Like every other write path: the model is told what the gate
+                    # repaired, so its next `old_str` matches the buffer (an `&` it
+                    # wrote is now `\&`) and it stops repeating the mistake.
+                    result["auto_repairs"] = heal_fixes
+                return result
 
             if not old_str:
                 return {
