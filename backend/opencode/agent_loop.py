@@ -2414,13 +2414,26 @@ def stream_opencode_agent(
             agent_trace.failure_reason = "compile_failed_after_repairs"
             err_descs = [str(e.get("error", ""))[:120] for e in errs[:3]]
             err_summary = "; ".join(err_descs) if err_descs else "Unknown compilation errors"
+            # "Did not compile" is the wrong thing to tell someone whose only
+            # problem is that their document takes a while to build: there is
+            # no error to go and fix, and the sentence sends them looking for
+            # one. Name the real cause and the knob that changes it.
+            from .shadow_compiler import SHADOW_COMPILE_TIMEOUT, is_timeout_error
+            only_timeouts = bool(errs) and all(is_timeout_error(e) for e in errs)
+            budget = compile_failed_final.get("timeout_seconds") or SHADOW_COMPILE_TIMEOUT
             failure_payload = {
                 "message": SAFE_FAILURE_MESSAGE,
                 "operation": "edit",
                 "reason": (
+                    f"Compilation did not finish within {budget}s, so the edit could not be "
+                    f"verified and was not applied. Nothing is wrong with it structurally — this "
+                    f"document is simply slow to build. Raise SHADOW_COMPILE_TIMEOUT if this keeps "
+                    f"happening."
+                    if only_timeouts else
                     f"The edited document did not compile, and the automatic repairs did not fix it "
                     f"({compile_repairs} repair attempt(s)). Failing errors: {err_summary}"
                 ),
+                "timed_out": only_timeouts,
                 "attempts": [f"compile + {compile_repairs} repair attempt(s)"],
                 "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
                 "document_unchanged": True,

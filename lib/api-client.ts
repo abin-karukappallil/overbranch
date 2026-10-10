@@ -29,8 +29,20 @@ export async function getAuthHeaders(): Promise<Record<string, string>> {
     // Non-fatal if session lookup fails
   }
 
-  // 2. Guest token from localStorage or document.cookie
-  if (typeof window !== "undefined") {
+  // 2. Guest token — ONLY when there is no session to speak for us.
+  //
+  // A guest token is minted on any signed-out visit and nothing clears it at
+  // sign-in, so it outlives the anonymous session that created it. Sending it
+  // next to a real Bearer token gave the backend two identities for one
+  // request, and whenever the session was not accepted it quietly used the
+  // other one: a signed-in collaborator became an anonymous visitor and was
+  // told they had no access to a project they can edit. The backend now
+  // refuses that downgrade; not offering a second identity in the first place
+  // is the other half of the fix.
+  //
+  // Guest flows are unaffected — they have no session — and guest migration
+  // passes its token in the request body, not this header.
+  if (!headers["Authorization"] && typeof window !== "undefined") {
     let guestToken = localStorage.getItem("ob_guest_token");
     if (!guestToken && typeof document !== "undefined") {
       const match = document.cookie.match(/ob_guest_token=([^;]+)/);

@@ -304,14 +304,14 @@ export function ProjectFilesPanel({
 
   return (
     <div
-      className={`h-full border-r border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-full md:w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
+      className={`h-full border-r border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 ${isOpen ? "w-full md:w-52 lg:w-60 xl:w-64 opacity-100" : "w-0 opacity-0 pointer-events-none border-r-0"
         }`}
     >
       {/* Panel Header */}
       <div className="h-9 px-3 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between shrink-0 select-none">
         <div className="flex items-center gap-1.5 font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
           <FolderGit2 className="w-4 h-4 text-[#10B981]" />
-          <span>Project Files</span>
+          <span className="truncate"><span className="hidden lg:inline">Project </span>Files</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-[#22242C] border border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] font-mono">
             {files.length}
           </span>

@@ -149,7 +149,7 @@ function CollabPresenceBarImpl({
 
   return (
     <div
-      className="hidden sm:flex items-center gap-2 h-8 px-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0"
+      className="hidden xl:flex items-center gap-2 h-8 px-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0"
       data-testid="collab-presence-bar"
     >
       <StatusDot status={status} />

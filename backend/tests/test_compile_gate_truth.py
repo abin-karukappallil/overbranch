@@ -241,3 +241,80 @@ def test_pdflatex_non_utf8_output_byte_0xed_does_not_raise_infra_error(monkeypat
     assert "[INFRASTRUCTURE ERROR]" not in res.get("log", "")
     assert "[INFRASTRUCTURE ERROR]" not in res.get("error_log", "")
 
+
+
+# ── Timeouts are a missing answer, not a verdict on the edit ────────────────
+
+def test_the_budget_comes_from_the_whole_project_not_just_main(monkeypatch):
+    """
+    A thesis has a main.tex of thirty lines that only \\input{}s its chapters.
+    Sized on that file alone it looked like the lightest document in the
+    project, got the short budget, and timed out — then the gate called the
+    timeout a compile failure and the whole run was rolled back.
+    """
+    from opencode.shadow_compiler import project_compile_timeout, SHADOW_COMPILE_TIMEOUT
+
+    ws = ShadowWorkspace(ORIG)
+    assert project_compile_timeout(ws) == SHADOW_COMPILE_TIMEOUT
+
+    thesis = ShadowWorkspace(
+        B + "documentclass{report}\n" + B + "begin{document}\n"
+        + B + "input{ch1}\n" + B + "end{document}\n")
+    thesis.add_auxiliary_file("ch1.tex", "x" * 250_000)
+    assert project_compile_timeout(thesis) > project_compile_timeout(ws)
+
+    tikz = ShadowWorkspace(ORIG)
+    tikz.add_auxiliary_file("ch1.tex", (B + "begin{tikzpicture}") * 6)
+    assert project_compile_timeout(tikz) > SHADOW_COMPILE_TIMEOUT
+
+
+def test_the_retry_does_not_double_past_the_ceiling(monkeypatch):
+    from opencode import shadow_compiler
+
+    monkeypatch.setattr(shadow_compiler, "SHADOW_COMPILE_TIMEOUT_MAX", 100)
+    res, calls = _gate(monkeypatch, WITH_NEW_MACRO, [
+        _fail("\n[TIMEOUT] pdflatex exceeded 90s"),
+        _fail("\n[TIMEOUT] pdflatex exceeded 100s"),
+        _pdf([]),
+    ])
+    assert calls[1]["timeout_seconds"] <= 100
+
+
+def test_a_timeout_the_original_also_has_does_not_fail_a_fix_request(monkeypatch):
+    """
+    Strict mode fails on every remaining error, which is right for errors. A
+    timeout is not an error, it is the absence of an answer — counting it as
+    one told a user whose document is merely slow that their edit had broken
+    it, and discarded the edit.
+    """
+    res, _ = _gate(monkeypatch, WITH_NEW_MACRO, [
+        _fail("\n[TIMEOUT] pdflatex exceeded 90s"),
+        _fail("\n[TIMEOUT] pdflatex exceeded 180s"),
+        _fail("\n[TIMEOUT] pdflatex exceeded 90s"),
+        _fail("\n[TIMEOUT] pdflatex exceeded 180s"),
+    ], strict=True)
+    assert res["success"] is True
+    assert res["unverified"] is True and res["timed_out"] is True
+    assert "could not be verified" in res["summary"]
+    assert "did not compile" not in res["summary"]
+
+
+def test_a_timeout_only_the_edit_has_still_fails(monkeypatch):
+    """The original builds and the edit does not: that is evidence, and it stands."""
+    res, _ = _gate(monkeypatch, WITH_NEW_MACRO, [
+        _fail("\n[TIMEOUT] pdflatex exceeded 90s"),
+        _fail("\n[TIMEOUT] pdflatex exceeded 180s"),
+        _pdf([]),
+    ], strict=True)
+    assert res["success"] is False
+    assert res["unverified"] is False
+
+
+def test_a_real_error_in_strict_mode_still_fails(monkeypatch):
+    """The timeout exemption must not become a hole for genuine errors."""
+    res, _ = _gate(monkeypatch, WITH_NEW_MACRO, [
+        _pdf(["./main.tex:3: Undefined control sequence."]),
+        _pdf(["./main.tex:3: Undefined control sequence."]),
+    ], strict=True)
+    assert res["success"] is False
+    assert res["unverified"] is False

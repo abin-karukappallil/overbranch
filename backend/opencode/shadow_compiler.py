@@ -34,6 +34,39 @@ INFRA_MARKERS = ("[infrastructure error]", "compilation infrastructure error")
 _FAILURE_PLACEHOLDERS = ("", "latex compilation failed.", "compilation failed")
 
 
+
+# The agent's compile budget. A flat 30 s (retried once at 60 s) is fine for a
+# scratch document and nowhere near enough for the documents people actually
+# bring: a thesis with bibliography and TikZ needs two or three pdflatex passes
+# and routinely runs past a minute. When it overran, the gate reported
+# "[TIMEOUT] pdflatex exceeded 60s" as a compile failure and the whole run was
+# rolled back — so the user waited two minutes and was told their document had
+# not been modified, because it was big, not because anything was wrong with
+# the edit.
+SHADOW_COMPILE_TIMEOUT = int(os.getenv("SHADOW_COMPILE_TIMEOUT", "90"))
+SHADOW_COMPILE_TIMEOUT_MAX = int(os.getenv("SHADOW_COMPILE_TIMEOUT_MAX", "300"))
+
+
+def project_compile_timeout(workspace: "ShadowWorkspace", code: Optional[str] = None) -> int:
+    """
+    Seconds to allow for one compile of this project, from everything TeX will
+    actually read — the buffer *and* the auxiliary sources, not the main file
+    alone (see compiler.is_heavy_document).
+    """
+    from compiler import is_heavy_document
+
+    code = workspace.get_buffer() if code is None else code
+    aux = [v for k, v in (getattr(workspace, "_aux_files", {}) or {}).items()
+           if k.rsplit(".", 1)[-1].lower() in ("tex", "sty", "cls", "bbl")]
+    total = len(code) + sum(len(a or "") for a in aux)
+    budget = SHADOW_COMPILE_TIMEOUT
+    if is_heavy_document(code, aux):
+        budget = max(budget, 180)
+    if total > 200_000:
+        budget = max(budget, 240)
+    return min(budget, SHADOW_COMPILE_TIMEOUT_MAX)
+
+
 def parse_latex_error_log(log_text: str) -> Dict[str, Any]:
     """
     Parses a raw LaTeX compilation log or error summary into structured diagnostics:
@@ -225,7 +258,7 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
     if not result.get("success") and "[TIMEOUT]" in (log_text or ""):
         # Agent compiles do not go through compile_queue, so under load a healthy
         # document can time out; one retry with twice the budget before calling it an error.
-        result = compile_once(timeout_seconds * 2)
+        result = compile_once(min(timeout_seconds * 2, SHADOW_COMPILE_TIMEOUT_MAX))
         log_text = result.get("raw_log") or result.get("error_log") or result.get("log", "")
 
     # TeX's own error lines (`./main.tex:12: …`, `! …`) are taken from the FULL log by
@@ -278,7 +311,7 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
 
 
 def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
-                      timeout_seconds: int = 30) -> Dict[str, Any]:
+                      timeout_seconds: Optional[int] = None) -> Dict[str, Any]:
     """
     Compiles the buffer (cached by content) and classifies its errors against
     the ORIGINAL document's: only errors the edits introduced are ``new_errors``.
@@ -307,6 +340,8 @@ def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
     from collections import Counter
 
     file_path = getattr(workspace, "_file_path", "main.tex")
+    if timeout_seconds is None:
+        timeout_seconds = project_compile_timeout(workspace, code)
     run = _run_compile(workspace, code, engine, timeout_seconds)
     _attach_sources(run["errors"], code, file_path)
     run["errors_before"] = None
@@ -338,10 +373,15 @@ def compile_workspace(workspace: "ShadowWorkspace", engine: str = "pdfLaTeX",
     return run
 
 
+def is_timeout_error(err: Dict[str, Any]) -> bool:
+    """Whether this diagnostic is "the compiler ran out of time", not "TeX said no"."""
+    return "[timeout]" in str(err.get("error", "")).lower()
+
+
 def compile_shadow_buffer(
     workspace: "ShadowWorkspace",
     engine: str = "pdfLaTeX",
-    timeout_seconds: int = 30,
+    timeout_seconds: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     The agent's compile check.
@@ -366,6 +406,8 @@ def compile_shadow_buffer(
     except Exception as e:
         logger.warning(f"heal_touched before compile: {e}")
 
+    if timeout_seconds is None:
+        timeout_seconds = project_compile_timeout(workspace)
     try:
         run = compile_workspace(workspace, engine, timeout_seconds)
     except Exception as e:
@@ -389,6 +431,19 @@ def compile_shadow_buffer(
     all_errors = run["errors"]
     new_errors = run["new_errors"]
     failing = all_errors if strict else new_errors
+
+    # A timeout the edits did not introduce is not a verdict on them.
+    #
+    # In strict mode every remaining error fails the run, which is right for
+    # errors — but a timeout is not an error, it is the absence of an answer.
+    # Counting it as one told a user whose thesis simply takes a while that
+    # their edit had broken the document, and threw the edit away. A timeout
+    # the ORIGINAL did not have still fails: that one is evidence against the
+    # edit (and is pinned by test_timeout_is_a_failure_after_one_retry).
+    new_sigs = {id(e) for e in new_errors}
+    unattributable_timeouts = [e for e in failing if is_timeout_error(e) and id(e) not in new_sigs]
+    if unattributable_timeouts:
+        failing = [e for e in failing if id(e) not in {id(t) for t in unattributable_timeouts}]
     stderr_text = ""
     if failing:
         try:
@@ -399,7 +454,12 @@ def compile_shadow_buffer(
             stderr_text = "COMPILATION ERRORS:\n" + "\n".join(
                 f"  Line {e.get('line', '?')}: {e.get('error', 'Unknown error')}" for e in failing[:5])
 
-    if not all_errors:
+    timed_out = [e for e in all_errors if is_timeout_error(e)]
+    if timed_out and not failing:
+        summary = (f"Compilation did not finish within {timeout_seconds}s, so it could not be "
+                   f"verified. The edits passed every structural check; this says nothing "
+                   f"about them — the document is simply slow to build.")
+    elif not all_errors:
         summary = "Compiled without errors."
     elif not failing:
         summary = (f"No new errors; {len(all_errors)} error(s) that were already in the original document "
@@ -423,6 +483,9 @@ def compile_shadow_buffer(
         "errors_after": len(all_errors),
         "remaining_errors": len(all_errors),
         "strict": strict,
+        "timed_out": bool(timed_out),
+        "unverified": bool(timed_out and not failing),
+        "timeout_seconds": timeout_seconds,
         "overfull_boxes": severe[:10],
         "stderr": stderr_text,
         "compile_time_ms": result.get("compile_time_ms", 0),

@@ -269,22 +269,22 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   );
 
   return (
-    <div className="flex items-center gap-2 select-none">
+    <div className="flex items-center gap-1.5 sm:gap-2 select-none shrink-0 min-w-0">
       <div
         onClick={() => setModalOpen(true)}
-        className="flex items-center -space-x-2 overflow-hidden cursor-pointer"
+        className="flex items-center -space-x-1.5 sm:-space-x-2 overflow-hidden cursor-pointer max-w-[64px] sm:max-w-none shrink-0"
         title="Manage Project Co-Authors"
       >
         {membersList.map((m) => (
-          <div key={m.id} className="relative group">
-            <Avatar className="w-7 h-7 sm:w-8 sm:h-8 rounded-full border-2 border-zinc-950 shadow-md">
+          <div key={m.id} className="relative group shrink-0">
+            <Avatar className="w-6 h-6 sm:w-7 sm:h-7 lg:w-8 lg:h-8 rounded-full border-2 border-zinc-950 shadow-md">
               <AvatarImage src={m.avatar} alt={m.name || 'Member'} />
-              <AvatarFallback className="bg-indigo-600 text-white text-[10px] font-bold">
+              <AvatarFallback className="bg-indigo-600 text-white text-[9px] sm:text-[10px] font-bold">
                 {(m.name || 'U').slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
 
-            <span className="absolute bottom-0 right-0 w-2 h-2 rounded-full bg-indigo-600 border border-zinc-950" />
+            <span className="absolute bottom-0 right-0 w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-indigo-600 border border-zinc-950" />
 
             <div className="absolute right-0 top-10 hidden group-hover:block z-50 p-2.5 rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl text-xs whitespace-nowrap space-y-1">
               <p className="font-bold text-white flex items-center gap-1">
@@ -301,10 +301,12 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
         variant="outline"
         size="sm"
         onClick={() => setModalOpen(true)}
-        className="h-8 px-3 border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white font-mono font-bold text-xs rounded-xl"
+        className="h-8 w-8 sm:w-auto p-0 sm:px-2.5 border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-white font-mono font-bold text-xs rounded-xl flex items-center justify-center shrink-0 cursor-pointer shadow-sm"
+        title="Invite Co-Author"
       >
-        <UserPlus className="w-3.5 h-3.5 text-indigo-400 sm:mr-1.5" />
-        <span className="hidden sm:inline">Invite Co-Author</span>
+        <UserPlus className="w-3.5 h-3.5 text-indigo-400 sm:mr-1.5 shrink-0" />
+        <span className="hidden xl:inline">Invite Co-Author</span>
+        <span className="hidden lg:inline xl:hidden">Invite</span>
       </Button>
 
       {mounted && modalContent && createPortal(modalContent, document.body)}

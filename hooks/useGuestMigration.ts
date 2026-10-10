@@ -8,6 +8,20 @@ import { authFetch } from "@/lib/api-client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
+/** Removes the anonymous identity from this browser, in both places it lives. */
+function clearGuestToken(): void {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.removeItem("ob_guest_token");
+    } catch {
+      /* storage unavailable (private window) */
+    }
+  }
+  if (typeof document !== "undefined") {
+    document.cookie = "ob_guest_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  }
+}
+
 export function useGuestMigration() {
   const { data: session, isPending } = authClient.useSession();
   const hasAttemptedRef = useRef(false);
@@ -56,6 +70,19 @@ export function useGuestMigration() {
         if (!res.ok) return;
 
         const data = await res.json();
+
+        // Signed in, so the anonymous identity has served its purpose — drop
+        // it whether or not anything was migrated.
+        //
+        // Clearing it only when `migrated_count > 0` left it behind for the
+        // commonest case there is: someone who looked at the site signed out
+        // (which mints the token), then signed in with nothing to migrate.
+        // It then rode along on every request for the life of the browser as
+        // a second identity, and any request whose session was not accepted
+        // was answered as that anonymous visitor instead — which is how a
+        // collaborator with full access was told they had none.
+        clearGuestToken();
+
         if (data.success && data.migrated_count > 0) {
           toast.success(
             data.message || `Your guest project has been permanently saved to your account!`,
@@ -64,14 +91,6 @@ export function useGuestMigration() {
               icon: "",
             }
           );
-
-          // Clear client-side token storage
-          if (typeof window !== "undefined") {
-            localStorage.removeItem("ob_guest_token");
-          }
-          if (typeof document !== "undefined") {
-            document.cookie = "ob_guest_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
-          }
 
           // Trigger page refresh so projects and editor permissions update
           router.refresh();
