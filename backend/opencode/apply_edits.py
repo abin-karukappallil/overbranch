@@ -16,19 +16,30 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from latex_error_fixer import sanitize_edit_latex
 from .locator import Target, resolve
 
 
-def resolve_and_apply(current_code: str, items: List[Dict[str, Any]],
-                      original_code: Optional[str] = None) -> Dict[str, Any]:
+def resolve_and_apply(
+    current_code: str,
+    items: List[Dict[str, Any]],
+    original_code: Optional[str] = None,
+    base_version: Optional[int] = None,
+    live_version: Optional[int] = None,
+) -> Dict[str, Any]:
     current = current_code.replace("\r\n", "\n")
     placed: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
+    is_stale = (
+        base_version is not None
+        and live_version is not None
+        and live_version != base_version
+    )
 
     for idx, item in enumerate(items):
         item_id = item.get("id") or f"edit-{idx + 1}"
         anchor = (item.get("original_chunk") or "").replace("\r\n", "\n")
-        proposal = (item.get("proposed_chunk") or "").replace("\r\n", "\n")
+        proposal = sanitize_edit_latex((item.get("proposed_chunk") or "").replace("\r\n", "\n"))
         op = item.get("op") or "replace"
 
         if item.get("is_full_document"):
@@ -36,13 +47,13 @@ def resolve_and_apply(current_code: str, items: List[Dict[str, Any]],
             # original_chunk (the whole original) is the reference — placing it unconditionally
             # overwrote text typed during the run, or a different file.
             norm_orig = (original_code if original_code is not None else anchor).replace("\r\n", "\n")
-            if current == norm_orig or current.strip() == norm_orig.strip():
+            if (current == norm_orig or current.strip() == norm_orig.strip()) and not is_stale:
                 placed.append({"id": item_id, "start": 0, "end": len(current), "text": proposal,
                                "method": "full_document"})
             else:
                 failed.append({"id": item_id, "op": op, "target": "whole document",
-                               "reason": "document_changed",
-                               "attempts": [{"method": "full_document", "outcome": "document_changed"}]})
+                               "reason": "stale_document_conflict" if is_stale else "document_changed",
+                               "attempts": [{"method": "full_document", "outcome": "stale_conflict" if is_stale else "document_changed"}]})
             continue
         if not anchor:
             failed.append({"id": item_id, "op": op, "target": None, "reason": "no_target", "attempts": []})
@@ -54,6 +65,15 @@ def resolve_and_apply(current_code: str, items: List[Dict[str, Any]],
             failed.append({"id": item_id, "op": op, "target": item.get("node_id") or anchor[:80],
                            "reason": res.reason, "attempts": res.attempts})
             continue
+
+        if is_stale and res.confidence < 0.85:
+            failed.append({
+                "id": item_id, "op": op, "target": item.get("node_id") or anchor[:80],
+                "reason": "stale_anchor_drift",
+                "attempts": [{"method": res.method, "outcome": f"stale version drift, confidence {round(res.confidence, 3)} < 0.85"}]
+            })
+            continue
+
         placed.append({"id": item_id, "start": res.start, "end": res.end, "text": proposal,
                        "method": res.method, "confidence": round(res.confidence, 3)})
 

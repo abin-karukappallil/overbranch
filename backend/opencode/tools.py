@@ -440,8 +440,9 @@ def execute_tool(
             return out
 
         elif tool_name == "replace_text":
+            from latex_error_fixer import sanitize_edit_latex
             old_str = args.get("old_str", args.get("old_text", ""))
-            new_str = args.get("new_str", args.get("new_text", ""))
+            new_str = sanitize_edit_latex(args.get("new_str", args.get("new_text", "")))
             target_file = args.get("file")
             if target_file and target_file not in ("main.tex", main_file):
                 return workspace.str_replace_file(target_file, old_str, new_str)
@@ -471,24 +472,30 @@ def execute_tool(
             )
 
         elif tool_name == "replace_block":
-            return workspace.replace_block(str(args.get("node_id", "")).strip(), args.get("new_content", ""))
+            from latex_error_fixer import sanitize_edit_latex
+            new_content = sanitize_edit_latex(args.get("new_content", ""))
+            return workspace.replace_block(str(args.get("node_id", "")).strip(), new_content)
 
         elif tool_name == "insert_block":
-            return workspace.insert_block(str(args.get("node_id", "")).strip(), args.get("content", ""),
+            from latex_error_fixer import sanitize_edit_latex
+            content = sanitize_edit_latex(args.get("content", ""))
+            return workspace.insert_block(str(args.get("node_id", "")).strip(), content,
                                           str(args.get("position", "after")).strip().lower())
 
         elif tool_name == "delete_block":
             return workspace.delete_block(str(args.get("node_id", "")).strip())
 
         elif tool_name == "rewrite_chunk":
+            from latex_error_fixer import sanitize_edit_latex
             chunk_id = str(args.get("chunk_id", "")).strip()
-            new_content = args.get("new_content", "")
+            new_content = sanitize_edit_latex(args.get("new_content", ""))
             result = workspace.rewrite_chunk(chunk_id, new_content)
             return result
 
         elif tool_name == "insert_into_chunk":
+            from latex_error_fixer import sanitize_edit_latex
             chunk_id = str(args.get("chunk_id", "")).strip()
-            content = args.get("content", "")
+            content = sanitize_edit_latex(args.get("content", ""))
             position = args.get("position", "end")
             result = workspace.insert_into_chunk(chunk_id=chunk_id, content=content, position=position)
             return result

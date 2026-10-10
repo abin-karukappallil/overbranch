@@ -95,8 +95,8 @@ def scoped_heal(baseline: str, candidate: str) -> Tuple[str, List[str], bool]:
             out.extend(cand[i1:i2])
             continue
         in_edit = any(i in allowed for i in range(i1, max(i2, i1 + 1)))
-        preamble_insert = (tag == "insert" and pre_end != -1 and i1 <= pre_end
-                           and not all(ln.strip() in pre_existing for ln in heal[j1:j2]))
+        is_pkg_insert = any(ln.strip().startswith(r"\usepackage") for ln in heal[j1:j2]) and not all(ln.strip() in pre_existing for ln in heal[j1:j2])
+        preamble_insert = ((tag == "insert" and pre_end != -1 and i1 <= pre_end) or is_pkg_insert) and not all(ln.strip() in pre_existing for ln in heal[j1:j2])
         doc_end_insert = tag == "insert" and i1 >= len(cand) - 1
         if in_edit or preamble_insert or doc_end_insert:
             out.extend(heal[j1:j2])

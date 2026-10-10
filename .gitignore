@@ -9,7 +9,13 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-/backend/.env
+/backend/tests/
+/scripts/run-collab-tests.sh
+/scripts/test_*.mjs
+user_prompt_*.txt
+COLLABORATION.md
+OVERVIEW.md
+
 /backend/.venv
 /backend/__pycache__
 /uploads/*

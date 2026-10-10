@@ -120,6 +120,18 @@ def _classify_tex_error(msg: str) -> Tuple[str, str]:
         return "MISSING_DOLLAR", "Escape _ and ^ in text as \\_ and \\^{}, or put math in $...$."
     if "misplaced alignment tab" in low:
         return "MISPLACED_AMPERSAND", "Escape & in text as \\&; & only separates columns inside tabular/align."
+    if "missing } inserted" in low or "extra }" in low or "missing \\endgroup" in low:
+        return "SYNTAX_ERROR", "Check for unbalanced curly braces { } or missing closing delimiter."
+    if "runaway argument" in low:
+        return "RUNAWAY_ARGUMENT", "Check for unclosed curly braces { or unclosed macro argument."
+    if "file" in low and "not found" in low:
+        return "MISSING_FILE", "Check that the referenced graphic or input file exists in the project assets."
+    if "package" in low and "error" in low:
+        return "PACKAGE_ERROR", "Check package requirements, options, or conflicting definitions."
+    if "something's wrong" in low or "missing \\item" in low or "lonely \\item" in low:
+        return "LONELY_ITEM", "Ensure all \\item commands are enclosed inside \\begin{itemize} or \\begin{enumerate}."
+    if "emergency stop" in low:
+        return "COMPILER_ERROR", "Fatal compilation stop; check previous error lines."
     return "GENERAL_LATEX_ERROR", ""
 
 
@@ -217,6 +229,22 @@ def parse_compilation_errors(error_text: str) -> List[ParsedLatexError]:
         if key not in seen:
             seen.add(key)
             deduped.append(err)
+
+    if not deduped and error_text.strip():
+        # Fallback when TeX failed but specific error patterns did not match
+        clean_lines = [ln.strip() for ln in error_text.splitlines() if ln.strip()]
+        if clean_lines:
+            err_line = next(
+                (ln for ln in clean_lines if ln.startswith("!") or "fatal error" in ln.lower() or "error:" in ln.lower()),
+                clean_lines[0] if any("error" in ln.lower() for ln in clean_lines) else clean_lines[-1]
+            )
+            deduped.append(ParsedLatexError(
+                line_number=None,
+                error_type="COMPILER_ERROR",
+                message=err_line[:200],
+                snippet=err_line[:120],
+                suggested_action="Review compiler diagnostics and LaTeX syntax",
+            ))
 
     return deduped
 
@@ -789,17 +817,53 @@ def _escape_in_text(line: str, targets: str) -> Tuple[str, int]:
     return "".join(out), count
 
 
+def sanitize_edit_latex(text: str) -> str:
+    """
+    Normalizes and strips accidental wrappers and fences from LLM-generated LaTeX edit content:
+    - Strips markdown code blocks: ```latex ... ``` or ``` ... ```
+    - Strips lines containing isolated ``` or ```latex
+    - Normalizes CRLF -> LF
+    """
+    if not text:
+        return text
+    s = text.replace("\r\n", "\n")
+    trimmed = s.strip()
+
+    # If the whole content is wrapped in a markdown fence: ```latex\n...\n```
+    if trimmed.startswith("```"):
+        m = re.match(r"^```(?:latex|tex|text)?\s*\n?(.*?)\n?```$", trimmed, re.DOTALL)
+        if m:
+            s = m.group(1)
+        else:
+            lines = s.split("\n")
+            filtered = [
+                l for l in lines
+                if not re.match(r"^\s*```(?:latex|tex|text)?\s*$", l)
+            ]
+            s = "\n".join(filtered)
+    elif "```" in s:
+        lines = s.split("\n")
+        filtered = [
+            l for l in lines
+            if not re.match(r"^\s*```(?:latex|tex|text)?\s*$", l)
+        ]
+        s = "\n".join(filtered)
+
+    return s
+
+
 def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
                                allowed_lines: Optional[Set[int]] = None) -> Tuple[str, List[str]]:
     r"""
-    Deterministic fixes driven by TeX's own errors, on the reported line only and
-    only where ``allowed_lines`` (1-based) permits:
-
-    * ``Missing $ inserted`` — bare ``_`` / ``^`` in text (``file_name``,
-      ``x^2`` outside math) are escaped. Lines inside a math environment, math
-      on the line, and label/ref/url/path arguments are left alone.
-    * ``Misplaced alignment tab character &`` — a bare ``&`` outside any
-      tabular / align / matrix-like environment becomes ``\&``.
+    Deterministic fixes driven by TeX's own errors:
+    * ``Missing $ inserted`` — bare ``_`` / ``^`` in text are escaped.
+    * ``Misplaced alignment tab character &`` — bare ``&`` outside tabular/align becomes ``\&``.
+    * ``Undefined control sequence`` / ``undefined environment`` — missing standard packages
+      (amsmath, booktabs, graphicx, amssymb, tikz) are injected into the preamble.
+    * ``did you forget a semicolon`` / TikZ error — missing semicolons added.
+    * ``Missing } inserted`` / ``Extra }`` — brace imbalances repaired on affected lines.
+    * ``Unclosed environment`` — inserts matching closing tag before enclosing environment.
+    * ``Lonely \item`` — wrapped in itemize environment.
 
     The caller recompiles and keeps the result only if there are fewer errors.
     Returns ``(code, fixes)``.
@@ -811,32 +875,108 @@ def repair_from_compile_errors(code: str, errors: List[Dict[str, Any]],
     view_lines = view.split("\n") if len(view) == len(code) else lines
     fixes: List[str] = []
     done: Set[Tuple[int, str]] = set()
+
     for err in errors:
         ln = err.get("line")
-        if not isinstance(ln, int) or not (1 <= ln <= len(lines)):
-            continue
-        if allowed_lines is not None and ln not in allowed_lines:
-            continue
         msg = str(err.get("error", "")).lower()
-        if "missing $ inserted" in msg:
-            kind, targets = "dollar", "_^"
-        elif "misplaced alignment tab" in msg:
-            kind, targets = "amp", "&"
-        else:
-            continue
-        if (ln, kind) in done:
-            continue
-        done.add((ln, kind))
-        envs = set(_enclosing_envs(view_lines, ln))
-        if kind == "dollar" and envs & _MATH_ENVS:
-            continue
-        if kind == "amp" and envs & _ALIGNMENT_ENVS:
-            continue
-        new_line, count = _escape_in_text(lines[ln - 1], targets)
-        if count:
-            lines[ln - 1] = new_line
-            what = "'_'/'^'" if kind == "dollar" else "'&'"
-            fixes.append(f"Escaped {count} bare {what} in text on line {ln}.")
+
+        # 1. Missing $ inserted (bare _ / ^ in text) & misplaced alignment tab
+        if isinstance(ln, int) and (1 <= ln <= len(lines)):
+            if allowed_lines is None or ln in allowed_lines:
+                if "missing $ inserted" in msg:
+                    kind, targets = "dollar", "_^"
+                elif "misplaced alignment tab" in msg:
+                    kind, targets = "amp", "&"
+                else:
+                    kind, targets = None, None
+
+                if kind is not None and (ln, kind) not in done:
+                    done.add((ln, kind))
+                    envs = set(_enclosing_envs(view_lines, ln))
+                    if not (kind == "dollar" and envs & _MATH_ENVS) and not (kind == "amp" and envs & _ALIGNMENT_ENVS):
+                        new_line, count = _escape_in_text(lines[ln - 1], targets)
+                        if count:
+                            lines[ln - 1] = new_line
+                            what = "'_'/'^'" if kind == "dollar" else "'&'"
+                            fixes.append(f"Escaped {count} bare {what} in text on line {ln}.")
+
+                # 2. Missing brace or Extra brace on affected line
+                if ("missing }" in msg or "missing \\endgroup" in msg or "runaway argument" in msg) and (ln, "brace_add") not in done:
+                    done.add((ln, "brace_add"))
+                    delta = _brace_delta(lines[ln - 1])
+                    if delta > 0:
+                        lines[ln - 1] += "}" * delta
+                        fixes.append(f"Appended {delta} missing '}}' on line {ln}.")
+                elif "extra }" in msg and (ln, "brace_sub") not in done:
+                    done.add((ln, "brace_sub"))
+                    delta = _brace_delta(lines[ln - 1])
+                    if delta < 0 and "}" in lines[ln - 1]:
+                        pos = lines[ln - 1].rfind("}")
+                        lines[ln - 1] = lines[ln - 1][:pos] + lines[ln - 1][pos + 1:]
+                        fixes.append(f"Removed extra '}}' on line {ln}.")
+
+                # 3. Lonely \item on affected line
+                if ("lonely \\item" in msg or "something's wrong" in msg or "missing \\item" in msg) and (ln, "lonely_item") not in done:
+                    done.add((ln, "lonely_item"))
+                    if r"\item" in lines[ln - 1]:
+                        lines[ln - 1] = f"\\begin{{itemize}}\n{lines[ln - 1]}\n\\end{{itemize}}"
+                        fixes.append(f"Enclosed lonely \\item on line {ln} in \\begin{{itemize}} ... \\end{{itemize}}.")
+
+        # 4. Unclosed environment ending with mismatch
+        m_unclosed = _RE_LOG_UNCLOSED_ENV.search(str(err.get("error", ""))) or _RE_LOG_UNCLOSED_ENV.search(str(err.get("snippet", "")))
+        if m_unclosed and ("unclosed", m_unclosed.group(1)) not in done:
+            opened_env = m_unclosed.group(1)
+            closed_env = m_unclosed.group(3)
+            done.add(("unclosed", opened_env))
+            cur_code = "\n".join(lines)
+            target = f"\\end{{{closed_env}}}"
+            idx = cur_code.find(target)
+            if idx != -1:
+                cur_code = cur_code[:idx] + f"\\end{{{opened_env}}}\n" + cur_code[idx:]
+                lines = cur_code.split("\n")
+                fixes.append(f"Inserted \\end{{{opened_env}}} before \\end{{{closed_env}}}.")
+
+    # 5. Missing package / undefined control sequence: auto-inject required packages
+    has_undefined = any(
+        "undefined control sequence" in str(e.get("error", "")).lower()
+        or "environment" in str(e.get("error", "")).lower() and "undefined" in str(e.get("error", "")).lower()
+        or e.get("type") in ("UNDEFINED_MACRO", "UNDEFINED_ENVIRONMENT")
+        for e in errors
+    )
+    if has_undefined:
+        cur_code = "\n".join(lines)
+        patched_code, pkg_fixes = ensure_required_packages(cur_code)
+        if pkg_fixes:
+            lines = patched_code.split("\n")
+            fixes.extend(pkg_fixes)
+
+    # 6. TikZ syntax error: fix missing semicolons
+    has_tikz = any(
+        "did you forget a sem" in str(e.get("error", "")).lower()
+        or "giving up on this path" in str(e.get("error", "")).lower()
+        or e.get("type") == "TIKZ_SYNTAX_ERROR"
+        for e in errors
+    )
+    if has_tikz:
+        cur_code = "\n".join(lines)
+        patched_code, tikz_fixes = fix_tikz_semicolons(cur_code)
+        if tikz_fixes:
+            lines = patched_code.split("\n")
+            fixes.extend(tikz_fixes)
+
+    # 7. Bad math environment delimiter in TikZ coordinate calculations
+    has_calc = any(
+        "bad math environment delimiter" in str(e.get("error", "")).lower()
+        or e.get("type") == "BAD_MATH_DELIMITER"
+        for e in errors
+    )
+    if has_calc:
+        cur_code = "\n".join(lines)
+        patched_code, heal_fixes = auto_heal_latex_code(cur_code)
+        if heal_fixes:
+            lines = patched_code.split("\n")
+            fixes.extend(heal_fixes)
+
     return ("\n".join(lines), fixes) if fixes else (code, [])
 
 

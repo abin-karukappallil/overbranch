@@ -41,6 +41,8 @@ class OpenCodeRequest(BaseModel):
     file_path: str = Field("main.tex", description="Path of the TeX file")
     user_prompt: str = Field(..., description="User's editing request or question")
     current_code: Optional[str] = Field(None, description="Current editor LaTeX content")
+    base_version: Optional[int] = Field(None, description="Client document version number at time of prompt")
+    base_sha256: Optional[str] = Field(None, description="Client document SHA-256 hash at time of prompt")
     model: Optional[str] = Field(None, description="LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'edit' (default) or 'ask'")
     attached_file: Optional[Dict[str, Any]] = Field(None, description="Attached PDF/text document reference")
@@ -183,6 +185,8 @@ class ResolveEditsRequest(BaseModel):
     original_code: Optional[str] = None
     project_id: Optional[str] = None
     file_path: Optional[str] = None
+    base_version: Optional[int] = None
+    live_version: Optional[int] = None
 
 
 @router.post(
@@ -217,7 +221,14 @@ async def resolve_edits_endpoint(
 
     from opencode.apply_edits import resolve_and_apply
 
-    result = await asyncio.to_thread(resolve_and_apply, req.current_code, req.items, req.original_code)
+    result = await asyncio.to_thread(
+        resolve_and_apply,
+        req.current_code,
+        req.items,
+        req.original_code,
+        req.base_version,
+        req.live_version,
+    )
     logger.info(
         "resolve-edits project=%s file=%s items=%d applied=%d failed=%d methods=%s",
         req.project_id, req.file_path, len(req.items), len(result["applied"]), len(result["failed"]),
@@ -319,6 +330,8 @@ async def agent_opencode(
                         assets_dir=assets_dir,
                         session_id=req.session_id or req.project_id,
                         user_context={"user_id": user_id, "is_guest": is_guest},
+                        base_version=req.base_version,
+                        base_sha256=req.base_sha256,
                     ):
                         if token.is_cancelled():
                             break
