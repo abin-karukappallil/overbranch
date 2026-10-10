@@ -74,6 +74,7 @@ class AgentTrace:
     # Extended performance & latency profiling telemetry
     step_budget_allocated: int = 0
     steps_used: int = 0
+    step_extensions: int = 0
     tool_breakdown: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     compile_invocations: int = 0
     compile_latencies_ms: List[float] = field(default_factory=list)
@@ -218,6 +219,7 @@ class AgentTrace:
             "total_latency_ms": self.total_latency_ms,
             "step_budget_allocated": self.step_budget_allocated,
             "steps_used": self.steps_used,
+            "step_extensions": self.step_extensions,
             "nodes_touched": len(self.nodes_touched),
             "tool_calls_count": len(self.tool_calls),
             "tool_breakdown": self.tool_breakdown,

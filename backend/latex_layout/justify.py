@@ -10,10 +10,13 @@ width of the content against the available width.
     paragraph too wide             → over-long unbreakable tokens get break
                                      points (only those tokens); the paragraph
                                      gets \\emergencystretch so TeX can wrap it
-    one-line unit ≤ 10% too wide   → horizontal condense to the exact width
-                                     (\\resizebox{W}{\\height}{…}: height kept)
-    one-line unit > 10% too wide   → font size reduced (never below 85%), then
-                                     condensed for whatever is left
+    one-line unit too wide         → horizontal condense to the exact width
+                                     (\\resizebox{W}{\\height}{…}: height kept),
+                                     with a warning when the reduction is large
+
+Type is never made smaller to fit. That is a restyle, not a repair: it shows
+on the page next to text set at the document's real size, and it spreads,
+because the next overflow invites the same treatment.
 
 Words are never broken unless the word alone is wider than the space it has.
 
@@ -38,7 +41,6 @@ from .metrics import latex_to_plain, text_width
 logger = logging.getLogger("latex_layout.justify")
 
 CONDENSE_LIMIT = 1.10   # up to 10% too wide: condense horizontally
-MIN_FONT_SCALE = 0.85   # never shrink type below 85% of its size
 FIT_SLACK = 0.25        # pt: a measurement this close to the limit already fits
 
 _ALIGN_CMD = {"left": "\\raggedright", "right": "\\raggedleft", "center": "\\centering", "justify": "\\justifying"}
@@ -47,7 +49,7 @@ _ALIGN_CMD = {"left": "\\raggedright", "right": "\\raggedleft", "center": "\\cen
 @dataclass
 class JustifyResult:
     latex: str
-    strategy: str             # none | align | wrap | break_tokens | condense | shrink | shrink+condense
+    strategy: str             # none | align | wrap | break_tokens | condense
     measured_w: float
     target_w: float
     ratio: float
@@ -107,6 +109,62 @@ def tex_probe(preamble: str, fragments: List[str], extra_files: Optional[Dict[st
     for m in re.finditer(r"OB-(W\d+|TW|LW)=([0-9.]+)pt", out):
         vals[m.group(1)] = float(m.group(2))
     return vals or None
+
+
+# TeX's pt is 1/72.27 inch; PDF coordinates are big points, 1/72 inch.
+PT_TO_BP = 72.0 / 72.27
+
+
+def probe_page_geometry(preamble: str, extra_files: Optional[Dict[str, str]] = None,
+                        timeout: int = 30) -> Optional[Dict[str, float]]:
+    """
+    The document's page geometry in PDF big points: where the body text block
+    starts and how large it is.
+
+    This is measured rather than inferred because inference fails on exactly
+    the pages that need checking: ``text_right_edge`` needs three lines to
+    agree on a right edge, and a page dominated by a wide table has no such
+    agreement, so it returns None and every overflow check silently passes.
+    LaTeX knows the answer exactly, so ask LaTeX.
+
+    Returns {left, top, right, bottom, text_width, text_height}, or None when
+    pdflatex is unavailable or the probe fails.
+    """
+    if not shutil.which("pdflatex"):
+        return None
+    names = ("textwidth", "textheight", "oddsidemargin", "topmargin", "headheight", "headsep")
+    body = "\n".join(f"\\typeout{{OB-G-{n}=\\the\\{n}}}" for n in names)
+    src = preamble.rstrip() + "\n\\begin{document}\n" + body + "\n\\end{document}\n"
+    with tempfile.TemporaryDirectory() as d:
+        for name, content in (extra_files or {}).items():
+            if ".." in Path(name).parts:
+                continue
+            fp = Path(d) / name
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(content)
+        (Path(d) / "geom.tex").write_text(src)
+        try:
+            proc = subprocess.run(["pdflatex", "-interaction=nonstopmode", "-draftmode", "geom.tex"],
+                                  cwd=d, capture_output=True, timeout=timeout)
+            out = proc.stdout
+            if isinstance(out, bytes):
+                out = out.decode("utf-8", errors="replace")
+        except Exception as e:
+            logger.debug(f"Geometry probe failed: {e}")
+            return None
+    vals: Dict[str, float] = {}
+    for m in re.finditer(r"OB-G-([a-z]+)=(-?[0-9.]+)pt", out):
+        vals[m.group(1)] = float(m.group(2)) * PT_TO_BP
+    if "textwidth" not in vals or "textheight" not in vals:
+        return None
+    # LaTeX's reference point is 1 inch in from the top-left of the paper.
+    left = 72.0 + vals.get("oddsidemargin", 0.0)
+    top = 72.0 + vals.get("topmargin", 0.0) + vals.get("headheight", 0.0) + vals.get("headsep", 0.0)
+    return {
+        "left": left, "top": top,
+        "right": left + vals["textwidth"], "bottom": top + vals["textheight"],
+        "text_width": vals["textwidth"], "text_height": vals["textheight"],
+    }
 
 
 def split_preamble(code: str) -> str:
@@ -169,9 +227,9 @@ def _align(content: str, alignment: Optional[str]) -> str:
     return f"{{{cmd} {content}\\par}}" if cmd else content
 
 
-def justify_content(fragment: str, available_w: float, font: Optional[FontSpec] = None,
-                    alignment: Optional[str] = None, single_line: Optional[bool] = None,
-                    preamble: Optional[str] = None, extra_files: Optional[Dict[str, str]] = None) -> JustifyResult:
+def fit_fragment(fragment: str, available_w: float, font: Optional[FontSpec] = None,
+                  alignment: Optional[str] = None, single_line: Optional[bool] = None,
+                  preamble: Optional[str] = None, extra_files: Optional[Dict[str, str]] = None) -> JustifyResult:
     """
     Decides and writes the smallest fix that makes ``fragment`` fit
     ``available_w`` pt. ``preamble`` (the document's) turns on TeX measurement.
@@ -227,15 +285,17 @@ def justify_content(fragment: str, available_w: float, font: Optional[FontSpec] 
         return result(_align(latex, alignment), "condense",
                       [f"Condensed horizontally by {(1 - 1 / ratio) * 100:.1f}%."], ["graphicx"])
 
-    scale = max(MIN_FONT_SCALE, 1.0 / ratio)
-    size = font.size * scale
-    sized = f"{{\\fontsize{{{_pt(size)}}}{{{_pt(size * 1.2)}}}\\selectfont {fragment}}}"
-    remaining = ratio * scale
-    if remaining <= 1.0 + FIT_SLACK / max(available_w, 1):
-        return result(_align(sized, alignment), "shrink", [f"Font size {font.size:g}pt → {size:.2f}pt."])
-    latex = f"\\resizebox{{{_pt(available_w)}pt}}{{\\height}}{{{sized}}}"
-    return result(_align(latex, alignment), "shrink+condense",
-                  [f"Font size {font.size:g}pt → {size:.2f}pt (floor), then condensed {(1 - 1 / remaining) * 100:.1f}%."],
+    # No font-size rung. Making content fit by setting it smaller than the text
+    # around it is a restyle disguised as a repair: it is visible on the page,
+    # it spreads (the next overflow gets the same treatment), and it is never
+    # what a typesetter would do. An unbreakable unit that is badly too wide is
+    # condensed to the width it has and the caller is told by how much, so a
+    # human can decide whether the content or the column is the real problem.
+    latex = f"\\resizebox{{{_pt(available_w)}pt}}{{\\height}}{{{fragment}}}"
+    return result(_align(latex, alignment), "condense",
+                  [f"Condensed horizontally by {(1 - 1 / ratio) * 100:.1f}% to fit "
+                   f"{_pt(available_w)}pt. This is a large reduction — consider widening the "
+                   f"column or shortening the content instead."],
                   ["graphicx"])
 
 
@@ -246,3 +306,9 @@ def hfit_line(content: str, width_pt: float) -> str:
     so it stays correct when the text is edited later.
     """
     return f"\\obhfit{{{_pt(width_pt)}pt}}{{{content}}}"
+
+
+# The fragment fitter used to be the whole of justify_content. The agent tool
+# of that name is now the document-level layout repair in
+# opencode/layout_tools.py; this remains its one-fragment primitive.
+justify_content = fit_fragment

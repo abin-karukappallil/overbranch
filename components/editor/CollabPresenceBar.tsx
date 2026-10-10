@@ -15,7 +15,7 @@
  */
 
 import React, { memo, useMemo, useState } from "react";
-import { Wifi, WifiOff, RotateCw, Users } from "lucide-react";
+import { Wifi, WifiOff, RotateCw, Users, UserRound } from "lucide-react";
 import type { RemotePeer } from "@/lib/collab/monaco-binding";
 import { initialsForName, type CollabColor } from "@/lib/collab/colors";
 import type { CollabStatus } from "@/lib/collab/useCollaboration";
@@ -39,6 +39,21 @@ function StatusDot({ status }: { status: CollabStatus }) {
       <span className="flex items-center gap-1 text-emerald-600 dark:text-[#10B981]" title="Live — changes sync instantly">
         <Wifi className="w-3 h-3" />
         <span className="hidden lg:inline">Live</span>
+      </span>
+    );
+  }
+  if (status === "standby") {
+    // Nobody else is here, so no realtime room is held. That is the normal,
+    // efficient state for a solo editing session — not a failure, and it must
+    // not be dressed as one: the previous fall-through showed a red "Offline"
+    // badge to someone whose document was saving perfectly well.
+    return (
+      <span
+        className="flex items-center gap-1 text-slate-500 dark:text-[#8A8F98]"
+        title="You are the only one here — realtime sync starts automatically when a collaborator opens this project"
+      >
+        <UserRound className="w-3 h-3" />
+        <span className="hidden lg:inline">Solo</span>
       </span>
     );
   }

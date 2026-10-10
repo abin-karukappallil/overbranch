@@ -35,13 +35,33 @@ const BACKEND_URL = (
 ).replace(/\/$/, "");
 
 /** Close codes the server uses to say "do not come back" (backend/collab/room.py). */
-const FATAL_CLOSE_CODES = new Set([4401, 4403, 4404]);
+/**
+ * Codes that mean "stop asking": the user genuinely may not open this project.
+ *
+ * 4401 is deliberately NOT here. It means a credential was presented and
+ * rejected, which on a first attempt usually means the cookie was not sent
+ * at all — the normal case when the API is cross-site with the app. Treating
+ * it as fatal is what made production show "access revoked" to users who had
+ * access: the ticket fallback below would have connected them, but it never
+ * ran. 4401 is retried once through ticket mode, and only then given up on.
+ */
+const FATAL_CLOSE_CODES = new Set([4403, 4404]);
+/** No credential was volunteered: authenticate and retry with a ticket. */
+const CREDENTIALS_REQUIRED = 4402;
+const UNAUTHORIZED = 4401;
 const ROOM_FULL = 4429;
 
 const FILE_PREFIX = "file:";
 const META_ROOT = "meta";
 
-export type CollabStatus = "disabled" | "connecting" | "connected" | "reconnecting" | "offline";
+export type CollabStatus =
+  | "disabled"
+  /** Enabled, but nobody else is here: no socket is held. */
+  | "standby"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "offline";
 
 export interface CollabSession {
   /** The layer is running for this project (not a guest, not disabled). */
@@ -59,6 +79,8 @@ export interface CollabSession {
   savedAt: number | null;
   /** A non-retryable reason the session is not available. */
   fatalError: string | null;
+  /** People with this project open right now, from the presence heartbeat. */
+  viewers: number;
   registerEditor: (editor: any, monaco: any) => void;
   unregisterEditor: (editor: any) => void;
   /** Local-only undo/redo through the CRDT. Returns false when unavailable. */
@@ -102,13 +124,23 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
   const userId = user?.id || null;
   const enabled = !!projectId && !!userId && !isGuest && !disabled && !envDisabled;
 
-  const [status, setStatus] = useState<CollabStatus>(enabled ? "connecting" : "disabled");
+  const [status, setStatus] = useState<CollabStatus>(enabled ? "standby" : "disabled");
   const [synced, setSynced] = useState(false);
   const [bound, setBound] = useState(false);
   const [role, setRole] = useState<CollabSession["role"]>(null);
   const [peers, setPeers] = useState<RemotePeer[]>([]);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  /**
+   * Whether a realtime room is worth holding right now, from the presence
+   * heartbeat. A room costs a websocket, a server concurrency slot, an
+   * authoritative CRDT document and a persistence timer for as long as the
+   * tab is open — and the common case is one person editing alone, who needs
+   * none of it and is served by the REST autosave path. The socket is opened
+   * only once the project is actually shared AND a second person has it open.
+   */
+  const [shouldConnect, setShouldConnect] = useState(false);
+  const [viewers, setViewers] = useState(1);
 
   const docRef = useRef<Y.Doc | null>(null);
   const providerRef = useRef<WebsocketProvider | null>(null);
@@ -116,9 +148,13 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
   const monacoRef = useRef<any>(null);
   const editorsRef = useRef<Set<any>>(new Set());
   const ticketModeRef = useRef(false);
+  // Whether a ticket has actually been sent, so a later 4401 can be told
+  // apart from the first attempt that carried no credential at all.
+  const ticketTriedRef = useRef(false);
   const manualReconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const destroyedRef = useRef(false);
+  const presenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onRemoteChangeRef = useRef(onRemoteChange);
   const readOnlyRef = useRef(readOnly);
   const filePathRef = useRef(filePath);
@@ -170,11 +206,57 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
     }
   }, [projectId]);
 
-  /* ── Provider lifecycle (one per project) ────────────────────────────────── */
+  /* ── Presence heartbeat (decides whether a socket is worth opening) ────── */
 
   useEffect(() => {
     if (!enabled || !projectId) {
-      setStatus("disabled");
+      setShouldConnect(false);
+      return;
+    }
+    let cancelled = false;
+
+    const beat = async (leaving = false) => {
+      try {
+        const res = await authFetch(`${BACKEND_URL}/api/collab/presence`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project_id: projectId, leaving }),
+          keepalive: leaving,
+        });
+        if (!res.ok || cancelled || leaving) return;
+        const data = await res.json();
+        if (data?.role) setRole(data.role);
+        setViewers(typeof data?.viewers === "number" ? data.viewers : 1);
+        // Once connected we stay connected until the tab closes: the room's
+        // own last-leave path flushes and closes it. Pulling the socket out
+        // from under someone mid-keystroke to save a connection is not a
+        // trade worth making.
+        setShouldConnect((prev) => prev || !!data?.connect);
+        if (!cancelled) {
+          const every = Math.max(4, Number(data?.poll_interval) || 8) * 1000;
+          presenceTimerRef.current = setTimeout(() => void beat(), every);
+        }
+      } catch {
+        if (!cancelled) presenceTimerRef.current = setTimeout(() => void beat(), 15_000);
+      }
+    };
+
+    void beat();
+    return () => {
+      cancelled = true;
+      if (presenceTimerRef.current) clearTimeout(presenceTimerRef.current);
+      presenceTimerRef.current = null;
+      // Tell the server at once, so the other editor's socket is not kept
+      // alive by a ghost for the whole TTL.
+      void beat(true);
+    };
+  }, [enabled, projectId]);
+
+  /* ── Provider lifecycle (one per project) ────────────────────────────────── */
+
+  useEffect(() => {
+    if (!enabled || !projectId || !shouldConnect) {
+      setStatus(enabled ? "standby" : "disabled");
       return;
     }
 
@@ -192,8 +274,13 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
       maxBackoffTime: 10_000,
       shouldReconnect: (event) => {
         if (FATAL_CLOSE_CODES.has(event.code)) return false;
-        // Ticket mode drives its own reconnect so each attempt carries a fresh,
-        // unused ticket; y-websocket would retry with the consumed one.
+        // Authentication codes are answered by the ticket reconnect below,
+        // which fetches a *fresh* credential first. y-websocket's own retry
+        // would replay the identical handshake — the same absent cookie, or a
+        // ticket already consumed — and fail the same way forever. Returning
+        // false parks the provider (`shouldConnect = false`); the explicit
+        // provider.connect() in scheduleManualReconnect resumes it.
+        if (event.code === CREDENTIALS_REQUIRED || event.code === UNAUTHORIZED) return false;
         if (ticketModeRef.current) return false;
         return true;
       },
@@ -219,6 +306,7 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
         const ticket = await fetchTicket();
         if (destroyedRef.current) return;
         if (ticket) {
+          ticketTriedRef.current = true;
           provider.params = { ticket, file: filePathRef.current };
           collabLog("COLLAB_RECONNECT", { projectId, attempt, auth: "ticket" });
           provider.connect();
@@ -232,6 +320,7 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
       if (destroyedRef.current) return;
       if (event.status === "connected") {
         reconnectAttemptsRef.current = 0;
+        ticketTriedRef.current = false;
         setStatus("connected");
         collabLog("COLLAB_CONNECT", { projectId, auth: ticketModeRef.current ? "ticket" : "cookie" });
       } else if (event.status === "connecting") {
@@ -266,11 +355,23 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
         return;
       }
 
-      // 1006 before any sync usually means the cookie was not attached
-      // (cross-site deployment): switch to ticket mode and drive reconnects.
-      if (!ticketModeRef.current && !provider.synced) {
+      // A 4401 that survives ticket mode is a real rejection: we presented a
+      // freshly issued, signed ticket for this project and the server refused
+      // it. Anything earlier is "we have not proved who we are yet".
+      if (event.code === UNAUTHORIZED && ticketModeRef.current && ticketTriedRef.current) {
+        setStatus("offline");
+        setFatalError("Your access to this project was revoked. Reload to continue.");
+        return;
+      }
+
+      // Either the server asked for a credential (4402), the cookie was not
+      // attached (cross-site deployment: 4401 or a bare 1006), or the link
+      // dropped. In every one of those cases the answer is the same — get a
+      // ticket and try again — so this is the one path to ticket mode.
+      if (!ticketModeRef.current && (event.code === CREDENTIALS_REQUIRED
+          || event.code === UNAUTHORIZED || !provider.synced)) {
         ticketModeRef.current = true;
-        collabLog("COLLAB_RECONNECT", { projectId, switchingTo: "ticket" });
+        collabLog("COLLAB_RECONNECT", { projectId, switchingTo: "ticket", code: event.code });
       }
       setStatus("reconnecting");
       if (ticketModeRef.current) scheduleManualReconnect();
@@ -337,7 +438,7 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
     // excluded: switching files must only re-bind inside the same room (see
     // the binding effect), and a late-loading avatar must not reconnect.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, projectId, userId, fetchTicket]);
+  }, [enabled, projectId, userId, shouldConnect, fetchTicket]);
 
   /* ── Announce the active file; the room seeds it on this signal ──────────── */
 
@@ -500,6 +601,7 @@ export function useCollaboration(options: UseCollaborationOptions): CollabSessio
     selfColor,
     savedAt,
     fatalError,
+    viewers,
     registerEditor,
     unregisterEditor,
     undo,
