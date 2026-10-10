@@ -160,6 +160,24 @@ export const guestProjects = pgTable("guest_projects", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+/**
+ * Durable CRDT state for the realtime collaboration room of a project.
+ *
+ * The document *text* stays in `latex_documents` (written by the backend's
+ * debounced persister, read by the compiler, the AI agent and the PDF
+ * importer). This table holds only the Yjs update blob, which is what makes a
+ * backend restart safe: a room rebuilt from plain text would give the text a
+ * new CRDT identity, and a client reconnecting with the old one would merge
+ * both copies and duplicate the document.
+ *
+ * Written exclusively by the FastAPI backend (`backend/collab/persistence.py`).
+ */
+export const collabDocState = pgTable("collab_doc_state", {
+  projectId: text("project_id").primaryKey().references(() => projects.id, { onDelete: "cascade" }),
+  stateB64: text("state_b64").notNull(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow()
+});
+
 export type User = typeof user.$inferSelect;
 export type Project = typeof projects.$inferSelect;
 export type ProjectMember = typeof projectMembers.$inferSelect;
@@ -168,4 +186,5 @@ export type Notification = typeof notifications.$inferSelect;
 export type Comment = typeof comments.$inferSelect;
 export type GuestSession = typeof guestSessions.$inferSelect;
 export type GuestProject = typeof guestProjects.$inferSelect;
+export type CollabDocState = typeof collabDocState.$inferSelect;
 
