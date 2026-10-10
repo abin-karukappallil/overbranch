@@ -93,24 +93,24 @@ export function AgentReasoningWindow({
 
   return (
     <div
-      className={`p-3 rounded-2xl bg-[#141519] border border-[#282A30] text-[#E2E4E9] font-mono space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1 relative ${
+      className={`p-3 rounded-2xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] font-mono space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1 relative ${
         compact ? "text-[11px]" : "text-xs"
       } ${className}`}
     >
       {/* Header */}
-      <div className="flex items-center justify-between font-archivo font-bold border-b border-[#282A30] pb-2 text-[#E2E4E9]">
+      <div className="flex items-center justify-between font-archivo font-bold border-b border-slate-200 dark:border-[#282A30] pb-2 text-slate-900 dark:text-[#E2E4E9]">
         <div className="flex items-center gap-2 min-w-0">
-          <Zap className="w-3.5 h-3.5 text-[#10B981] animate-pulse shrink-0" />
+          <Zap className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981] animate-pulse shrink-0" />
           <span className="truncate">Agent Reasoning</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[#22242C] text-[#9E9E9E] border border-[#282A30] font-mono font-medium shrink-0">
+          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-[#22242C] text-slate-500 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] font-mono font-medium shrink-0">
             Step {activeStepNumber}
           </span>
           {currentPhase?.phase && (
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded-md border font-mono font-medium shrink-0 ${
                 phaseFailed
-                  ? "bg-[#EB5757]/10 text-[#EB5757] border-[#EB5757]/30"
-                  : "bg-[#10B981]/10 text-[#10B981] border-[#10B981]/30"
+                  ? "bg-red-50 dark:bg-[#EB5757]/10 text-red-600 dark:text-[#EB5757] border-red-200 dark:border-[#EB5757]/30"
+                  : "bg-emerald-50 dark:bg-[#10B981]/10 text-emerald-600 dark:text-[#10B981] border-emerald-200 dark:border-[#10B981]/30"
               }`}
               title={currentPhase.message}
             >
@@ -124,10 +124,10 @@ export function AgentReasoningWindow({
             <button
               type="button"
               onClick={handleResumeAutoScroll}
-              className="px-2 py-0.5 rounded-md bg-[#22242C] hover:bg-[#2A2C36] text-[#10B981] border border-[#282A30] text-[10px] font-mono font-medium flex items-center gap-1 transition-all cursor-pointer shadow-xs animate-bounce"
+              className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] text-[10px] font-mono font-medium flex items-center gap-1 transition-all cursor-pointer shadow-xs animate-bounce"
               title="Resume auto-scroll to latest step"
             >
-              <ArrowDown className="w-2.5 h-2.5 text-[#10B981]" />
+              <ArrowDown className="w-2.5 h-2.5 text-emerald-600 dark:text-[#10B981]" />
               <span>Latest</span>
             </button>
           )}
@@ -135,12 +135,12 @@ export function AgentReasoningWindow({
           <button
             type="button"
             onClick={onStop}
-            className={`px-2 py-0.5 rounded-md bg-[#EB5757]/10 hover:bg-[#EB5757]/20 text-[#EB5757] border border-[#EB5757]/30 font-mono font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer ${
+            className={`px-2 py-0.5 rounded-md bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 text-red-600 dark:text-[#EB5757] border border-red-200 dark:border-[#EB5757]/30 font-mono font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer ${
               compact ? "text-[10px]" : "text-xs"
             }`}
             title="Stop AI agent thinking"
           >
-            <Square className="w-2.5 h-2.5 fill-current text-[#EB5757]" />
+            <Square className="w-2.5 h-2.5 fill-current text-red-600 dark:text-[#EB5757]" />
             <span>Stop</span>
           </button>
         </div>
@@ -150,17 +150,13 @@ export function AgentReasoningWindow({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className={`space-y-1.5 overflow-y-auto pr-1 scroll-smooth ${
+        className={`ob-thin-scroll space-y-1.5 overflow-y-auto pr-1 scroll-smooth ${
           compact ? "max-h-28" : "max-h-36"
         }`}
-        style={{
-          scrollbarWidth: "thin",
-          scrollbarColor: "#282A30 transparent",
-        }}
       >
         {steps.length === 0 ? (
-          <div className="flex items-center gap-2 text-[#9E9E9E] animate-pulse py-1 font-mono text-[11px]">
-            <Loader2 className="w-3 h-3 text-[#10B981] animate-spin shrink-0" />
+          <div className="flex items-center gap-2 text-slate-500 dark:text-[#9E9E9E] animate-pulse py-1 font-mono text-[11px]">
+            <Loader2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981] animate-spin shrink-0" />
             <span>Initializing LaTeX pipeline...</span>
           </div>
         ) : (
@@ -173,26 +169,26 @@ export function AgentReasoningWindow({
                   compact ? "text-[10px]" : "text-[11px]"
                 } ${
                   isLatest
-                    ? "text-[#E2E4E9] bg-[#22242C] border border-[#282A30] font-medium"
-                    : "text-[#9E9E9E] bg-[#1A1C22] border border-[#282A30]/60 font-normal hover:text-[#E2E4E9]"
+                    ? "text-slate-900 dark:text-[#E2E4E9] bg-slate-100 dark:bg-[#22242C] border border-slate-200 dark:border-[#282A30] font-medium"
+                    : "text-slate-500 dark:text-[#9E9E9E] bg-slate-50 dark:bg-[#1A1C22] border border-slate-200/70 dark:border-[#282A30]/60 font-normal hover:text-slate-900 dark:hover:text-[#E2E4E9]"
                 }`}
               >
                 <div className="mt-0.5 shrink-0">
                   {s.step === "phase" && s.phase === "failed" ? (
-                    <AlertTriangle className="w-3 h-3 text-[#EB5757]" />
+                    <AlertTriangle className="w-3 h-3 text-red-600 dark:text-[#EB5757]" />
                   ) : isLatest ? (
                     <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#10B981] opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-[#10B981]" />
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-600 dark:bg-[#10B981] opacity-75" />
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600 dark:bg-[#10B981]" />
                     </span>
                   ) : (
-                    <Check className="w-3 h-3 text-[#10B981]" />
+                    <Check className="w-3 h-3 text-emerald-600 dark:text-[#10B981]" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0 break-words leading-relaxed">
                   <span title={s.message}>{s.message}</span>
                   {SHOW_DEBUG_DETAILS && s.details && (
-                    <pre className="mt-1 whitespace-pre-wrap text-[10px] text-[#9E9E9E]">
+                    <pre className="mt-1 whitespace-pre-wrap text-[10px] text-slate-500 dark:text-[#9E9E9E]">
                       {JSON.stringify(s.details, null, 1)}
                     </pre>
                   )}

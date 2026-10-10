@@ -156,6 +156,7 @@ bash deploy.sh
    - [Feature 29: Design System ("Celestial Obsidian & Luminescent Iris") & Theming Engine](#feature-29-design-system-celestial-obsidian--luminescent-iris--theming-engine)
    - [Feature 30: Structured Observability, Tracing & Performance Telemetry](#feature-30-structured-observability-tracing--performance-telemetry)
    - [Feature 31: Comprehensive Pytest Test Suite & Evaluation Harness](#feature-31-comprehensive-pytest-test-suite--evaluation-harness)
+   - [Feature 32: Mobile Touch Editing, Find & Replace & the Dual-Editor Resolver](#feature-32-mobile-touch-editing-find--replace--the-dual-editor-resolver)
 4. [Deployment, Infrastructure & Environment Configuration](#4-deployment-infrastructure--environment-configuration)
 
 ---
@@ -572,11 +573,14 @@ overbranch/
 │   │   ├── ChatModeToggle.tsx                  # Mode toggle switching between 'Ask' and 'Edit' modes
 │   │   ├── CollaboratorAvatars.tsx             # Active collaborator avatar stack & invite modal
 │   │   ├── CompileToolbar.tsx                  # Compile button, engine dropdown, error pill & "Ask AI to Fix"
-│   │   ├── EditorLayout.tsx                    # Master resizable split-pane editor shell & AI stream handler (result merged into final_diff; file-tagged edits; compile errors kept with the PDF)
+│   │   ├── CopyButton.tsx                      # Copy-to-clipboard affordance on chat messages (prompt recall)
+│   │   ├── EditorLayout.tsx                    # Master resizable split-pane editor shell & AI stream handler (getActiveEditor resolves the visible Monaco; result merged into final_diff; file-tagged edits; compile errors kept with the PDF)
+│   │   ├── EditorSearchBar.tsx                 # Find & replace over the active model (match counter, case/word/regex, replace all); replaces Monaco's find widget on both platforms
 │   │   ├── EditorThemeModal.tsx                # Monaco editor theme & typography customizer modal
 │   │   ├── FileAnalyzerModal.tsx               # File inspection & AI multimodal querying modal
 │   │   ├── InlineDiffEditor.tsx                # Side-by-side or unified Monaco diff viewer with Accept/Reject
 │   │   ├── LatexEditorView.tsx                 # Code editor wrapper with line numbers, markers and SyncTeX
+│   │   ├── MobileEditorAssist.tsx              # Touch editing layer for Monaco: draggable caret & selection handles, action callout (Select/Copy/Cut/Paste/Find, iOS paste fallback), key accessory bar above the keyboard
 │   │   ├── ModelSelector.tsx                   # Dropdown model picker with provider badges
 │   │   ├── PDFViewer.tsx                       # Interactive PDF preview with SyncTeX double-click triggers; non-blocking error bar + Ask AI to Fix for PDFs compiled with errors
 │   │   ├── PresentationView.tsx                # Fullscreen Beamer slide player with laser pointer mode
@@ -656,6 +660,7 @@ overbranch/
 │   ├── api-client.ts                           # Standardized fetch API wrapper with auth & error handling
 │   ├── auth-client.ts                          # Better-Auth client SDK instance (signIn, signOut, useSession)
 │   ├── auth.ts                                 # Better-Auth server configuration & PostgreSQL adapter
+│   ├── clipboard.ts                            # copyText / readClipboard with execCommand fallback; shared by the toolbar, CopyButton and the mobile callout
 │   ├── EditHistoryStore.ts                     # LocalStorage edit history & undo/redo tracking
 │   ├── guest-token.ts                          # Guest token cookie management & persistence
 │   ├── latex-edit-apply.ts                     # Pure applier for AI edit items (authoritative vs chunk replay, zero silent drops)
@@ -1172,8 +1177,9 @@ overbranch/
   5. `commitEditOutcome` in `EditorLayout.tsx` is the one place that touches Monaco, `EditHistoryStore`, `saveDocument` and `handleCompile` — previously duplicated across four handlers with diverging behaviour.
   6. `final_diff` payloads are accumulated **keyed by file**, so an auxiliary `.tex` file's diff no longer clobbers the main one, and `result` **merges** into the accumulated payload instead of replacing it.
   7. `EditHistoryStore.ts` records snapshots in browser LocalStorage for instant undo/redo.
+  8. **One accept marks exactly one message.** `commitEditOutcome` only sets `isApplied`/`historyEntryId` when it is given `opts.msgId`. Its old `else` branch stamped **every** message that still carried an `edits` array, so untouched proposals were badged "Applied" and all of them shared one `historyEntryId` — one Revert click then flipped every card (`m.historyEntryId === editId` matched them all), and a message whose own entry had been overwritten restored the *wrong* document. The three floating diff cards (desktop in-editor, desktop sidebar, mobile) now pass `pendingEditsMsgIdRef`, the id of the assistant message whose edits are in `diffEditsList`; revert/reapply resolve a single target (`historyEntryId` first, then `id`); and `repairSharedEditHistoryIds` clears the flags once on load for chats already corrupted in LocalStorage.
 
-> Note: `components/editor/InlineDiffEditor.tsx` currently exports the `EditItem` type that the rest of the editor consumes, but the component itself is not rendered — the inline preview blocks in `EditorLayout.tsx` display diffs instead.
+> Note: `components/editor/InlineDiffEditor.tsx` currently exports the `EditItem` type that the rest of the editor consumes, but the component itself is not rendered — the inline preview blocks in `EditorLayout.tsx` display diffs instead. The handlers that only it called (`handleAcceptDiff`, `handleAcceptSingleEdit`, `handleRejectSingleEdit`) have been removed.
 
 ---
 
@@ -1202,6 +1208,7 @@ overbranch/
   - Display typography in **Archivo Black**, body text in **Inter**, code in **Space Mono**.
 - **User Configurable Parameters**:
   - Themes (VS Code Dark, GitHub Light, Nord, Dracula, Monokai, Cyberpunk), font sizes, tab sizes, soft wrap, and auto-compile triggers synchronized to PostgreSQL `editor_preferences`.
+- **Every surface must be a `light dark:` pair.** A hardcoded hex utility with no `dark:` prefix stays dark in light mode. `AgentReasoningWindow.tsx` had **zero** `dark:` prefixes in the whole file, and the mobile AI panel's own root (`bg-[#141519] text-[#E2E4E9]`) kept the entire tab dark while its correctly-paired children rendered light-on-dark. The agent chat path — reasoning window, message edits card, mobile AI/files/PDF pane roots, the mobile floating diff card and the remaining unpaired sidebar controls — is now paired throughout. Saturated accent buttons (the emerald Compile/Accept, the red Stop) are deliberately left unpaired: white text on a brand fill reads correctly in both themes, and pairing them only produced pale borders around saturated fills. The reasoning window's scrollbar moved from an inline `scrollbarColor` to the themed `.ob-thin-scroll` class for the same reason.
 
 ---
 
@@ -1227,6 +1234,27 @@ overbranch/
   6. `test_justify_content.py`: the strategy ladder, break points only in over-long tokens (separators first), overfull parsing, TeX measurement, compiled end-to-end overflow fix.
   6b. `test_converted_document_edits.py`: "change jacob to tims ittus" on a long imported PDF — the line is in the first message, lower-case search and `replace_text` still find "JACOB", nothing else changes; overprinted fake bold is extracted once and converts without double text.
   7. `test_pdf2latex_fidelity.py`: bold from names / descriptor / synthetic rendering, sizes in the facts, Carlito mapping and fallback, body repair, and the **IRCTC ticket regression**: real pipeline with a model that drops all bold → bold restored, 0 overflowing lines, with and without Carlito; a faithful body is left untouched.
+
+---
+
+### Feature 32: Mobile Touch Editing, Find & Replace & the Dual-Editor Resolver
+
+- **File Implementation**: [`components/editor/MobileEditorAssist.tsx`](file:///home/abin/overbranch/components/editor/MobileEditorAssist.tsx), [`components/editor/EditorSearchBar.tsx`](file:///home/abin/overbranch/components/editor/EditorSearchBar.tsx), [`lib/clipboard.ts`](file:///home/abin/overbranch/lib/clipboard.ts), [`components/editor/EditorLayout.tsx`](file:///home/abin/overbranch/components/editor/EditorLayout.tsx), [`app/globals.css`](file:///home/abin/overbranch/app/globals.css)
+
+- **`getActiveEditor()` — the dual-editor resolver.** `EditorLayout` renders **two** Monaco instances (desktop `hidden md:flex`, mobile `flex md:hidden`); both always mount and only CSS hides one. `handleEditorMount` used to end with an unconditional `editorRef.current = editor`, and because the mobile editor is later in the JSX it mounted last and **won on desktop too** — so Undo/Redo, symbol insertion, `commitEditOutcome`, revert/reapply and the diff decorations all drove a hidden, zero-sized editor. `editorRef` is gone; `getActiveEditor()` picks the instance matching the viewport, and an `editorsNonce` state bump on mount re-runs the effects that need an instance. The touch `paste` listener now closes over its bound `editor` and is attached to the mobile editor only.
+
+- **Why Monaco needs a touch layer at all.** Monaco paints text into non-editable DOM and keeps the caret in an off-screen textarea, so a touch device gets no native selection handles. Two things made it worse: `app/globals.css` forced `touch-action: pan-x pan-y !important` on `.monaco-editor`, overriding the `touch-action: none` Monaco's own `Gesture` layer sets on its targets and handing every single-finger gesture to the browser scroller (so a tap could never place the caret); and the mobile `<Editor>` options were a stripped-down subset that also **omitted `readOnly: isViewer`**, giving a Viewer-role collaborator an editable buffer on a phone. The CSS rule is removed, `touch-action` is Monaco's to set again, and the mobile options match desktop.
+
+- **`MobileEditorAssist`** overlays the mobile editor (`pointer-events: none`, `auto` only on its own controls, so Monaco keeps every gesture it already handles):
+  - A draggable **caret handle** and two **selection handles**. Drags use pointer capture and `editor.getTargetAtClientPoint(x, y ∓ probeOffset)` — the probe is offset by `lineHeight/2 + handleSize/2` so the sampled glyph is the one the handle points at, not the one under the fingertip. The start handle hangs above its line (`+offset`), the caret and end handles below (`−offset`). Dragging near an edge auto-scrolls; collapsing a selection onto itself mid-drag is refused so the handles cannot vanish under the finger.
+  - Handle positions come from `editor.getScrolledVisiblePosition`, which Monaco documents as *inaccurate* (not null) outside the viewport, so results are bound-checked against `getLayoutInfo().height` — otherwise a stale handle hovers at the pane edge and drags from the wrong place.
+  - An **action callout** (Select word / Select All / Copy / Cut / Paste / Find), dismissed on a tap elsewhere and while typing.
+  - **iOS paste fallback**: `navigator.clipboard.readText()` does not exist in iOS Safari, so when it returns nothing the callout opens a real, focused textarea and forwards its `paste`/`input` into `executeEdits`. This is the only route to the clipboard there.
+  - A **key accessory bar** (◀▶▲▼ with press-and-hold repeat, Tab, Undo/Redo, Find, quick TeX symbols) pinned against `window.visualViewport` so it rides above the on-screen keyboard. Every button calls `preventDefault()` on `pointerdown` so the keyboard does not dismiss.
+
+- **`EditorSearchBar`** replaces Monaco's built-in find widget on **both** platforms (the built-in one needs a hardware keyboard and has no UI trigger, so it is unreachable on mobile). `model.findMatches` drives a live `n/total` counter, case / whole-word / regex toggles, prev-next with wrap, and Replace / Replace All (descending ranges inside one `pushUndoStop` pair, so it is a single undo). All matches are highlighted with `.ob-find-match` / `.ob-find-match-current` decorations, cleared on close and unmount. Opened by the tab-bar button, the mobile bar's 🔍, or `Ctrl/Cmd+F` registered on both editors; `Esc` closes. Both editors stay mounted so the bar renders twice — the hidden copy refuses focus via an `offsetParent` check.
+
+- **`lib/clipboard.ts`** holds `copyText` (async clipboard → hidden-textarea `execCommand`) and `readClipboard`, shared by the editor toolbar, the chat `CopyButton` and the mobile callout, so all three behave identically.
 
 ---
 

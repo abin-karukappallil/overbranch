@@ -238,3 +238,31 @@ def test_classify_text_and_status():
     assert classify(None, "Resource_Exhausted")[0] == FailureKind.RATE_LIMIT
     assert classify(404, "model not found")[0] == FailureKind.MODEL_UNAVAILABLE
     assert classify(429, '{"retry_after": 12}') == (FailureKind.RATE_LIMIT, 12.0)
+
+
+def test_allow_fallback_false_skips_fallback(router, monkeypatch):
+    primary_down(router, 429)
+    seen: List[Dict[str, Any]] = []
+    script(monkeypatch, [FakeResp(200, ok_body())], seen)
+    with pytest.raises(LLMProviderError):
+        router.chat([{"role": "user", "content": "hi"}], model="gemini-3.7-flash", allow_fallback=False)
+    assert seen == []
+
+
+def test_pdf2latex_llm_chat_disables_fallback(monkeypatch):
+    from pdf2latex.llm import _chat
+    from cancellation import CancellationToken
+    from providers.router import provider_router
+
+    captured_kwargs = {}
+
+    def fake_chat(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {"content": "latex body"}
+
+    monkeypatch.setattr(provider_router, "chat", fake_chat)
+    tok = CancellationToken("test")
+    res = _chat([{"role": "user", "content": "test"}], max_tokens=1000, token=tok)
+    assert res == "latex body"
+    assert captured_kwargs.get("allow_fallback") is False
+

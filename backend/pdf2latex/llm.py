@@ -1,11 +1,10 @@
 """
 llm.py — Page-level LLM calls through the agentic edit feature's own client.
 
-Every call goes through providers.router.provider_router.chat with DEFAULT_MODEL,
-exactly like the OpenCode agent loop: same GeminiProvider (GEMINI_WEB2API_BASE_URL,
-rotating GEMINI_WEB2API_API_KEY_*), same model, same OpenRouter fallback. This module
-only adds what a batch of page calls needs: per-call timeout (the cancel token aborts
-the stream), retries with backoff, and a process-wide concurrency cap.
+Every call goes through providers.router.provider_router.chat with DEFAULT_MODEL
+using GeminiProvider (GEMINI_WEB2API_BASE_URL, rotating GEMINI_WEB2API_API_KEY_*).
+Fallback to OpenRouter / MiniMax M3 is disabled to prevent token limit errors
+and time-taking delays on large PDF prompts and images.
 """
 
 import asyncio
@@ -37,9 +36,7 @@ def model_name() -> str:
 
 
 def llm_available() -> bool:
-    if get_web2api_base_url() and load_web2api_keys():
-        return True
-    return bool(getattr(provider_router.openrouter, "candidates", None))
+    return bool(get_web2api_base_url() and load_web2api_keys())
 
 
 def _slots_for(n: int) -> threading.BoundedSemaphore:
@@ -73,8 +70,14 @@ def _pool_for(n: int) -> ThreadPoolExecutor:
 
 def _chat(messages: List[Dict[str, Any]], max_tokens: int, token: CancellationToken) -> str:
     token.check_cancelled()
-    resp = provider_router.chat(messages=messages, model=DEFAULT_MODEL, temperature=0.0,
-                                max_tokens=max_tokens, cancel_token=token)
+    resp = provider_router.chat(
+        messages=messages,
+        model=DEFAULT_MODEL,
+        temperature=0.0,
+        max_tokens=max_tokens,
+        cancel_token=token,
+        allow_fallback=False,
+    )
     return str(resp.get("content") or "")
 
 

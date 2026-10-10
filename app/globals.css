@@ -386,11 +386,35 @@ html, body {
   background-color: rgba(99, 102, 241, 0.28) !important;
 }
 
-/* Prevent unwanted selection flicker on mobile touches */
+/* Monaco's own Gesture layer (vs/base/browser/touch) sets `touch-action: none`
+   on its targets so it can receive taps and drags and synthesize them into
+   editor gestures. Forcing `pan-x pan-y !important` here overrode that and
+   handed every single-finger gesture to the browser scroller, which is why a
+   tap could never place the caret on mobile. touch-action is Monaco's to set. */
 .monaco-editor {
-  touch-action: pan-x pan-y !important;
-  -webkit-user-select: text !important;
-  user-select: text !important;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* The caret / selection handles in MobileEditorAssist drive their own pointer
+   gestures, so the browser must not claim them for panning or long-press. */
+.ob-touch-handle {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Find & replace highlights (EditorSearchBar) */
+.ob-find-match {
+  background-color: rgba(16, 185, 129, 0.22);
+  border-radius: 2px;
+}
+.ob-find-match-current {
+  background-color: rgba(16, 185, 129, 0.45);
+  border-radius: 2px;
+  outline: 1px solid rgba(16, 185, 129, 0.9);
+  outline-offset: -1px;
 }
 
 /* SyncTeX Reverse Navigation Line Highlight & Gutter Accent */
@@ -405,4 +429,17 @@ html, body {
   width: 4px !important;
   height: 100% !important;
   border-radius: 2px !important;
+}
+/* Thin scrollbar that follows the active theme (AgentReasoningWindow). */
+.ob-thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.ob-thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.ob-thin-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
 }
