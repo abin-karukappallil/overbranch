@@ -520,10 +520,82 @@ def _human(kind: str) -> str:
             CODE_WRAP: "Code"}.get(kind, "Technical token")
 
 
+FURNITURE_BAND = 0.12      # share of the page height, top and bottom, where running lines live
+FURNITURE_SHARE = 0.3      # of the pages a line / rule group must recur on to be page furniture
+
+
+@dataclass
+class Furniture:
+    """What a document's class or theme prints on its pages, as opposed to what the author wrote."""
+    lines: set = field(default_factory=set)
+    tables: set = field(default_factory=set)
+
+    def has_line(self, b: TextBlock) -> bool:
+        return _line_key(b) in self.lines
+
+    def has_table(self, t: "TableRegion") -> bool:
+        return _table_key(t) in self.tables
+
+
+def _line_key(b: TextBlock) -> Tuple[int, str]:
+    """
+    A running line's identity across pages: its height on the page and what it
+    says, numbers aside. Not its x — a right-aligned "9 / 13" and "10 / 13" start
+    at different places and are the same line.
+    """
+    text = re.sub(r"#+", "#", re.sub(r"\d+", "#", b.text.strip()))[:40]
+    return (round(b.y / 2.0), text)
+
+
+def _table_key(t: "TableRegion") -> Tuple[int, int, int, int]:
+    return tuple(round(v / 4.0) for v in t.bbox)  # type: ignore[return-value]
+
+
+def page_furniture(pdf_bytes: bytes, max_pages: int = 40) -> Furniture:
+    """
+    Page furniture of a document: page numbers, footlines and running heads (short
+    lines in the top or bottom band that recur at the same height), and rule
+    groups a theme draws at the same place on page after page.
+
+    They are placed by the class or theme, often outside the text area on
+    purpose: Beamer's "6 / 13" sits in the footline, right of \\textwidth; a
+    footline's author / title / date print below \\textheight; a theme's frame
+    rules span the whole slide. Judged as the author's content, every slide of
+    such a deck "runs past the right margin", "prints below the text area" and
+    holds "a table wider than the page" — defects no edit to the slide can
+    remove. Measured on the bundled templates before this existed: 3 to 15 such
+    reports per presentation template, none of them real.
+    """
+    import pymupdf
+
+    line_counts: Dict[Tuple[int, str], int] = {}
+    table_counts: Dict[Tuple[int, int, int, int], int] = {}
+    with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
+        n = min(doc.page_count, max_pages)
+        if n < 2:
+            return Furniture()
+        for i in range(n):
+            page = doc[i]
+            ph = page.rect.height
+            keys = set()
+            for b in text_blocks(page):
+                top = b.y - b.height
+                if len(b.text.strip()) <= 40 and (b.y >= ph * (1 - FURNITURE_BAND) or top <= ph * FURNITURE_BAND):
+                    keys.add(_line_key(b))
+            for k in keys:
+                line_counts[k] = line_counts.get(k, 0) + 1
+            for k in {_table_key(t) for t in table_regions(page)}:
+                table_counts[k] = table_counts.get(k, 0) + 1
+    need = max(2, int(n * FURNITURE_SHARE + 0.999))
+    return Furniture(lines={k for k, c in line_counts.items() if c >= need},
+                     tables={k for k, c in table_counts.items() if c >= need})
+
+
 def detect_page(pdf_bytes: bytes, page_index: int, textwidth: Optional[float] = None,
                 overfull: Optional[List[Dict[str, Any]]] = None,
                 geometry: Optional[Dict[str, float]] = None,
-                source_plain: Optional[str] = None) -> Tuple[List[LayoutIssue], TextArea]:
+                source_plain: Optional[str] = None,
+                furniture: Optional[Furniture] = None) -> Tuple[List[LayoutIssue], TextArea]:
     """Every geometric defect of one page, plus the text area they were judged against."""
     import pymupdf
 
@@ -539,6 +611,10 @@ def detect_page(pdf_bytes: bytes, page_index: int, textwidth: Optional[float] = 
         tables = table_regions(page)
 
     body = [b for b in blocks if b.width > 1]
+    if furniture:
+        # Page numbers, footlines and theme rules are not the author's content (see page_furniture).
+        body = [b for b in body if not furniture.has_line(b)]
+        tables = [t for t in tables if not furniture.has_table(t)]
 
     # 1. Text outside the page, or past the text area's right edge.
     for b in body:
@@ -662,12 +738,21 @@ def detect_layout_issues(pdf_bytes: Optional[bytes], log: str = "",
     wanted = [p - 1 for p in pages] if pages else list(range(count))
     wanted = [i for i in wanted if 0 <= i < count][:max_pages]
 
+    # Judged over the whole document even when only some pages are scanned: a line is a
+    # running line because of the other pages it recurs on.
+    try:
+        furniture = page_furniture(pdf_bytes, max_pages)
+    except Exception as e:                          # detection still works without it
+        logger.debug(f"Could not determine running lines: {e}")
+        furniture = Furniture()
+
     found: List[LayoutIssue] = []
     seen = set()
     for n, idx in enumerate(wanted):
         try:
             page_issues, _area = detect_page(pdf_bytes, idx, textwidth,
-                                             overfull if n == 0 else None, geometry, source_plain)
+                                             overfull if n == 0 else None, geometry, source_plain,
+                                             furniture)
         except Exception as e:                      # one bad page must not lose the rest
             logger.warning(f"Layout detection failed on page {idx + 1}: {e}")
             continue

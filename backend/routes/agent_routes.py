@@ -17,7 +17,7 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ from auth import get_current_user, get_current_user_or_guest, verify_project_own
 from models import User
 from rate_limiter import RateLimiter
 from project_storage import get_supabase_client
+from providers.router import DEFAULT_MODEL
 
 logger = logging.getLogger("routes.agent_opencode")
 
@@ -239,6 +240,136 @@ async def resolve_edits_endpoint(
 
 
 # ============================================================================
+# Chat attachments
+# ============================================================================
+
+def attachment_session_key(project_id: str, user_id: str) -> str:
+    """
+    The attachment store's key for one user's chat in one project.
+
+    Derived on the server from the authenticated caller. It used to be whatever
+    ``session_id`` the client sent — in practice the project id — so the files
+    one collaborator attached were readable by anyone who could name the project.
+    """
+    return f"{project_id or 'default'}:{user_id}"
+
+
+def _require_project_access(project_id: str, auth_info: Dict[str, Any]) -> str:
+    """Verifies the caller may use ``project_id`` (same rule as the agent endpoint). Returns the user id."""
+    user_id = auth_info["user_id"]
+    if project_id:
+        try:
+            verify_project_ownership_or_member(
+                get_supabase_client(), project_id, user_id, is_guest=bool(auth_info.get("is_guest")))
+        except Exception as auth_err:
+            logger.warning(f"Project access verification warning for user {user_id}: {auth_err}")
+            if project_id not in ("proj-default", "default", "scratchpad") and not project_id.startswith("proj-"):
+                raise
+    return user_id
+
+
+def _attachment_limits() -> Dict[str, Any]:
+    from attached_context import attached_context_store as store
+    return {"max_files": store.max_files, "max_mb": round(store.max_bytes / 1048576, 1)}
+
+
+def _store_attachment(session: str, filename: str, file_type: str, data: bytes) -> Dict[str, Any]:
+    """Stores one upload and scans it for figures, so the chip can say what was found."""
+    from attached_context import attached_context_store as store
+    from attachment_figures import figures_for
+
+    record = store.store_bytes(session, filename, file_type, data)
+    try:
+        figures_for(record, store)
+    except Exception as e:  # noqa: BLE001 — the text is usable even if figure detection is not
+        logger.warning(f"Figure scan failed for '{filename}': {e}")
+        record["figures"] = []
+    return record
+
+
+@router.post(
+    "/api/agent/attachments",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_agent_attach"))],
+)
+async def upload_attachment(
+    request: Request,
+    project_id: str = Form(...),
+    file: UploadFile = File(...),
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """
+    Attaches one file (PDF, image or text) to the caller's chat in a project.
+    Multipart, one file per request: a paper does not fit in the agent's JSON body.
+    """
+    from attached_context import AttachmentLimitError, attached_context_store as store
+
+    user_id = _require_project_access(project_id, auth_info)
+    session = attachment_session_key(project_id, user_id)
+    data = await file.read(store.max_bytes + 1)
+    try:
+        record = await asyncio.to_thread(
+            _store_attachment, session, file.filename or "attachment", file.content_type or "", data)
+    except AttachmentLimitError as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": str(e), **_attachment_limits()})
+    summaries = store.summaries(session)
+    return {
+        "attachment": next((a for a in summaries if a["id"] == record["id"]), None),
+        "attachments": summaries,
+        **_attachment_limits(),
+    }
+
+
+@router.get(
+    "/api/agent/attachments",
+    dependencies=[Depends(RateLimiter(times=120, seconds=60, key_prefix="rl_agent_attach_list"))],
+)
+async def list_attachments(
+    project_id: str,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """The files currently attached to the caller's chat in a project (metadata only)."""
+    from attached_context import attached_context_store as store
+
+    user_id = _require_project_access(project_id, auth_info)
+    summaries = await asyncio.to_thread(store.summaries, attachment_session_key(project_id, user_id))
+    return {"attachments": summaries, **_attachment_limits()}
+
+
+@router.delete(
+    "/api/agent/attachments/{attachment_id}",
+    dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_agent_attach_del"))],
+)
+async def delete_attachment(
+    attachment_id: str,
+    project_id: str,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """Removes one attachment from the caller's chat."""
+    from attached_context import attached_context_store as store
+
+    user_id = _require_project_access(project_id, auth_info)
+    session = attachment_session_key(project_id, user_id)
+    removed = await asyncio.to_thread(store.remove_attachment, session, attachment_id)
+    return {"removed": removed, "attachments": store.summaries(session), **_attachment_limits()}
+
+
+@router.delete(
+    "/api/agent/attachments",
+    dependencies=[Depends(RateLimiter(times=30, seconds=60, key_prefix="rl_agent_attach_clear"))],
+)
+async def clear_attachments(
+    project_id: str,
+    auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
+):
+    """Removes every attachment from the caller's chat (used by "clear chat")."""
+    from attached_context import attached_context_store as store
+
+    user_id = _require_project_access(project_id, auth_info)
+    await asyncio.to_thread(store.clear_session, attachment_session_key(project_id, user_id))
+    return {"removed": True, "attachments": [], **_attachment_limits()}
+
+
+# ============================================================================
 # SSE Endpoint
 # ============================================================================
 
@@ -299,7 +430,7 @@ async def agent_opencode(
             # Resolve assets directory
             assets_dir = _resolve_assets_dir(req.project_id)
 
-            model = req.model or "gemini-3.7-flash"
+            model = req.model or DEFAULT_MODEL
             max_steps = req.max_steps  # None enables adaptive step budgeting based on prompt scope
 
             yield sse_event("progress", {
@@ -328,7 +459,9 @@ async def agent_opencode(
                         max_steps=max_steps,
                         cancel_token=token,
                         assets_dir=assets_dir,
-                        session_id=req.session_id or req.project_id,
+                        # Attachments are keyed by who is asking, not by what the client
+                        # says its session is (see attachment_session_key).
+                        session_id=attachment_session_key(req.project_id, user_id),
                         user_context={"user_id": user_id, "is_guest": is_guest},
                         base_version=req.base_version,
                         base_sha256=req.base_sha256,
@@ -399,6 +532,16 @@ async def agent_opencode(
                             "page_count": result.get("page_count"),
                             "filename": result.get("filename"),
                         })
+
+                elif event_type == "page_snapshot":
+                    # What the agent just looked at (a rendered page, an imported figure).
+                    yield sse_event("progress", {
+                        "step": "page_snapshot",
+                        "message": f"Looked at {event.get('label') or 'the rendered page'}",
+                        "icon": "search",
+                        "label": event.get("label"),
+                        "image": event.get("image"),
+                    })
 
                 elif event_type == "coverage_check":
                     yield sse_event("coverage_check", event)
@@ -571,6 +714,21 @@ def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
         n = len(result.get("beyond_text_area", [])) + len(result.get("beyond_page", [])) + \
             len([o for o in result.get("overfull", []) if o.get("severe")])
         return f"Layout check: {n} overflowing line{'s' if n != 1 else ''}" if n else "Layout check: nothing overflows"
+
+    elif tool_name == "view_rendered_pages":
+        if result.get("skipped"):
+            return "Could not render the page (no PDF)"
+        pages = ", ".join(str(p) for p in result.get("pages", [])) or "?"
+        n = len(result.get("issues", []))
+        return (f"Looked at page {pages}: {n} visual issue{'s' if n != 1 else ''} measured"
+                if n else f"Looked at page {pages}: no measured visual issues")
+
+    elif tool_name == "list_attachment_figures":
+        n = result.get("count", 0)
+        return f"Found {n} figure{'s' if n != 1 else ''} in the attached file(s)"
+
+    elif tool_name == "import_attachment_figure":
+        return f"Imported figure into the project: {result.get('path', '')}"
 
     elif tool_name == "convert_attached_pdf":
         pages = result.get("page_count", "?")

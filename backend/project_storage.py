@@ -102,6 +102,43 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
 
 
 # ============================================================================
+# Binary assets
+# ============================================================================
+
+def save_project_asset_bytes(project_id: str, file_path: str, content: bytes, label: Optional[str] = None) -> Path:
+    """
+    Writes a binary asset (image, PDF, font, class file) into the project: the
+    file on local disk, plus the ``latex_documents`` row that makes it appear in
+    the file tree. Shared by the upload endpoint and by the agent, which imports
+    figures from attached PDFs through the same path a user upload takes.
+    """
+    target_path = get_project_disk_path(project_id, file_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(content)
+    try:
+        asset_meta = f"[Binary Asset: {label or target_path.name}, Size: {len(content)} bytes]"
+        upsert_latex_document(get_supabase_client(), project_id, file_path, asset_meta)
+    except Exception as db_err:  # the file on disk is what compiles; the row is only the listing
+        logger.warning(f"Asset metadata DB insert warning: {db_err}")
+    return target_path
+
+
+def delete_project_asset(project_id: str, file_path: str) -> None:
+    """Removes a binary asset from disk and from the file listing (best effort)."""
+    try:
+        target_path = get_project_disk_path(project_id, file_path)
+        if target_path.is_file():
+            target_path.unlink()
+    except Exception as e:
+        logger.warning(f"Could not delete asset '{file_path}': {e}")
+    try:
+        get_supabase_client().table("latex_documents").delete() \
+            .eq("project_id", project_id).eq("file_path", file_path).execute()
+    except Exception as e:
+        logger.warning(f"Could not delete asset row '{file_path}': {e}")
+
+
+# ============================================================================
 # Reusable document read/write helpers
 # ============================================================================
 # These were previously inlined in the HTTP handlers. The realtime
@@ -245,19 +282,9 @@ async def upload_project_asset(
         is_guest = bool(auth_info.get("is_guest"))
         verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
 
-        target_path = get_project_disk_path(project_id, file_path)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-
         content = await file.read()
-        target_path.write_bytes(content)
+        target_path = save_project_asset_bytes(project_id, file_path, content, label=file.filename)
         logger.info(f"Uploaded binary asset to local disk: '{target_path}'")
-
-        # Save metadata in Supabase latex_documents table safely
-        try:
-            asset_meta = f"[Binary Asset: {file.filename}, Size: {len(content)} bytes]"
-            upsert_latex_document(supabase, project_id, file_path, asset_meta)
-        except Exception as db_err:
-            logger.warning(f"Asset metadata DB insert warning: {db_err}")
 
         return {
             "success": True,

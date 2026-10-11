@@ -227,6 +227,50 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": [],
     },
     {
+        "name": "view_rendered_pages",
+        "description": (
+            "LOOK at the compiled document. Use this for any request about how something looks — alignment, "
+            "spacing, overlapping text or images, text that is hard to see, content cut off or off the page — "
+            "before editing, and again after editing to confirm the fix. It compiles the buffer, renders the "
+            "page(s) and returns the page image together with MEASURED defects (overlap, off-page content, "
+            "low contrast, overflow), each mapped to the source lines that produced it. Give a target: "
+            "node_id (a frame/section/figure block), text (a phrase printed on the page) or pages."
+        ),
+        "parameters": {
+            "node_id": {"type": "string", "description": "Block to look at, e.g. 'frame:results' or 'slide 3'."},
+            "text": {"type": "string", "description": "A phrase printed on the page(s) to look at."},
+            "pages": {"type": "string", "description": "1-based page(s): 3, '2-4' or '1,3' (at most 3 per call)."},
+            "scan": {"type": "string", "description": "'document' measures every page and shows the two with the heaviest defects."},
+        },
+        "required": [],
+    },
+    {
+        "name": "list_attachment_figures",
+        "description": (
+            "List the figures (diagrams, charts, photographs) found in the files attached to this chat, with "
+            "their figure_id, page, caption and size. Use it to choose which figures of an attached paper "
+            "belong in the document (e.g. the system architecture for the architecture slide)."
+        ),
+        "parameters": {
+            "filename": {"type": "string", "description": "Only this attached file (default: all of them)."},
+        },
+        "required": [],
+    },
+    {
+        "name": "import_attachment_figure",
+        "description": (
+            "Copy one figure from an attached file into the project's assets/ folder so the document can show "
+            "it. Returns the saved path and ready-to-use LaTeX (\\includegraphics with a caption). Then place "
+            "that LaTeX in the slide or section that discusses the figure. Only reference image paths that this "
+            "tool or list_assets returned — never invent a filename."
+        ),
+        "parameters": {
+            "figure_id": {"type": "string", "description": "ID from the figure list, e.g. '3f2a9c1b-p3-f1'."},
+            "asset_name": {"type": "string", "description": "Optional file name without extension, e.g. 'system-architecture'."},
+        },
+        "required": ["figure_id"],
+    },
+    {
         "name": "search_uploaded_references",
         "description": (
             "Search previously uploaded reference files/PDFs attached to this session. "
@@ -549,6 +593,18 @@ def execute_tool(
             from .layout_tools import justify_content_tool
             return justify_content_tool(workspace, args)
 
+        elif tool_name == "view_rendered_pages":
+            from .visual_tools import view_rendered_pages_tool
+            return view_rendered_pages_tool(workspace, args)
+
+        elif tool_name == "list_attachment_figures":
+            from .attachment_tools import list_attachment_figures_tool
+            return list_attachment_figures_tool(workspace, args)
+
+        elif tool_name == "import_attachment_figure":
+            from .attachment_tools import import_attachment_figure_tool
+            return import_attachment_figure_tool(workspace, args)
+
         elif tool_name == "search_uploaded_references":
             from attached_context import attached_context_store
             query = args.get("query", "")
@@ -591,6 +647,8 @@ def execute_tool(
                     "page_count": a.get("page_count", 1),
                     "size_chars": a.get("size", len(a.get("content", ""))),
                     "is_pdf": a.get("is_pdf", False),
+                    "kind": a.get("kind"),
+                    "figures": len(a["figures"]) if isinstance(a.get("figures"), list) else None,
                     "preview": (a.get("content", "")[:300] + "...").replace("\n", " "),
                 })
             # Also check workspace reference files
@@ -699,13 +757,15 @@ def _convert_attached_pdf(args: Dict[str, Any], workspace: "ShadowWorkspace") ->
     if not owner or not project_id:
         return {"error": "PDF conversion needs a signed-in user and an open project."}
 
-    pdfs = [a for a in attached_context_store.get_attachments(workspace.session_id) if a.get("raw_bytes")]
+    pdfs = [a for a in attached_context_store.get_attachments(workspace.session_id) if a.get("is_pdf")]
     if not pdfs:
         return {"error": "No attached PDF found in this chat. Ask the user to attach the PDF file."}
     wanted = (args.get("filename") or "").lower()
     att = next((a for a in pdfs if wanted and a.get("filename", "").lower() == wanted), pdfs[-1])
 
-    data: bytes = att["raw_bytes"]
+    data = attached_context_store.read_bytes(att)
+    if not data:
+        return {"error": "The attached PDF is no longer available. Ask the user to attach it again."}
     try:
         doc = open_pdf(data)
         page_count = doc.page_count

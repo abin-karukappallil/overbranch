@@ -29,13 +29,26 @@ def has_image_parts(messages: List[Dict[str, Any]]) -> bool:
     return False
 
 
-def strip_image_parts(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Returns a copy where list contents keep only their text parts, joined into a string."""
+IMAGES_OMITTED_NOTE = ("[{n} image(s) that accompanied this message were omitted: this model does not accept "
+                       "image input. Work from the text and the measurements given.]")
+
+
+def strip_image_parts(messages: List[Dict[str, Any]], note: bool = True) -> List[Dict[str, Any]]:
+    """
+    Returns a copy where list contents keep only their text parts, joined into a string.
+
+    A message that lost images says so (``note``): the text around them was written
+    for a reader who could see ("the page image is attached"), and a model told that
+    while holding no image either reports that it cannot see or describes one anyway.
+    """
     out: List[Dict[str, Any]] = []
     for msg in messages:
         content = msg.get("content")
         if isinstance(content, list):
             texts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+            dropped = sum(1 for p in content if isinstance(p, dict) and p.get("type") == "image_url")
+            if note and dropped:
+                texts.append(IMAGES_OMITTED_NOTE.format(n=dropped))
             out.append({**msg, "content": "\n\n".join(t for t in texts if t)})
         else:
             out.append(msg)

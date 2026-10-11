@@ -25,6 +25,7 @@ from typing import Dict, Any, List, Optional, Tuple, Callable
 from .base_provider import LLMProvider, LLMProviderError
 from .errors import FALLBACK_KINDS, classify_exception
 from .groq_provider import GroqProvider
+from .multimodal import has_image_parts, strip_image_parts
 from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
 from .openrouter_provider import OpenRouterProvider
 
@@ -267,9 +268,13 @@ class ProviderRouter:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise LLMOperationCancelled("LLM call cancelled.")
             t0 = time.time()
+            # A provider that cannot take image input gets the same step as text.
+            provider_messages = messages
+            if not getattr(provider, "supports_images", False) and has_image_parts(messages):
+                provider_messages = strip_image_parts(messages)
             try:
                 resp = provider.chat(
-                    messages=messages,
+                    messages=provider_messages,
                     model=target_model,
                     temperature=temperature,
                     max_tokens=max_tokens,

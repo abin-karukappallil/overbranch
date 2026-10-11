@@ -417,6 +417,106 @@ html, body {
   outline-offset: -1px;
 }
 
+/* Inline AI review (lib/inline-diff-monaco.ts): removed lines are the document's own
+   lines, decorated; added lines are a read-only block beneath them. */
+.monaco-editor .ob-diff-removed {
+  background-color: rgba(239, 68, 68, 0.16);
+}
+.monaco-editor .ob-diff-removed-margin {
+  background-color: rgba(239, 68, 68, 0.12);
+}
+.monaco-editor .ob-diff-removed-gutter {
+  background-color: #ef4444;
+  width: 3px !important;
+  margin-left: 3px;
+}
+.monaco-editor .ob-diff-zone {
+  background-color: rgba(16, 185, 129, 0.15);
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: pre;
+  cursor: default;
+}
+.monaco-editor .ob-diff-zone.ob-diff-zone-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.monaco-editor .ob-diff-added-line {
+  padding-left: 0;
+}
+.monaco-editor .ob-diff-added-margin {
+  background-color: rgba(16, 185, 129, 0.12);
+  box-shadow: inset -3px 0 0 #10b981;
+  height: 100%;
+}
+.dark .monaco-editor .ob-diff-removed {
+  background-color: rgba(239, 68, 68, 0.22);
+}
+.dark .monaco-editor .ob-diff-zone {
+  background-color: rgba(16, 185, 129, 0.18);
+}
+.ob-diff-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 6;
+}
+.ob-diff-actions {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  pointer-events: auto;
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+.ob-diff-actions:hover,
+.ob-diff-actions.ob-diff-actions-current {
+  opacity: 1;
+}
+.ob-diff-btn {
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font: 600 10.5px/16px var(--font-mono, ui-monospace, monospace);
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.ob-diff-btn-accept {
+  background: #059669;
+  border-color: #047857;
+  color: #fff;
+}
+.ob-diff-btn-accept:hover {
+  background: #047857;
+}
+.ob-diff-btn-reject {
+  background: #fff;
+  border-color: #fca5a5;
+  color: #b91c1c;
+}
+.ob-diff-btn-reject:hover {
+  background: #fee2e2;
+}
+.dark .ob-diff-btn-reject {
+  background: #1a1c22;
+  border-color: rgba(235, 87, 87, 0.45);
+  color: #f87171;
+}
+.dark .ob-diff-btn-reject:hover {
+  background: rgba(235, 87, 87, 0.18);
+}
+@media (pointer: coarse) {
+  .ob-diff-btn {
+    height: 26px;
+    padding: 0 10px;
+    font-size: 12px;
+    line-height: 24px;
+  }
+}
+
 /* SyncTeX Reverse Navigation Line Highlight & Gutter Accent */
 .synctex-highlight-line {
   background-color: rgba(99, 102, 241, 0.15) !important;

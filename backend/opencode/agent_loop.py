@@ -19,13 +19,14 @@ import time
 from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 from cancellation import CancellationToken, LLMOperationCancelled
-from providers.router import provider_router
+from providers.router import DEFAULT_MODEL, provider_router
 from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
 from document_index import DocumentIndex, DocumentChunk
 from edit_validator import (
     validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
 )
-from attached_context import attached_context_store
+from attached_context import AttachmentLimitError, attached_context_store
+from providers.multimodal import image_part, text_part
 from trace import trace_manager, AgentTrace
 from document_analyzer import analyze_document, generate_compact_summary, generate_preservation_map, build_task_state
 from context_strategy import (
@@ -38,19 +39,21 @@ from .shadow_workspace import ShadowWorkspace
 from .tools import TOOL_DEFINITIONS, EDIT_TOOLS, canonical_tool_name, execute_tool, get_tools_prompt_block
 from .context_builder import SMALL_DOC_LINES, ContextLedger, build_targeted_context
 from .diff_generator import compute_final_diff, compute_edit_items
+from .image_refs import available_images, new_unresolved_refs, reconcile_image_refs
 
 logger = logging.getLogger("opencode.agent_loop")
 
 DEFAULT_MAX_STEPS = 16
-DEFAULT_MODEL = "gemini-3.7-flash"
 MAX_COMPILE_REPAIRS = int(os.getenv("SHADOW_COMPILE_MAX_RETRIES", "2"))
 MAX_TARGET_RETRIES = 1  # a target that failed is corrected once, then given up on
+ATTACHED_PREVIEW_TOTAL_CHARS = int(os.getenv("AGENT_ATTACH_PREVIEW_CHARS", "48000") or 48000)
+ATTACHED_PREVIEW_MIN_CHARS = 6000
 SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not modified."
 # Where the agent is in its budget, refreshed on the live user message each
 # turn. Without it `request_more_steps` is unusable: a model cannot judge
 # whether the remaining steps cover the work if it is never told how many it
 # has. Stripped and re-added rather than appended, so it never accumulates.
-_BUDGET_RE = re.compile(r"\n*\[Step \d+/\d+[^\]]*\]\s*$")
+_BUDGET_RE = re.compile(r"\n*(?:\[Figures in the project[^\]]*\]\s*)?\[Step \d+/\d+[^\]]*\]\s*$")
 
 
 def _budget_note(step: int, total: int, can_extend: bool) -> str:
@@ -62,15 +65,86 @@ def _budget_note(step: int, total: int, can_extend: bool) -> str:
     return note + "]"
 
 
-def _with_budget_note(message: Dict[str, Any], step: int, total: int, can_extend: bool) -> Dict[str, Any]:
-    body = _BUDGET_RE.sub("", str(message.get("content", "")))
-    return {**message, "content": f"{body}\n\n{_budget_note(step, total, can_extend)}"}
+def _content_text(content: Any) -> str:
+    """The text of a message's content, whether it is a string or a list of text/image parts."""
+    if isinstance(content, list):
+        return "\n\n".join(str(p.get("text", "")) for p in content
+                           if isinstance(p, dict) and p.get("type") == "text")
+    return str(content or "")
+
+
+def _map_text(message: Dict[str, Any], fn: Any) -> Dict[str, Any]:
+    """``message`` with ``fn`` applied to its text (the first text part of a multimodal message)."""
+    content = message.get("content", "")
+    if isinstance(content, list):
+        parts = [dict(part) if isinstance(part, dict) else part for part in content]
+        for part in parts:
+            if isinstance(part, dict) and part.get("type") == "text":
+                part["text"] = fn(str(part.get("text", "")))
+                break
+        else:
+            parts.insert(0, text_part(fn("")))
+        return {**message, "content": parts}
+    return {**message, "content": fn(str(content or ""))}
+
+
+def _with_budget_note(message: Dict[str, Any], step: int, total: int, can_extend: bool,
+                      state: str = "") -> Dict[str, Any]:
+    note = (f"{state}\n" if state else "") + _budget_note(step, total, can_extend)
+    return _map_text(message, lambda body: f"{_BUDGET_RE.sub('', body)}\n\n{note}")
+
+
+def _imported_figures_note(workspace: Any) -> str:
+    """
+    The image files this run put in the project, restated on every turn.
+
+    The path a figure was saved under is returned once, by the import; history
+    compaction then reduces that result to a one-line marker. A model that places
+    the figure three steps later no longer has the path, and writes one that
+    sounds right ("assets/fig2-system-architecture.png" for a file saved as
+    "assets/system-architecture.png"). So the paths travel with the live message,
+    like the step budget, instead of depending on what is still in the history.
+    """
+    known = dict(workspace.__dict__.get("_imported_figures", {}) or {})
+    if not known:
+        return ""
+    items = []
+    for res in list(known.values())[:10]:
+        caption = re.sub(r"[\[\]\s]+", " ", str(res.get("caption") or "")).strip()[:60]
+        items.append(f"{res.get('path')} ({caption})" if caption else str(res.get("path")))
+    return "[Figures in the project from the attached files \u2014 reference EXACTLY these paths: " + "; ".join(items) + "]"
+
+
+# A tool result may carry images for the model (a rendered page, an imported
+# figure). They ride on the follow-up message of that step only: image tokens
+# are expensive, and a page the model has already acted on is stale anyway.
+MAX_STEP_IMAGES = 4
+# A request that names figures, whatever else it asks for.
+_RE_FIGURE_REQUEST = re.compile(
+    r"\b(?:figures?|figs?\.?|images?|diagrams?|architecture|charts?|plots?|graphs?|pictures?|illustrations?|tables?)\b")
+# Rounds the model gets to fix defects still measured on the page after its edit.
+MAX_VISUAL_REPAIRS = int(os.getenv("AGENT_VISUAL_REPAIR_ROUNDS", "1") or 1)
+_IMAGES_GONE_NOTE = "[The image(s) shown with this step are no longer attached; call the tool again to look.]"
+
+
+def _without_images(message: Dict[str, Any]) -> Dict[str, Any]:
+    content = message.get("content")
+    if not isinstance(content, list):
+        return message
+    had_image = any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)
+    text = _content_text(content)
+    return {**message, "content": f"{text}\n\n{_IMAGES_GONE_NOTE}" if had_image else text}
+
+# Tool results worth more room than the default when they are fed back to the model.
+_RESULT_CHAR_LIMITS = {"view_rendered_pages": 7000, "list_attachment_figures": 6000}
+_BATCH_RESULT_CHAR_LIMITS = {"view_rendered_pages": 3500, "list_attachment_figures": 3000,
+                             "import_attachment_figure": 900}
 
 _LAST_STEP_NOTE = (
     "FINAL STEP: this is your last step. If your edits are complete, respond with done=true now; "
     "they are compiled automatically and you may get a turn to repair compile errors."
 )
-_LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry"}
+_LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry", "view_rendered_pages"}
 
 
 def _phase(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
@@ -89,6 +163,29 @@ def _compile_status_note(last_compile: Dict[str, Any], compile_available: bool, 
         return "✓ Compiles without errors."
     return (f"No new compile errors; {remaining} error(s) that were already in the document "
             f"remain (not caused by this change).")
+
+
+def _render_status_note(before: List[Dict[str, Any]], after: Dict[str, Any]) -> str:
+    """One honest line about what the rendered pages measure at the end of a run."""
+    if not after or not after.get("success"):
+        return ""
+    left = after.get("issues") or []
+    total = after.get("issue_total") or len(left)
+    if after.get("scanned_pages"):
+        # A whole-document check for the defects that are wrong in any document.
+        if not left:
+            return (f"\u2713 Render check: nothing is cut off at the page edge and nothing overlaps "
+                    f"on any of the {after['scanned_pages']} page(s).")
+        where = ", ".join(str(p) for p in after.get("pages_with_issues") or [])
+        shown = "; ".join(str(i.get("description", ""))[:110] for i in left[:3])
+        return f"Render check: {total} issue(s) still measured on page(s) {where} \u2014 {shown}"
+    pages = ", ".join(str(p) for p in after.get("pages") or [])
+    if not left:
+        was = f" ({len(before)} measured before the edit)" if before else ""
+        return f"\u2713 Render check, page {pages}: no overlap, off-page content, low contrast or overflow measured{was}."
+    shown = "; ".join(str(i.get("description", ""))[:110] for i in left[:3])
+    return (f"Render check, page {pages}: {len(left)} issue(s) still measured"
+            f"{f' (was {len(before)})' if before else ''} \u2014 {shown}")
 
 
 # Recompiles the gate may spend on deterministic repairs before an LLM round. One
@@ -238,7 +335,9 @@ YOUR WORKFLOW & FAST EXECUTION MANDATE:
 7. After editing, you may call `compile_latex` to check for LaTeX compilation errors; edits are also compiled automatically when you finish.
 8. When all edits are complete, respond with the done signal.
 9. PDF IMPORT: When the user asks to convert / import / recreate an attached PDF as LaTeX, call `convert_attached_pdf()` instead of transcribing it yourself, then finish immediately with done=true (no document edits). Every page is reproduced as compilable LaTeX with the same text, images, colors, font sizes and spacing as closely as possible, then compiled and compared with the original. Results are best-effort and come with measured per-page similarity — never promise an identical copy.
-10. CRITICAL STRUCTURAL INVARIANT: NEVER remove or omit `\\begin{{document}}` or `\\end{{document}}`. Every standalone document MUST have `\\begin{{document}}` separating the preamble from the document body, and `\\end{{document}}` at the end.
+10. FIGURES FROM ATTACHED FILES: an attached paper's figures are listed under "FIGURES IN <file>" (or via `list_attachment_figures`). To show one, call `import_attachment_figure(figure_id)` — it saves the image into the project's assets/ folder and returns the exact path and LaTeX — then place that LaTeX in the slide/section that explains the figure (the architecture diagram on the architecture slide, a result plot beside the results). Never write `\\includegraphics` with a path no tool returned.
+11. VISUAL REQUESTS: when the request is about how the output LOOKS (alignment, spacing, overlapping text or images, text that is hard to read or invisible, content cut off), call `view_rendered_pages` on the page/block FIRST — you cannot judge these from the source — fix what it shows, then call it again to confirm. Text overflowing the margin or a table too wide for the page is `justify_content`'s job.
+12. CRITICAL STRUCTURAL INVARIANT: NEVER remove or omit `\\begin{{document}}` or `\\end{{document}}`. Every standalone document MUST have `\\begin{{document}}` separating the preamble from the document body, and `\\end{{document}}` at the end.
 
 {tools_block}
 
@@ -707,6 +806,11 @@ def _compact_conversation_history(
     - Replaces large tool output payloads and assistant drafts with concise markers.
     - Dramatically reduces token count and speeds up LLM processing time.
     """
+    # Only the newest message keeps images: a render the model has already acted on is
+    # stale, and re-sending it every step would multiply its cost by the step count.
+    last = len(messages) - 1
+    messages = [m if i == last else _without_images(m) for i, m in enumerate(messages)]
+
     if len(messages) <= 2 + (keep_recent_turns * 2):
         return messages
 
@@ -751,16 +855,26 @@ def _compact_conversation_history(
             compacted.append(msg)
         elif role == "user":
             tool_m = _RE_TOOL_RESULT.search(content)
-            if tool_m:
+            if tool_m and tool_m.group(1) == "import_attachment_figure":
+                # The saved path is the one thing a later step still needs from this result.
+                paths = sorted(set(re.findall(r'"path":\s*"([^"]+)"', content)))
+                saved = f" saved {', '.join(paths)} — already imported, reference these paths." if paths else ""
+                compacted.append({
+                    "role": "user",
+                    "content": f"[TOOL RESULT from import_attachment_figure:{saved or ' processed in an earlier step.'}]",
+                })
+            elif tool_m:
                 compacted.append({
                     "role": "user",
                     "content": f"[TOOL RESULT from {tool_m.group(1)}: processed in an earlier step.]",
                 })
             elif "BATCH TOOL RESULTS" in content:
-                compacted.append({
-                    "role": "user",
-                    "content": "[BATCH TOOL RESULTS: Batched edits applied in earlier step.]",
-                })
+                marker = "[BATCH TOOL RESULTS: Batched edits applied in earlier step.]"
+                if "import_attachment_figure" in content:
+                    paths = sorted(set(re.findall(r'"path":\s*"([^"]+)"', content)))
+                    if paths:
+                        marker += f" [Figures saved: {', '.join(paths)} \u2014 reference these paths.]"
+                compacted.append({"role": "user", "content": marker})
             elif "COVERAGE CHECK FAILED" in content:
                 compacted.append({
                     "role": "user",
@@ -1018,12 +1132,13 @@ def stream_opencode_agent(
                 workspace.add_auxiliary_file(p_path, p_content)
 
     # 1b. Store & mount attached reference document(s) into session cache and ShadowWorkspace
-    if attached_file:
-        attached_context_store.store_attachment(effective_session_id, attached_file)
-    if attached_files:
-        for af in attached_files:
-            if af:
-                attached_context_store.store_attachment(effective_session_id, af)
+    for af in ([attached_file] if attached_file else []) + list(attached_files or []):
+        if not af:
+            continue
+        try:
+            attached_context_store.store_attachment(effective_session_id, af)
+        except AttachmentLimitError as limit_err:
+            yield {"type": "status", "step": 0, "message": f"Attachment skipped: {limit_err}"}
 
     stored_attachments = attached_context_store.get_attachments(effective_session_id)
     for sf in stored_attachments:
@@ -1329,8 +1444,38 @@ def stream_opencode_agent(
 
     # Format attached reference document from active session cache
     attached_block = ""
+    figure_inventory_text = ""
+    auto_imported: List[Dict[str, Any]] = []
+    imported_block_text = ""
     if stored_attachments:
         stored_files_text = []
+        # One budget shared by every attachment: the first message is re-sent on every
+        # step, and 40K characters *each* for five papers is ~50K tokens per round trip.
+        per_file_chars = max(ATTACHED_PREVIEW_MIN_CHARS,
+                             min(40000, ATTACHED_PREVIEW_TOTAL_CHARS // len(stored_attachments)))
+        try:
+            from attachment_figures import figure_inventory
+            figure_inventory_text = figure_inventory(effective_session_id, attached_context_store)
+        except Exception as fig_err:  # noqa: BLE001 — figures are a bonus; the text must still load
+            logger.warning(f"Could not list attachment figures: {fig_err}")
+        # A document built FROM the attached material gets its figures put in the project
+        # before the model's first turn. Listing them and describing a tool was not enough:
+        # the configured model wrote whole decks from a paper without importing one figure.
+        wants_slides = bool(re.search(r"\b(ppt|pptx|presentation|slides?|slide deck|deck|beamer|seminar)\b", user_lower))
+        workspace.__dict__["_target_slides"] = wants_slides
+        builds_from_attachments = mode == "edit" and not is_compilation_fix_request and (
+            is_creation_request or is_full_rewrite or is_expansion or bool(_RE_FIGURE_REQUEST.search(user_lower)))
+        if figure_inventory_text and builds_from_attachments:
+            try:
+                from .attachment_tools import auto_import_figures, imported_figures_block
+                auto_imported = auto_import_figures(workspace)
+                if auto_imported:
+                    imported_block_text = imported_figures_block(
+                        auto_imported, wants_slides or "{beamer}" in current_code)
+                    yield {"type": "status", "step": 0,
+                           "message": f"Imported {len(auto_imported)} figure(s) from the attached file(s) into assets/."}
+            except Exception as fig_err:  # noqa: BLE001
+                logger.warning(f"Could not import attachment figures up front: {fig_err}")
         for sf in stored_attachments:
             s_name = sf.get("filename", "Attached Document")
             s_type = sf.get("file_type", "document")
@@ -1350,13 +1495,13 @@ def stream_opencode_agent(
                     f"{s_content[:5000]}"
                 )
             elif s_content:
-                fcontent_capped = s_content[:40000]
+                fcontent_capped = s_content[:per_file_chars]
                 body = (
                     f"{header}\n"
                     f"---------------------------------------------------------\n"
                     f"{fcontent_capped}"
                 )
-                if len(s_content) > 40000:
+                if len(s_content) > per_file_chars:
                     body += f"\n... [Truncated preview: {len(s_content):,} chars total. Use `read_attached_document(filename='{s_name}', start_page=...)` or `search_uploaded_references(query=...)` to read any section/page in full.]"
             else:
                 body = f"{header}\n(Empty or unparseable content)"
@@ -1375,6 +1520,22 @@ def stream_opencode_agent(
                 "4. To search for specific keywords or formulas, use `search_uploaded_references(query=...)` or `search_document(query=..., file=...)`.\n"
                 "5. You can also read reference document lines directly using `read_file_range(file=...)`."
             )
+            if imported_block_text:
+                attached_block += (
+                    "\n\n" + imported_block_text + "\n\n" + figure_inventory_text +
+                    "\n\nThe list above is everything found in the attached file(s); the ones under FIGURES ALREADY "
+                    "IN THE PROJECT need no import. Any other can be added with "
+                    "`import_attachment_figure(figure_id=...)`, which returns its path."
+                )
+            elif figure_inventory_text:
+                attached_block += (
+                    "\n\n" + figure_inventory_text +
+                    "\n\nFIGURES: these are the figures found in the attached file(s). When the document you are "
+                    "writing discusses what a figure shows (the system architecture, a result plot, a pipeline), "
+                    "call `import_attachment_figure(figure_id=...)` and place the LaTeX it returns in that slide or "
+                    "section. Import only figures the content actually uses, and never reference an image path "
+                    "that a tool did not return."
+                )
 
     # Grounding reminder for content creation
     grounding_instruction = (
@@ -1914,6 +2075,145 @@ def stream_opencode_agent(
                     "\n\nCURRENT COMPILER OUTPUT (authoritative — it replaces the line numbers in the "
                     "request above):\n" + compile_feedback(current))
 
+    # Visual requests: look at the render before the model writes anything. Whether a title
+    # sits on a picture cannot be read off the source, and a model asked to "fix the slide
+    # that looks broken" rewrites the slide from the source it can see instead of calling
+    # the tool that would show it the page (observed with the configured model on a real
+    # deck). So the look is not left to the model: it is the first step of the run, entered
+    # into the conversation as the tool call it is.
+    from .visual_tools import auto_target, is_visual_request, thumbnail_data_url
+    visual_request = (mode == "edit" and not is_compilation_fix_request and not is_creation_request
+                      and bool(workspace.get_buffer().strip()) and is_visual_request(user_instruction))
+    visual_target: Optional[Dict[str, Any]] = None
+    visual_before: List[Dict[str, Any]] = []
+    # A document being created has no page to look at yet, but what comes out is checked
+    # once for the defects that are wrong in any document — text or an image cut off at
+    # the page edge, things printed over each other. (A generated title slide with its
+    # title running off the right edge compiled cleanly and would have been delivered.)
+    creation_check = mode == "edit" and is_creation_request and not visual_request
+    if creation_check:
+        visual_target = {"scan": "document", "unambiguous_only": True}
+    visual_after: Optional[Dict[str, Any]] = None
+    visual_rounds = 0
+
+    def look_at_render(args: Dict[str, Any]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        res = execute_tool("view_rendered_pages", dict(args), workspace)
+        imgs = (res.pop("_images", None) or [])[:MAX_STEP_IMAGES] if isinstance(res, dict) else []
+        if imgs:
+            res["images_attached"] = len(imgs)
+        return res, imgs
+
+    def render_message(text: str, imgs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        if not imgs:
+            return {"role": "user", "content": text}
+        return {"role": "user", "content": [text_part(text)] + [
+            image_part(im["data"], im.get("mime") or "image/png") for im in imgs]}
+
+    def visual_gate() -> Optional[Dict[str, Any]]:
+        """
+        After the edits compile: measure the same page(s) again. Returns a message for
+        the model when defects are still measured and a round is left, else None.
+        """
+        nonlocal visual_after, visual_rounds
+        if not ((visual_request or creation_check) and visual_target and workspace.has_changed()):
+            return None
+        res, imgs = look_at_render(visual_target)
+        if not res.get("success"):
+            return None
+        visual_after = res
+        if not res.get("issues") or visual_rounds >= MAX_VISUAL_REPAIRS or steps_taken >= actual_max_steps:
+            return None
+        visual_rounds += 1
+        report = json.dumps({k: res[k] for k in ("pages", "issues", "issue_counts") if k in res},
+                            indent=2, ensure_ascii=False)[:6000]
+        return render_message(
+            "RENDER CHECK after your edit — these defects are still measured on the page:\n"
+            f"{report}\n\n"
+            "Fix them with edits to the source lines shown (they are compiled and measured again when you "
+            "finish), then set done=true. If a remaining item is intended, say so in your explanation.",
+            imgs)
+
+    figure_nudged = False
+    missing_reported = False
+
+    def after_done() -> Optional[Tuple[str, Dict[str, Any]]]:
+        """
+        Checks that only make sense on a finished, compiling edit. Returns
+        ``(progress message, message for the model)`` when the model should take
+        another turn, else None. Each check asks at most once.
+        """
+        nonlocal figure_nudged, missing_reported
+        if not (mode == "edit" and workspace.has_changed()) or steps_taken >= actual_max_steps:
+            return None
+
+        # 1. Image paths that are no file (and that reconciliation could not place).
+        if not missing_reported and workspace.__dict__.get("_imported_figures"):
+            missing = (reconcile_image_refs(workspace).get("missing") or [])
+            if missing:
+                missing_reported = True
+                return ("Checking image files…", {"role": "user", "content": (
+                    "IMAGE FILES NOT FOUND — the document references image path(s) that do not exist in the "
+                    f"project: {', '.join(missing[:8])}.\nThey compile only as a grey SAMPLE IMAGE placeholder.\n"
+                    f"Image files that do exist: {', '.join(available_images(workspace)) or '(none)'}.\n"
+                    "Change each reference to one of the existing paths (or import the figure with "
+                    "`import_attachment_figure` and use the path it returns), or remove it. Then set done=true.")})
+
+        # 2. Figures were imported for this document and it shows none of them.
+        if auto_imported and not figure_nudged:
+            from .attachment_tools import _is_referenced
+            buffer_now = workspace.get_buffer()
+            if not any(_is_referenced(r["path"], buffer_now) for r in auto_imported):
+                figure_nudged = True
+                listing = "\n".join(f"  {r['path']} \u2014 {str(r.get('caption') or '')[:120]}" for r in auto_imported)
+                return ("Adding figures from the attached file…", {"role": "user", "content": (
+                    "FIGURES NOT USED — the attached material's figures are in the project, and the document "
+                    f"shows none of them:\n{listing}\n"
+                    "Add the ones that illustrate what you wrote (the architecture figure where the system is "
+                    "explained, a results figure or table beside the results) with \\includegraphics and exactly "
+                    "these paths, using insert_block / replace_text. Then set done=true. If none of them fits "
+                    "the document, set done=true and say so.")})
+
+        # 3. A visual request: measure the page again.
+        still_visible = visual_gate()
+        if still_visible is not None:
+            return ("Checking the rendered page…", still_visible)
+        return None
+
+    if visual_request:
+        yield _phase("checking_layout", "Looking at the rendered page…")
+        look_args = auto_target(workspace, user_instruction)
+        yield {"type": "tool_call", "tool": "view_rendered_pages", "args": look_args}
+        t_look = time.time()
+        look, look_images = look_at_render(look_args)
+        agent_trace.record_tool_call(
+            name="view_rendered_pages", args=look_args,
+            result_summary=json.dumps({k: look.get(k) for k in ("success", "pages", "issue_counts") if k in look},
+                                      default=str),
+            latency_ms=(time.time() - t_look) * 1000, success=bool(look.get("success")))
+        for im in look_images:
+            thumb = thumbnail_data_url(im["data"])
+            if thumb:
+                yield {"type": "page_snapshot", "tool": "view_rendered_pages",
+                       "label": im.get("label") or "", "image": thumb}
+        yield {"type": "tool_result", "tool": "view_rendered_pages", "result": look}
+        if look.get("success"):
+            # The same pages are measured again after the edit, whatever they were found by.
+            visual_target = look_args if look_args.get("node_id") else {"pages": look["pages"]}
+            visual_before = list(look.get("issues") or [])
+            look_json = json.dumps(look, indent=2, ensure_ascii=False)[:_RESULT_CHAR_LIMITS["view_rendered_pages"]]
+            messages.append({"role": "assistant", "content": json.dumps({
+                "thought": "This request is about how the page looks, so I look at the compiled page first.",
+                "tool_call": {"name": "view_rendered_pages", "arguments": look_args}})})
+            messages.append(render_message(
+                f"TOOL RESULT from `view_rendered_pages`:\n{look_json}\n\n"
+                + (f"{len(look_images)} page image(s) accompany this message (if a note below says they were "
+                   "omitted, rely on the measured issues). " if look_images else "")
+                + "This is how the document renders NOW. Make the smallest edit that fixes what the user "
+                  "described — move or resize the element, change the colour, shorten the text — on the source "
+                  "lines shown; do not rewrite the slide or restyle the document. The page is measured again "
+                  "after your edit. Then set done=true.",
+                look_images))
+
     while steps_taken < actual_max_steps and not preflight_fixed:
         if cancel_token and cancel_token.is_cancelled():
             raise LLMOperationCancelled("Agent loop cancelled by user.")
@@ -1945,19 +2245,20 @@ def stream_opencode_agent(
         # simply running out on unverified edits.
         if (mode == "edit" and steps_taken == actual_max_steps and workspace.has_changed()
                 and not compile_verified and messages and messages[-1].get("role") == "user"
-                and _LAST_STEP_NOTE not in str(messages[-1].get("content", ""))):
-            messages[-1] = {**messages[-1], "content": f"{messages[-1].get('content', '')}\n\n{_LAST_STEP_NOTE}"}
+                and _LAST_STEP_NOTE not in _content_text(messages[-1].get("content", ""))):
+            messages[-1] = _map_text(messages[-1], lambda body: f"{body}\n\n{_LAST_STEP_NOTE}")
 
         if messages and messages[-1].get("role") == "user":
             messages[-1] = _with_budget_note(
                 messages[-1], steps_taken, actual_max_steps,
-                can_extend=(mode == "edit" and actual_max_steps < ABSOLUTE_MAX_STEPS))
+                can_extend=(mode == "edit" and actual_max_steps < ABSOLUTE_MAX_STEPS),
+                state=_imported_figures_note(workspace))
 
         # Compact older conversation history to keep network payload lightweight and fast
         compact_messages = _compact_conversation_history(messages)
 
-        raw_chars = sum(len(m.get("content", "")) for m in messages)
-        compact_chars = sum(len(m.get("content", "")) for m in compact_messages)
+        raw_chars = sum(len(_content_text(m.get("content", ""))) for m in messages)
+        compact_chars = sum(len(_content_text(m.get("content", ""))) for m in compact_messages)
         agent_trace.record_step_tokens(
             step=steps_taken,
             raw_chars=raw_chars,
@@ -2244,6 +2545,13 @@ def stream_opencode_agent(
                     agent_explanation = parsed.get("explanation", thought or "")
                     break
 
+            more = after_done()
+            if more is not None:
+                yield _phase("checking_layout", more[0])
+                messages.append({"role": "assistant", "content": content})
+                messages.append(more[1])
+                continue
+
             agent_explanation = parsed.get("explanation", thought or "Edit completed.")
             break
 
@@ -2261,6 +2569,7 @@ def stream_opencode_agent(
 
         if calls:
             tool_results_list = []
+            step_images: List[Dict[str, Any]] = []
             names = {canonical_tool_name(str(c.get("name", ""))) for c in calls}
             if names & EDIT_TOOLS:
                 yield _phase("finding_target", "Finding target…")
@@ -2311,6 +2620,20 @@ def stream_opencode_agent(
                         tool_result.pop("failing_errors", None)
                 t_tool_ms = (time.time() - t_tool_start) * 1000
 
+                # Images are for the model only. They leave the result here, before the
+                # progress feed, the trace or the JSON observation can serialise megabytes.
+                tool_images = tool_result.pop("_images", None) if isinstance(tool_result, dict) else None
+                if tool_images:
+                    room = max(0, MAX_STEP_IMAGES - len(step_images))
+                    step_images.extend(tool_images[:room])
+                    tool_result["images_attached"] = min(len(tool_images), room)
+                    from .visual_tools import thumbnail_data_url
+                    for im in tool_images[:room]:
+                        thumb = thumbnail_data_url(im["data"])
+                        if thumb:
+                            yield {"type": "page_snapshot", "tool": tool_name,
+                                   "label": im.get("label") or "", "image": thumb}
+
                 is_success = bool(tool_result.get("success", True) if isinstance(tool_result, dict) else True)
                 if isinstance(tool_result, dict) and tool_result.get("error") and "success" not in tool_result:
                     is_success = False
@@ -2334,6 +2657,13 @@ def stream_opencode_agent(
                 )
                 if tool_name in EDIT_TOOLS and is_success:
                     compile_verified = False  # a new edit needs a new compile
+                    # An image path typed from memory instead of copied from the import
+                    # compiles (the compiler draws a placeholder), so nothing else catches it.
+                    path_fixes = reconcile_image_refs(workspace).get("fixed") or []
+                    if path_fixes and isinstance(tool_result, dict):
+                        tool_result["image_paths_corrected"] = path_fixes
+                        tool_result["note"] = ("Image path(s) corrected to the files that exist in the project: "
+                                               + "; ".join(f"{f['from']} -> {f['to']}" for f in path_fixes))
                 if tool_name in EDIT_TOOLS and not is_success:
                     key = f"{tool_name}:{tool_args.get('node_id') or tool_args.get('chunk_id') or str(tool_args.get('old_str', ''))[:60]}"
                     target_failures[key] = target_failures.get(key, 0) + 1
@@ -2435,9 +2765,21 @@ def stream_opencode_agent(
                             "passed": True,
                             "message": cov_report.feedback_message,
                         }
+                        more = after_done()
+                        if more is not None:
+                            yield _phase("checking_layout", more[0])
+                            messages.append({"role": "assistant", "content": content})
+                            messages.append(more[1])
+                            continue
                         agent_explanation = parsed.get("explanation", thought or "Edit completed.")
                         break
                 else:
+                    more = after_done()
+                    if more is not None:
+                        yield _phase("checking_layout", more[0])
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append(more[1])
+                        continue
                     agent_explanation = parsed.get("explanation", thought or "Edit completed.")
                     break
 
@@ -2448,8 +2790,9 @@ def stream_opencode_agent(
             if len(tool_results_list) == 1:
                 tool_name, tool_args, tool_result = tool_results_list[0]
                 result_str = json.dumps(tool_result, indent=2, ensure_ascii=False)
-                if len(result_str) > 4000:
-                    result_str = result_str[:4000] + "\n... (truncated)"
+                result_limit = _RESULT_CHAR_LIMITS.get(tool_name, 4000)
+                if len(result_str) > result_limit:
+                    result_str = result_str[:result_limit] + "\n... (truncated)"
 
                 # Tailor follow-up instruction based on the tool that just executed
                 if tool_name == "rewrite_chunk":
@@ -2521,6 +2864,31 @@ def stream_opencode_agent(
                             "inside a table row. Use `replace_text` with `old_str` copied from the lines shown, "
                             "then set done=true (the fix is compiled automatically)."
                         )
+                elif tool_name == "view_rendered_pages":
+                    if tool_result.get("success"):
+                        seen = (f"{tool_result.get('images_attached', 0)} page image(s) accompany this message "
+                                "(if a note below says they were omitted, rely on the measured issues). "
+                                if tool_result.get("images_attached") else "")
+                        followup_msg = (
+                            f"TOOL RESULT from `view_rendered_pages`:\n{result_str}\n\n{seen}"
+                            "If something is wrong, fix it with edits to the source lines shown (move or resize the "
+                            "element, change the colour, shorten the text), then call `view_rendered_pages` once more "
+                            "on the same target to confirm before done=true. Do not shrink the whole document's font "
+                            "or margins to fix one element. If nothing is wrong, say so and finish with done=true."
+                        )
+                    else:
+                        followup_msg = (
+                            f"TOOL RESULT from `view_rendered_pages`:\n{result_str}\n\n"
+                            "The page could not be rendered. If the document does not compile, fix that first; "
+                            "otherwise retry with pages=<number>."
+                        )
+                elif tool_name == "import_attachment_figure" and tool_result.get("success"):
+                    followup_msg = (
+                        f"TOOL RESULT from `import_attachment_figure`:\n{result_str}\n\n"
+                        "The figure is saved in the project. Place the returned `latex` in the slide or section that "
+                        "discusses it (insert_block / replace_text), referencing exactly the returned path. "
+                        "Then continue, or set done=true when everything requested is in place."
+                    )
                 elif tool_name == "search_uploaded_references":
                     followup_msg = (
                         f"TOOL RESULT from `search_uploaded_references`:\n{result_str}\n\n"
@@ -2536,8 +2904,9 @@ def stream_opencode_agent(
                 results_summary = []
                 for t_name, t_args, t_res in tool_results_list:
                     res_json = json.dumps(t_res, ensure_ascii=False)
-                    if len(res_json) > 150:
-                        res_json = res_json[:150] + "..."
+                    batch_limit = _BATCH_RESULT_CHAR_LIMITS.get(t_name, 150)
+                    if len(res_json) > batch_limit:
+                        res_json = res_json[:batch_limit] + "..."
                     results_summary.append(f"- `{t_name}`({json.dumps(t_args, ensure_ascii=False)}): {res_json}")
 
                 touched = workspace.get_touched_chunks()
@@ -2556,9 +2925,14 @@ def stream_opencode_agent(
                         + "\n\nAll batched edits have been applied to the shadow buffer! If all changes are complete, set done=true with your final explanation."
                     )
 
+            if step_images:
+                followup_content: Any = [text_part(followup_msg)] + [
+                    image_part(im["data"], im.get("mime") or "image/png") for im in step_images]
+            else:
+                followup_content = followup_msg
             messages.append({
                 "role": "user",
-                "content": followup_msg,
+                "content": followup_content,
             })
             continue
 
@@ -2795,6 +3169,41 @@ def stream_opencode_agent(
         status = _compile_status_note(last_compile, compile_available, compile_verified)
         if status:
             agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + status
+        # …and, for a request about how the page looks, what the page measures now.
+        if (visual_request or creation_check) and visual_target:
+            try:
+                final_look, _ = look_at_render(visual_target)
+            except Exception as look_err:  # noqa: BLE001 — a status line must not fail the run
+                logger.warning(f"Final render check failed: {look_err}")
+                final_look = {}
+            note = _render_status_note(visual_before, final_look)
+            if note:
+                agent_explanation = (agent_explanation.rstrip() + "\n" + note) if agent_explanation else note
+
+    # 4c. Figures imported from attachments are real files in the project. Keep the
+    # ones the delivered document references; a rolled-back run keeps none. Paths are
+    # reconciled first: a figure must never be deleted because its path was mistyped.
+    from .attachment_tools import cleanup_imported_assets
+    kept_assets: List[str] = []
+    missing_images: List[str] = []
+    try:
+        if not failure_payload and workspace.__dict__.get("_imported_figures"):
+            missing_images = reconcile_image_refs(workspace).get("missing") or []
+        kept_assets = cleanup_imported_assets(
+            workspace,
+            None if failure_payload else [workspace.get_buffer()] + list(workspace._aux_files.values()))
+    except Exception as asset_err:  # noqa: BLE001 — never lose the run over a stray file
+        logger.warning(f"Could not clean up imported assets: {asset_err}")
+    if not failure_payload and mode == "edit" and workspace.has_changed():
+        figure_notes = []
+        if kept_assets:
+            figure_notes.append(f"Figures added to the project from the attached file(s): {', '.join(kept_assets)}.")
+        if missing_images:
+            figure_notes.append(
+                f"\u26a0 {len(missing_images)} image reference(s) point to files that do not exist and will show as "
+                f"a SAMPLE IMAGE placeholder: {', '.join(missing_images[:6])}.")
+        if figure_notes:
+            agent_explanation = ((agent_explanation.rstrip() + "\n") if agent_explanation else "") + "\n".join(figure_notes)
 
     # 5. Compute and yield diff & emit trace
     elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2871,6 +3280,7 @@ def stream_opencode_agent(
                     file_path=file_path,
                     explanation=rejection_msg,
                 )
+                cleanup_imported_assets(workspace, None)
                 return
 
         agent_trace.validation_result = {"valid": True}
@@ -2957,6 +3367,7 @@ def stream_opencode_agent(
                 "elapsed_ms": elapsed_ms,
                 "trace": trace_summary,
                 "modified_files": all_modified,
+                "imported_assets": kept_assets,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
                 "is_fallback": had_fallback,
                 "model_used": fallback_model_name if had_fallback else model,

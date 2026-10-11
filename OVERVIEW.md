@@ -69,12 +69,17 @@ pytest tests/test_tex_diagnostics.py -v         # TeX errors on their true lines
 pytest tests/test_ampersand_repair.py -v        # `&` legality by structure, aligned, lone-backslash rows, column widening; every template untouched
 pytest tests/test_collab_sync.py -v             # realtime rooms: CRDT merge, late joiners, restart, persistence
 pytest tests/test_collab_auth.py -v             # realtime auth: tickets, roles, handshake, revocation, origins
+pytest tests/test_attachments.py -v             # chat attachments: five-file cap, disk copy, per-user sessions, upload endpoints
+pytest tests/test_attachment_figures.py -v      # figures of an attached PDF: found by caption, rendered, imported, cleaned up
+pytest tests/test_visual_tools.py -v            # view_rendered_pages: page lookup, overlap / contrast / off-page, images in the loop, look-first
+pytest tests/test_diff_hunks.py -v              # review hunks: structurally closed, any subset valid, whole-document rewrites
 ```
 
 ### Realtime Collaboration Client Checks (Node, no test runner added)
 ```bash
-# Yjs <-> Monaco binding (loop safety, convergence, per-user undo, cursors)
-# and the AI-apply line diff. Bundled with the esbuild already in node_modules.
+# Yjs <-> Monaco binding (loop safety, convergence, per-user undo, cursors),
+# the AI-apply line diff, and the inline review's block logic (lib/inline-diff.ts).
+# Bundled with the esbuild already in node_modules.
 bash scripts/run-collab-tests.sh
 ```
 
@@ -118,6 +123,9 @@ bash deploy.sh
      - [S. Target Resolution, Targeted Context & Transactional Edits](#s-target-resolution-targeted-context--transactional-edits)
      - [T. Provider Fallback Chain & Key Health](#t-provider-fallback-chain--key-health)
      - [U. Realtime Collaborative Editing (Yjs CRDT over WebSocket)](#u-realtime-collaborative-editing-yjs-crdt-over-websocket)
+     - [V. Chat Attachments & Figures From Attached Papers](#v-chat-attachments--figures-from-attached-papers)
+     - [W. Looking at the Render (`view_rendered_pages`)](#w-looking-at-the-render-view_rendered_pages)
+     - [X. Inline Review of AI Changes](#x-inline-review-of-ai-changes)
 2. [Complete Repository & File Structure (As-Is Verbatim)](#2-complete-repository--file-structure-as-is-verbatim)
    - [Root Configuration & Deployment Files](#root-configuration--deployment-files)
    - [Frontend Application (`app/`)](#frontend-application-app)
@@ -172,6 +180,9 @@ bash deploy.sh
    - [Feature 32: Mobile Touch Editing, Find & Replace & the Dual-Editor Resolver](#feature-32-mobile-touch-editing-find--replace--the-dual-editor-resolver)
    - [Feature 33: Realtime Collaborative Editing, Presence & Remote Cursors](#feature-33-realtime-collaborative-editing-presence--remote-cursors)
    - [Feature 34: Render-Aware Layout Repair (`justify_content`)](#feature-34-render-aware-layout-repair-justify_content)
+   - [Feature 35: Chat Attachments (up to five) & Figure Import](#feature-35-chat-attachments-up-to-five--figure-import)
+   - [Feature 36: `view_rendered_pages` & the Look-First Visual Loop](#feature-36-view_rendered_pages--the-look-first-visual-loop)
+   - [Feature 37: Inline Review — Accept / Reject per Change](#feature-37-inline-review--accept--reject-per-change)
 4. [Deployment, Infrastructure & Environment Configuration](#4-deployment-infrastructure--environment-configuration)
 
 ---
@@ -246,7 +257,9 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
    - `read_attached_document`: Extracts content from uploaded reference papers/PDFs stored in the multi-turn session cache.
    - `search_uploaded_references`: Searches user-attached documents for specific technical terminology, equations, and tables.
    - `convert_attached_pdf`: Starts a PDF → LaTeX import job for a PDF attached in chat; the agent then finishes without editing and the UI shows the job's progress and similarity report.
-4. **SSE Event Streaming**: Streams real-time reasoning (`thought`, `tool_call`, `tool_result`, `phase`, `compile_error`, `coverage_check`, `final_diff`, `pdf_conversion`, `result`) to [`components/editor/AgentReasoningWindow.tsx`](file:///home/abin/overbranch/components/editor/AgentReasoningWindow.tsx) and [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx).
+   - `list_attachment_figures` / `import_attachment_figure`: the figures (diagrams, charts, photographs) of the files attached to the chat, and a copy of one into the project's `assets/` with the LaTeX to place it (see [V](#v-chat-attachments--figures-from-attached-papers)).
+   - `view_rendered_pages`: compiles, renders the page(s) a block / phrase / page number is on, and returns the page image with **measured** visual defects — overlapping text, text crossing an image, content off the page, low contrast, overflow — each mapped to its source lines (see [W](#w-looking-at-the-render-view_rendered_pages)).
+4. **SSE Event Streaming**: Streams real-time reasoning (`thought`, `tool_call`, `tool_result`, `phase`, `compile_error`, `coverage_check`, `page_snapshot`, `final_diff`, `pdf_conversion`, `result`) to [`components/editor/AgentReasoningWindow.tsx`](file:///home/abin/overbranch/components/editor/AgentReasoningWindow.tsx) and [`components/editor/InlineDiffEditor.tsx`](file:///home/abin/overbranch/components/editor/InlineDiffEditor.tsx).
 
 #### B. Automated LaTeX Error Diagnostics & Deterministic Auto-Healing
 1. **Log Parsing**: [`backend/latex_error_fixer.py`](file:///home/abin/overbranch/backend/latex_error_fixer.py) parses raw LaTeX compiler error logs (`! LaTeX Error: ...`, `l.<line>`) into structured `ParsedLatexError` diagnostics containing file names, line numbers, error categories, and contextual code snippets.
@@ -272,9 +285,10 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 3. **Preservation Mapping**: Identifies sacred front-matter (Title Page, Certificate, Acknowledgement, Abstract, Table of Contents, Slide 1 Title Slide) to ensure the AI never modifies or destroys them during document overhauls.
 
 #### D. Multi-Turn Attached Context Session Store
-1. **In-Memory TTL Store**: [`backend/attached_context.py`](file:///home/abin/overbranch/backend/attached_context.py) provides a thread-safe, 2-hour TTL cache for uploaded reference documents (PDFs, papers, benchmarks).
-2. **Page-by-Page PDF Extraction**: Uses PyMuPDF (`fitz`) or `pypdf` to extract plain text and structural page maps up to 60,000 characters without crashing memory.
-3. **Multi-Turn Retention**: Keeps uploaded context alive across follow-up chat messages so users do not have to re-upload files when asking subsequent questions.
+1. **Up to five files per chat** ([`backend/attached_context.py`](file:///home/abin/overbranch/backend/attached_context.py)): PDFs, images and text, `AGENT_ATTACH_MAX_FILES` (5) per session and `AGENT_ATTACH_MAX_MB` (25) each; re-uploading a filename replaces it. The kind is read from the **bytes** (`sniff_kind`), so a renamed file keeps its real type.
+2. **Text in memory, bytes on disk**: extracted text and page maps (PyMuPDF, `pypdf` fallback) are cached with a 2-hour TTL; the uploaded bytes go to `AGENT_ATTACH_DIR/<session hash>/` and a session this process has not seen is rebuilt from them. The server recycles its worker regularly (`--limit-max-requests`), and an in-memory-only store lost every attachment mid-conversation when it did.
+3. **Multi-Turn Retention**: attachments stay for follow-up messages until removed or the chat is cleared.
+4. **Figures, upload endpoints and the session key**: see [V](#v-chat-attachments--figures-from-attached-papers).
 
 #### E. Smart Context Strategy & Model Context Window Management
 1. **Strategy Selection**: [`backend/context_strategy.py`](file:///home/abin/overbranch/backend/context_strategy.py) chooses between 4 context delivery strategies based on document scale and model token capacity:
@@ -420,6 +434,36 @@ Full architecture and rationale: [`COLLABORATION.md`](file:///home/abin/overbran
 12. **Scaling caveat**: rooms are per-process, so `entrypoint.sh` and `Dockerfile.backend` pin the backend to **one worker** while collaboration is on (`COLLAB_ENABLED=0` or `COLLAB_MULTI_WORKER=1` opt out, and `warn_if_multi_worker()` logs loudly). A websocket holds a `--limit-concurrency` slot and one `--limit-max-requests` request for its whole life, so both limits were raised.
 13. **Structured logs** ([`collab/events.py`](file:///home/abin/overbranch/backend/collab/events.py), [`lib/collab/log.ts`](file:///home/abin/overbranch/lib/collab/log.ts)): `COLLAB_CONNECT/DISCONNECT/JOIN/LEAVE/SYNC/PERSIST/RECONNECT/AUTH_FAILURE/CONFLICT/ROOM_OPEN/ROOM_CLOSE/FILE_LOAD/EXTERNAL_CHANGE/AWARENESS/UPDATE/ERROR`. Per-message events are DEBUG unless `COLLAB_DEBUG=1` so cursor traffic cannot flood production; no event carries document text or a token.
 
+#### V. Chat Attachments & Figures From Attached Papers
+1. **Uploaded once, not sent with every message.** The editor used to hold **one** attachment as a base64 string, send it inside every agent request and mirror it into `localStorage`. The agent route caps its JSON body at 10 MB and `localStorage` at ~5 MB, so a real paper returned 413 or silently lost its persistence. Files now go, one per request, to `POST /api/agent/attachments` (multipart); the agent request carries no file at all and reads the chat's session ([`components/editor/useChatAttachments.ts`](file:///home/abin/overbranch/components/editor/useChatAttachments.ts), [`ChatAttachments.tsx`](file:///home/abin/overbranch/components/editor/ChatAttachments.tsx)). Only metadata is kept in the browser, and the server's list is re-read on mount — the server holds the bytes and expires them, so it is the source of truth.
+2. **The session key is derived on the server** (`attachment_session_key(project_id, user_id)`). It used to be whatever `session_id` the client sent — in practice the project id — so one collaborator's attachments were readable by anyone who could name the project.
+3. **A figure is found by its caption** ([`backend/attachment_figures.py`](file:///home/abin/overbranch/backend/attachment_figures.py)). A page's graphics are embedded images plus vector paths, and neither says "I am Figure 2": a diagram is often several images and dozens of paths, a logo or a table rule is none. Each caption line (`Fig. 2. …`, `Figure 2: …`) is paired with the graphic region directly above it (below, for caption-on-top styles) in the same column; `Fig. 3 shows …` opening a paragraph is a reference, not a caption. Large uncaptioned graphics are still listed; rules, logos and table frames are not.
+4. **The region is rendered, not extracted.** Pulling the embedded image out by xref loses everything drawn over it — the labels of a block diagram are text, the arrows are paths. The clip of the page is rendered at 200 DPI instead, grown over the text that belongs to the graphic (tick labels, axis titles). What stops that growth swallowing the neighbouring column of a two-column paper: a label sits in a short text block of its own, inside the band the graphic and its caption span.
+5. **The figures are in the project before the model's first turn** (`attachment_tools.auto_import_figures`). For a document being *built from* the attached material — a creation request, a rewrite or expansion, or any request that names figures — the captioned figures (up to `AGENT_ATTACH_AUTO_FIGURES`, 6) and a few compact tables (`AGENT_ATTACH_AUTO_TABLES`, 2) are imported up front and the first message lists them under **FIGURES ALREADY IN THE PROJECT** with the form to place them in. Listing the figures and describing an import tool was not enough: the configured model wrote whole decks from a paper without importing one. An ordinary edit with a paper attached imports nothing; the figures are still listed and `import_attachment_figure` adds one on request, through `project_storage.save_project_asset_bytes` — the path a user upload takes — never overwriting a different file.
+6. **An import is a real file, so the run owns it**: imports the delivered document does not use are deleted at the end of the run, and all of them when the run is rolled back. "Uses" is judged by **file name**, not by exact path (`_is_referenced`) — with or without the extension, through a `\graphicspath` — and only after the paths have been reconciled (9): a figure the document shows must never be deleted over how its path was spelled. `result.imported_assets` makes the editor refresh its file tree, and the explanation names the files that were added.
+7. **One preview budget for all attachments**: 40 K characters *each* for five papers is ~50 K tokens in a message re-sent every step; the previews share `AGENT_ATTACH_PREVIEW_CHARS` (48 K), and the rest is read with `read_attached_document` / `search_uploaded_references`.
+8. **A table is not a figure, but it is listed.** Publishers often typeset table bodies as vector outlines — in the paper this was tested on, every one of nine tables was, and its text cannot be extracted at all — so the region under a `TABLE 2.` caption looks exactly like a diagram and was being reported as an anonymous "Figure on page 7". Table captions are paired too (a table's caption sits *above* it, a figure's below), the item is `kind: table` with id `p7-t1` and its own caption, and its image is often the only form the numbers survive in. A caption needs its separator (`Fig. 2.` / `Figure 2:` / `TABLE II.`): "Table 1 summarizes …" and "Figure 3 visualizes …" open paragraphs that *refer* to one.
+9. **A path typed from memory is corrected** ([`backend/opencode/image_refs.py`](file:///home/abin/overbranch/backend/opencode/image_refs.py)). The reported failure, traced on a real run: two figures were imported as `assets/system-architecture.png` and `assets/detection-performance.png`; two failed edits and an outline read later the import result had been compacted out of the conversation, and the model wrote `assets/fig2-system-architecture.png` and `assets/fig10-detection-performance.png`. **Nothing downstream notices**: `compiler.ensure_sample_images_exist` deliberately draws a "SAMPLE IMAGE" placeholder for a missing image so templates with absent artwork still build, which means the compile gate passes; the cleanup then deleted the two real files as unused. The user got grey boxes and an empty `assets/`. Three changes, each sufficient on its own: the saved paths are restated on **every** turn next to the step budget (`_imported_figures_note`) and survive compaction of batched results; after every edit of a run that imported figures, a new `\includegraphics` path that resolves to no file is matched to the imported files by the words of its name (label tokens such as `fig2` / `p5` ignored, a clear lead over the runner-up required, never "the only one left") and rewritten through the write gate; what cannot be matched goes back to the model once (`IMAGE FILES NOT FOUND`, with the files that do exist) and, if still there, into the explanation. Only runs that imported something are checked, and only references the run introduced — a template's placeholder artwork is not this check's business.
+10. **A deck that shows none of the figures is asked once to add them** (`FIGURES NOT USED`), with the list and the slides they belong on; "none of them fits" is an accepted answer.
+
+#### W. Looking at the Render (`view_rendered_pages`)
+1. **Why a tool has to look.** "The title is on top of the picture", "I can't read this text", "it looks broken" are statements about a rendered page. The source of an overlapping title and of a well-placed one differ by a length somewhere, and nothing in the source says which.
+2. **Two outputs, because one of them depends on the provider** ([`backend/opencode/visual_tools.py`](file:///home/abin/overbranch/backend/opencode/visual_tools.py), [`backend/latex_layout/visual.py`](file:///home/abin/overbranch/backend/latex_layout/visual.py)): the **page image**, for a model that can see, and a **measured report** of the same render — `TEXT_OVERLAP` (two words printed over each other; faked-bold overprints excluded), `ELEMENT_OVERLAP` (text *crossing the edge* of an image — text lying entirely on one is a caption on a background, which is a design), `OFF_PAGE`, `LOW_CONTRAST` (the text colour against the pixels actually behind it, WCAG ratio), plus everything `justify_content` already measures — each mapped to the exact source lines, including the second party of an overlap. **The configured Gemini Web2API gateway returns an empty response to any image input** (checked with a 300×120 px PNG and JPEG on two models), so on this deployment the measured report is what the model works from; the provider retries text-only and remembers it per endpoint.
+3. **Finding the page**: by page number, by a phrase printed on it, or by a block (`frame:results`, "slide 3") whose visible text is matched against each page's text — phrases first, then the share of the block's words a page carries, since a slide of three-word bullets has no long phrase to find. With no target the tool goes to the pages where it measures defects.
+4. **Looking is not left to the model.** Asked to "check how the Results slide renders and fix what is wrong", the configured model rewrote the slide from the source it could see instead of calling the tool (observed on a real deck, twice). So for a request about appearance (`is_visual_request`) the loop takes the look itself, before the first LLM call, and enters it into the conversation as the tool call it is; after the edits compile it **measures the same page again** (`visual_gate`), hands anything still measured back to the model for `AGENT_VISUAL_REPAIR_ROUNDS` (1) more round, and ends the explanation with what the page measures now — "✓ Render check, page 2: no overlap … (2 measured before the edit)" or the issues that remain. On the same deck the run went from a rewritten slide to a handful of changed lines.
+5. **Images in the loop**: a tool result may carry `_images`; they are taken off the result before the progress feed, the trace or the JSON observation can serialise them, and ride on that step's follow-up message only (`_compact_conversation_history` keeps images on the newest message alone). `ProviderRouter` removes image parts for a provider that does not declare `supports_images`, and a message that lost its images **says so** — the text around them was written for a reader who could see. The reasoning window shows a small thumbnail of what the agent looked at (`page_snapshot`).
+6. **The tool only looks.** Unlike `justify_content` there is no closed set of safe fixes for "these overlap" — moving the title, scaling the image and recolouring the text are all valid for different content — so the fix is the model's edit, through the same write gate and compile gate as any other.
+7. **Page furniture is not the author's content** (`issues.page_furniture`, `visual._running_lines`). A Beamer page number sits in the footline right of `\textwidth`; a footline's author / title / date print below `\textheight`; a theme's frame rules span the slide; a navigation bar dims the sections you are not in. Judged as content, every slide of such a deck "runs past the right margin", "prints below the text area", holds "a table wider than the page" and has "low-contrast text". Running lines are recognised by **recurrence** — a short line in the top or bottom band at the same height on ≥ 30 % of the pages, numbers aside and regardless of x (a right-aligned `9 / 13` and `10 / 13` start at different places) — and rule groups a theme redraws at the same place are recognised the same way. Measured over the bundled presentation templates this removed every report on two of them and most on the rest (Sorbonne 9 → 0, Basic 4 → 0, UWM 12 → 4, Nordlight 15 → 6); it also applies to `justify_content`, which scores pages with the same detector.
+8. **What may be acted on without being asked** (`visual_tools.is_unambiguous`). The remaining width, table-cell and contrast reports on those templates are measurements of designs, not defects — a CV's column layout, a theme's coloured header. Text or an image **physically past the edge of the paper**, and things **printed over each other**, raise *no* report on any of the 29 bundled templates. So a request about appearance gets every measurement, and a **newly created document** is checked once for those unambiguous classes only (`view_rendered_pages(scan="document", unambiguous_only=…)`): anything found goes back to the model for one round, and the explanation ends "✓ Render check: nothing is cut off at the page edge and nothing overlaps on any of the 12 page(s)." or with what remains. The case that prompted it: a generated title slide whose title, subtitle and authors ran off the right edge of the slide, compiled cleanly.
+
+#### X. Inline Review of AI Changes
+1. **Where the change would land** ([`lib/inline-diff-monaco.ts`](file:///home/abin/overbranch/lib/inline-diff-monaco.ts), [`lib/inline-diff.ts`](file:///home/abin/overbranch/lib/inline-diff.ts)): removed lines get a red background, added lines appear beneath them in a green block, and each change has its own Accept / Reject; a bar gives the count, previous / next and Accept all / Reject all.
+2. **The document is not touched until a change is accepted.** The removed lines are the document's own lines, decorated; the added lines live in Monaco view zones, which are not part of the model. Applying the proposal first and reverting on Reject would push unaccepted AI text through autosave, the compiler and — in a shared project — the CRDT to every collaborator.
+3. **The unit of accept/reject is a structurally closed block, not a line.** A `\begin{itemize}` added on one line and its `\end{itemize}` ten lines below are one block, because accepting the first and rejecting the second leaves a document that does not compile. The blocks are the backend's `hunks` (`diff_generator.compute_review_hunks`, apply contract v4): line references into `original_code` / `proposed_code`, present even when `edits` has collapsed to one whole-document item, so a full rewrite is still reviewable block by block. Inside a block only the lines that really changed are coloured.
+4. **Each block is anchored by a tracked decoration, not a line number**, so typing during a review, collaborators' edits and accepting other blocks all leave every block where it now belongs. A block whose lines the user edits no longer applies cleanly and is withdrawn (counted as "not shown") rather than drawn over text it does not match.
+5. **Accepting is an ordinary edit** (`executeEdits`, one undo stop) — the path typing takes, so it becomes CRDT operations and Ctrl+Z undoes it. One history entry per proposal, so Revert restores the document from before the first accepted change. The document is compiled once, when no block is pending.
+6. **"Accept all" with nothing decided still writes `proposed_code` verbatim** (the validated, compiled buffer); part-way through a review it applies only what is pending — replaying every item on a document that already holds some of them would apply those twice.
+
 ---
 
 # 2. Complete Repository & File Structure (As-Is Verbatim)
@@ -495,27 +539,30 @@ overbranch/
 │   │   └── tickets.py                          # One-time HMAC websocket admission tickets (identity only)
 │   ├── opencode/                               # OpenCode Bounded ReAct Agentic Pipeline
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, phase events, self-validating LaTeX-in-JSON parser
+│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, figure inventory & shared attachment preview budget, images on tool results, look-first visual preflight + render check, phase events, self-validating LaTeX-in-JSON parser
 │   │   ├── apply_edits.py                      # Server-side all-or-nothing placement of edits the editor could not place (resolve-edits); whole-document items only over the unchanged original
+│   │   ├── attachment_tools.py                 # list_attachment_figures / import_attachment_figure; up-front import for documents built from attachments; removes imports the delivered document does not use (by file name)
 │   │   ├── context_builder.py                  # Levels 1-5 targeted context, node outline, request→node matching, ContextLedger
-│   │   ├── diff_generator.py                   # Unified/split diffs + apply-contract v3 edit items (unique, structurally-closed, node-annotated)
-│   │   ├── edit_guard.py                       # Scoped healing (edited lines only) & duplicate-block guard
+│   │   ├── diff_generator.py                   # Unified/split diffs + apply-contract v3 edit items (unique, structurally-closed, node-annotated) + v4 review hunks (compute_review_hunks)
+│   │   ├── edit_guard.py                       # Scoped healing (edited lines only; a preamble line the original already lacked is not added by an unrelated edit) & duplicate-block guard
+│   │   ├── image_refs.py                       # \includegraphics paths that resolve to no file: matched to this run's imported figures by name and corrected, else reported
 │   │   ├── layout_tools.py                     # detect_overflow / inspect_pdf_geometry / justify_content; the render→measure→repair→verify loop, per-defect rollback, stale-version guard
 │   │   ├── locator.py                          # Target resolution: node → exact → normalized → fuzzy (structure-guarded), with recorded attempts
 │   │   ├── shadow_compiler.py                  # Truthful compile verdict: located errors from the compiler's diagnostics (one per occurrence), explicit infra markers, (file, message, source line) multiset differential, strict fix mode, timeout retry, real main.tex for non-main files, failing_errors / pdf_produced; pre_heal=False so error lines match the buffer
 │   │   ├── shadow_workspace.py                 # In-memory buffer: locator-based edits, node ops, transactions, scoped heal; line-number-prefix & trailing-newline hygiene, auto_repairs reported
 │   │   ├── template_registry.py                # Template/theme registry (Regalia, Nordlight, Prism, IEEE, ACM)
-│   │   └── tools.py                            # Tool definitions & dispatcher (replace_text, replace_block, insert_block, compile_latex, …; old names aliased)
+│   │   ├── visual_tools.py                     # view_rendered_pages: page lookup from a block/phrase, render + measured report, visual-request detection & auto target
+│   │   └── tools.py                            # Tool definitions & dispatcher (replace_text, replace_block, insert_block, compile_latex, view_rendered_pages, list/import_attachment_figure, …; old names aliased)
 │   ├── providers/                              # Multi-Provider LLM Gateway
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── base_provider.py                    # Abstract LLMProvider interface; LLMProviderError carries a FailureKind
 │   │   ├── errors.py                           # Failure classification (rate_limit/quota/auth/timeout/…) & which kinds fall back
-│   │   ├── gemini_provider.py                  # Google Gemini adapter (Gemini 3.7 Flash, 2.5 Pro, 2.0 Flash)
+│   │   ├── gemini_provider.py                  # Google Gemini adapter (default Gemini 3.5 Flash Thinking; image input with a text-only retry remembered per endpoint)
 │   │   ├── groq_provider.py                    # High-speed Groq inference adapter (LLaMA 3.3 70B, 3.1 8B, Mixtral)
 │   │   ├── key_pool.py                         # Sticky, health-tracked key rotation with per-failure cooldowns
-│   │   ├── multimodal.py                       # OpenAI-style image content parts (build, detect, strip for text-only gateways)
+│   │   ├── multimodal.py                       # OpenAI-style image content parts (build, detect, strip — with a note to the model that images were omitted)
 │   │   ├── openrouter_provider.py              # OpenRouter adapter (MiniMax M3 fallback) over a 5-key KeyPool; returns key_id, never keys
-│   │   ├── router.py                           # ProviderRouter: routing + LLM_FALLBACK_CHAIN walk on provider failures, attempt observer
+│   │   ├── router.py                           # ProviderRouter: routing + LLM_FALLBACK_CHAIN walk on provider failures, attempt observer, image parts removed for providers without `supports_images`; DEFAULT_MODEL (gemini-3.5-flash-thinking)
 │   │   └── web2api_keys.py                     # GEMINI_WEB2API_* base URL & rotating key loader used by GeminiProvider
 │   ├── pdf2latex/                              # Per-page PDF → LaTeX importer (uses the copilot's LLM)
 │   │   ├── __init__.py                         # Package exports
@@ -536,7 +583,7 @@ overbranch/
 │   │   └── verify.py                           # pdftoppm render, shift-aligned SSIM, regions, word coverage & word displacement
 │   ├── routes/                                 # Modular FastAPI API Routers
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_routes.py                     # OpenCode SSE stream (POST /api/agent/opencode), abort, validate-latex & resolve-edits
+│   │   ├── agent_routes.py                     # OpenCode SSE stream (POST /api/agent/opencode), abort, validate-latex, resolve-edits & chat attachments (POST/GET/DELETE /api/agent/attachments, server-derived session key)
 │   │   ├── collab_routes.py                    # WS /ws/collab/{project_id}, POST /api/collab/ticket & /api/collab/presence, config & room introspection
 │   │   └── pdf_convert.py                      # PDF import jobs (POST/GET /api/convert/pdf…), previews, guest session & migration
 │   ├── services/                               # Business Logic & Support Services
@@ -585,15 +632,20 @@ overbranch/
 │   │   ├── justify.py                          # fit_fragment ladder; TeX-measured widths & page geometry (\settowidth / \textwidth probes)
 │   │   ├── repair.py                           # Closed set of minimal repairs per defect; text-preservation & no-shrink guards
 │   │   ├── vision.py                           # Optional advisory vision pass on pages geometry could not explain (JUSTIFY_VISION=1)
+│   │   ├── visual.py                           # Measured visual defects of a rendered page: text overlap, text crossing an image, off-page content, low contrast
 │   │   ├── metrics.py                          # String widths from the TeX font files (kpsewhich), latex_to_plain
 │   │   └── overflow.py                         # Overfull boxes, past-the-text-area and off-page detection
 │   ├── tests/                                  # Pytest suite (no network; TeX-dependent tests skip without pdflatex)
-│   │   ├── conftest.py                         # ScriptedLLM stub for provider_router.chat, stub shadow compiler, run_agent helpers
+│   │   ├── conftest.py                         # ScriptedLLM stub for provider_router.chat, stub shadow compiler, run_agent helpers; attachment store isolated to a temp folder per test
+│   │   ├── attachment_fixtures.py              # A two-column "paper" page (raster figure, vector diagram, chart with outside labels, logo, table), multi-page text PDF, PNG
 │   │   ├── pdf2latex_fixtures.py               # IRCTC-like ticket PDF (Carlito, bold labels, right edge, long IDs), synthetic bold
 │   │   ├── test_agent_json_latex.py            # LaTeX inside agent JSON: escaped / raw / mixed replies, &, \n, \\\hline, prompt rule
 │   │   ├── test_agent_compile_outcomes.py      # Budget exhaustion compiles, last-step repair turn, strict fix requests, partial fixes, honest explanation; Beamer-shaped `&` errors repaired with no LLM round, fix-request preflight, draft outcome
 │   │   ├── test_ampersand_repair.py            # `&` verdict matrix, templates untouched, aligned, lone-backslash rows, column widening, error-driven repair from \end{frame}, feedback text
 │   │   ├── test_agent_token_budget.py          # Targeted context: prompt size vs document size, one-call edits, ledger
+│   │   ├── test_attachments.py                 # Store: kinds from bytes, five-file cap, size cap, restart, expiry; endpoints: upload/list/delete, per-user isolation, access
+│   │   ├── test_attachment_figures.py          # Caption pairing, column / label boundaries, real two-column TeX paper with a TikZ figure, import, overwrite guard, cleanup, agent runs
+│   │   ├── test_diff_hunks.py                  # Review hunks: closed, every subset validates, whole-document rewrites, edges, editor line numbering
 │   │   ├── test_collab_auth.py                 # Realtime auth: ticket signing/expiry/replay/binding, roles, handshake codes, revocation, origins
 │   │   ├── test_collab_sync.py                 # Realtime rooms: CRDT merge, same-offset concurrency, late joiners, Viewer writes, restart, persistence, external writes
 │   │   ├── test_compile_pre_heal.py            # compile_latex pre-heal gating (editor / agent / importer) & line remap to source
@@ -608,8 +660,10 @@ overbranch/
 │   │   ├── test_converted_document_edits.py    # Agent edits on imported PDFs (text-match context, case-insensitive), fake-bold PDFs
 │   │   ├── test_tex_diagnostics.py             # TeX log parsing per occurrence, token location from context, spans, .vrb, located compile results, recovery patch guard
 │   │   ├── test_transactions.py                # Scoped heal, duplicate guard, compile rollback/repair, provider-failure rollback
+│   │   ├── test_visual_tools.py                # Page lookup, overlap / contrast / image-edge / off-page detection, tool targets, images in the loop, router stripping, look-first & render check
 │   │   └── test_write_gate.py                  # Validator magnitudes, \% / tikz / \end{document} healer fixes, fuzzy guard, edit hygiene, resolve-edits guard
-│   ├── attached_context.py                     # Multi-turn in-memory TTL store for user-attached reference files
+│   ├── attached_context.py                     # Chat attachments: five files per session, text in memory (TTL), bytes on disk and re-hydrated after a worker restart
+│   ├── attachment_figures.py                   # Figures and tables of an attached PDF: found by caption (figure below / table above), grown over their labels, rendered; attached images as figures
 │   ├── auth.py                                 # Cross-stack Better-Auth session verification & RBAC
 │   ├── cancellation.py                         # Thread-safe cancellation tokens & HTTP stream abort manager
 │   ├── compile_queue.py                        # Concurrency-controlled compile semaphore, queue & dedicated compile thread pool
@@ -625,7 +679,7 @@ overbranch/
 │   ├── latex_specials.py                       # Where `&` is legal, by structure: verdict per `&`, \& / aligned repairs, lone-backslash row breaks, tabular column analysis & widening
 │   ├── main.py                                 # FastAPI application entry point, CORS, lifespan, compile & synctex
 │   ├── models.py                               # SQLAlchemy ORM models for Better-Auth schema (User, Session, Account)
-│   ├── project_storage.py                      # Local filesystem disk storage & Supabase storage manager
+│   ├── project_storage.py                      # Local filesystem disk storage & Supabase storage manager; save_project_asset_bytes / delete_project_asset shared by uploads and agent figure imports
 │   ├── prompt_builder.py                       # Structured system prompt assembler enforcing surgical edits & Regalia
 │   ├── query_rewriter.py                       # Fast multi-query expansion for hybrid RAG retrieval
 │   ├── rate_limiter.py                         # Sliding-window in-memory rate limiter per IP / User ID
@@ -647,15 +701,16 @@ overbranch/
 │   │   ├── TopNav.tsx                          # Dashboard top header bar with breadcrumbs & user profile
 │   │   └── UserProfileDropdown.tsx             # User avatar dropdown menu with settings & sign-out
 │   ├── editor/                                 # Master LaTeX Editor Suite Components
-│   │   ├── AgentReasoningWindow.tsx            # Live ReAct thought / step execution & inspection monitor
+│   │   ├── AgentReasoningWindow.tsx            # Live ReAct thought / step execution & inspection monitor, with thumbnails of pages the agent looked at
 │   │   ├── ApiSettingsModal.tsx                # Custom user API keys dialog (Gemini, Groq, OpenRouter)
 │   │   ├── ChatMessageContent.tsx              # Markdown & LaTeX formula renderer using KaTeX
 │   │   ├── ChatModeToggle.tsx                  # Mode toggle switching between 'Ask' and 'Edit' modes
 │   │   ├── CollabPresenceBar.tsx               # Who is live right now: avatars, their file, idle state, 🟢/🟡/🔴 link state
+│   │   ├── ChatAttachments.tsx                 # Chips for the files attached to the chat: pages · figures · size, upload state, remove
 │   │   ├── CollaboratorAvatars.tsx             # Invited collaborators: avatar stack, invite, remove, transfer ownership
 │   │   ├── CompileToolbar.tsx                  # Compile button, engine dropdown, error pill & "Ask AI to Fix"
 │   │   ├── CopyButton.tsx                      # Copy-to-clipboard affordance on chat messages (prompt recall)
-│   │   ├── EditorLayout.tsx                    # Master resizable split-pane editor shell & AI stream handler (getActiveEditor resolves the visible Monaco; result merged into final_diff; file-tagged edits; compile errors kept with the PDF)
+│   │   ├── EditorLayout.tsx                    # Master resizable split-pane editor shell & AI stream handler (getActiveEditor resolves the visible Monaco; result merged into final_diff; file-tagged edits; compile errors kept with the PDF; chat attachments; inline review controller, review bar & per-change history)
 │   │   ├── EditorSearchBar.tsx                 # Find & replace over the active model (match counter, case/word/regex, replace all); replaces Monaco's find widget on both platforms
 │   │   ├── EditorThemeModal.tsx                # Monaco editor theme & typography customizer modal
 │   │   ├── FileAnalyzerModal.tsx               # File inspection & AI multimodal querying modal
@@ -665,6 +720,7 @@ overbranch/
 │   │   ├── ModelSelector.tsx                   # Dropdown model picker with provider badges
 │   │   ├── PDFViewer.tsx                       # Interactive PDF preview with SyncTeX double-click triggers; non-blocking error bar + Ask AI to Fix for PDFs compiled with errors
 │   │   ├── PresentationView.tsx                # Fullscreen Beamer slide player with laser pointer mode
+│   │   ├── useChatAttachments.ts               # Attachment state for a project's chat: multipart upload, five-file cap, server list as the source of truth
 │   │   └── ProjectFilesPanel.tsx               # File tree explorer, asset uploader & file manager
 │   ├── pdf-import/                             # PDF → LaTeX importer UI (dashboard, /convert, editor, copilot)
 │   │   ├── ImportPdfDialog.tsx                 # Upload, mode selector, per-page progress, cancellation, report & preview
@@ -753,6 +809,8 @@ overbranch/
 │   ├── latex-edit-apply.ts                     # Pure applier for AI edit items (authoritative vs chunk replay, zero silent drops)
 │   ├── latex-validate.ts                       # Clients for POST /api/agent/validate-latex and /api/agent/resolve-edits
 │   ├── IndexedDBEmbeddingCache.ts              # Browser IndexedDB cache for client-side embeddings
+│   ├── inline-diff.ts                          # Review blocks from the backend's hunks, changed-line segments, placement in a moved document, subset application (pure)
+│   ├── inline-diff-monaco.ts                   # Inline review in Monaco: red decorations, green view zones, tracked anchors, per-change Accept / Reject
 │   ├── pdf-thumbnail-utils.ts                  # PDF.js page canvas thumbnail rendering
 │   └── utils.ts                                # Tailwind CSS class merging utility (cn)
 │
@@ -769,9 +827,10 @@ overbranch/
 │   └── window.svg                              # Window graphic icon
 │
 ├── scripts/                                    # Maintenance & Diagnostics Scripts
-│   ├── run-collab-tests.sh                     # Bundles & runs the browser-side collaboration checks (esbuild from node_modules)
+│   ├── run-collab-tests.sh                     # Bundles & runs the browser-side collaboration and inline-review checks (esbuild from node_modules)
 │   ├── test_collab_binding.mjs                 # Yjs <-> Monaco binding: loop safety, convergence, per-user undo, cursor decorations
 │   ├── test_collab_text_diff.mjs               # computeLineEdits / applyTextToEditor round trips incl. 300 randomized cases
+│   ├── test_inline_diff.mjs                    # Review blocks: hunks → blocks, any subset replays, placement after typing, CRLF, 300 randomized cases
 │   └── test_file_analysis.py                   # Local sanity script testing multimodal file analyzer
 │
 ├── server/                                     # Server tRPC Core Layer
@@ -924,6 +983,7 @@ overbranch/
   - `POST /api/agent/stop` — cancels an in-flight run.
   - `POST /api/agent/resolve-edits` — `{current_code, items, original_code?}` → places accepted edits the editor could not locate by exact text, using the agent's locator; all-or-nothing (`{success, code, applied[{id, method}], failed[{id, op, target, reason, attempts}], document_unchanged}`). Writes nothing. Rate limited 60/min.
   - `POST /api/agent/validate-latex` — heals and/or validates a LaTeX string without writing anything. Body `{latex_code, project_id?, file_path?, heal?}` → `{valid, errors[], fixes_applied[], healed_code, changed}`. `heal` defaults to **false**: healing hoists packages and injects theme colours, so it must never be applied without showing the user `fixes_applied`. Rate limited 60/min; bodies over 2 MB return 413.
+  - `POST /api/agent/attachments` (multipart `project_id`, `file`) → `{attachment, attachments[], max_files, max_mb}`; `GET /api/agent/attachments?project_id=`; `DELETE /api/agent/attachments/{id}?project_id=`; `DELETE /api/agent/attachments?project_id=` (clear). Metadata only (`id, filename, kind, page_count, size_bytes, figure_count, …`); 409 when the chat already holds five files, 413 over the size limit. Rate limited 30/min for uploads.
 - **The step budget is an estimate the agent can revise, not a contract.** `determine_adaptive_step_budget` sets a *starting* budget from document structure, capped at `MAX_STEP_BUDGET` (32); from there it is extensible.
   - **Why it cannot be fixed.** Running out mid-edit is the worst outcome the loop produces: the transaction is rolled back, so the user waits for a whole run and receives nothing, having lost work the agent had already done correctly. Guessing high instead is no answer — every step is an LLM round trip, so a generous fixed budget is a latency bill paid on every request.
   - **The agent asks** (`request_more_steps`): it is told where it is in its budget on every turn (`[Step 3/8 · 5 remaining…]`, refreshed on the live user message rather than appended, so it never accumulates) — without that it could not judge whether to ask at all, and the tool would be inert.
@@ -1004,12 +1064,12 @@ overbranch/
 
 ### Feature 7: Multi-Turn Attached Context Session Store & File Injection
 
-- **File Implementation**: [`backend/attached_context.py`](file:///home/abin/overbranch/backend/attached_context.py), [`backend/tests/test_attached_context.py`](file:///home/abin/overbranch/backend/tests/test_attached_context.py)
+- **File Implementation**: [`backend/attached_context.py`](file:///home/abin/overbranch/backend/attached_context.py), [`backend/routes/agent_routes.py`](file:///home/abin/overbranch/backend/routes/agent_routes.py), [`backend/tests/test_attachments.py`](file:///home/abin/overbranch/backend/tests/test_attachments.py)
 - **How It Works**:
-  1. When a user uploads a reference PDF, paper, or dataset in chat, the file payload is decoded from base64.
-  2. `extract_text_and_pages_from_pdf` uses PyMuPDF (`fitz`) or `pypdf` to extract high-fidelity text with page indices.
-  3. The parsed document is stored in an in-memory session cache keyed by `project_id` / `session_id` with a 2-hour TTL.
-  4. In follow-up messages, the agent accesses tools `read_attached_document` and `search_uploaded_references` to extract real empirical data, formulas, and diagrams without requiring the user to re-upload.
+  1. Each file is uploaded once as multipart to `POST /api/agent/attachments` and stored under the caller's own session (`project_id:user_id`); up to five per chat. Older clients that still send `attached_file(s)` inside the agent request are accepted through the same store.
+  2. `build_record` reads the kind from the bytes: a PDF's text and page map (PyMuPDF, `pypdf` fallback), an image as one importable figure, anything else as UTF-8 text.
+  3. Text is cached in memory with a 2-hour TTL; the bytes live on disk and a session is rebuilt from them after a worker restart.
+  4. In follow-up messages the agent reads with `read_attached_document` / `search_uploaded_references`, and places figures with `import_attachment_figure` ([Feature 35](#feature-35-chat-attachments-up-to-five--figure-import)).
 
 ---
 
@@ -1138,7 +1198,7 @@ overbranch/
 
 - **File Implementation**: [`backend/providers/router.py`](file:///home/abin/overbranch/backend/providers/router.py), [`backend/providers/gemini_provider.py`](file:///home/abin/overbranch/backend/providers/gemini_provider.py), [`backend/providers/groq_provider.py`](file:///home/abin/overbranch/backend/providers/groq_provider.py), [`backend/providers/openrouter_provider.py`](file:///home/abin/overbranch/backend/providers/openrouter_provider.py)
 - **Supported Providers**:
-  - **Google Gemini**: Gemini 3.7 Flash, 2.5 Pro, 2.0 Flash (Long context, multimodal reasoning).
+  - **Google Gemini** (Web2API gateway): Gemini 3.5 Flash Thinking (**default**, `providers.router.DEFAULT_MODEL` — the one definition the agent loop, the agent route, `/api/models` and the importer all read), 3.7 / 3.6 / 3.5 Flash, 3.5 Flash Thinking Lite.
   - **Groq**: LLaMA 3.3 70B Versatile, LLaMA 3.1 8B Instant (Ultra-fast inference).
   - **OpenRouter**: Claude 3.5 Sonnet, GPT-4o, DeepSeek Chat/Coder, MiniMax-01.
 - **Failover**: failures are classified (`providers/errors.py`). Rate limits, exhausted quota, timeouts, outages and unavailable models walk `LLM_FALLBACK_CHAIN` (default OpenRouter **MiniMax M3**, `minimax/minimax-m3`); a cancellation or a malformed request does not. OpenRouter's five server-side keys rotate through a health-tracked `KeyPool` (sticky selection, per-failure cooldowns, automatic recovery). See [T](#t-provider-fallback-chain--key-health).
@@ -1252,9 +1312,9 @@ overbranch/
 
 - **File Implementation**: [`backend/opencode/diff_generator.py`](file:///home/abin/overbranch/backend/opencode/diff_generator.py), [`lib/latex-edit-apply.ts`](file:///home/abin/overbranch/lib/latex-edit-apply.ts), [`lib/latex-validate.ts`](file:///home/abin/overbranch/lib/latex-validate.ts), [`components/editor/EditorLayout.tsx`](file:///home/abin/overbranch/components/editor/EditorLayout.tsx), [`lib/EditHistoryStore.ts`](file:///home/abin/overbranch/lib/EditHistoryStore.ts)
 
-#### The Apply Contract (`apply_contract_version: 2`)
+#### The Apply Contract (`apply_contract_version: 4`)
 
-`compute_edit_items` guarantees, for every emitted item (contract v3 adds `node_id` / `node_path`: the structural node enclosing the edit):
+`compute_edit_items` guarantees, for every emitted item (contract v3 adds `node_id` / `node_path`: the structural node enclosing the edit; v4 adds `hunks` to the payload — the same change as structurally closed line ranges, for the inline review in [Feature 37](#feature-37-inline-review--accept--reject-per-change)):
 
 | Guarantee | Why |
 |---|---|
@@ -1340,7 +1400,11 @@ overbranch/
   7c. `test_agent_compile_outcomes.py` (additions): with a compile stub that reports like TeX on Beamer — every bare `&` at its frame's closing line — a created deck is delivered with no repair round; the gate alone repairs it when the write-time pass is disabled; an explicit `compile_latex` call gets the same repairs; a pre-existing `&` on a line the edit did not touch is left alone; a fix request for an `&` needs no LLM call; the feedback names the block; and the draft outcome (kept for an empty file that still builds; rolled back with no PDF, and for a document with content).
   8. `test_collab_sync.py`: `CollabRoom` driven with the real y-websocket protocol (one `pycrdt.Doc` per "browser") — seeding, an edit reaching the other peer, simultaneous inserts at the same offset converging, concurrent delete+insert, a late joiner getting the live state rather than the stored snapshot, a peer leaving, a Viewer's writes dropped, a role downgrade taking effect, restart **without duplicating the document**, adopting an edit made outside the session, keeping unflushed edits over stale storage, debounced persistence and flush retry, presence relay and ghost-cursor cleanup, path/size/garbage rejection, and a backend write (AI commit / PDF import) reaching live editors.
   9. `test_collab_auth.py`: ticket round trip, single use, project binding, tampering, expiry; role resolution from `projects` / `project_members` including deleted projects and fail-closed on a database error; the websocket handshake with no credential, a forged ticket, a valid ticket for a non-member, a ticket for another project; a Viewer connecting read-only; revocation closing a live socket; a foreign `Origin` refused.
-  10. `scripts/run-collab-tests.sh` (Node, outside pytest): the Yjs ↔ Monaco binding — loop safety, two-editor convergence, offline merge, per-user undo/redo, remote cursor decorations and name labels, read-only — and `computeLineEdits` / `applyTextToEditor` round trips including 300 randomized cases.
+  9a. `test_attachments.py`: kinds from bytes; the five-file cap (and that replacing a name is not a sixth file); size and empty-file refusals; a second store on the same folder restoring a session with its bytes; removal and expiry deleting the disk copy; the JSON-body path; endpoints — figure count on upload, 409 / 413 with a reason, delete and clear, **one user's attachments invisible to another on the same project**, no upload without project access; and, in the agent, seven attachments in one request skipping two instead of failing, and five large papers staying under one preview budget.
+  9b. `test_attachment_figures.py`: on a generated two-column page — three captioned figures found, the logo / ruled table / "Fig. 1 shows …" not; the raster figure not reaching into the next column; the chart keeping its tick labels and axis title but not its caption; a table set as vector outlines listed as `table` (`p1-t1`) with its own caption and not its "Table 2 summarizes …" paragraph; with real TeX, a `twocolumn` article whose TikZ block diagram is found by its caption with its node labels inside the region. Tools: listing, import for a slide vs. an article, short IDs, idempotent re-import, **never overwriting a different existing asset**, attached images passed through, table file names, cleanup of unused and rolled-back imports. Image paths: similarity by the words of the name; a mistyped path corrected to the imported file; an unmatched one reported while the user's own unresolved reference and a commented-out one are left alone; a run that imported nothing not checked. Agent runs: **the reported failure replayed step for step** (batched import under model-chosen names → two failed edits → outline read → frames written with paths typed from memory) ending with corrected paths, both files kept and named in the explanation; a deck built from a paper getting its figures before the first turn and keeping only the ones it shows; a deck showing none asked once to add them; an ordinary edit importing nothing; an image path that matches no file going back to the model and into the explanation; a rolled-back run leaving no files; nothing binary in any event.
+  9c. `test_visual_tools.py`: page parsing and lookup; a clean page reporting nothing; overprinted text (faked bold excluded); contrast from rendered pixels (light-on-dark fine, dark-on-dark not); text crossing an image edge vs. a caption on it; overlapping images; an image off the page; WCAG ratios; the tool's targets and its no-PDF answer; with real TeX, a slide whose overlap and invisible sentence are mapped to their exact source lines; budget notes and history compaction on image messages; the model shown the page once and the client never sent the bytes; the router stripping images (with a note) for a provider that cannot see; which requests count as visual; the look happening before the model's first turn; a defect still measured after the edit going back to the model once; an unfixed defect reported rather than hidden; an ordinary request rendering nothing; and an edit to a TikZ document not adding libraries the document already lacked; a right-aligned page number outside the text width not being a margin violation (while a real overflow on one slide still is, also when only that page is scanned); a single page having no running lines; which defect classes count as unambiguous; a created deck with a clipped title going back to the model once and ending with a clean render check; and a created deck that renders fine taking no extra turn.
+  9d. `test_diff_hunks.py`: all hunks reproduce the proposal and none the original; an environment the edit opens and closes is one hunk; every hunk structurally closed; **every subset of hunks validates**; a rewrite that collapses `edits` to one whole-document item still has one hunk per changed paragraph; a document created from nothing; trailing newline, CRLF, top insertion and end deletion; lines numbered as the editor numbers them (not `str.splitlines`).
+  10. `scripts/run-collab-tests.sh` (Node, outside pytest): the Yjs ↔ Monaco binding — loop safety, two-editor convergence, offline merge, per-user undo/redo, remote cursor decorations and name labels, read-only — and `computeLineEdits` / `applyTextToEditor` round trips including 300 randomized cases; and the inline review's block logic (`scripts/test_inline_diff.mjs`): hunks → blocks with only changed lines as segments, any subset replaying exactly, untrusted hunks falling back to one block, blocks following the document when the user typed above them, a block the user edited left unplaced, CRLF, and 300 randomized proposals.
 
 ---
 
@@ -1460,6 +1524,48 @@ overbranch/
 
 - **Measured end to end** on a three-page fixture reproducing all three reported defects (a path overflowing the margin, a two-column table wider than the page, a 29-row table printing over the footer): layout score **96.6 → 12.8**, four repairs — `longtable`, `tabularx`, `\allowbreak` break points and one `sloppypar` — with the body's visible text byte-identical and no `\small`, `\fontsize` or margin change anywhere in the diff.
 
+---
+
+### Feature 35: Chat Attachments (up to five) & Figure Import
+
+- **File Implementation**: [`backend/attached_context.py`](file:///home/abin/overbranch/backend/attached_context.py), [`backend/attachment_figures.py`](file:///home/abin/overbranch/backend/attachment_figures.py), [`backend/opencode/attachment_tools.py`](file:///home/abin/overbranch/backend/opencode/attachment_tools.py), [`backend/opencode/image_refs.py`](file:///home/abin/overbranch/backend/opencode/image_refs.py), [`backend/routes/agent_routes.py`](file:///home/abin/overbranch/backend/routes/agent_routes.py), [`components/editor/useChatAttachments.ts`](file:///home/abin/overbranch/components/editor/useChatAttachments.ts), [`components/editor/ChatAttachments.tsx`](file:///home/abin/overbranch/components/editor/ChatAttachments.tsx)
+- **What it is for**: attach an IEEE paper, ask for a seminar deck or a report, and get the paper's figures in the project's `assets/` and on the slides that discuss them. Rationale and the decisions behind it: [V](#v-chat-attachments--figures-from-attached-papers).
+- **How It Works**:
+  1. The paperclip opens a multi-file picker (PDF, PNG / JPEG / WebP, text). Each file is uploaded on selection; its chip shows `19 pages · 12 figures · 3.6 MB`, an upload spinner, or the server's reason for refusing it. A sixth file is refused in the picker and again by the server.
+  2. `extract_figures` runs at upload (so the chip can count them) and is cached on the record: caption lines → the graphic region beside them → grown over its labels → `p<page>-f<k>` (figure) or `p<page>-t<k>` (table), prefixed with the attachment id.
+  3. For a document built from the attachments the loop imports the figures itself, before the first LLM call, and the first message lists them with their paths; otherwise the model may call `import_attachment_figure(figure_id)`. Either way the region is rendered (PNG; JPEG above 1.5 MB), saved under `assets/`, the workspace is pointed at that folder so the shadow compile finds it, and the saved paths are restated on every later turn.
+  4. After each edit, image paths that resolve to no file are corrected to the imported file they name; at the end unresolved ones are reported, a deck showing none of the figures is asked once to add them, unused imports are deleted, and `imported_assets` plus a line in the explanation say what was added. The editor refreshes its file tree.
+- **Measured on real runs** (configured model, the user's own 19-page IEEE Access paper — 3 figures, 9 tables set as outlines):
+  - *"Create a seminar ppt from the attached paper"*, empty project: 5 files imported up front (Figures 1–3, Tables 1–2), a 13-frame deck placing all five — the architecture figure on "System Architecture & Threat Model", the model list on "Evaluated LLM Models", the detection plot on the RQ2 results slide — every reference a real file, compiling without errors. 85 s, no import tool call by the model.
+  - *"Add the figures from the attached paper to the relevant slides of this presentation"*, on a copy of an existing 26-frame deck: the three figures placed on "Background of the Study", "Main Paper: System Architecture" and "Main Paper: Results & Performance Analysis"; the two table images it did not use removed again. 55 s.
+  - The run this fix came from, replayed as a test (`test_the_run_that_lost_its_figures`): paths corrected, both files kept.
+- **Not covered**: OCR of scanned PDFs (their figures still import; their text stays unavailable), and recovering a table as an editable LaTeX table — a table arrives as an image. A figure whose caption the paper omits is listed but not imported automatically.
+
+---
+
+### Feature 36: `view_rendered_pages` & the Look-First Visual Loop
+
+- **File Implementation**: [`backend/opencode/visual_tools.py`](file:///home/abin/overbranch/backend/opencode/visual_tools.py), [`backend/latex_layout/visual.py`](file:///home/abin/overbranch/backend/latex_layout/visual.py), [`backend/opencode/agent_loop.py`](file:///home/abin/overbranch/backend/opencode/agent_loop.py), [`backend/providers/multimodal.py`](file:///home/abin/overbranch/backend/providers/multimodal.py), [`backend/providers/router.py`](file:///home/abin/overbranch/backend/providers/router.py)
+- **How It Works** (design and rationale in [W](#w-looking-at-the-render-view_rendered_pages)):
+  1. `view_rendered_pages(node_id | text | pages)` compiles through the cached `compile_workspace`, resolves the target to at most three pages, renders them at `AGENT_VIEW_DPI` (110) and measures them. The result lists each defect with its type, severity, description, region, evidence (`contrast: 1.17`, `overlap_share: 0.8`) and `source_lines` / `source` — for an overlap also `other_source_lines`, usually the line that has to move.
+  2. A visual request does not wait for the model to call it: the loop looks first, the model edits, the loop measures again and either feeds the remaining defects back once or finishes, and the explanation states what the page measures now.
+  3. Images accompany that step's message when the provider accepts them; otherwise the model is told they were omitted and works from the measurements.
+- **Measured on a real run** (configured model, a slide with two overprinted TikZ headings and a sentence in `#EEEEE6` on white; prompt: *"The Results and Discussion slide looks broken when I compile it. Check how it renders and fix whatever is visually wrong."*): the look measured `TEXT_OVERLAP` and `LOW_CONTRAST` at lines 15 and 18; the first edit fixed the colour and left an overlap, which the render check reported back; the second edit cleared it. 30 s, three small hunks, final render check clean. Before the look-first step the same prompt produced a rewrite of the whole slide as a bullet list.
+- **Limits**: alignment and spacing that is merely unpleasant is not measured — only a model that can see the image can judge it, and the configured gateway does not accept images. The table-cell and contrast measurements still misread some designs (a CV's columns, a header on a coloured bar); they are reported to a request that asks about appearance and never acted on unasked.
+
+---
+
+### Feature 37: Inline Review — Accept / Reject per Change
+
+- **File Implementation**: [`lib/inline-diff.ts`](file:///home/abin/overbranch/lib/inline-diff.ts), [`lib/inline-diff-monaco.ts`](file:///home/abin/overbranch/lib/inline-diff-monaco.ts), [`components/editor/EditorLayout.tsx`](file:///home/abin/overbranch/components/editor/EditorLayout.tsx), [`backend/opencode/diff_generator.py`](file:///home/abin/overbranch/backend/opencode/diff_generator.py), [`app/globals.css`](file:///home/abin/overbranch/app/globals.css) (`ob-diff-*`)
+- **What it replaced**: a rose background over each edit item's whole `original_chunk` (context lines included), a floating card showing the first line of the first edit — for a rewrite, `- \documentclass…` / `+ \documentclass…` — and all-or-nothing Accept / Reject.
+- **How It Works** (design and rationale in [X](#x-inline-review-of-ai-changes)):
+  1. `final_diff.hunks` → `buildReviewBlocks` (trusted only if applying all of them reproduces `proposed_code`; otherwise the proposal is one block) → `placeBlocks` against the live document, since the editor is not locked while the agent works.
+  2. `InlineDiffController` draws each block: `ob-diff-removed` whole-line decorations, a view zone of the added lines in the editor's own font, wrapped where the editor wraps and colourised by Monaco's tokenizer, and an Accept / Reject pair positioned from the editor's geometry (plain DOM over the editor — Monaco owns pointer events inside a view zone). Viewers get Reject only.
+  3. `EditorLayout` owns the bookkeeping: the review bar (`renderReviewBar`: `2 / 7`, ▲▼, `+12 −4`, Reject all / Accept all), one history entry per proposal updated as blocks are accepted, the chat card's "Applied 3 of 5 changes", one save and one compile when nothing is pending. The text is read from the Monaco model at that moment — `code` is React state and lags it by a render.
+  4. The chat card's preview shows the first line that actually changes.
+- **Verified in a browser** (headless Chromium driving the real editor page with the network stubbed, desktop and 390 px): accepting one block with the mouse while the others stay pending and the document otherwise untouched; rejecting one; Accept all for the rest; the partial-apply badge; exactly one compile at the end; the saved text equal to the model; Revert restoring the pre-review document; Accept all on an untouched review writing `proposed_code` byte for byte; Reject all leaving the document alone. The controller alone was also exercised in real Monaco for typing above pending blocks, undo, a block edited underneath, an empty document, deletion at the end of a file, insertion at the top, read-only and disposal, in both themes.
+
 # 4. Deployment, Infrastructure & Environment Configuration
 
 ### Universal Docker Deployment
@@ -1532,6 +1638,13 @@ services:
 | `JUSTIFY_MAX_PAGES` | Backend Layout | Most pages `justify_content` measures in one run (Default: `40`) |
 | `JUSTIFY_VISION` | Backend Layout | `1` turns on the advisory vision pass over pages geometry could not explain. Report-only: its findings are never repaired automatically (Default: `0`) |
 | `JUSTIFY_VISION_BATCH` / `JUSTIFY_VISION_DPI` | Backend Layout | Pages per vision prompt and their render resolution (Defaults: `5`, `100`) |
+| `AGENT_ATTACH_MAX_FILES` / `AGENT_ATTACH_MAX_MB` | Backend AI | Files a chat may hold, and the size limit of each (Defaults: `5`, `25`) |
+| `AGENT_ATTACH_DIR` | Backend AI | Where attachment bytes are kept so they survive a worker restart; purged with the 2-hour session TTL (Default: system temp `overbranch_attachments`) |
+| `AGENT_ATTACH_PREVIEW_CHARS` | Backend AI | Characters of attachment text in the agent's first message, shared by all attachments (Default: `48000`) |
+| `AGENT_ATTACH_FIGURE_PAGES` | Backend AI | Pages of an attached PDF scanned for figures (Default: `60`) |
+| `AGENT_ATTACH_AUTO_FIGURES` / `AGENT_ATTACH_AUTO_TABLES` | Backend AI | Figures and compact table images imported into `assets/` up front when a document is built from the attached files; unused ones are removed at the end of the run (Defaults: `6`, `2`) |
+| `AGENT_VIEW_DPI` | Backend AI | Resolution of the page images `view_rendered_pages` returns (Default: `110`) |
+| `AGENT_VISUAL_REPAIR_ROUNDS` | Backend AI | Rounds the model gets to fix defects still measured on the page after a visual fix (Default: `1`) |
 | `COLLAB_ENABLED` | Backend Collaboration | Master switch for realtime collaborative editing (Default: `1`) |
 | `COLLAB_CONNECT_THRESHOLD` | Backend Collaboration | People who must have a project open before a realtime room is held (Default: `2`). Below it, editing uses the REST autosave path |
 | `COLLAB_PRESENCE_TTL` / `COLLAB_PRESENCE_POLL` | Backend Collaboration | How long a viewer counts as present after their last heartbeat, and how often the client sends one (Defaults: `30`, `8` seconds) |

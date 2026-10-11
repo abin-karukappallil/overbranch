@@ -41,6 +41,7 @@ import {
   Palette,
   Zap,
   ChevronDown,
+  ChevronUp,
   PlusCircle,
   Trash2,
   Search,
@@ -61,7 +62,7 @@ import {
 import { CollaboratorAvatars } from "@/components/editor/CollaboratorAvatars";
 import { CollabPresenceBar } from "@/components/editor/CollabPresenceBar";
 import { useCollaboration } from "@/lib/collab/useCollaboration";
-import { applyTextToEditor } from "@/lib/collab/text-diff";
+import { applyTextToEditor, computeLineEdits } from "@/lib/collab/text-diff";
 import { collabLog } from "@/lib/collab/log";
 import { authClient } from "@/lib/auth-client";
 import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
@@ -102,6 +103,10 @@ import {
   type ApplyOutcome,
 } from "@/lib/latex-edit-apply";
 import { resolveEditsOnServer } from "@/lib/latex-validate";
+import { ChatAttachments } from "@/components/editor/ChatAttachments";
+import { blockStats, buildReviewBlocks, placeBlocks, type ReviewHunk } from "@/lib/inline-diff";
+import { InlineDiffController, type InlineDiffState } from "@/lib/inline-diff-monaco";
+import { ATTACHMENT_ACCEPT, useChatAttachments } from "@/components/editor/useChatAttachments";
 import { copyText, readClipboard } from "@/lib/clipboard";
 
 const SHOW_EDIT_DEBUG = process.env.NODE_ENV !== "production";
@@ -126,6 +131,9 @@ interface ChatMessage {
   isApplied?: boolean;
   isReverted?: boolean;
   historyEntryId?: string;
+  /** Inline review progress: how many of the proposal's changes were accepted. */
+  appliedChanges?: number;
+  totalChanges?: number;
   diff?: {
     original_chunk: string;
     proposed_chunk: string;
@@ -140,6 +148,8 @@ interface AuthoritativeDoc {
   file: string;
   originalCode: string;
   proposedCode: string;
+  /** Structurally closed change blocks (apply contract v4), for the inline review. */
+  hunks?: ReviewHunk[];
 }
 
 interface DiffData {
@@ -322,6 +332,16 @@ export function EditorLayout({
    * history id — so a single Revert flipped all of them.
    */
   const pendingEditsMsgIdRef = useRef<string | null>(null);
+  // Inline review of the pending proposal (lib/inline-diff-monaco.ts).
+  const inlineDiffRef = useRef<InlineDiffController | null>(null);
+  const [reviewState, setReviewState] = useState<InlineDiffState | null>(null);
+  const [reviewStats, setReviewStats] = useState<{ added: number; removed: number } | null>(null);
+  /** The document as it was just before the first change of this review was accepted. */
+  const reviewBaselineRef = useRef<string | null>(null);
+  const reviewHandlersRef = useRef<{
+    accepted: (state: InlineDiffState) => void;
+    rejected: (state: InlineDiffState) => void;
+  } | null>(null);
 
   // In-memory SWR file cache for instantaneous file switching
   const fileContentCacheRef = useRef<Map<string, { content: string; timestamp: number }>>(new Map());
@@ -404,10 +424,14 @@ export function EditorLayout({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastSelectionRef = useRef<any>(null);
   const lastPositionRef = useRef<any>(null);
-  const [attachedFile, setAttachedFile] = useState<{ filename: string; content: string; file_type: string } | null>(null);
+  // Files attached to the agent chat (up to five). Uploaded once; only metadata lives here.
+  const chatAttachments = useChatAttachments(projectId, projectId || "proj-default");
+  const hasAttachments = chatAttachments.ready.length > 0;
+  // Attachments already named in a chat message, so each is announced once.
+  const announcedAttachmentsRef = useRef<Set<string>>(new Set());
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.7-flash");
+  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.5-flash-thinking");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
@@ -707,10 +731,10 @@ export function EditorLayout({
     {
       name: "Gemini Web2API",
       models: [
-        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: true },
+        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: false },
         { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", default: false },
         { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", default: false },
-        { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: false },
+        { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: true },
         { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite", default: false },
       ],
     },
@@ -762,46 +786,7 @@ export function EditorLayout({
 
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (!selectedFile) return;
-
-    // Allow up to 50MB for large PDFs (30+ pages)
-    if (selectedFile.size > 50 * 1024 * 1024) {
-      toast.error("File size exceeds 50MB limit.");
-      return;
-    }
-
-    const reader = new FileReader();
-    const filename = selectedFile.name;
-    const lowerName = filename.toLowerCase();
-    const fileType = selectedFile.type || (lowerName.endsWith(".pdf") ? "application/pdf" : "text/plain");
-
-    const isBinaryOrPdf = fileType.startsWith("image/") || fileType === "application/pdf" || lowerName.endsWith(".pdf");
-
-    reader.onerror = () => {
-      toast.error(`Failed to read file: ${filename}. The file may be too large or corrupted.`);
-    };
-
-    if (isBinaryOrPdf) {
-      reader.readAsDataURL(selectedFile);
-      reader.onload = () => {
-        setAttachedFile({
-          filename,
-          content: reader.result as string,
-          file_type: fileType,
-        });
-      };
-    } else {
-      reader.readAsText(selectedFile);
-      reader.onload = () => {
-        setAttachedFile({
-          filename,
-          content: reader.result as string,
-          file_type: fileType,
-        });
-      };
-    }
-
+    void chatAttachments.addFiles(e.target.files);
     if (e.target) e.target.value = "";
   };
 
@@ -977,37 +962,10 @@ export function EditorLayout({
     }
   }, [messages, projStorageKey]);
 
-  // Load persistent attached PDF/file from localStorage on mount / project change
-  useEffect(() => {
-    try {
-      const savedFile = localStorage.getItem(`overbranch_${projStorageKey}_attached_file`);
-      if (savedFile) {
-        const parsed = JSON.parse(savedFile);
-        if (parsed && parsed.filename) {
-          setAttachedFile(parsed);
-        }
-      }
-    } catch (e) {
-      console.warn("Failed to load attached file from localStorage:", e);
-    }
-  }, [projStorageKey]);
-
-  // Save/remove attached file in localStorage when attachedFile changes
-  useEffect(() => {
-    try {
-      if (attachedFile) {
-        localStorage.setItem(`overbranch_${projStorageKey}_attached_file`, JSON.stringify(attachedFile));
-      } else {
-        localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
-      }
-    } catch (e) {
-      console.warn("Failed to update attached file in localStorage:", e);
-    }
-  }, [attachedFile, projStorageKey]);
-
   const handleNewChat = () => {
     setMessages([]);
-    setAttachedFile(null);
+    void chatAttachments.clear();
+    announcedAttachmentsRef.current = new Set();
     setDiffData(null);
     setDiffEditsList([]);
     pendingEditsMsgIdRef.current = null;
@@ -1015,15 +973,15 @@ export function EditorLayout({
     setAgentProgressSteps([]);
     try {
       localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
-      localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
     } catch (_) { }
   };
 
   const handleClearChat = () => {
-    if (messages.length === 0 && !attachedFile) return;
+    if (messages.length === 0 && chatAttachments.attachments.length === 0) return;
     if (confirm("Are you sure you want to delete all chat history and document context for this project?")) {
       setMessages([]);
-      setAttachedFile(null);
+      void chatAttachments.clear();
+      announcedAttachmentsRef.current = new Set();
       setDiffData(null);
       setDiffEditsList([]);
       pendingEditsMsgIdRef.current = null;
@@ -1031,7 +989,6 @@ export function EditorLayout({
       setAgentProgressSteps([]);
       try {
         localStorage.removeItem(`overbranch_${projStorageKey}_chat_messages`);
-        localStorage.removeItem(`overbranch_${projStorageKey}_attached_file`);
       } catch (_) { }
     }
   };
@@ -1055,7 +1012,6 @@ export function EditorLayout({
   // Last (file, content) handleCodeChange acted on, to collapse the duplicate
   // notifications the two shared-model editors produce for one edit.
   const lastCodeChangeRef = useRef<string | null>(null);
-  const decorationsRef = useRef<string[]>([]);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const mobileChatEndRef = useRef<HTMLDivElement>(null);
 
@@ -1085,50 +1041,50 @@ export function EditorLayout({
     mobileChatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isAgentThinking, diffData, agentProgressSteps.length]);
 
-  // Apply native line decorations (red deletion highlights) directly inside Monaco Editor
+  // Inline review: the pending proposal drawn in the editor — removed lines red,
+  // added lines green beneath them, Accept / Reject per change. The document is
+  // not modified until a change is accepted.
+  const reviewDoc = diffData?.authoritative;
   useEffect(() => {
     const editor = getActiveEditor();
-    if (!editor) return;
-    const model = editor.getModel();
-    if (!model) return;
-
-    if (!diffEditsList || diffEditsList.length === 0) {
-      decorationsRef.current = editor.deltaDecorations(decorationsRef.current, []);
+    const monaco = monacoRef.current;
+    const model = editor?.getModel?.();
+    const file = activeFilePath || "main.tex";
+    if (!reviewDoc || !editor || !monaco || !model || (reviewDoc.file && reviewDoc.file !== file)) {
+      setReviewState(null);
+      setReviewStats(null);
       return;
     }
-
-    const newDecorations: any[] = [];
-    const text = model.getValue();
-    const lines = text.split("\n");
-
-    diffEditsList.forEach((edit) => {
-      const orig = edit.original_chunk;
-      if (orig && text.includes(orig)) {
-        const startIdx = text.indexOf(orig);
-        const startLine = text.slice(0, startIdx).split("\n").length;
-        const lineCount = orig.split("\n").length;
-        const endLine = startLine + lineCount - 1;
-
-        newDecorations.push({
-          range: {
-            startLineNumber: startLine,
-            startColumn: 1,
-            endLineNumber: endLine,
-            endColumn: (lines[endLine - 1] || "").length + 1,
-          },
-          options: {
-            isWholeLine: true,
-            className: "bg-rose-950/60 text-rose-200 border-l-4 border-rose-500 font-mono",
-            glyphMarginClassName: "bg-rose-500",
-          },
-        });
-      }
+    const blocks = placeBlocks(
+      reviewDoc.originalCode,
+      model.getValue(),
+      buildReviewBlocks(reviewDoc.originalCode, reviewDoc.proposedCode, reviewDoc.hunks),
+    );
+    if (blocks.length === 0) {
+      setReviewState(null);
+      setReviewStats(null);
+      return;
+    }
+    reviewBaselineRef.current = null;
+    setReviewStats(blockStats(blocks));
+    const controller = new InlineDiffController(editor, monaco, blocks, {
+      readOnly: isViewer,
+      onState: setReviewState,
+      onBeforeApply: () => {
+        if (reviewBaselineRef.current === null) reviewBaselineRef.current = model.getValue();
+      },
+      onAccepted: (_id, state) => reviewHandlersRef.current?.accepted(state),
+      onRejected: (_id, state) => reviewHandlersRef.current?.rejected(state),
     });
-
-    decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations);
+    inlineDiffRef.current = controller;
+    controller.reveal(0);
+    return () => {
+      controller.dispose();
+      if (inlineDiffRef.current === controller) inlineDiffRef.current = null;
+    };
     // editorsNonce: the editors mount after this effect first runs, and
-    // getActiveEditor() reads a ref, so without it the decorations never appear.
-  }, [diffEditsList, code, getActiveEditor, editorsNonce]);
+    // getActiveEditor() reads a ref, so without it the review never appears.
+  }, [reviewDoc, activeFilePath, getActiveEditor, editorsNonce, isViewer]);
 
   // Responsive Sidebar Panels
   const [aiOpen, setAiOpen] = useState(() => {
@@ -1807,9 +1763,19 @@ export function EditorLayout({
     // agent cannot change the document, so the fix could never be applied.
     const effectiveMode: ChatMode = modeOverride ?? chatMode;
     const rawUserText = customPrompt !== undefined ? customPrompt : chatInput;
-    if ((!rawUserText.trim() && !attachedFile) || isAgentThinking) return;
+    if ((!rawUserText.trim() && !hasAttachments) || isAgentThinking) return;
+    if (chatAttachments.isUploading) {
+      toast.info("Your files are still uploading. Send again in a moment.");
+      return;
+    }
 
-    const userText = rawUserText.trim() || (attachedFile ? `[Uploaded file: ${attachedFile.filename}]` : "");
+    const attachedNames = chatAttachments.ready.map((a) => a.filename);
+    const userText = rawUserText.trim() || (hasAttachments ? `[Uploaded files: ${attachedNames.join(", ")}]` : "");
+    // Name each attachment in the chat once, when it first travels with a message.
+    const newlyAttached = chatAttachments.ready.filter(
+      (a) => !announcedAttachmentsRef.current.has(a.id) && !userText.includes(a.filename),
+    );
+    chatAttachments.ready.forEach((a) => announcedAttachmentsRef.current.add(a.id));
     const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     setMessages((prev) => [
@@ -1817,14 +1783,13 @@ export function EditorLayout({
       {
         id: `user-${Date.now()}`,
         sender: "user",
-        text: attachedFile && !userText.includes(attachedFile.filename)
-          ? `${userText}\n\n📎 Attached Document: ${attachedFile.filename}`
+        text: newlyAttached.length > 0
+          ? `${userText}\n\n📎 Attached: ${newlyAttached.map((a) => a.filename).join(", ")}`
           : userText,
         time: now,
       },
     ]);
 
-    const currentFilePayload = attachedFile;
     if (customPrompt === undefined) {
       setChatInput("");
       if (typeof document !== "undefined") {
@@ -1832,8 +1797,8 @@ export function EditorLayout({
           el.style.height = "auto";
         });
       }
-      // Note: Do NOT clear attachedFile here so attached document persists across multi-turn requests!
-      // User can remove it anytime via the (x) button on the attachment badge or by clearing chat.
+      // Attachments stay for follow-up messages; they are removed with the (x) on
+      // their chip or by clearing the chat.
     }
     setIsAgentThinking(true);
     setFallbackModelNotice(null);
@@ -1843,22 +1808,11 @@ export function EditorLayout({
     const reqId = `chat-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
     activeRequestIdRef.current = reqId;
 
-    // Scale timeout based on whether there's a large attached file (600s for files, 300s otherwise)
-    const hasLargeFile = currentFilePayload && currentFilePayload.content && currentFilePayload.content.length > 500000;
-    const timeoutMs = hasLargeFile ? 600000 : 300000;
+    // Runs that read attached papers take longer (600s with attachments, 300s otherwise).
+    const timeoutMs = hasAttachments ? 600000 : 300000;
     const timeoutId = setTimeout(() => abortControllerRef.current?.abort(), timeoutMs);
 
     try {
-      // Prepare the attached file payload
-      let filePayload: { filename: string; content: string; file_type: string } | null = null;
-      if (currentFilePayload) {
-        filePayload = {
-          filename: currentFilePayload.filename,
-          content: currentFilePayload.content,
-          file_type: currentFilePayload.file_type,
-        };
-      }
-
       // Check for user-provided API keys
       let customApiKeys = null;
       try {
@@ -1880,7 +1834,8 @@ export function EditorLayout({
           user_prompt: userText,
           current_code: currentDocumentText(),
           model: activeModelName || "auto:smart",
-          attached_file: filePayload,
+          // Attached files are already on the server (see useChatAttachments); the
+          // agent reads them from this chat's session.
           mode: effectiveMode,
           api_keys: customApiKeys || undefined,
         }),
@@ -2150,6 +2105,7 @@ export function EditorLayout({
               file: data.file || activeFile,
               originalCode: data.original_code,
               proposedCode: data.proposed_code,
+              hunks: Array.isArray(data.hunks) ? data.hunks : undefined,
             }
             : undefined;
         authoritativeDocRef.current = authoritativeDoc ?? null;
@@ -2168,6 +2124,10 @@ export function EditorLayout({
       if (data.pdf_conversion_job_id) {
         setPdfImportJobId(data.pdf_conversion_job_id);
         setPdfImportOpen(true);
+      }
+      // Figures the agent imported from attached files are new project files.
+      if (Array.isArray(data.imported_assets) && data.imported_assets.length > 0) {
+        setFilesRefreshTrigger((n) => n + 1);
       }
     } catch (err: any) {
       clearTimeout(timeoutId);
@@ -2404,6 +2364,19 @@ export function EditorLayout({
       toast.error(`These edits were made for ${targetFile}. Open ${targetFile} to apply them.`);
       return;
     }
+    // Part-way through an inline review the document already holds the accepted
+    // changes: replaying every item on top of it would apply those twice. The
+    // rest are applied where the review has them.
+    const review = inlineDiffRef.current;
+    const progress = review?.getState();
+    if (review && progress && progress.accepted + progress.rejected > 0
+        && (!msgId || msgId === pendingEditsMsgIdRef.current)) {
+      review.acceptAll();
+      const after = review.getState();
+      if (after.pending === 0 && inlineDiffRef.current === review) finishInlineReview(after);
+      return;
+    }
+
     const editor = getActiveEditor();
     const model = editor?.getModel?.();
     const codeBeforeEdit = model ? model.getValue() : code;
@@ -2433,11 +2406,190 @@ export function EditorLayout({
     });
   };
 
+  /**
+   * The text in the editor right now. `code` is React state and lags the model by
+   * a render — an edit applied a moment ago in the same handler is not in it yet.
+   */
+  const liveEditorText = (): string => {
+    const value = getActiveEditor()?.getModel?.()?.getValue?.();
+    return typeof value === "string" ? value : code;
+  };
+
   const handleRejectAllEdits = () => {
+    // Changes already accepted in the inline review stay; only what is pending is dropped.
+    const acceptedSome = (inlineDiffRef.current?.getState().accepted ?? 0) > 0;
+    const updated = acceptedSome ? liveEditorText() : null;
+    inlineDiffRef.current = null;
     setDiffData(null);
     setDiffEditsList([]);
     authoritativeDocRef.current = null;
     pendingEditsMsgIdRef.current = null;
+    if (updated !== null) {
+      saveDocument(updated, true);
+      handleCompile(updated);
+    }
+  };
+
+  /** Ends the inline review once every change has been accepted, rejected or withdrawn. */
+  const finishInlineReview = (state: InlineDiffState) => {
+    if (!inlineDiffRef.current) return; // already finished (accept-all reports once per change)
+    inlineDiffRef.current = null;
+    const updated = liveEditorText();
+    if (state.unplaced > 0) {
+      toast.info(
+        `${state.unplaced} change${state.unplaced === 1 ? " was" : "s were"} not applied: the document was edited at ${state.unplaced === 1 ? "that place" : "those places"} while you were reviewing.`,
+      );
+    }
+    setDiffData(null);
+    setDiffEditsList([]);
+    authoritativeDocRef.current = null;
+    pendingEditsMsgIdRef.current = null;
+    if (state.accepted > 0) {
+      saveDocument(updated, true);
+      handleCompile(updated);
+    }
+  };
+
+  /** Records an accepted change: editor mirror, one history entry per proposal, the chat card. */
+  const recordReviewProgress = (state: InlineDiffState) => {
+    const file = activeFilePath || "main.tex";
+    const editor = getActiveEditor();
+    const updated = liveEditorText();
+    setCode(updated);
+    const msgId = pendingEditsMsgIdRef.current ?? undefined;
+    const historyId = msgId || `edit-review-${file}`;
+    editHistoryStoreRef.current?.pushEdit({
+      id: historyId,
+      timestamp: Date.now(),
+      model: activeModelName,
+      prompt: messages.filter((m) => m.sender === "user").pop()?.text || "AI Document Edit",
+      files: [file],
+      beforeCode: { [file]: reviewBaselineRef.current ?? updated },
+      afterCode: { [file]: updated },
+      cursorState: {
+        file,
+        line: editor?.getPosition?.()?.lineNumber || 1,
+        column: editor?.getPosition?.()?.column || 1,
+        scrollTop: editor?.getScrollTop?.() || 0,
+      },
+      isReverted: false,
+    });
+    if (msgId) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId
+            ? {
+              ...m,
+              isApplied: true,
+              isReverted: false,
+              historyEntryId: historyId,
+              appliedChanges: state.accepted,
+              totalChanges: state.total,
+            }
+            : m,
+        ),
+      );
+    }
+  };
+
+  // Re-bound every render so the controller's callbacks always see current state.
+  reviewHandlersRef.current = {
+    accepted: (state) => {
+      recordReviewProgress(state);
+      if (state.pending === 0) finishInlineReview(state);
+    },
+    rejected: (state) => {
+      if (state.pending === 0) finishInlineReview(state);
+    },
+  };
+
+  /**
+   * One bar for the pending proposal: how many changes are left, stepping
+   * between them, and accept / reject for all of them. The changes themselves
+   * are drawn in the editor, each with its own Accept / Reject.
+   */
+  const renderReviewBar = (variant: "editor" | "sidebar" | "mobile") => {
+    if (!diffData || diffEditsList.length === 0) return null;
+    const review = reviewState;
+    const compact = variant === "mobile";
+    const position =
+      variant === "sidebar"
+        ? "mb-2"
+        : `absolute ${compact ? "bottom-2" : "bottom-3"} left-1/2 -translate-x-1/2 z-20 max-w-[calc(100%-1rem)]`;
+    const step = (dir: 1 | -1) => (dir === 1 ? inlineDiffRef.current?.next() : inlineDiffRef.current?.previous());
+    const acceptAll = () => {
+      handleAcceptAllEdits(diffEditsList, pendingEditsMsgIdRef.current ?? undefined);
+      if (variant === "sidebar" && typeof window !== "undefined" && window.innerWidth < 768) {
+        setActiveMobileTab("code");
+      }
+    };
+    const navBtn =
+      "h-6 w-6 rounded-md flex items-center justify-center text-slate-600 dark:text-[#9E9E9E] hover:bg-slate-200 dark:hover:bg-[#22242C] hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default";
+
+    return (
+      <div
+        className={`${position} flex items-center ${variant === "sidebar" ? "flex-wrap" : "flex-nowrap"} gap-x-2 gap-y-1.5 px-2.5 py-1.5 rounded-xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-xl font-mono text-[11px] text-slate-700 dark:text-[#C9CCD3] animate-in fade-in`}
+        role="group"
+        aria-label="Review AI changes"
+      >
+        {review && review.pending > 0 ? (
+          <>
+            <div className="flex items-center gap-0.5">
+              <button type="button" className={navBtn} onClick={() => step(-1)} disabled={review.pending < 2} title="Previous change" aria-label="Previous change">
+                <ChevronUp className="w-3.5 h-3.5" />
+              </button>
+              <span className="px-1 tabular-nums whitespace-nowrap font-semibold text-slate-900 dark:text-[#E2E4E9]">
+                {review.current + 1} / {review.pending}
+              </span>
+              <button type="button" className={navBtn} onClick={() => step(1)} disabled={review.pending < 2} title="Next change" aria-label="Next change">
+                <ChevronDown className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            {!compact && reviewStats && (
+              <span className="whitespace-nowrap">
+                <span className="text-emerald-600 dark:text-[#10B981] font-semibold">+{reviewStats.added}</span>{" "}
+                <span className="text-red-600 dark:text-[#EB5757] font-semibold">−{reviewStats.removed}</span>
+                {review.accepted + review.rejected > 0 && (
+                  <span className="text-slate-500 dark:text-[#8A8F98]"> · {review.accepted} accepted</span>
+                )}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="font-semibold text-slate-900 dark:text-[#E2E4E9] whitespace-nowrap">
+            {diffEditsList.length} pending edit{diffEditsList.length === 1 ? "" : "s"}
+          </span>
+        )}
+        {review && review.unplaced > 0 && (
+          <span
+            className="text-amber-700 dark:text-amber-300 whitespace-nowrap"
+            title="The document was edited where these changes apply, so they cannot be shown inline."
+          >
+            {review.unplaced} not shown
+          </span>
+        )}
+        <div className="flex items-center gap-1.5 ml-auto">
+          <button
+            type="button"
+            onClick={handleRejectAllEdits}
+            className="h-7 px-2.5 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-[#EB5757]/10 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] font-semibold flex items-center gap-1 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Reject all</span>
+          </button>
+          {!isViewer && (
+            <button
+              type="button"
+              onClick={acceptAll}
+              className="h-7 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-archivo font-bold flex items-center gap-1 transition-colors border border-emerald-600 shadow-sm cursor-pointer whitespace-nowrap"
+            >
+              <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+              <span>Accept all</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   const handleRevertEdit = (editId: string) => {
@@ -2613,6 +2765,21 @@ export function EditorLayout({
     }
     if (!m.edits || m.edits.length === 0) return null;
     const firstEdit = m.edits[0];
+    // The first line that actually changes. An edit's chunks carry context (a
+    // whole-document edit carries the whole document), so their first lines are
+    // usually identical and say nothing about the change.
+    const preview = (() => {
+      if (!firstEdit) return { removed: "", added: "" };
+      const before = firstEdit.original_chunk || "";
+      const after = firstEdit.proposed_chunk || "";
+      const change = before && after ? computeLineEdits(before, after)[0] : undefined;
+      if (!change) return { removed: before.split("\n")[0], added: after.split("\n")[0] };
+      const removedLines = before.split("\n").slice(change.startLine - 1, change.endLine - 1);
+      return {
+        removed: removedLines.find((l) => l.trim()) ?? removedLines[0] ?? "",
+        added: change.lines.find((l) => l.trim()) ?? change.lines[0] ?? "",
+      };
+    })();
 
     return (
       <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-zinc-950 border border-slate-200 dark:border-zinc-800 text-xs font-mono space-y-2">
@@ -2633,14 +2800,14 @@ export function EditorLayout({
 
         {firstEdit && (firstEdit.original_chunk || firstEdit.proposed_chunk) && (
           <div className="bg-white dark:bg-black/80 p-2 rounded-lg text-[10px] space-y-1 overflow-x-auto border border-slate-200 dark:border-zinc-800 font-mono max-h-28">
-            {firstEdit.original_chunk && (
+            {preview.removed && (
               <div className="text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
-                - {firstEdit.original_chunk.split("\n")[0]}
+                - {preview.removed}
               </div>
             )}
-            {firstEdit.proposed_chunk && (
-              <div className="text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-600/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 truncate">
-                + {firstEdit.proposed_chunk.split("\n")[0]}
+            {preview.added && (
+              <div className="text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate">
+                + {preview.added}
               </div>
             )}
           </div>
@@ -2674,7 +2841,13 @@ export function EditorLayout({
           <div className="pt-1.5 border-t border-slate-200 dark:border-zinc-800/80 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1 text-[11px] font-mono font-bold text-indigo-600 dark:text-indigo-400">
               <Check className="w-3.5 h-3.5" />
-              <span>{m.isReverted ? "Reverted" : "Applied to TeX"}</span>
+              <span>
+                {m.isReverted
+                  ? "Reverted"
+                  : m.totalChanges && m.appliedChanges !== undefined && m.appliedChanges < m.totalChanges
+                    ? `Applied ${m.appliedChanges} of ${m.totalChanges} changes`
+                    : "Applied to TeX"}
+              </span>
             </div>
             <div className="flex items-center gap-1.5">
               {!m.isReverted ? (
@@ -3164,76 +3337,8 @@ export function EditorLayout({
                 onDocumentChange={handleCodeChange}
               />
 
-              {/* Floating In-Editor Accept/Reject Action Bar */}
-              {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-3 right-4 z-20 max-w-sm p-3 rounded-2xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl animate-in fade-in zoom-in-95 font-mono text-xs space-y-2">
-                  <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
-                    <div className="flex items-center gap-1.5 text-emerald-600 dark:text-[#10B981]">
-                      <span>In-Editor Diff</span>
-                    </div>
-                    <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] font-mono">
-                      {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk, diffEditsList[0] as AppliedEditItem)}
-                    </span>
-                  </div>
-
-                  {/* Red / Green Line Preview */}
-                  <div className="max-h-24 overflow-y-auto bg-slate-50 dark:bg-[#0E0F12] p-2 rounded-xl text-[10px] space-y-1 border border-slate-200 dark:border-[#282A30] font-mono">
-                    {diffEditsList[0].original_chunk && (
-                      <div className="text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
-                        - {diffEditsList[0].original_chunk.split("\n")[0]}
-                      </div>
-                    )}
-                    {diffEditsList[0].proposed_chunk && (
-                      <div className="text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.5 rounded border-l-2 border-emerald-500 truncate font-semibold">
-                        + {diffEditsList[0].proposed_chunk.split("\n")[0]}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons: Copy Patch, Reject, Accept */}
-                  <div className="flex items-center gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        let patch = "";
-                        diffEditsList.forEach((e) => {
-                          if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
-                          if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
-                        });
-                        navigator.clipboard.writeText(patch.trim());
-                      }}
-                      className="h-7 px-2.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] text-xs font-mono font-medium flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                      title="Copy diff patch"
-                    >
-                      <Copy className="w-3 h-3 text-slate-500 dark:text-[#9E9E9E]" />
-                      <span>Copy</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-red-50 hover:bg-red-100 dark:bg-[#EB5757]/10 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-mono font-semibold flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleAcceptAllEdits(
-                          diffEditsList,
-                          pendingEditsMsgIdRef.current ?? undefined,
-                        )
-                      }
-                      className="flex-1 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#10B981] dark:hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-emerald-600 dark:border-[#10B981]/30 shadow-sm cursor-pointer"
-                    >
-                      <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
-                      <span>Accept</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+              {/* Review bar for the pending AI proposal (changes are drawn inline in the editor) */}
+              {renderReviewBar("editor")}
             </div>
 
             {/* Bottom Status Bar */}
@@ -3324,7 +3429,7 @@ export function EditorLayout({
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={handleClearChat}
-                            disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                            disabled={isAgentThinking || (messages.length === 0 && chatAttachments.attachments.length === 0)}
                             className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -3405,104 +3510,25 @@ export function EditorLayout({
                   <div ref={chatEndRef} />
                 </div>
 
-                {/* Diff Control Card */}
-                {diffData && diffEditsList.length > 0 && (
-                  <div className="mb-2 p-3 rounded-2xl bg-white dark:bg-[#141517] border border-slate-200 dark:border-[#23252A] shadow-xl space-y-2 font-mono text-[11px] animate-in fade-in slide-in-from-bottom-2">
-                    <div className="flex items-center justify-between font-semibold text-slate-900 dark:text-[#F7F8F8]">
-                      <div className="flex items-center gap-1.5">
-                        <Zap className="w-3.5 h-3.5 text-indigo-600 dark:text-[#5E6AD2]" />
-                        <span>Proposed TeX Patch</span>
-                      </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-[#18191B] text-slate-600 dark:text-[#8A8F98] border border-slate-200 dark:border-[#23252A] font-medium">
-                        {getEditLineRange(diffEditsList[0].original_chunk, diffEditsList[0].proposed_chunk, diffEditsList[0] as AppliedEditItem)}
-                      </span>
-                    </div>
-
-                    <div className="max-h-28 overflow-y-auto bg-slate-50 dark:bg-[#08090A] p-2 rounded-xl text-[10px] space-y-1 font-mono border border-slate-200 dark:border-[#23252A]">
-                      {diffEditsList[0].original_chunk && (
-                        <div className="text-rose-600 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/40 px-1.5 py-0.5 rounded line-through border-l-2 border-rose-500 truncate">
-                          - {diffEditsList[0].original_chunk.split("\n")[0]}
-                        </div>
-                      )}
-                      {diffEditsList[0].proposed_chunk && (
-                        <div className="text-indigo-600 dark:text-[#5E6AD2] bg-indigo-50 dark:bg-[#5E6AD2]/10 px-1.5 py-0.5 rounded border-l-2 border-indigo-500 dark:border-[#5E6AD2] truncate font-semibold">
-                          + {diffEditsList[0].proposed_chunk.split("\n")[0]}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-1.5 pt-1 font-semibold">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          let patch = "";
-                          diffEditsList.forEach((e) => {
-                            if (e.original_chunk) patch += e.original_chunk.split("\n").map((l) => `-${l}`).join("\n") + "\n";
-                            if (e.proposed_chunk) patch += e.proposed_chunk.split("\n").map((l) => `+${l}`).join("\n") + "\n";
-                          });
-                          navigator.clipboard.writeText(patch.trim());
-                        }}
-                        className="h-8 px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#18191B] dark:hover:bg-[#23252A] text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] border border-slate-200 dark:border-[#23252A] text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
-                        title="Copy diff patch"
-                      >
-                        <Copy className="w-3.5 h-3.5 text-slate-500 dark:text-[#8A8F98]" />
-                        <span>Copy</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={handleRejectAllEdits}
-                        className="flex-1 h-8 rounded-xl bg-red-50 hover:bg-red-100 dark:bg-[#EB5757]/10 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-mono flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        <span>Reject</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                        handleAcceptAllEdits(
-                          diffEditsList,
-                          pendingEditsMsgIdRef.current ?? undefined,
-                        )
-                      }
-                        className="flex-1 h-8 rounded-xl bg-indigo-600 hover:bg-indigo-700 dark:bg-[#5E6AD2] dark:hover:bg-[#4F5BBE] text-white text-xs font-mono font-semibold flex items-center justify-center gap-1.5 transition-colors border border-indigo-600 dark:border-[#6875E5]/30 shadow-sm cursor-pointer"
-                      >
-                        <Check className="w-3.5 h-3.5 text-white stroke-[2.5]" />
-                        <span>Accept All</span>
-                      </button>
-                    </div>
-                  </div>
-                )}
+                {/* Review bar for the pending AI proposal */}
+                {renderReviewBar("sidebar")}
 
                 <input
                   type="file"
                   ref={fileInputRef}
                   onChange={handleFileUpload}
+                  multiple
+                  accept={ATTACHMENT_ACCEPT}
+                  aria-label="Attach files to the chat"
                   className="hidden"
                 />
 
-                {attachedFile && (
-                  <div className="space-y-1.5 mb-2">
-                    <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-slate-100 dark:bg-[#141517] border border-slate-200 dark:border-[#23252A] text-slate-900 dark:text-[#F7F8F8] text-[11px] font-mono animate-in fade-in font-medium">
-                      <div className="flex items-center gap-2 truncate">
-                        <Paperclip className="w-3.5 h-3.5 text-indigo-600 dark:text-[#5E6AD2] shrink-0" />
-                        <span className="truncate">{attachedFile.filename}</span>
-                        <span className="text-[9px] text-indigo-700 dark:text-[#5E6AD2] bg-indigo-50 dark:bg-[#18191B] border border-indigo-200 dark:border-[#23252A] px-1.5 py-0.5 rounded font-mono uppercase">
-                          {attachedFile.file_type || "file"}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setAttachedFile(null)}
-                        className="p-1 text-slate-400 dark:text-[#8A8F98] hover:text-red-500 dark:hover:text-[#EB5757] transition-colors rounded-md cursor-pointer"
-                        title="Remove attachment"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <ChatAttachments
+                  attachments={chatAttachments.attachments}
+                  maxFiles={chatAttachments.maxFiles}
+                  onRemove={chatAttachments.remove}
+                  disabled={isAgentThinking}
+                />
 
                 {/* Chat Input Form */}
                 <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
@@ -3511,7 +3537,7 @@ export function EditorLayout({
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isAgentThinking}
                     className="p-2.5 h-[38px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] transition-colors disabled:opacity-50 shrink-0 cursor-pointer flex items-center justify-center"
-                    title="Upload file (text, TeX, code, image)"
+                    title={`Attach files — PDFs, images or text (up to ${chatAttachments.maxFiles})`}
                   >
                     <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
                   </button>
@@ -3531,7 +3557,7 @@ export function EditorLayout({
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
-                          if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
+                          if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
                             handleSendPrompt(e);
                           }
                         }
@@ -3554,7 +3580,7 @@ export function EditorLayout({
                   ) : (
                     <Button
                       type="submit"
-                      disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
+                      disabled={(!chatInput.trim() && !hasAttachments) || isAgentThinking}
                       size="sm"
                       className="h-9 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center text-xs disabled:opacity-40 cursor-pointer"
                     >
@@ -3641,36 +3667,7 @@ export function EditorLayout({
                 onDocumentChange={handleCodeChange}
                 compact
               />
-              {diffData && diffEditsList.length > 0 && (
-                <div className="absolute top-2 right-2 z-30 max-w-[240px] p-2 rounded-xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] shadow-2xl font-mono text-xs space-y-1.5">
-                  <div className="flex items-center justify-between font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">
-                    <span className="text-emerald-600 dark:text-[#10B981]">Pending Edit</span>
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleRejectAllEdits}
-                      className="flex-1 h-7 rounded-lg bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 border border-red-200 dark:border-[#EB5757]/30 text-red-600 dark:text-[#EB5757] text-xs font-semibold flex items-center justify-center gap-1 transition-colors"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      <span>Reject</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                          handleAcceptAllEdits(
-                            diffEditsList,
-                            pendingEditsMsgIdRef.current ?? undefined,
-                          )
-                        }
-                      className="flex-1 h-7 rounded-lg bg-[#10B981] hover:bg-[#059669] text-white text-xs font-archivo font-bold flex items-center justify-center gap-1 transition-colors border border-[#10B981]/30"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Accept</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+              {renderReviewBar("mobile")}
             </div>
           </div>
 
@@ -3745,7 +3742,7 @@ export function EditorLayout({
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={handleClearChat}
-                      disabled={isAgentThinking || (messages.length === 0 && !attachedFile)}
+                      disabled={isAgentThinking || (messages.length === 0 && chatAttachments.attachments.length === 0)}
                       className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -3803,13 +3800,20 @@ export function EditorLayout({
             <div ref={mobileChatEndRef} />
           </div>
 
+          <ChatAttachments
+            attachments={chatAttachments.attachments}
+            maxFiles={chatAttachments.maxFiles}
+            onRemove={chatAttachments.remove}
+            disabled={isAgentThinking}
+          />
+
           <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isAgentThinking}
               className="p-2.5 h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] shrink-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
-              title="Upload file"
+              title={`Attach files — PDFs, images or text (up to ${chatAttachments.maxFiles})`}
             >
               <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
             </button>
@@ -3828,7 +3832,7 @@ export function EditorLayout({
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if ((chatInput.trim() || attachedFile) && !isAgentThinking) {
+                  if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
                     handleSendPrompt(e);
                   }
                 }
@@ -3850,7 +3854,7 @@ export function EditorLayout({
             ) : (
               <Button
                 type="submit"
-                disabled={(!chatInput.trim() && !attachedFile) || isAgentThinking}
+                disabled={(!chatInput.trim() && !hasAttachments) || isAgentThinking}
                 size="sm"
                 className="h-10 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
               >
