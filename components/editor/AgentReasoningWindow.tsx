@@ -11,6 +11,9 @@ export interface AgentProgressStep {
   phase?: string;
   /** Structured failure detail (operation, target, attempts) — shown in development only. */
   details?: Record<string, unknown> | null;
+  /** For step === "page_snapshot": a small data-URL image of what the agent looked at. */
+  image?: string;
+  label?: string;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -187,6 +190,14 @@ export function AgentReasoningWindow({
                 </div>
                 <div className="flex-1 min-w-0 break-words leading-relaxed">
                   <span title={s.message}>{s.message}</span>
+                  {s.step === "page_snapshot" && s.image && s.image.startsWith("data:image/") && (
+                    // eslint-disable-next-line @next/next/no-img-element -- a data URL the agent just rendered
+                    <img
+                      src={s.image}
+                      alt={s.label ? `Rendered ${s.label}` : "Rendered page"}
+                      className="mt-1 block max-h-40 max-w-full rounded-md border border-slate-200 dark:border-[#282A30] bg-white"
+                    />
+                  )}
                   {SHOW_DEBUG_DETAILS && s.details && (
                     <pre className="mt-1 whitespace-pre-wrap text-[10px] text-slate-500 dark:text-[#9E9E9E]">
                       {JSON.stringify(s.details, null, 1)}

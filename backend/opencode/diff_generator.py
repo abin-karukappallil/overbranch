@@ -35,8 +35,18 @@ Apply contract (version 2)
 write ``proposed_code`` directly when the live document still matches
 ``original_code``, and fall back to replaying ``edits`` otherwise.
 
+7. **Reviewable (v4, additive).** ``hunks`` lists the same change as
+   structurally closed line ranges into ``original_code`` / ``proposed_code``
+   (``compute_review_hunks``), carrying no text of their own. They exist for
+   the editor's inline review, where each one is accepted or rejected on its
+   own — which is only safe because guarantee 3 holds for every one of them —
+   and they are present even when ``edits`` has collapsed to a single
+   whole-document item, so a full rewrite can still be reviewed block by block.
+   Lines are counted by splitting on ``\n`` (after CRLF normalisation), exactly
+   as the editor does.
+
 The client-side implementation of this contract lives in
-``lib/latex-edit-apply.ts``; ``backend/tests/test_diff_generator_anchors.py``
+``lib/latex-edit-apply.ts`` (apply) and ``lib/inline-diff.ts`` (review); ``backend/tests/test_diff_generator_anchors.py``
 holds a Python mirror of it that asserts a full replay reproduces
 ``proposed_code`` byte-for-byte.
 """
@@ -50,7 +60,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from edit_validator import clean_latex_for_validation
 
-APPLY_CONTRACT_VERSION = 3
+APPLY_CONTRACT_VERSION = 4
 
 _RE_ENV_TAG = re.compile(r"\\(begin|end)\s*\{\s*([A-Za-z@*][A-Za-z0-9@*]*)\s*\}")
 _RE_ESCAPED_BRACE = re.compile(r"(?<!\\)(?:\\\\)*\\[{}]")
@@ -122,6 +132,84 @@ def _full_document_item(
     }
 
 
+def _closed_hunks(orig_lines: List[str], mod_lines: List[str], min_context: int = 1,
+                  joiner: str = "") -> List[List[int]]:
+    """
+    Passes 1 and 2 of the decomposition: the changed line ranges
+    ``[i1, i2, j1, j2]`` (0-based, end-exclusive), merged until every one is
+    structurally closed and no two are closer than ``2 * min_context`` lines.
+
+    ``joiner`` is what rebuilds text from the line lists: ``""`` when the lines
+    keep their endings, ``"\n"`` when they were produced by ``split("\n")``.
+    """
+    sm = difflib.SequenceMatcher(None, orig_lines, mod_lines)
+    hunks: List[List[int]] = [
+        [i1, i2, j1, j2] for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != "equal"
+    ]
+
+    def is_closed(h: List[int]) -> bool:
+        return (_structural_delta(joiner.join(orig_lines[h[0]:h[1]]))
+                == _structural_delta(joiner.join(mod_lines[h[2]:h[3]])))
+
+    progressed = True
+    while progressed and len(hunks) > 1:
+        progressed = False
+        for k, h in enumerate(hunks):
+            too_close = (
+                k + 1 < len(hunks)
+                and (hunks[k + 1][0] - h[1]) < 2 * min_context
+            )
+            if is_closed(h) and not too_close:
+                continue
+            if k + 1 < len(hunks):
+                hunks[k:k + 2] = [[h[0], hunks[k + 1][1], h[2], hunks[k + 1][3]]]
+            elif k > 0:
+                prev = hunks[k - 1]
+                hunks[k - 1:k + 1] = [[prev[0], h[1], prev[2], h[3]]]
+            else:
+                continue
+            progressed = True
+            break
+    return hunks
+
+
+def compute_review_hunks(original: str, modified: str) -> List[Dict[str, Any]]:
+    """
+    The change as independently acceptable blocks, for the editor's inline review.
+
+    Each hunk is ``{id, orig_start, orig_count, new_start, new_count}``: lines
+    ``orig_start … orig_start + orig_count - 1`` of the original (1-based) are
+    replaced by ``new_count`` lines of the proposal starting at ``new_start``.
+    ``orig_count == 0`` is a pure insertion before line ``orig_start``.
+
+    Every hunk is structurally closed, so accepting any subset leaves
+    environments, braces and inline math balanced; applying all of them
+    reproduces ``modified`` exactly. Lines are those of ``text.split("\n")``
+    after CRLF normalisation — the editor's own line numbering — not
+    ``str.splitlines``, which also breaks on form feeds and Unicode separators
+    and would number a document differently from Monaco.
+    """
+    if original == modified:
+        return []
+    orig_lines = original.replace("\r\n", "\n").split("\n")
+    mod_lines = modified.replace("\r\n", "\n").split("\n")
+    if original == "":
+        orig_lines = []
+    out: List[Dict[str, Any]] = []
+    # min_context=0: hunks are merged only to close structure. Keeping neighbours apart
+    # matters to anchors (edit items), not to a review, where two changes a line apart
+    # are two decisions.
+    for k, (i1, i2, j1, j2) in enumerate(_closed_hunks(orig_lines, mod_lines, 0, joiner="\n"), start=1):
+        out.append({
+            "id": f"h{k}",
+            "orig_start": i1 + 1,
+            "orig_count": i2 - i1,
+            "new_start": j1 + 1,
+            "new_count": j2 - j1,
+        })
+    return out
+
+
 def compute_edit_items(
     original: str,
     modified: str,
@@ -147,21 +235,9 @@ def compute_edit_items(
     if not orig_lines:
         return [_full_document_item(original, modified, explanation, 0, n_mod)]
 
-    sm = difflib.SequenceMatcher(None, orig_lines, mod_lines)
-    hunks: List[List[int]] = [
-        [i1, i2, j1, j2] for tag, i1, i2, j1, j2 in sm.get_opcodes() if tag != "equal"
-    ]
+    hunks = _closed_hunks(orig_lines, mod_lines, min_context)
     if not hunks:
         return []
-
-    def orig_body(h: List[int]) -> str:
-        return "".join(orig_lines[h[0]:h[1]])
-
-    def prop_body(h: List[int]) -> str:
-        return "".join(mod_lines[h[2]:h[3]])
-
-    def is_closed(h: List[int]) -> bool:
-        return _structural_delta(orig_body(h)) == _structural_delta(prop_body(h))
 
     def merged(a: List[int], b: List[int]) -> List[int]:
         return [a[0], b[1], a[2], b[3]]
@@ -175,22 +251,6 @@ def compute_edit_items(
             hs[k - 1:k + 1] = [merged(hs[k - 1], hs[k])]
             return True
         return False
-
-    # Pass 2 — structural merge. Keep merging until every hunk is structurally
-    # closed and no two anchors could overlap.
-    progressed = True
-    while progressed and len(hunks) > 1:
-        progressed = False
-        for k, h in enumerate(hunks):
-            too_close = (
-                k + 1 < len(hunks)
-                and (hunks[k + 1][0] - h[1]) < 2 * min_context
-            )
-            if is_closed(h) and not too_close:
-                continue
-            if merge_at(hunks, k):
-                progressed = True
-            break
 
     # Passes 3 & 4 — context expansion for uniqueness, then emit. If a hunk's
     # anchor cannot be made unique within its bounds, merge it and start over.
@@ -320,6 +380,7 @@ def compute_final_diff(
             "explanation": explanation or "No changes were made.",
             "unified_diff": "",
             "edits": [],
+            "hunks": [],
             "stats": {"additions": 0, "deletions": 0, "modifications": 0},
             "original_sha256": orig_sha,
             "proposed_sha256": prop_sha,
@@ -380,6 +441,7 @@ def compute_final_diff(
         "explanation": explanation,
         "unified_diff": udiff,
         "edits": edits,
+        "hunks": compute_review_hunks(original, modified),
         "stats": {
             "additions": additions,
             "deletions": deletions,

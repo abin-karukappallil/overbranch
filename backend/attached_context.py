@@ -1,29 +1,94 @@
 """
-attached_context.py — In-Memory Multi-Turn Session Store for Attached Reference Files
-====================================================================================
-Provides a thread-safe, TTL-cached in-memory store for attached documents (PDFs, papers,
-source texts) uploaded in chat sessions.
+attached_context.py — Session store for files attached to the agent chat
+=========================================================================
+Up to ``AGENT_ATTACH_MAX_FILES`` reference files (PDFs, images, text) per chat
+session, kept across follow-up messages so the agent can read them, search them
+and import their figures without the user re-attaching anything.
 
-Persists uploaded reference files across follow-up messages in the same session/project,
-allowing the agent to recall domain data, benchmark results, and citations without
-requiring the user to re-attach the file on every prompt.
+Text, page maps and figure lists live in memory. The uploaded **bytes** live on
+disk (``AGENT_ATTACH_DIR``) and a session that is not in memory is rebuilt from
+them: the server recycles its worker regularly (``--limit-max-requests``), and
+an in-memory-only store lost every attachment mid-conversation when it did.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
+import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("attached_context")
 
 DEFAULT_TTL_SECONDS = 7200  # 2 hours
 MAX_ATTACHED_FILE_CHARS = 60000  # Initial prompt injection cap (~15,000 tokens)
+MAX_ATTACHMENTS = int(os.getenv("AGENT_ATTACH_MAX_FILES", "5") or 5)
+MAX_ATTACHMENT_BYTES = int(float(os.getenv("AGENT_ATTACH_MAX_MB", "25") or 25) * 1024 * 1024)
+DISK_PURGE_INTERVAL = 600.0  # seconds between sweeps of expired session folders
+
+IMAGE_MIME_BY_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+class AttachmentLimitError(ValueError):
+    """An upload the store refuses: too many files in the session, a file too large, or empty."""
+
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+def attachment_dir() -> Path:
+    return Path(os.getenv("AGENT_ATTACH_DIR") or os.path.join(tempfile.gettempdir(), "overbranch_attachments"))
+
+
+def sniff_kind(filename: str, file_type: str, data: bytes) -> str:
+    """'pdf' | 'image' | 'text', from the bytes first (a renamed file keeps its real type)."""
+    head = data[:16]
+    if head.startswith(b"%PDF-"):
+        return "pdf"
+    if head.startswith(b"\x89PNG") or head.startswith(b"\xff\xd8\xff") or (head[:4] == b"RIFF" and head[8:12] == b"WEBP"):
+        return "image"
+    ext = os.path.splitext(filename.lower())[1]
+    if ext in IMAGE_MIME_BY_EXT or (file_type or "").lower().startswith("image/"):
+        return "image"
+    return "text"
+
+
+def payload_to_bytes(filename: str, file_type: str, content: Any) -> Optional[bytes]:
+    """
+    The bytes of an attachment sent inside a JSON body (data URL, bare base64 PDF or
+    plain text). ``None`` when nothing usable was sent.
+    """
+    if not content:
+        return None
+    if isinstance(content, (bytes, bytearray)):
+        return bytes(content)
+    clean = str(content).strip()
+    if clean.startswith("data:") and "," in clean:
+        header, b64 = clean.split(",", 1)
+        if ";base64" in header:
+            b64 = re.sub(r"\s+", "", b64)
+            b64 += "=" * (-len(b64) % 4)
+            try:
+                return base64.b64decode(b64)
+            except Exception as e:  # noqa: BLE001 — malformed uploads are reported, not raised
+                logger.warning(f"Could not decode attachment '{filename}': {e}")
+                return None
+        return b64.encode("utf-8")
+    if clean.startswith("JVBERi0") and len(clean) > 100:
+        return _decode_base64_payload(clean)
+    if clean.startswith("%PDF-"):
+        return clean.encode("latin-1", errors="replace")
+    return str(content).encode("utf-8")
 
 
 def _decode_base64_payload(content: Any) -> Optional[bytes]:
@@ -186,109 +251,275 @@ def extract_text_from_attachment(filename: str, file_type: str, content: str) ->
     return full_text
 
 
+def _image_size(data: bytes) -> Tuple[int, int]:
+    try:
+        try:
+            import pymupdf as fitz
+        except ImportError:
+            import fitz
+        pix = fitz.Pixmap(data)
+        return pix.width, pix.height
+    except Exception:  # noqa: BLE001 — an unreadable image is still listed, without a size
+        return 0, 0
+
+
+def build_record(filename: str, file_type: str, data: bytes) -> Dict[str, Any]:
+    """Everything the agent needs from one attachment, extracted from its bytes."""
+    kind = sniff_kind(filename, file_type, data)
+    is_scanned = False
+    width = height = 0
+    if kind == "pdf":
+        full_text, pages, page_count, is_scanned = extract_text_and_pages_from_pdf(data, filename)
+        file_type = "application/pdf"
+    elif kind == "image":
+        width, height = _image_size(data)
+        size_note = f" ({width}×{height} px)" if width else ""
+        full_text = (f"[Attached image '{filename}'{size_note}. It can be placed in the document: "
+                     f"import it with import_attachment_figure.]")
+        pages, page_count = {1: full_text}, 1
+        file_type = file_type if (file_type or "").startswith("image/") else \
+            IMAGE_MIME_BY_EXT.get(os.path.splitext(filename.lower())[1], "image/png")
+    else:
+        full_text = data.decode("utf-8", errors="replace")
+        pages, page_count = {1: full_text}, 1
+
+    preview = full_text
+    if len(preview) > MAX_ATTACHED_FILE_CHARS:
+        preview = (preview[:MAX_ATTACHED_FILE_CHARS]
+                   + f"\n\n... [Remaining content available via `read_attached_document` ({page_count} pages total)]")
+    return {
+        "id": hashlib.sha1(filename.strip().lower().encode("utf-8")).hexdigest()[:8],
+        "filename": filename,
+        "file_type": file_type or "document",
+        "kind": kind,
+        "is_pdf": kind == "pdf",
+        "content": preview,            # capped preview for the prompt
+        "full_content": full_text,     # full text for the reading tools
+        "pages": pages,
+        "page_count": max(1, page_count),
+        "size": len(full_text),
+        "size_bytes": len(data),
+        "width_px": width,
+        "height_px": height,
+        "is_scanned": is_scanned,
+        "uploaded_at": time.time(),
+    }
+
+
 class AttachedContextStore:
     """
-    Thread-safe in-memory session cache for attached reference documents.
-    Supports full multi-page document inspection, page-by-page reads,
-    line-by-line reads, and contextual keyword search.
+    Thread-safe session cache of attached reference files: page-by-page reads,
+    line reads, keyword search, and the original bytes (on disk) for the PDF
+    importer and for figure extraction.
     """
 
-    def __init__(self, ttl_seconds: int = DEFAULT_TTL_SECONDS):
+    def __init__(self, ttl_seconds: int = DEFAULT_TTL_SECONDS, root: Optional[Path] = None,
+                 max_files: Optional[int] = None, max_bytes: Optional[int] = None):
         self._lock = threading.Lock()
         self._store: Dict[str, List[Dict[str, Any]]] = {}
         self._last_accessed: Dict[str, float] = {}
         self._ttl_seconds = ttl_seconds
+        self._root = Path(root) if root else None
+        self._max_files = max_files
+        self._max_bytes = max_bytes
+        self._last_disk_purge = 0.0
 
-    def store_attachment(self, session_id: str, file_data: Dict[str, Any]) -> None:
+    # -- limits & disk ------------------------------------------------------
+
+    @property
+    def max_files(self) -> int:
+        return self._max_files if self._max_files is not None else MAX_ATTACHMENTS
+
+    @property
+    def max_bytes(self) -> int:
+        return self._max_bytes if self._max_bytes is not None else MAX_ATTACHMENT_BYTES
+
+    def _session_dir(self, session_id: str) -> Path:
+        root = self._root or attachment_dir()
+        return root / hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:32]
+
+    def _write_disk(self, session_id: str, record: Dict[str, Any], data: bytes) -> None:
+        try:
+            d = self._session_dir(session_id)
+            d.mkdir(parents=True, exist_ok=True)
+            (d / f"{record['id']}.bin").write_bytes(data)
+            meta = {"id": record["id"], "filename": record["filename"], "file_type": record["file_type"],
+                    "uploaded_at": record["uploaded_at"]}
+            (d / f"{record['id']}.json").write_text(json.dumps(meta), encoding="utf-8")
+            record["raw_path"] = str(d / f"{record['id']}.bin")
+        except OSError as e:
+            logger.warning(f"Could not persist attachment '{record.get('filename')}': {e}")
+
+    def read_bytes(self, record: Dict[str, Any]) -> Optional[bytes]:
+        """The uploaded bytes of an attachment (``None`` if they are gone from disk)."""
+        path = record.get("raw_path")
+        if not path:
+            return None
+        try:
+            return Path(path).read_bytes()
+        except OSError:
+            return None
+
+    def _load_from_disk(self, session_id: str) -> List[Dict[str, Any]]:
+        """Rebuilds a session's records from disk (after a worker restart)."""
+        d = self._session_dir(session_id)
+        if not d.is_dir():
+            return []
+        if time.time() - d.stat().st_mtime > self._ttl_seconds:
+            shutil.rmtree(d, ignore_errors=True)
+            return []
+        records: List[Dict[str, Any]] = []
+        for meta_path in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime):
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                bin_path = meta_path.with_suffix(".bin")
+                record = build_record(meta["filename"], meta.get("file_type") or "", bin_path.read_bytes())
+                record["uploaded_at"] = meta.get("uploaded_at") or record["uploaded_at"]
+                record["raw_path"] = str(bin_path)
+                records.append(record)
+            except Exception as e:  # noqa: BLE001 — one unreadable file must not hide the others
+                logger.warning(f"Could not restore attachment from {meta_path}: {e}")
+        if records:
+            logger.info(f"Restored {len(records)} attachment(s) for session '{session_id}' from disk")
+        return records
+
+    def _touch(self, session_id: str) -> None:
+        self._last_accessed[session_id] = time.time()
+        try:
+            os.utime(self._session_dir(session_id), None)
+        except OSError:
+            pass
+
+    # -- writes -------------------------------------------------------------
+
+    def store_bytes(self, session_id: str, filename: str, file_type: str, data: bytes) -> Dict[str, Any]:
         """
-        Stores or updates an attached reference document for a session.
-        Automatically extracts text, page mappings, and metadata.
+        Stores one uploaded file. Re-uploading a filename replaces it. Raises
+        ``AttachmentLimitError`` when the file is too large or the session is full.
         """
+        if not session_id:
+            raise AttachmentLimitError("No chat session to attach the file to.")
+        filename = os.path.basename((filename or "").replace("\\", "/")).strip() or "attachment"
+        if not data:
+            raise AttachmentLimitError(f"'{filename}' is empty.")
+        if len(data) > self.max_bytes:
+            raise AttachmentLimitError(
+                f"'{filename}' is {len(data) / 1048576:.1f} MB; the limit is {self.max_bytes / 1048576:.0f} MB per file.",
+                status_code=413)
+
+        existing = self.get_attachments(session_id)
+        if not any(a.get("filename") == filename for a in existing) and len(existing) >= self.max_files:
+            raise AttachmentLimitError(
+                f"A chat can hold at most {self.max_files} attached files. Remove one to attach '{filename}'.",
+                status_code=409)
+
+        record = build_record(filename, file_type, data)  # extraction happens outside the lock
+        self._write_disk(session_id, record, data)
+        with self._lock:
+            files = self._store.setdefault(session_id, [])
+            idx = next((i for i, f in enumerate(files) if f.get("filename") == filename), None)
+            if idx is not None:
+                files[idx] = record
+            elif len(files) >= self.max_files:
+                raise AttachmentLimitError(
+                    f"A chat can hold at most {self.max_files} attached files. Remove one to attach '{filename}'.",
+                status_code=409)
+            else:
+                files.append(record)
+            self._touch(session_id)
+        logger.info(f"Stored attachment '{filename}' ({record['kind']}, {record['page_count']} page(s), "
+                    f"{len(data)} bytes) for session '{session_id}'")
+        return record
+
+    def store_attachment(self, session_id: str, file_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Stores an attachment sent inside a JSON body ({filename, file_type, content})."""
         if not session_id or not file_data:
-            return
-
+            return None
         filename = file_data.get("filename", "Uploaded File")
         file_type = file_data.get("file_type", "document")
-        raw_content = file_data.get("content", "")
+        data = payload_to_bytes(filename, file_type, file_data.get("content", ""))
+        if not data:
+            return None
+        return self.store_bytes(session_id, filename, file_type, data)
 
-        full_text, pages_dict, page_count, is_scanned = extract_document_payload(
-            filename=filename,
-            file_type=file_type,
-            content=raw_content,
-        )
-
-        # Build initial prompt preview (capped at MAX_ATTACHED_FILE_CHARS)
-        prompt_content = full_text
-        if len(prompt_content) > MAX_ATTACHED_FILE_CHARS:
-            prompt_content = prompt_content[:MAX_ATTACHED_FILE_CHARS] + f"\n\n... [Remaining content available via `read_attached_document` ({page_count} pages total)]"
-
-        # Keep the original PDF bytes so the PDF → LaTeX converter can import the attachment
-        raw_pdf: Optional[bytes] = None
-        if isinstance(raw_content, str) and raw_content.strip()[:30].startswith(("data:application/pdf", "data:application/x-pdf", "JVBERi0")):
-            decoded = _decode_base64_payload(raw_content.strip())
-            max_bytes = int(os.getenv("PDF2LATEX_MAX_FILE_MB", "50")) * 1024 * 1024
-            if decoded and decoded[:5] == b"%PDF-" and len(decoded) <= max_bytes:
-                raw_pdf = decoded
-
-        record = {
-            "filename": filename,
-            "file_type": file_type,
-            "is_pdf": raw_pdf is not None,
-            "raw_bytes": raw_pdf,
-            "content": prompt_content,           # Capped preview for prompt context
-            "full_content": full_text,            # Full un-truncated text for tool reading
-            "pages": pages_dict,                  # Dict[page_number: text]
-            "page_count": max(1, page_count),
-            "size": len(full_text),
-            "is_scanned": is_scanned,
-            "uploaded_at": time.time(),
-        }
-
+    def remove_attachment(self, session_id: str, attachment_id: str) -> bool:
+        """Removes one attachment by id (or exact filename). Returns whether anything was removed."""
+        self.get_attachments(session_id)  # make sure a disk-only session is loaded
         with self._lock:
-            self._cleanup_expired_locked()
-            if session_id not in self._store:
-                self._store[session_id] = []
+            files = self._store.get(session_id) or []
+            keep = [f for f in files if f.get("id") != attachment_id and f.get("filename") != attachment_id]
+            removed = [f for f in files if f not in keep]
+            if not removed:
+                return False
+            self._store[session_id] = keep
+        d = self._session_dir(session_id)
+        for f in removed:
+            for suffix in (".bin", ".json"):
+                try:
+                    (d / f"{f['id']}{suffix}").unlink()
+                except OSError:
+                    pass
+        return True
 
-            # Replace if same filename exists, else append
-            existing_idx = next(
-                (i for i, f in enumerate(self._store[session_id]) if f.get("filename") == filename),
-                None
-            )
-            if existing_idx is not None:
-                self._store[session_id][existing_idx] = record
-            else:
-                self._store[session_id].append(record)
-
-            self._last_accessed[session_id] = time.time()
-            logger.info(f"Stored attached file '{filename}' for session '{session_id}' ({page_count} pages, {len(full_text)} chars)")
+    # -- reads --------------------------------------------------------------
 
     def get_attachments(self, session_id: str) -> List[Dict[str, Any]]:
-        """Retrieves all active attached reference documents for a session."""
+        """All attachments of a session (rebuilt from disk if this process has not seen it)."""
         if not session_id:
             return []
-
         with self._lock:
             self._cleanup_expired_locked()
             if session_id in self._store:
-                self._last_accessed[session_id] = time.time()
+                self._touch(session_id)
                 return list(self._store[session_id])
+        restored = self._load_from_disk(session_id)
+        if not restored:
             return []
+        with self._lock:
+            files = self._store.setdefault(session_id, restored)
+            self._touch(session_id)
+            return list(files)
 
     def get_attachment(self, session_id: str, filename: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        """Retrieves a specific attachment by filename, or the first/latest attachment if filename is None."""
+        """An attachment by filename or id; the most recent one when ``filename`` is None or unknown."""
         attachments = self.get_attachments(session_id)
         if not attachments:
             return None
         if not filename:
-            return attachments[-1]  # Return most recent
+            return attachments[-1]
 
-        # Case-insensitive filename match or basename match
         fn_lower = filename.lower()
         for att in attachments:
             att_name = att.get("filename", "").lower()
-            if att_name == fn_lower or att_name.endswith("/" + fn_lower) or fn_lower.endswith("/" + att_name):
+            if (att.get("id") == filename or att_name == fn_lower
+                    or att_name.endswith("/" + fn_lower) or fn_lower.endswith("/" + att_name)):
                 return att
         return attachments[-1]
+
+    def find_attachment(self, session_id: str, name_or_id: str) -> Optional[Dict[str, Any]]:
+        """Like get_attachment, but ``None`` when nothing matches (no most-recent fallback)."""
+        wanted = (name_or_id or "").strip().lower()
+        for att in self.get_attachments(session_id):
+            if att.get("id") == wanted or att.get("filename", "").lower() == wanted:
+                return att
+        return None
+
+    def summaries(self, session_id: str) -> List[Dict[str, Any]]:
+        """What the client shows for each attachment — never text or bytes."""
+        out = []
+        for a in self.get_attachments(session_id):
+            out.append({
+                "id": a.get("id"),
+                "filename": a.get("filename"),
+                "file_type": a.get("file_type"),
+                "kind": a.get("kind"),
+                "page_count": a.get("page_count", 1),
+                "size_bytes": a.get("size_bytes", 0),
+                "chars": a.get("size", 0),
+                "is_scanned": bool(a.get("is_scanned")),
+                "figure_count": len(a["figures"]) if isinstance(a.get("figures"), list) else None,
+            })
+        return out
 
     def read_attachment_pages(
         self,
@@ -413,18 +644,21 @@ class AttachedContextStore:
         results.sort(key=lambda x: x["score"], reverse=True)
         return results[:top_k]
 
+    # -- lifecycle ----------------------------------------------------------
+
     def clear_session(self, session_id: str) -> None:
-        """Clears all attachments for a specific session."""
+        """Clears all attachments for a specific session, on disk too."""
         with self._lock:
             self._store.pop(session_id, None)
             self._last_accessed.pop(session_id, None)
+        shutil.rmtree(self._session_dir(session_id), ignore_errors=True)
 
     def cleanup_expired(self) -> None:
         """Public method to clean up expired sessions."""
         with self._lock:
-            self._cleanup_expired_locked()
+            self._cleanup_expired_locked(force_disk=True)
 
-    def _cleanup_expired_locked(self) -> None:
+    def _cleanup_expired_locked(self, force_disk: bool = False) -> None:
         now = time.time()
         expired = [
             sid for sid, last_time in self._last_accessed.items()
@@ -433,7 +667,19 @@ class AttachedContextStore:
         for sid in expired:
             self._store.pop(sid, None)
             self._last_accessed.pop(sid, None)
+            shutil.rmtree(self._session_dir(sid), ignore_errors=True)
             logger.debug(f"Expired attached context for session '{sid}'")
+
+        # Folders of sessions this process never loaded (left by an earlier worker).
+        if force_disk or now - self._last_disk_purge > DISK_PURGE_INTERVAL:
+            self._last_disk_purge = now
+            root = self._root or attachment_dir()
+            try:
+                for d in root.iterdir():
+                    if d.is_dir() and now - d.stat().st_mtime > self._ttl_seconds:
+                        shutil.rmtree(d, ignore_errors=True)
+            except OSError:
+                pass
 
 
 # Global singleton instance

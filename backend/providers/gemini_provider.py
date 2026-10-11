@@ -12,7 +12,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from .base_provider import LLMProvider, LLMProviderError
-from .errors import classify
+from .errors import FailureKind, classify
 from .multimodal import has_image_parts, strip_image_parts
 from .web2api_keys import get_web2api_base_url, load_web2api_keys
 
@@ -41,13 +41,16 @@ class GeminiProvider(LLMProvider):
     Automatically rotates across up to 5 server-side keys when rate limits occur.
     """
 
+    supports_images = True  # with a text-only retry if the gateway rejects them (see chat)
+
     def __init__(self):
         self.base_url = get_web2api_base_url()
         self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "30.0"))
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
-        self._images_unsupported = False
+        # Endpoints (the server gateway / a user's own key) that have rejected image input.
+        self._images_unsupported: set = set()
 
     def _load_server_keys(self) -> List[Dict[str, str]]:
         """Loads up to 5 server-side Gemini Web2API keys via the shared loader."""
@@ -92,11 +95,10 @@ class GeminiProvider(LLMProvider):
         """Validates and returns the model ID. Falls back to first allowed model."""
         if model in ALLOWED_MODEL_IDS:
             return model
-        logger.warning(
-            f"Gemini model '{model}' not in allowed list. "
-            f"Falling back to '{ALLOWED_GEMINI_MODELS[0]['id']}'."
-        )
-        return ALLOWED_GEMINI_MODELS[0]["id"]
+        default_id = next((m["id"] for m in ALLOWED_GEMINI_MODELS if m.get("default")),
+                          ALLOWED_GEMINI_MODELS[0]["id"])
+        logger.warning(f"Gemini model '{model}' not in allowed list. Falling back to '{default_id}'.")
+        return default_id
 
     def chat(
         self,
@@ -111,7 +113,10 @@ class GeminiProvider(LLMProvider):
         args = (model, temperature, max_tokens, api_keys, cancel_token, web_search)
         if not has_image_parts(messages):
             return self._chat_once(messages, *args)
-        if self._images_unsupported:
+        # Remembered per endpoint: the shared gateway refusing images says nothing about
+        # a user's own key, which goes to a different service.
+        endpoint = "user" if (api_keys or {}).get("gemini") else "server"
+        if endpoint in self._images_unsupported:
             return self._chat_once(strip_image_parts(messages), *args)
         try:
             return self._chat_once(messages, *args)
@@ -121,7 +126,7 @@ class GeminiProvider(LLMProvider):
             if not rejected:
                 raise
             logger.warning(f"Gemini endpoint rejected image input ({str(e)[:120]}); retrying text-only.")
-            self._images_unsupported = True
+            self._images_unsupported.add(endpoint)
             return self._chat_once(strip_image_parts(messages), *args)
 
     def _chat_once(

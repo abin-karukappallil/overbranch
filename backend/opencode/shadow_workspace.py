@@ -108,6 +108,9 @@ class ShadowWorkspace:
 
         # Attached reference files (PDFs, papers, source documents) — read-only
         self._reference_files: Dict[str, str] = {}
+        # Assets this run wrote into the project (figures imported from attachments):
+        # project-relative paths, so an unused or rolled-back import can be removed.
+        self.imported_assets: List[str] = []
 
         # Stable node IDs that changed because an op edited the node's own title:
         # old_id -> new_id, so an ID the model already holds keeps working.
@@ -965,6 +968,10 @@ class ShadowWorkspace:
     # ------------------------------------------------------------------
     # Asset operations
     # ------------------------------------------------------------------
+
+    def set_assets_dir(self, assets_dir: str) -> None:
+        """Points the workspace at the project's assets/ folder (created by the first import)."""
+        self._assets_dir = assets_dir
 
     def list_assets(self) -> List[str]:
         """

@@ -53,6 +53,11 @@ class LLMProvider(ABC):
     }
     """
 
+    # Whether chat() accepts OpenAI-style image parts in message content. The
+    # router removes them for a provider that does not: a fallback model that
+    # cannot see must still get the text of the step, not a rejected request.
+    supports_images: bool = False
+
     @abstractmethod
     def get_provider_name(self) -> str:
         """Returns a human-readable provider name (e.g. 'Groq', 'Gemini')."""

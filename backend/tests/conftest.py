@@ -51,6 +51,23 @@ class ScriptedLLM:
         return [sum(len(str(m.get("content", ""))) for m in call) for call in self.calls]
 
 
+@pytest.fixture(autouse=True)
+def isolated_attachment_store(tmp_path, monkeypatch):
+    """
+    Attachments are kept on disk (so they survive a worker restart). Tests must
+    not share that folder with each other, or with a developer's running server.
+    """
+    import attached_context
+
+    store = attached_context.attached_context_store
+    monkeypatch.setattr(store, "_root", tmp_path / "attachments")
+    store._store.clear()
+    store._last_accessed.clear()
+    yield store
+    store._store.clear()
+    store._last_accessed.clear()
+
+
 @pytest.fixture
 def scripted_llm(monkeypatch):
     def make(replies):
