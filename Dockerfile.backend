@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
 # 1. Install System Dependencies: Complete TeX Live Suite & PDF Processing Tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     texlive-base \
     texlive-latex-base \
     texlive-latex-recommended \
@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     texlive-pictures \
     texlive-fonts-recommended \
     texlive-fonts-extra \
+    texlive-fonts-extra-links \
     texlive-science \
     texlive-publishers \
     texlive-xetex \
@@ -45,7 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     unzip \
     && rm -rf /var/lib/apt/lists/* \
-    && fc-cache -f
+    && fc-cache -f -v \
+    && mktexlsr
 
 WORKDIR /app
 
