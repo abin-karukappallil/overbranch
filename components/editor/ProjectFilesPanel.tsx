@@ -97,10 +97,17 @@ export function ProjectFilesPanel({
     setPreviewLoading(true);
     setPreviewError(null);
 
-    authFetch(
-      `${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(
+    // Same-origin proxy (app/api/projects/get-file). The browser's Better-Auth
+    // cookie flows naturally on same-origin, so the request never falls through
+    // to the backend's guest branch — which it did when a cross-origin <img>
+    // dropped the Authorization header and the user saw "this request was not
+    // signed in" even though they are a project collaborator. See
+    // app/api/projects/get-file/route.ts.
+    fetch(
+      `/api/projects/get-file?project_id=${encodeURIComponent(projectId)}&file_path=${encodeURIComponent(
         previewImage.path
-      )}&raw=true`
+      )}&raw=true`,
+      { credentials: "same-origin", cache: "no-store" }
     )
       .then(async (res) => {
         if (!res.ok) {
@@ -321,47 +328,25 @@ export function ProjectFilesPanel({
     setTimeout(() => setCopiedPath(null), 2000);
   };
 
-  const handleDownloadFile = async (filePath: string, e?: React.MouseEvent) => {
+  const handleDownloadFile = (filePath: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     if (!projectId) return;
 
+    // One-click, same-origin download. The <a download> is clicked by the
+    // browser directly — no fetch, no blob, no race with session hydration —
+    // and the proxy route sets Content-Disposition: attachment server-side.
+    // The backend URL is never put in front of the user, and the Better-Auth
+    // cookie travels naturally because this URL is on the app's own origin.
     const fileName = filePath.split("/").pop() || filePath;
-    setDownloadingPath(filePath);
-    const toastId = toast.loading(`Downloading ${fileName}...`);
-
-    try {
-      const res = await authFetch(
-        `${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(
-          filePath
-        )}&download=true&raw=true`
-      );
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || `Failed to download ${fileName} (${res.status})`);
-      }
-
-      const blob = await res.blob();
-      const blobUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.style.display = "none";
-      anchor.href = blobUrl;
-      anchor.download = fileName;
-      document.body.appendChild(anchor);
-      anchor.click();
-      document.body.removeChild(anchor);
-
-      setTimeout(() => {
-        window.URL.revokeObjectURL(blobUrl);
-      }, 30000);
-
-      toast.success(`Downloaded ${fileName}`, { id: toastId });
-    } catch (err: any) {
-      console.error("File download error:", err);
-      toast.error(err.message || `Failed to download ${fileName}`, { id: toastId });
-    } finally {
-      setDownloadingPath(null);
-    }
+    const href = `/api/projects/get-file?project_id=${encodeURIComponent(projectId)}&file_path=${encodeURIComponent(filePath)}&download=1`;
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = fileName;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
   };
 
   const getFileIcon = (ext: string, type: "document" | "image") => {
