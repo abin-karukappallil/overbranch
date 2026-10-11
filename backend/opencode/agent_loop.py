@@ -40,6 +40,14 @@ from .tools import TOOL_DEFINITIONS, EDIT_TOOLS, canonical_tool_name, execute_to
 from .context_builder import SMALL_DOC_LINES, ContextLedger, build_targeted_context
 from .diff_generator import compute_final_diff, compute_edit_items
 from .image_refs import available_images, new_unresolved_refs, reconcile_image_refs
+from .presentation_style import STANDARD_PPT_SPEC
+
+# PPT template/theme names the user may ask for by name. When one appears in a
+# creation prompt, the deck is built from that template (reproduced exactly)
+# instead of the built-in OverBranch Standard.
+PPT_THEME_NAMES = (
+    "regalia", "nordlight", "prism", "minimalist", "basic", "sorbonne", "uwm",
+)
 
 logger = logging.getLogger("opencode.agent_loop")
 
@@ -337,6 +345,7 @@ YOUR WORKFLOW & FAST EXECUTION MANDATE:
 9. PDF IMPORT: When the user asks to convert / import / recreate an attached PDF as LaTeX, call `convert_attached_pdf()` instead of transcribing it yourself, then finish immediately with done=true (no document edits). Every page is reproduced as compilable LaTeX with the same text, images, colors, font sizes and spacing as closely as possible, then compiled and compared with the original. Results are best-effort and come with measured per-page similarity — never promise an identical copy.
 10. FIGURES FROM ATTACHED FILES: an attached paper's figures are listed under "FIGURES IN <file>" (or via `list_attachment_figures`). To show one, call `import_attachment_figure(figure_id)` — it saves the image into the project's assets/ folder and returns the exact path and LaTeX — then place that LaTeX in the slide/section that explains the figure (the architecture diagram on the architecture slide, a result plot beside the results). Never write `\\includegraphics` with a path no tool returned.
 11. VISUAL REQUESTS: when the request is about how the output LOOKS (alignment, spacing, overlapping text or images, text that is hard to read or invisible, content cut off), call `view_rendered_pages` on the page/block FIRST — you cannot judge these from the source — fix what it shows, then call it again to confirm. Text overflowing the margin or a table too wide for the page is `justify_content`'s job.
+11b. DIAGRAMS: when a slide or section needs a diagram, block diagram, figure or flowchart (a process, pipeline, workflow, architecture, or relationship picture), call `generate_diagram` — do NOT hand-write `tikzpicture` yourself. Two ways: pass a natural-language `description` for a rich or custom figure and the LLM draws it (the tool compiles, repairs and verifies it before placing), or pass a `nodes`/`edges` spec for a standard flow/block chart (laid out deterministically). Either way it loads the right libraries and guarantees the result fits the slide.
 12. CRITICAL STRUCTURAL INVARIANT: NEVER remove or omit `\\begin{{document}}` or `\\end{{document}}`. Every standalone document MUST have `\\begin{{document}}` separating the preamble from the document body, and `\\end{{document}}` at the end.
 
 {tools_block}
@@ -428,10 +437,10 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * For BEAMER PRESENTATIONS (e.g. converting a paper/PDF to slides): Generate 8-12 informative slides covering Background/Motivation, Problem Statement, System Architecture, Core Methodology, Key Algorithms/Formulations, Experimental Evaluation (with LaTeX tables of numbers from the paper), Discussion, and Conclusion.
      * For SEMINAR REPORTS / THESES: Generate multi-chapter report (`\\documentclass{{report}}`) synthesizing the paper's theory, mathematics, and experiments into comprehensive chapters.
    - For BEAMER PRESENTATIONS (PPT / SLIDES):
-     * DEFAULT PPT TEMPLATE MANDATE: You MUST use the **Regalia** template (`get_template_theme(category="ppt", theme_name="regalia")`) by default for all Beamer presentations and slide generation!
-     * Regalia Styling: `\\documentclass[aspectratio=169]{{beamer}}`, `\\usetheme{{default}}`, `cream` canvas background (`\\setbeamercolor{{background canvas}}{{bg=cream}}`), `navy` (#0B2545) and `gold` (#C9A24B) accent palette, custom frametitle sidebar with TikZ, elegant small-caps titles, and `[plain]` title slide banner with cream text.
-     * NEVER default to generic Madrid or bare unstyled slides — ALWAYS use Regalia as the standard presentation theme.
-     * Generate 6-12 content slides (`\\begin{{frame}}{{Title}}{{Subtitle}}`) with clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations.
+     * DEFAULT = OVERBRANCH STANDARD (no template): build the deck inline with the built-in OverBranch Standard — a clean, modern, LIGHT theme (white background, dark text, a slim accent sidebar, and a LIGHT title slide — NEVER a dark title banner). Do NOT pull a template by default; the exact preamble and title slide are supplied in the creation instructions below.
+     * USE A TEMPLATE ONLY WHEN THE USER ASKS for one by name (e.g. "use the nordlight template", "regalia", "the prism theme"). Then call `get_template_theme(category="ppt", theme_name="<name>")` and reproduce its preamble, colours and fonts EXACTLY — copy them verbatim, never substitute.
+     * Never leave slides as bare unstyled Madrid default; either the OverBranch Standard (default) or the template the user named.
+     * Generate 6-12 content slides (`\\begin{{frame}}{{Title}}`) with clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations.
    - For MULTI-CHAPTER REPORTS: Use `\\documentclass[11pt,a4paper,oneside]{{report}}`, standard geometry, setspace, amsmath, graphicx, booktabs, hyperref. Include Title, Abstract, Table of Contents, and 4-6 rich chapters with mathematical formulas, algorithms, tables, and bibliography.
    - For RESEARCH PAPERS / ARTICLES: Use `\\documentclass[conference]{{IEEEtran}}` or `\\documentclass[11pt,twocolumn]{{article}}`, abstract, keywords, numbered sections (Intro, Related Work, Methodology, Results, Conclusion), and references.
    - For RESUMES / CVs: Clean single- or two-page layout with Contact, Education, Technical Skills, Experience, and Projects.
@@ -447,13 +456,14 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - NEVER simply rephrase the wording when asked to fix invisible titles/headings — FIX THE PREAMBLE COLOR DEFINITIONS (`\\setbeamercolor` or `\\color`).
 
 8. TEMPLATES, THEMES & REDESIGNING (USING `get_template_theme`):
-   - DEFAULT PPT TEMPLATE: Regalia (`regalia`) is the designated default presentation template.
+   - DEFAULT: there is NO default template. A new presentation uses the built-in OverBranch Standard (clean, light) unless the user names a template. Templates are a library the user opts into, not the default.
+   - WHEN A TEMPLATE IS CHOSEN, USE IT EXACTLY: reproduce the template's preamble verbatim — its `\\definecolor`s, fonts (`\\setbeamerfont`), colours (`\\setbeamercolor`) and templates (`\\setbeamertemplate`) — do not approximate or substitute. Keep its exact look on the first pass; only change it if the user then asks.
    - MANDATORY TOOL CALL ON DESIGN OR TEMPLATE CHANGE:
-     If the user asks to CHANGE DESIGN, CHANGE TEMPLATE, SWITCH THEME, REDESIGN, or RESTYLE:
-     * YOU MUST MAKE A TOOL CALL TO `get_template_theme(category="ppt", theme_name=...)` to refer to other PPT templates from the template library.
-     * Available PPT themes include: 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'minimalist' (Focus clean), 'basic' (custom Madrid), 'sorbonne', 'uwm', and 'regalia'.
-     * If the user asks for another design or to change template without naming one, call `get_template_theme(category="ppt", theme_name="list")` to see available themes, or select an alternative like 'nordlight' or 'prism' using `get_template_theme(category="ppt", theme_name="nordlight", extract_section="preamble")`.
-     * Then use `read_file_range` on the document's preamble and `replace_text` to swap out the styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
+     If the user asks to CHANGE DESIGN, CHANGE TEMPLATE, SWITCH THEME, REDESIGN, RESTYLE, or to use a specific template:
+     * YOU MUST MAKE A TOOL CALL TO `get_template_theme(category="ppt", theme_name=...)` to fetch that template from the library, and apply it without hesitation.
+     * Available PPT themes include: 'regalia' (navy/gold formal), 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'minimalist' (Focus clean), 'basic' (custom Madrid), 'sorbonne', 'uwm'.
+     * If the user asks to change template without naming one, call `get_template_theme(category="ppt", theme_name="list")` to see available themes, then fetch the chosen one with `extract_section="preamble"`.
+     * Then use `read_file_range` on the document's preamble and `replace_text` to swap in the template's EXACT styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
 
 9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
    - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines.
@@ -1677,37 +1687,20 @@ def stream_opencode_agent(
         is_res = bool(re.search(r'\b(?:resume|cv|curriculum\s+vitae)\b', user_lower))
 
         if is_ppt:
-            archetype_hint = (
-                "DOCUMENT TARGET: BEAMER PRESENTATION (SLIDES) — DEFAULT TEMPLATE: REGALIA\n"
-                "- DEFAULT PPT TEMPLATE MANDATE: You MUST use the REGALIA presentation template (formal navy & gold, cream background) by default.\n"
-                "- Regalia Specification:\n"
-                "  * Document class: `\\documentclass[aspectratio=169]{beamer}`\n"
-                "  * Theme base: `\\usetheme{default}`\n"
-                "  * Packages: `\\usepackage[T1]{fontenc}\\usepackage[utf8]{inputenc}\\usepackage{tikz,booktabs,amsmath}\\usetikzlibrary{calc}`\n"
-                "  * Palette:\n"
-                "    `\\definecolor{navy}{HTML}{0B2545}\\definecolor{navylight}{HTML}{13315C}\\definecolor{gold}{HTML}{C9A24B}`\n"
-                "    `\\definecolor{cream}{HTML}{F7F4EC}\\definecolor{ink}{HTML}{1D1D1D}\\definecolor{muted}{HTML}{5C6270}`\n"
-                "  * Colors:\n"
-                "    `\\setbeamercolor{background canvas}{bg=cream}\\setbeamercolor{normal text}{fg=ink,bg=cream}`\n"
-                "    `\\setbeamercolor{frametitle}{fg=navy}\\setbeamercolor{title}{fg=navy}`\n"
-                "    `\\setbeamercolor{itemize item}{fg=gold}\\setbeamercolor{itemize subitem}{fg=navylight}`\n"
-                "    `\\setbeamercolor{block title}{fg=cream,bg=navy}\\setbeamercolor{block body}{fg=ink,bg=white}`\n"
-                "    `\\setbeamercolor{page number in head/foot}{fg=muted}`\n"
-                "  * Fonts & Templates:\n"
-                "    `\\setbeamerfont{frametitle}{series=\\bfseries,size=\\Large}\\setbeamerfont{title}{series=\\bfseries,size=\\huge}`\n"
-                "    `\\setbeamertemplate{navigation symbols}{}`\n"
-                "    `\\setbeamertemplate{itemize item}{\\textcolor{gold}{\\ensuremath{\\blacksquare}}}`\n"
-                "    `\\setbeamertemplate{itemize subitem}{\\textcolor{navylight}{\\textendash}}`\n"
-                "  * Custom Frametitle with left sidebar TikZ accent:\n"
-                "    `\\setbeamertemplate{frametitle}{\\begin{tikzpicture}[remember picture,overlay]\\fill[navy] (current page.north west) rectangle ($(current page.north west)+(0.55,-\\paperheight)$);\\fill[gold] ($(current page.north west)+(0.55,0)$) rectangle ($(current page.north west)+(0.62,-\\paperheight)$);\\node[anchor=north west,navy,font=\\usebeamerfont{frametitle}\\scshape] at ($(current page.north west)+(1.05,-0.55)$) {\\insertframetitle};\\draw[gold,line width=1pt] ($(current page.north west)+(1.05,-1.25)$) -- ($(current page.north west)+(3.4,-1.25)$);\\end{tikzpicture}\\vspace{9mm}}`\n"
-                "  * Footline:\n"
-                "    `\\setbeamertemplate{footline}{\\begin{tikzpicture}[remember picture,overlay]\\fill[navy] (current page.south west) rectangle ($(current page.south west)+(0.55,\\paperheight)$);\\fill[gold] ($(current page.south west)+(0.55,0)$) rectangle ($(current page.south west)+(0.62,\\paperheight)$);\\node[anchor=south east,muted,font=\\scriptsize] at ($(current page.south east)+(-0.4,0.22)$) {\\insertframenumber\\ / \\inserttotalframenumber};\\end{tikzpicture}}`\n"
-                "- Structure:\n"
-                "  * Title Slide (`[plain]`): TikZ banner with navy background, gold accent line, cream title text, author, and date.\n"
-                "  * Outline Slide (`\\begin{frame}{Outline}`): Key topics.\n"
-                "  * 6-12 content frames (`\\begin{frame}{Title}`): Clear bullet points (max 5-6 bullets/slide), structured blocks, tables, and equations. Never place text outside a frame.\n"
-                "- TIP: You can also call `get_template_theme(category='ppt', theme_name='regalia', extract_section='all')` to fetch the complete Regalia source if needed."
-            )
+            # A named template wins; otherwise build the clean light OverBranch Standard.
+            named_theme = next((t for t in PPT_THEME_NAMES if re.search(rf'\b{t}\b', user_lower)), None)
+            if named_theme:
+                archetype_hint = (
+                    f"DOCUMENT TARGET: BEAMER PRESENTATION (SLIDES) — TEMPLATE REQUESTED: {named_theme.upper()}\n"
+                    f"- The user asked for the '{named_theme}' template. On step 1 call "
+                    f"`get_template_theme(category='ppt', theme_name='{named_theme}', extract_section='all')` and build the deck on it.\n"
+                    "- Reproduce the template's preamble EXACTLY — its `\\definecolor`s, fonts, colours and `\\setbeamertemplate`s verbatim. Do not substitute or approximate; keep its exact look.\n"
+                    "- Structure: the template's own title slide, an Outline slide, and 6-12 content frames "
+                    "(`\\begin{frame}{Title}`) with clear bullets (max 5-6/slide), blocks, tables and equations. Never place text outside a frame.\n"
+                    "- DIAGRAMS: for any process/architecture/flowchart/relationship diagram, call `generate_diagram` with a node/edge spec instead of hand-writing TikZ."
+                )
+            else:
+                archetype_hint = STANDARD_PPT_SPEC
         elif is_rep:
             archetype_hint = (
                 "DOCUMENT TARGET: MULTI-CHAPTER SEMINAR / TECHNICAL REPORT\n"

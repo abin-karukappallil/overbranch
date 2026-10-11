@@ -46,8 +46,8 @@ export function UserProfileDropdown() {
             {userName.slice(0, 2).toUpperCase()}
           </AvatarFallback>
         </Avatar>
-        <div className="hidden sm:flex flex-col text-left">
-          <span className="text-xs font-medium text-slate-800 dark:text-[#F7F8F8] tracking-tight">{userName}</span>
+        <div className="hidden sm:flex flex-col text-left max-w-[100px] sm:max-w-[120px]">
+          <span className="text-xs font-medium text-slate-800 dark:text-[#F7F8F8] tracking-tight truncate">{userName}</span>
           <span className="text-[10px] text-slate-500 dark:text-[#8A8F98] font-mono">Workspace</span>
         </div>
         <ChevronDown className="w-3.5 h-3.5 text-slate-500 dark:text-[#8A8F98] hidden sm:block" />

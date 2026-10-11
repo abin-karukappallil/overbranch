@@ -345,7 +345,7 @@ function DashboardContent() {
       </div>
 
       {isProjectsLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
           <ProjectCardSkeleton />
           <ProjectCardSkeleton />
           <ProjectCardSkeleton />
@@ -368,10 +368,10 @@ function DashboardContent() {
                 <span>Owned Projects ({ownedProjects.length})</span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
                 {ownedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none">
+                    <Card className="group p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none overflow-hidden">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2 min-w-0">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
@@ -390,7 +390,7 @@ function DashboardContent() {
                                 e.stopPropagation();
                                 setDeleteConfirmProj(project);
                               }}
-                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors"
+                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors cursor-pointer"
                               title="Delete Project"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -403,16 +403,20 @@ function DashboardContent() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0">
-                        <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0 flex-wrap sm:flex-nowrap">
+                        <span
+                          className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] text-[11px] truncate max-w-[100px] sm:max-w-[130px] min-w-0 shrink"
+                          title={project.template || "None"}
+                        >
                           {project.template || "None"}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap shadow-xs"
+                          className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ml-auto group/btn"
                         >
-                          <span>Open Workspace →</span>
+                          <span>Open Workspace</span>
+                          <span className="group-hover/btn:translate-x-0.5 transition-transform inline-block">→</span>
                         </Link>
                       </div>
                     </Card>
@@ -430,10 +434,10 @@ function DashboardContent() {
                 <span>Shared With Me ({sharedProjects.length})</span>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
                 {sharedProjects.map((project) => (
                   <motion.div key={project.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none">
+                    <Card className="group p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none overflow-hidden">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2 min-w-0">
                           <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
@@ -452,16 +456,20 @@ function DashboardContent() {
                         </p>
                       </div>
 
-                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0">
-                        <span className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] w-fit shrink-0 text-[11px]" title={project.template || "None"}>
+                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0 flex-wrap sm:flex-nowrap">
+                        <span
+                          className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] text-[11px] truncate max-w-[100px] sm:max-w-[130px] min-w-0 shrink"
+                          title={project.template || "None"}
+                        >
                           {project.template || "None"}
                         </span>
 
                         <Link
                           href={`/editor/${project.id}`}
-                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap shadow-xs"
+                          className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ml-auto group/btn"
                         >
-                          <span>Open Workspace →</span>
+                          <span>Open Workspace</span>
+                          <span className="group-hover/btn:translate-x-0.5 transition-transform inline-block">→</span>
                         </Link>
                       </div>
                     </Card>

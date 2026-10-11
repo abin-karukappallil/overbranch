@@ -227,6 +227,36 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": [],
     },
     {
+        "name": "generate_diagram",
+        "description": (
+            "Build a clean, compiling diagram, block diagram, figure or flowchart — do NOT hand-write TikZ for "
+            "diagrams. Use it whenever a slide or section needs a process, pipeline, workflow, architecture, or "
+            "relationship picture. TWO WAYS: (1) give a natural-language `description` and the diagram is DRAWN BY "
+            "THE LLM, then compiled, repaired if needed, and verified before it is placed — best for rich or custom "
+            "figures; (2) give a `nodes`/`edges` spec and it is laid out deterministically — best for standard "
+            "flow/block charts. Give node_id to insert it into that block (e.g. a frame); omit it (or dry_run=true) "
+            "to get the LaTeX back. It loads the right TikZ libraries and guarantees the result fits the slide."
+        ),
+        "parameters": {
+            "description": {"type": "string",
+                            "description": "Natural-language description of the diagram/figure to draw. When given, "
+                                           "the LLM draws it (verified to compile). Best for rich or custom figures."},
+            "nodes": {"type": "array",
+                      "description": "Deterministic mode: list of {id, label, shape?}. shape: 'process' (default, box), "
+                                     "'decision' (diamond), 'io' (parallelogram), 'terminal' (rounded) or 'data'."},
+            "edges": {"type": "array",
+                      "description": "Deterministic mode: list of {from, to, label?, style?}. from/to are node ids; "
+                                     "style 'solid' (default) or 'dashed'. A feedback edge (a cycle) is fine."},
+            "kind": {"type": "string", "description": "'flowchart' (default), 'block' or any figure kind (LLM mode)."},
+            "direction": {"type": "string", "description": "'vertical' (default) or 'horizontal'."},
+            "title": {"type": "string", "description": "Optional caption shown above the diagram."},
+            "node_id": {"type": "string", "description": "Block to insert the diagram into, e.g. 'frame:architecture'."},
+            "position": {"type": "string", "description": "Where, relative to node_id: 'end' (default), 'start', 'before', 'after'."},
+            "dry_run": {"type": "boolean", "description": "Return the LaTeX without inserting it."},
+        },
+        "required": [],
+    },
+    {
         "name": "view_rendered_pages",
         "description": (
             "LOOK at the compiled document. Use this for any request about how something looks — alignment, "
@@ -401,7 +431,7 @@ TOOL_ALIASES: Dict[str, str] = {
 # Tools that change the document (used for transactions and tracing).
 EDIT_TOOLS = frozenset({
     "replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",
-    "insert_into_chunk", "justify_content",
+    "insert_into_chunk", "justify_content", "generate_diagram",
 })
 
 
@@ -592,6 +622,10 @@ def execute_tool(
         elif tool_name == "justify_content":
             from .layout_tools import justify_content_tool
             return justify_content_tool(workspace, args)
+
+        elif tool_name == "generate_diagram":
+            from .diagram_tools import generate_diagram_tool
+            return generate_diagram_tool(workspace, args)
 
         elif tool_name == "view_rendered_pages":
             from .visual_tools import view_rendered_pages_tool

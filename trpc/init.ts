@@ -69,8 +69,18 @@ export const createContext = async () => {
   // Always verify guest token if present so guest projects can be linked/accessed/migrated
   const verifiedGuest = rawGuestToken ? verifyGuestToken(rawGuestToken) : null;
 
+  const rawCookieHeader = reqHeaders.get('cookie') || cookieStore.toString();
+  const sessionToken =
+    cookieStore.get('__Secure-better-auth.session_token')?.value ||
+    cookieStore.get('better-auth.session_token')?.value ||
+    cookieStore.get('session_token')?.value ||
+    session?.session?.token ||
+    null;
+
   return {
     session,
+    rawCookieHeader,
+    sessionToken,
     guestToken: rawGuestToken || null,
     guestSessionId: verifiedGuest?.sessionId || null,
   };
@@ -89,6 +99,7 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   }
   return next({
     ctx: {
+      ...ctx,
       session: ctx.session,
       user: ctx.session.user,
     },

@@ -73,6 +73,8 @@ pytest tests/test_attachments.py -v             # chat attachments: five-file ca
 pytest tests/test_attachment_figures.py -v      # figures of an attached PDF: found by caption, rendered, imported, cleaned up
 pytest tests/test_visual_tools.py -v            # view_rendered_pages: page lookup, overlap / contrast / off-page, images in the loop, look-first
 pytest tests/test_diff_hunks.py -v              # review hunks: structurally closed, any subset valid, whole-document rewrites
+pytest tests/test_diagram_tool.py -v            # generate_diagram: layered layout, cycles, escaped labels, real-TeX compiles, write-gate insertion
+pytest tests/test_presentation_default.py -v    # default = light OverBranch Standard (not Regalia); named template routes to get_template_theme; diagram tool reachable
 ```
 
 ### Realtime Collaboration Client Checks (Node, no test runner added)
@@ -111,7 +113,7 @@ bash deploy.sh
      - [G. Document Environment Integrity & AST Auto-Repair](#g-document-environment-integrity--ast-auto-repair)
      - [H. Pre-Commit Validation & Deterministic Repair](#h-pre-commit-validation--deterministic-repair)
      - [I. Shadow Compilation & Compiler-Feedback Self-Correction](#i-shadow-compilation--compiler-feedback-self-correction)
-     - [J. Regalia Presentation Standard & Theme Registry](#j-regalia-presentation-standard--theme-registry)
+     - [J. Default Presentation Standard, Theme Registry & Diagram Tool](#j-default-presentation-standard-theme-registry--diagram-tool)
      - [K. PDF → LaTeX Per-Page Verification, Repair & Best-Version Selection](#k-pdf--latex-per-page-verification-repair--best-version-selection)
      - [L. Scanned Pages & Vector Art](#l-scanned-pages--vector-art)
      - [M. Cross-Stack Better-Auth Authentication & SQLAlchemy Session Verification](#m-cross-stack-better-auth-authentication--sqlalchemy-session-verification)
@@ -254,6 +256,7 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
    - `request_more_steps`: Asks for more reasoning steps when the remaining budget will not cover the work. Granted only against progress since the last request.
    - `detect_overflow` / `inspect_pdf_geometry` / `justify_content`: Layout tools. `justify_content` with `scope="document"` is the render-aware layout repair — compile, measure every page, map each defect to its source, apply the smallest fix, recompile, keep it only if the page measurably improved (see [R](#r-layout-engine-justify_content-defect-detection--minimal-repair)).
    - `get_template_theme`: Retrieves curated themes (Beamer PPT themes, IEEE conference/journal papers, theses, resumes/CVs, formal letters, lab assignments) and extracts styling preambles for non-destructive redesigns.
+   - `generate_diagram`: Builds a diagram / block diagram / figure / flowchart and inserts it at a node — either LLM-drawn from a natural-language `description` (verified to compile, repaired if needed) or deterministically laid out from a `nodes`/`edges` spec. The model never hand-writes diagram TikZ. See [J](#j-default-presentation-standard-theme-registry--diagram-tool).
    - `read_attached_document`: Extracts content from uploaded reference papers/PDFs stored in the multi-turn session cache.
    - `search_uploaded_references`: Searches user-attached documents for specific technical terminology, equations, and tables.
    - `convert_attached_pdf`: Starts a PDF → LaTeX import job for a PDF attached in chat; the agent then finishes without editing and the UI shows the job's progress and similarity report.
@@ -343,13 +346,13 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
    - `compile_latex` returns the located records as `diagnostics` and rewrites `errors` to carry the located line (same string shape, `./main.tex:64: …`), so the editor's error bar and "Ask AI to Fix" get true lines without a frontend change. `compile_shadow_buffer` returns the first `MAX_REPORTED_ERRORS` (12) as `errors` and **all** of them as `failing_errors` for the repairer — capped at five, a deck with six bare `&` could not be repaired in one pass — plus `pdf_produced`.
    - Recovery patch 4 (`\\[6pt]` → `\par\vspace{6pt}`, meant for title pages) no longer runs inside tabular-like environments. It is triggered by `has an extra }` in the log — exactly what `\textbf{A & B}` in a cell produces — and it turned every spaced row break into a paragraph break, so the agent was shown *Extra alignment tab* errors for a document it had not written.
 
-#### J. Regalia Presentation Standard & Theme Registry
-1. **Default Presentation Standard**: Regalia (`regalia`) is the designated default presentation template across OverBranch:
-   - `\documentclass[aspectratio=169]{beamer}`
-   - `\usetheme{default}` with `cream` background canvas (`\setbeamercolor{background canvas}{bg=cream}`).
-   - `navy` (`#0B2545`) and `gold` (`#C9A24B`) accent palette with TikZ frametitle decorations.
-   - Dedicated `[plain]` title slide and 6–12 structured content slides.
-2. **Curated Themes**: [`backend/opencode/template_registry.py`](file:///home/abin/overbranch/backend/opencode/template_registry.py) indexes themes (`nordlight`, `prism`, `minimalist`, `sorbonne`, `uwm`, `regalia`, `ieee`, `acm`, `moderncv`) and extracts styling preambles without destroying user content.
+#### J. Default Presentation Standard, Theme Registry & Diagram Tool
+1. **Default = OverBranch Standard (no template)**: a plain "make a ppt" is built inline with the built-in **OverBranch Standard** ([`backend/opencode/presentation_style.py`](file:///home/abin/overbranch/backend/opencode/presentation_style.py), `STANDARD_PPT_PREAMBLE` / `STANDARD_PPT_TITLE_SLIDE` / `STANDARD_PPT_SPEC`), not a template. It is a clean, **light** deck — white background, dark text, a slim accent (`#2A5DB0`) left sidebar, and a **light title slide** (no dark banner). The old behaviour forced the Regalia template, whose title slide is cream text on a dark navy banner — the "dark title page" users disliked. Both the sidebar (background template with `[overlay]`, **not** `remember picture`) and the title slide (normal flow in a `minipage`, so a two-line title does not collide with the accent rule) are **single-pass safe**, verified by rendering with real pdflatex. The agent injects the standard into the PPT creation message ([`agent_loop.py`](file:///home/abin/overbranch/backend/opencode/agent_loop.py) `is_ppt` branch) only when the user named no template.
+2. **Templates are opt-in and reproduced exactly**: a template is used only when the user names/asks for one (`PPT_THEME_NAMES`: regalia, nordlight, prism, minimalist, basic, sorbonne, uwm). Then the agent calls `get_template_theme` and copies that template's preamble (colours, fonts, `\setbeamertemplate`s) **verbatim** on the first pass; it changes the design freely afterward when the user asks. [`backend/opencode/template_registry.py`](file:///home/abin/overbranch/backend/opencode/template_registry.py) indexes the themes and extracts styling preambles without destroying user content. Regalia remains a valid named template (unchanged), as does its colour safety net in `latex_error_fixer`.
+3. **`generate_diagram` — diagrams / block diagrams / figures / flowcharts, two modes** ([`backend/opencode/diagram_tools.py`](file:///home/abin/overbranch/backend/opencode/diagram_tools.py)). The model never hand-writes diagram TikZ; it calls this tool one of two ways:
+   - **LLM mode** (`description=…`, natural language): the diagram is **drawn by the copilot's own model** (`providers.router` `DEFAULT_MODEL`). The tool prompts for a single self-contained `tikzpicture` (standard libraries only, xcolor expressions only, no preamble/float/fences), extracts it, then **verifies it compiles with real pdflatex and feeds the compiler's errors back for up to `DIAGRAM_LLM_MAX_REPAIRS` (2) repairs** before inserting — nothing is shipped unchecked. The figure is bounded to the slide with `adjustbox` (`max width`/`max totalheight`). Best for rich or custom figures.
+   - **Deterministic mode** (`nodes:[{id,label,shape}]` / `edges:[{from,to,label?}]`, `kind`, `direction`): guaranteed-compiling TikZ — longest-path layered layout with explicit coordinates, back-edges (feedback/retry cycles) excluded from layering and bent, shapes from `shapes.geometric` (diamond/trapezium), orientation-dependent pitch so boxes never overlap, labels LaTeX-escaped, wrapped in `\resizebox` so it never overflows. Best for standard flow/block charts, and the **fallback** when the LLM path cannot produce compiling TikZ (with a spec given).
+   It is an edit tool: it ensures `\usetikzlibrary{shapes.geometric,…}` (and `adjustbox` in LLM mode) in the preamble — the healer adds `tikz`/`calc`/`positioning`/`arrows.meta` — and inserts at a `node_id` through the write + compile gates; `dry_run`/no `node_id` returns the LaTeX. Covered by `tests/test_diagram_tool.py` (real TeX, both modes + fallback) and `tests/test_presentation_default.py`.
 
 #### K. PDF → LaTeX Per-Page Verification, Repair & Best-Version Selection
 1. **Strict Compile**: every page is compiled on its own through the shared compile queue with pdfLaTeX. A PDF produced *despite* TeX errors (nonstopmode) or a reference to a missing image counts as a failure — `compile_latex` reports the TeX error lines in an `errors` field for this.
@@ -539,7 +542,7 @@ overbranch/
 │   │   └── tickets.py                          # One-time HMAC websocket admission tickets (identity only)
 │   ├── opencode/                               # OpenCode Bounded ReAct Agentic Pipeline
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, figure inventory & shared attachment preview budget, images on tool results, look-first visual preflight + render check, phase events, self-validating LaTeX-in-JSON parser
+│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, figure inventory & shared attachment preview budget, images on tool results, look-first visual preflight + render check, phase events, self-validating LaTeX-in-JSON parser, default light PPT standard vs. named-template branch, generate_diagram
 │   │   ├── apply_edits.py                      # Server-side all-or-nothing placement of edits the editor could not place (resolve-edits); whole-document items only over the unchanged original
 │   │   ├── attachment_tools.py                 # list_attachment_figures / import_attachment_figure; up-front import for documents built from attachments; removes imports the delivered document does not use (by file name)
 │   │   ├── context_builder.py                  # Levels 1-5 targeted context, node outline, request→node matching, ContextLedger
@@ -552,7 +555,9 @@ overbranch/
 │   │   ├── shadow_workspace.py                 # In-memory buffer: locator-based edits, node ops, transactions, scoped heal; line-number-prefix & trailing-newline hygiene, auto_repairs reported
 │   │   ├── template_registry.py                # Template/theme registry (Regalia, Nordlight, Prism, IEEE, ACM)
 │   │   ├── visual_tools.py                     # view_rendered_pages: page lookup from a block/phrase, render + measured report, visual-request detection & auto target
-│   │   └── tools.py                            # Tool definitions & dispatcher (replace_text, replace_block, insert_block, compile_latex, view_rendered_pages, list/import_attachment_figure, …; old names aliased)
+│   │   ├── presentation_style.py              # OverBranch Standard: the built-in light default deck (preamble, light title slide, creation spec) used when no template is named
+│   │   ├── diagram_tools.py                   # generate_diagram: LLM-drawn diagram/figure from a description (verify+repair against pdflatex) OR deterministic flowchart/block TikZ from a node/edge spec (layered layout, cycles, escaped labels, resizebox/adjustbox)
+│   │   └── tools.py                            # Tool definitions & dispatcher (replace_text, replace_block, insert_block, compile_latex, generate_diagram, view_rendered_pages, list/import_attachment_figure, …; old names aliased)
 │   ├── providers/                              # Multi-Provider LLM Gateway
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── base_provider.py                    # Abstract LLMProvider interface; LLMProviderError carries a FailureKind
@@ -660,6 +665,8 @@ overbranch/
 │   │   ├── test_converted_document_edits.py    # Agent edits on imported PDFs (text-match context, case-insensitive), fake-bold PDFs
 │   │   ├── test_tex_diagnostics.py             # TeX log parsing per occurrence, token location from context, spans, .vrb, located compile results, recovery patch guard
 │   │   ├── test_transactions.py                # Scoped heal, duplicate guard, compile rollback/repair, provider-failure rollback
+│   │   ├── test_diagram_tool.py                # generate_diagram: deterministic builder (closed picture, escaped labels, cycles, orientation) + LLM mode (draw/verify/repair, adjustbox, fallback to deterministic), real-TeX compiles, dry-run, write-gate insertion
+│   │   ├── test_presentation_default.py        # Default PPT = light OverBranch Standard (no cream/navy banner), diagram-tool mention, named-template → get_template_theme (exact), generate_diagram reachable
 │   │   ├── test_visual_tools.py                # Page lookup, overlap / contrast / image-edge / off-page detection, tool targets, images in the loop, router stripping, look-first & render check
 │   │   └── test_write_gate.py                  # Validator magnitudes, \% / tikz / \end{document} healer fixes, fuzzy guard, edit hygiene, resolve-edits guard
 │   ├── attached_context.py                     # Chat attachments: five files per session, text in memory (TTL), bytes on disk and re-hydrated after a worker restart
@@ -680,7 +687,7 @@ overbranch/
 │   ├── main.py                                 # FastAPI application entry point, CORS, lifespan, compile & synctex
 │   ├── models.py                               # SQLAlchemy ORM models for Better-Auth schema (User, Session, Account)
 │   ├── project_storage.py                      # Local filesystem disk storage & Supabase storage manager; save_project_asset_bytes / delete_project_asset shared by uploads and agent figure imports
-│   ├── prompt_builder.py                       # Structured system prompt assembler enforcing surgical edits & Regalia
+│   ├── prompt_builder.py                       # Structured system prompt assembler enforcing surgical edits; default PPT = built-in light OverBranch Standard, templates only on request
 │   ├── query_rewriter.py                       # Fast multi-query expansion for hybrid RAG retrieval
 │   ├── rate_limiter.py                         # Sliding-window in-memory rate limiter per IP / User ID
 │   ├── retriever.py                            # Vector & structural retriever interfacing with Qdrant

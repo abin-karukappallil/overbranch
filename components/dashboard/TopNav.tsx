@@ -28,24 +28,36 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
   const isDark = mounted && (resolvedTheme === "dark" || theme === "dark");
 
   return (
-    <header className="h-14 border-b border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] px-4 sm:px-8 flex items-center justify-between sticky top-0 z-20 min-w-0 transition-colors">
+    <header className="h-14 border-b border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] px-4 md:px-6 lg:px-8 flex items-center justify-between sticky top-0 z-20 min-w-0 transition-colors">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {onToggleMobileSidebar && (
           <Button variant="ghost" size="icon" onClick={onToggleMobileSidebar} className="md:hidden h-8 w-8 shrink-0 text-slate-500 hover:text-slate-900 dark:text-[#9E9E9E] dark:hover:text-[#E2E4E9] hover:bg-slate-100 dark:hover:bg-[#1E2026]">
             <Menu className="w-4 h-4" />
           </Button>
         )}
-        <div className="flex items-center gap-1.5 text-xs font-mono text-slate-500 dark:text-[#9E9E9E] min-w-0 truncate">
-          <Link href="/dashboard" className="hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] shrink-0 flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 text-xs font-mono text-slate-500 dark:text-[#9E9E9E] min-w-0">
+          <Link
+            href="/dashboard"
+            className={`hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] shrink-0 items-center gap-1.5 ${
+              collapsed ? "flex" : "flex md:hidden xl:flex"
+            }`}
+          >
             <span>OverBranch</span>
             <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#1E2026] text-slate-700 dark:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] tracking-wider">
               BETA
             </span>
           </Link>
+          {pathSegments.length > 0 && (
+            <ChevronRight
+              className={`w-3 h-3 text-slate-400 dark:text-[#62666D] shrink-0 ${
+                collapsed ? "block" : "block md:hidden xl:block"
+              }`}
+            />
+          )}
           {pathSegments.map((segment, index) => (
             <React.Fragment key={segment}>
-              <ChevronRight className="w-3 h-3 text-slate-400 dark:text-[#62666D] shrink-0" />
-              <span className={`capitalize truncate min-w-0 font-sans ${index === pathSegments.length - 1 ? "text-slate-900 dark:text-[#E2E4E9] font-semibold" : "hover:text-slate-900 dark:hover:text-[#E2E4E9]"}`}>
+              {index > 0 && <ChevronRight className="w-3 h-3 text-slate-400 dark:text-[#62666D] shrink-0" />}
+              <span className={`capitalize truncate min-w-0 font-sans ${index === pathSegments.length - 1 ? "text-slate-900 dark:text-[#E2E4E9] font-bold text-sm" : "hover:text-slate-900 dark:hover:text-[#E2E4E9]"}`}>
                 {segment}
               </span>
             </React.Fragment>
@@ -53,12 +65,12 @@ export function DashboardTopNav({ onOpenCommandPalette, collapsed, onToggleMobil
         </div>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-2.5">
+      <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
         <a
           href="https://github.com/abin-karukappallil/overbranch/issues"
           target="_blank"
           rel="noopener noreferrer"
-          className="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-[#282A30] bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] text-[11px] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] font-mono transition-colors"
+          className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-slate-200 dark:border-[#282A30] bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] text-[11px] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] font-mono transition-colors shrink-0"
           title="Report any bugs on GitHub Issues"
         >
           <span className="w-1.5 h-1.5 rounded-full bg-[#FF8849]" />

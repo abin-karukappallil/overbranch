@@ -715,6 +715,19 @@ def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
             len([o for o in result.get("overfull", []) if o.get("severe")])
         return f"Layout check: {n} overflowing line{'s' if n != 1 else ''}" if n else "Layout check: nothing overflows"
 
+    elif tool_name == "generate_diagram":
+        src = result.get("source")
+        if src == "llm":
+            how = "Drew a diagram with the LLM"
+            if result.get("verified") is False:
+                how += " (could not verify it compiles)"
+        else:
+            n, e = result.get("node_count", 0), result.get("edge_count", 0)
+            how = f"Built a {n}-node diagram ({e} connections)"
+        if result.get("inserted"):
+            return f"{how} and placed it in {result.get('node_id')}"
+        return how
+
     elif tool_name == "view_rendered_pages":
         if result.get("skipped"):
             return "Could not render the page (no PDF)"
