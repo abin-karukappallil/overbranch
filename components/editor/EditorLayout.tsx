@@ -1308,7 +1308,12 @@ export function EditorLayout({
     const loadSavedDocument = async () => {
       try {
         const activeProj = projectId || "proj-1";
-        const res = await authFetch(`${BACKEND_URL}/api/projects/get-file?project_id=${activeProj}&file_path=${encodeURIComponent(activeFilePath)}`);
+        // Same-origin proxy: cookies travel naturally, no cross-origin Bearer
+        // race, and the backend URL stays hidden. See app/api/projects/get-file.
+        const res = await fetch(
+          `/api/projects/get-file?project_id=${encodeURIComponent(activeProj)}&file_path=${encodeURIComponent(activeFilePath)}`,
+          { credentials: "same-origin", cache: "no-store" }
+        );
         // A late-arriving REST snapshot must never win over the live
         // collaborative document: the room already seeded itself from the same
         // storage and may be many keystrokes ahead of it. This is the "late
