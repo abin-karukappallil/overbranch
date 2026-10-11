@@ -4,6 +4,7 @@ import json
 import uuid
 import shutil
 import logging
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException, status, Depends
@@ -295,6 +296,16 @@ def use_ppt_template(
 
     # 3. Create database records in Supabase (projects & project_members)
     try:
+        is_guest = bool(auth_info.get("is_guest")) or str(user_id).startswith("guest")
+        guest_session_id = auth_info.get("session_id") if is_guest else (user_id.replace("guest_", "") if str(user_id).startswith("guest_") else None)
+
+        if str(user_id).startswith("guest_"):
+            try:
+                from services.guest_identity import ensure_guest_user_row
+                ensure_guest_user_row(supabase, user_id)
+            except Exception as e:
+                logger.warning(f"Could not ensure guest user row for {user_id}: {e}")
+
         repo_slug = f"prostack/{slugify(project_name)}"
         proj_record = {
             "id": project_id,
@@ -320,6 +331,16 @@ def use_ppt_template(
         }
         supabase.table("project_members").insert(member_record).execute()
 
+        if is_guest and guest_session_id:
+            try:
+                supabase.table("guest_projects").insert({
+                    "guest_session_id": guest_session_id,
+                    "project_id": project_id,
+                    "expires_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+                }).execute()
+            except Exception as ge:
+                logger.warning(f"Could not record guest project {project_id}: {ge}")
+
         # 4. Populate latex_documents table for copied files
         text_extensions = {".tex", ".sty", ".cls", ".bib", ".txt", ".json", ".md", ".cfg"}
         for fpath in dest_dir.rglob("*"):
@@ -338,6 +359,10 @@ def use_ppt_template(
 
     except Exception as db_err:
         logger.error(f"Error creating project database records: {db_err}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create project database record: {str(db_err)}"
+        )
 
     return {
         "success": True,

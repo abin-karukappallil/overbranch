@@ -315,6 +315,7 @@ export function EditorLayout({
   const [activeFilePath, setActiveFilePath] = useState("main.tex");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isCompiling, setIsCompiling] = useState(false);
+  const [engine, setEngine] = useState<"pdfLaTeX" | "XeLaTeX" | "LuaLaTeX">("pdfLaTeX");
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [errorLog, setErrorLog] = useState<string | null>(null);
   // TeX error lines from a compile that still produced a PDF (shown next to the PDF).
@@ -1737,7 +1738,7 @@ export function EditorLayout({
         body: JSON.stringify({
           latex_code: targetCode,
           project_id: projectId || "",
-          engine: "pdfLaTeX",
+          engine: engine,
         }),
       });
       const data = await res.json();
@@ -3040,6 +3041,19 @@ export function EditorLayout({
             </button>
           </div>
 
+          {/* Engine Selector */}
+          <select
+            value={engine}
+            onChange={(e) => setEngine(e.target.value as "pdfLaTeX" | "XeLaTeX" | "LuaLaTeX")}
+            disabled={isCompiling}
+            className="h-8 px-2 rounded-lg border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] text-slate-800 dark:text-[#E2E4E9] outline-none text-xs font-mono shrink-0 cursor-pointer hover:border-slate-300 dark:hover:border-[#383A42] transition-colors"
+            title="TeX Compilation Engine"
+          >
+            <option value="pdfLaTeX">pdfLaTeX</option>
+            <option value="XeLaTeX">XeLaTeX</option>
+            <option value="LuaLaTeX">LuaLaTeX</option>
+          </select>
+
           <Button
             size="sm"
             onClick={() => handleCompile()}
@@ -3083,6 +3097,18 @@ export function EditorLayout({
               Split
             </button>
           </div>
+
+          <select
+            value={engine}
+            onChange={(e) => setEngine(e.target.value as "pdfLaTeX" | "XeLaTeX" | "LuaLaTeX")}
+            disabled={isCompiling}
+            className="h-8 px-1.5 rounded-lg border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] text-slate-800 dark:text-[#E2E4E9] outline-none text-[11px] font-mono shrink-0 cursor-pointer hover:border-slate-300 dark:hover:border-[#383A42] transition-colors"
+            title="TeX Compilation Engine"
+          >
+            <option value="pdfLaTeX">pdf</option>
+            <option value="XeLaTeX">Xe</option>
+            <option value="LuaLaTeX">Lua</option>
+          </select>
 
           <Button
             size="sm"

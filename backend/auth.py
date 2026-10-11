@@ -99,6 +99,12 @@ def extract_session_token(request: Request) -> Optional[str]:
         if custom_token:
             token_str = custom_token.strip()
 
+    # 4. Check query parameters (for direct URLs, downloads, media previews)
+    if not token_str:
+        q_token = request.query_params.get("token") or request.query_params.get("session_token")
+        if q_token:
+            token_str = urllib.parse.unquote(q_token.strip())
+
     if not token_str:
         return None
 
@@ -127,6 +133,10 @@ def extract_guest_token(request: Request) -> Optional[str]:
     cookie_token = request.cookies.get(GUEST_TOKEN_COOKIE_NAME)
     if cookie_token:
         return cookie_token.strip()
+
+    query_token = request.query_params.get("guest_token") or request.query_params.get("x-guest-token")
+    if query_token:
+        return query_token.strip()
 
     return None
 

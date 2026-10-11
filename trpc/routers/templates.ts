@@ -1,5 +1,6 @@
 import { router, publicProcedure, protectedProcedure } from '../init';
 import { z } from 'zod';
+import { TRPCError } from '@trpc/server';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
@@ -76,7 +77,7 @@ export const templatesRouter = router({
       }
     }),
 
-  useTemplate: protectedProcedure
+  useTemplate: publicProcedure
     .input(
       z.object({
         templateId: z.string(),
@@ -84,10 +85,42 @@ export const templatesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const userId = ctx.user.id;
+      const user = ctx.session?.user;
+      let userId = user?.id;
+
+      if (!userId && ctx.guestToken && ctx.guestSessionId) {
+        userId = `guest_${ctx.guestSessionId}`;
+      }
+
+      if (!userId) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Authentication required. Please sign in or provide guest cookies.",
+        });
+      }
+
+      const forwardHeaders: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      if (ctx.rawCookieHeader) {
+        forwardHeaders["Cookie"] = ctx.rawCookieHeader;
+      }
+
+      if (ctx.sessionToken) {
+        const cleanToken = ctx.sessionToken.includes(".")
+          ? ctx.sessionToken.split(".")[0].trim()
+          : ctx.sessionToken.trim();
+        forwardHeaders["Authorization"] = `Bearer ${cleanToken}`;
+      } else if (ctx.guestToken) {
+        forwardHeaders["X-Guest-Token"] = ctx.guestToken;
+      }
+
+      forwardHeaders["X-User-Id"] = userId;
+
       const res = await fetch(`${BACKEND_URL}/api/templates/ppt/${encodeURIComponent(input.templateId)}/use`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: forwardHeaders,
         body: JSON.stringify({
           user_id: userId,
           name: input.name,

@@ -799,6 +799,119 @@ def get_template_roots() -> List[Path]:
     return _TEMPLATE_ROOTS_CACHE
 
 
+_CRITICAL_PACKAGES = {
+    # Document structure & presentations
+    "beamer", "beamertheme", "powerdot", "prosper",
+    # Math & science
+    "amsmath", "amssymb", "amsfonts", "amsthm", "mathtools", "bm", "physics", "siunitx",
+    # Graphics & plotting
+    "tikz", "pgfplots", "pgf", "graphicx", "graphics", "xcolor", "color", "tcolorbox", "adjustbox",
+    # Layout & typography
+    "geometry", "fancyhdr", "titlesec", "titling", "microtype", "setspace",
+    # Fonts & engine-specific
+    "fontspec", "unicode-math", "polyglossia", "babel", "inputenc", "fontenc",
+    # Tables & floats
+    "booktabs", "tabularx", "tabulary", "array", "longtable", "multirow", "multicol", "caption", "subcaption", "float",
+    # Code & algorithms
+    "listings", "minted", "algorithm", "algorithmic", "algorithm2e", "algpseudocode",
+    # Citations & references
+    "biblatex", "natbib", "cite", "hyperref", "url",
+    # Lists & utils
+    "enumitem", "etoolbox", "calc", "ifthen", "xparse", "expl3",
+}
+
+
+def _is_critical_package(pkg: str) -> bool:
+    clean = pkg.strip().lower()
+    if clean in _CRITICAL_PACKAGES:
+        return True
+    if clean.startswith(("beamertheme", "beamercolor", "beamerfont", "beamerinner", "beamerouter")):
+        return True
+    if clean.startswith(("tikz", "pgf", "amsmath", "amssymb", "firamath", "fontspec")):
+        return True
+    return False
+
+
+def find_matched_template_roots(latex_code: str) -> List[Path]:
+    """
+    Finds all template directories whose assets (.cls, .sty, images, inputs)
+    are referenced by the given LaTeX document.
+    """
+    code = latex_code or ""
+    template_roots = get_template_roots()
+    if not template_roots:
+        return []
+
+    # Extract themes, classes, packages, inputs, images
+    theme_matches = set(re.findall(r"\\usetheme(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+    color_theme_matches = set(re.findall(r"\\usecolortheme(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+    font_theme_matches = set(re.findall(r"\\usefonttheme(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+    inner_theme_matches = set(re.findall(r"\\useinnertheme(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+    outer_theme_matches = set(re.findall(r"\\useoutertheme(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+    doc_classes = set(re.findall(r"\\documentclass(?:\[[^\]]*\])?\{([a-zA-Z0-9_-]+)\}", code))
+
+    pkg_blocks = re.findall(r"\\(?:usepackage|RequirePackage)(?:\[[^\]]*\])?\{([^}]+)\}", code)
+    pkgs = set()
+    for block in pkg_blocks:
+        for p in block.split(","):
+            clean_p = p.strip()
+            if clean_p:
+                pkgs.add(clean_p)
+
+    input_matches = set(re.findall(r"\\(?:input|include)\{([^}]+)\}", code))
+    graphics_matches = set(re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", code))
+    graphics_basenames = {Path(g).name for g in graphics_matches}
+    graphics_stems = {Path(g).stem for g in graphics_matches}
+
+    matched_roots: List[Path] = []
+    for tmpl_root in template_roots:
+        tmpl_files = {
+            f.name
+            for f in tmpl_root.rglob("*")
+            if f.is_file() and f.name not in ("main.tex", "metadata.json", "thumbnail.png")
+        }
+        matched = False
+        for tf_name in tmpl_files:
+            stem = Path(tf_name).stem
+            # Document class match
+            if tf_name.endswith(".cls") and stem in doc_classes:
+                matched = True
+                break
+            # Package match
+            if tf_name.endswith(".sty") and stem in pkgs:
+                matched = True
+                break
+            # Beamer themes match
+            if tf_name.endswith(".sty") and stem.startswith("beamertheme") and stem[11:] in theme_matches:
+                matched = True
+                break
+            if tf_name.endswith(".sty") and stem.startswith("beamercolortheme") and stem[16:] in color_theme_matches:
+                matched = True
+                break
+            if tf_name.endswith(".sty") and stem.startswith("beamerfonttheme") and stem[15:] in font_theme_matches:
+                matched = True
+                break
+            if tf_name.endswith(".sty") and stem.startswith("beamerinnertheme") and stem[15:] in inner_theme_matches:
+                matched = True
+                break
+            if tf_name.endswith(".sty") and stem.startswith("beameroutertheme") and stem[15:] in outer_theme_matches:
+                matched = True
+                break
+            # Input / include file match
+            if any(tf_name == inp or tf_name == f"{inp}.tex" or stem == inp for inp in input_matches):
+                matched = True
+                break
+            # Graphic image file match
+            if tf_name in graphics_basenames or stem in graphics_stems:
+                matched = True
+                break
+
+        if matched:
+            matched_roots.append(tmpl_root)
+
+    return matched_roots
+
+
 def load_project_text_file(project_id: Optional[str], rel_path: str = "main.tex") -> Optional[str]:
     """
     Current text of one of a project's files — the uploads directory first, then
@@ -1103,23 +1216,9 @@ def _compile_latex_impl(
                 for f in files:
                     write_file_safely(tmpdir, f.get("filename", ""), f.get("data", ""))
 
-            # 4. Smart template asset resolution — only copy matched template files
-            template_roots = get_template_roots()
-            matched_root = None
-            for tmpl_root in template_roots:
-                tmpl_files = {f.name for f in tmpl_root.rglob("*") if f.is_file() and f.name not in ("main.tex", "metadata.json", "thumbnail.png")}
-                for tf_name in tmpl_files:
-                    name_no_ext = Path(tf_name).stem
-                    if tf_name.endswith((".cls", ".sty")) and (f"\\documentclass{{{name_no_ext}}}" in latex_code or f"\\usepackage{{{name_no_ext}}}" in latex_code):
-                        matched_root = tmpl_root
-                        break
-                    if tf_name == "structure.tex" and r"\input{structure.tex}" in latex_code:
-                        matched_root = tmpl_root
-                        break
-                if matched_root:
-                    break
-
-            if matched_root:
+            # 4. Smart template asset resolution — copy all matched template assets (.cls, .sty, images, inputs)
+            matched_roots = find_matched_template_roots(latex_code)
+            for matched_root in matched_roots:
                 for tmpl_file in matched_root.rglob("*"):
                     if tmpl_file.is_file():
                         rel_path = tmpl_file.relative_to(matched_root)
@@ -1139,7 +1238,7 @@ def _compile_latex_impl(
             # Environment configuration
             comp_env = os.environ.copy()
             existing_texinputs = comp_env.get("TEXINPUTS", "")
-            comp_env["TEXINPUTS"] = f".:{tmpdir}:{tmpdir}/images:{tmpdir}/*:{existing_texinputs}"
+            comp_env["TEXINPUTS"] = f".:{tmpdir}//:{tmpdir}:{tmpdir}/images:{existing_texinputs}"
             for _key, _value in _TEX_LOG_ENV.items():
                 comp_env.setdefault(_key, _value)
 
@@ -1285,7 +1384,7 @@ def _compile_latex_impl(
                                 last_output += "\n" + final_pass
 
                     # If PDF was created, persist artifacts and return it.
-                    if pdf_path.exists():
+                    if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in last_output:
                         if persist_synctex:
                             _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
@@ -1360,6 +1459,17 @@ def _compile_latex_impl(
                     r"(?:!|\S+\.tex:\d+:) LaTeX Error: File [`\x27]([^\x27`]+)\.sty[`\x27] not found", cur_output)
                 if not missing_pkgs:
                     break
+
+                # Critical packages gate: NEVER silently disable critical packages (beamer, tikz, amsmath, etc.)
+                # Disabling them causes TeX to dump raw parameters/macros as visual "jargon" into the PDF.
+                critical_missing = [p for p in missing_pkgs if _is_critical_package(p)]
+                if critical_missing:
+                    logger.warning(
+                        f"❌ [COMPILER RECOVERY] Missing critical package(s): {', '.join(critical_missing)}. "
+                        "Refusing to auto-disable critical package to avoid generating corrupted jargon PDF."
+                    )
+                    break
+
                 for pkg in set(missing_pkgs):
                     if pkg not in all_disabled_pkgs:
                         patched_code = re.sub(
@@ -1379,16 +1489,31 @@ def _compile_latex_impl(
                     )
                     cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
                     pdf_path = tmpdir / "main.pdf"
-                    if pdf_path.exists():
-                        pkg_notice = (
-                            f"Missing LaTeX package(s) on server: {', '.join(all_disabled_pkgs)}. "
-                            f"Install on server: 'pacman -S texlive-latexextra' (Arch) / 'apt-get install texlive-latex-extra' (Ubuntu) / 'tlmgr install <pkg>'."
-                        )
-                        print(f"✅ [COMPILER RECOVERY] Auto-recovered by disabling missing package(s): {', '.join(all_disabled_pkgs)}")
-                        return _recovery_success(
-                            f"Compiled via package auto-recovery ({', '.join(all_disabled_pkgs)} disabled)\n\n[PACKAGE NOTICE]\n{pkg_notice}",
-                            cur_output, patched_code,
-                        )
+                    if pdf_path.exists() and pdf_path.stat().st_size > 0:
+                        errs = tex_errors(cur_output)
+                        has_fatal_or_jargon = any(
+                            "emergency stop" in e.lower()
+                            or "fatal error" in e.lower()
+                            or "undefined control sequence" in e.lower()
+                            for e in errs
+                        ) or "Emergency stop" in cur_output
+
+                        if not has_fatal_or_jargon:
+                            pkg_notice = (
+                                f"Missing auxiliary LaTeX package(s) on server: {', '.join(all_disabled_pkgs)}. "
+                                f"Install on server: 'pacman -S texlive-latexextra' (Arch) / 'apt-get install texlive-latex-extra' (Ubuntu) / 'tlmgr install <pkg>'."
+                            )
+                            logger.info(f"✅ [COMPILER RECOVERY] Auto-recovered by disabling non-critical package(s): {', '.join(all_disabled_pkgs)}")
+                            return _recovery_success(
+                                f"Compiled via package auto-recovery ({', '.join(all_disabled_pkgs)} disabled)\n\n[PACKAGE NOTICE]\n{pkg_notice}",
+                                cur_output, patched_code,
+                            )
+                        else:
+                            logger.warning(
+                                f"❌ [COMPILER RECOVERY] Disabling {all_disabled_pkgs} caused fatal or undefined control sequences. "
+                                "Aborting recovery to prevent serving corrupted PDF."
+                            )
+                            break
                 except Exception:
                     break
 
@@ -1407,7 +1532,7 @@ def _compile_latex_impl(
                     try:
                         result = _run_tex(_engine_command(recovery_engine), cwd=tmpdir, timeout=15, env=comp_env)
                         pdf_path = tmpdir / "main.pdf"
-                        if pdf_path.exists():
+                        if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via font auto-recovery (lmodern patch)",
                                 (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
@@ -1432,7 +1557,7 @@ def _compile_latex_impl(
                             env=comp_env
                         )
                         pdf_path = tmpdir / "main.pdf"
-                        if pdf_path.exists():
+                        if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via beamercolorbox bg auto-recovery",
                                 (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
@@ -1484,7 +1609,7 @@ def _compile_latex_impl(
                             env=comp_env,
                         )
                         pdf_path = tmpdir / "main.pdf"
-                        if pdf_path.exists():
+                        if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via titlesec/spacing auto-recovery",
                                 (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,

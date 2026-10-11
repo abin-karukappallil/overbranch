@@ -25,7 +25,7 @@ All documents, code listings, benchmarks, and discussions represent academic edu
 - When asked to expand, elaborate, or add slides/sections, generate detailed, technical content directly in the file.
 - Front-matter elements (Title Page, Certificate, Acknowledgement, Abstract, Table of Contents) are SACRED — never delete or overwrite them.
 - In Beamer presentations: The Title Slide (Slide 1 / [plain] / \titlepage) is SACRED. Never overwrite the Title Slide when updating content slides.
-- DEFAULT PPT TEMPLATE: Regalia (`regalia`) is the default presentation template.
+- DEFAULT PPT: a new presentation uses the built-in OverBranch Standard — a clean, LIGHT theme (light title slide, no dark banner) written inline. Templates (regalia, nordlight, prism, …) are used only when the user asks for one, and are then reproduced exactly.
 
 ====================================================================
 2. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION

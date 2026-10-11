@@ -76,8 +76,58 @@ export function ProjectFilesPanel({
   const [newRenamePath, setNewRenamePath] = useState("");
   const [previewImage, setPreviewImage] = useState<ProjectFile | null>(null);
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
+  const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Authenticated asset preview loader
+  useEffect(() => {
+    if (!previewImage || !projectId) {
+      setPreviewBlobUrl(null);
+      setPreviewError(null);
+      setPreviewLoading(false);
+      return;
+    }
+
+    let active = true;
+    let url: string | null = null;
+    setPreviewLoading(true);
+    setPreviewError(null);
+
+    authFetch(
+      `${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(
+        previewImage.path
+      )}&raw=true`
+    )
+      .then(async (res) => {
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || `HTTP ${res.status}: Failed to load asset`);
+        }
+        const blob = await res.blob();
+        if (!active) return;
+        url = URL.createObjectURL(blob);
+        setPreviewBlobUrl(url);
+      })
+      .catch((err) => {
+        if (!active) return;
+        console.error("Failed to load asset preview:", err);
+        setPreviewError(err.message || "Failed to load asset preview");
+      })
+      .finally(() => {
+        if (active) setPreviewLoading(false);
+      });
+
+    return () => {
+      active = false;
+      if (url) {
+        URL.revokeObjectURL(url);
+      }
+    };
+  }, [previewImage, projectId]);
 
   const fetchFiles = async (forceSpinner = false) => {
     if (!projectId) return;
@@ -271,19 +321,46 @@ export function ProjectFilesPanel({
     setTimeout(() => setCopiedPath(null), 2000);
   };
 
-  const handleDownloadFile = (filePath: string, e?: React.MouseEvent) => {
+  const handleDownloadFile = async (filePath: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!projectId) return;
+
+    const fileName = filePath.split("/").pop() || filePath;
+    setDownloadingPath(filePath);
+    const toastId = toast.loading(`Downloading ${fileName}...`);
+
     try {
-      const downloadUrl = `${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(filePath)}`;
+      const res = await authFetch(
+        `${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(
+          filePath
+        )}&download=true&raw=true`
+      );
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `Failed to download ${fileName} (${res.status})`);
+      }
+
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
       const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = filePath.split("/").pop() || filePath;
+      anchor.style.display = "none";
+      anchor.href = blobUrl;
+      anchor.download = fileName;
       document.body.appendChild(anchor);
       anchor.click();
-      anchor.remove();
-      toast.success(`Downloading ${filePath}...`);
-    } catch (err) {
-      toast.error(`Failed to download ${filePath}`);
+      document.body.removeChild(anchor);
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 30000);
+
+      toast.success(`Downloaded ${fileName}`, { id: toastId });
+    } catch (err: any) {
+      console.error("File download error:", err);
+      toast.error(err.message || `Failed to download ${fileName}`, { id: toastId });
+    } finally {
+      setDownloadingPath(null);
     }
   };
 
@@ -423,10 +500,15 @@ export function ProjectFilesPanel({
                     <button
                       type="button"
                       onClick={(e) => handleDownloadFile(file.path, e)}
-                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors"
+                      disabled={downloadingPath === file.path}
+                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] transition-colors disabled:opacity-50"
                       title="Download File"
                     >
-                      <Download className="w-3.5 h-3.5" />
+                      {downloadingPath === file.path ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
                     </button>
 
                     {isAsset && (
@@ -591,20 +673,32 @@ export function ProjectFilesPanel({
             </div>
 
             {/* Asset Preview */}
-            <div className="p-3 bg-slate-50 dark:bg-[#0E0F12] rounded-xl border border-slate-200 dark:border-[#282A30] flex items-center justify-center max-h-56 overflow-hidden">
-              {previewImage.ext.toLowerCase() === ".pdf" ? (
-                <iframe
-                  src={`${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(previewImage.path)}`}
-                  title={previewImage.name}
-                  className="w-full h-48 rounded border-0"
-                />
-              ) : (
-                <img
-                  src={`${BACKEND_URL}/api/projects/get-file?project_id=${projectId}&file_path=${encodeURIComponent(previewImage.path)}`}
-                  alt={previewImage.name}
-                  className="max-h-48 object-contain rounded"
-                />
-              )}
+            <div className="p-3 bg-slate-50 dark:bg-[#0E0F12] rounded-xl border border-slate-200 dark:border-[#282A30] flex items-center justify-center min-h-[12rem] max-h-56 overflow-hidden relative">
+              {previewLoading ? (
+                <div className="flex flex-col items-center justify-center gap-2 text-slate-500 dark:text-[#9E9E9E] font-mono text-xs">
+                  <Loader2 className="w-5 h-5 animate-spin text-[#10B981]" />
+                  <span>Loading asset preview...</span>
+                </div>
+              ) : previewError ? (
+                <div className="flex flex-col items-center justify-center gap-1.5 text-center px-4 py-3 text-red-500 dark:text-red-400 font-mono text-xs">
+                  <span className="font-semibold">Unable to preview asset</span>
+                  <span className="text-[11px] text-slate-500 dark:text-[#9E9E9E]">{previewError}</span>
+                </div>
+              ) : previewBlobUrl ? (
+                previewImage.ext.toLowerCase() === ".pdf" ? (
+                  <iframe
+                    src={previewBlobUrl}
+                    title={previewImage.name}
+                    className="w-full h-48 rounded border-0"
+                  />
+                ) : (
+                  <img
+                    src={previewBlobUrl}
+                    alt={previewImage.name}
+                    className="max-h-48 object-contain rounded select-none"
+                  />
+                )
+              ) : null}
             </div>
 
             {/* Code to implement below */}
@@ -634,9 +728,14 @@ export function ProjectFilesPanel({
               <Button
                 size="sm"
                 onClick={() => handleDownloadFile(previewImage.path)}
-                className="h-8 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] flex items-center gap-1.5 cursor-pointer"
+                disabled={downloadingPath === previewImage.path}
+                className="h-8 text-xs bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
-                <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
+                {downloadingPath === previewImage.path ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-600 dark:text-[#10B981]" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
+                )}
                 <span>Download File</span>
               </Button>
 

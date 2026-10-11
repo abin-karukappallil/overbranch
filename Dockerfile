@@ -68,8 +68,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     # Refresh font cache
     && fc-cache -f -v \
     \
-    # Refresh TeX file database
-    && mktexlsr
+    # Refresh TeX file database and synchronize font maps
+    && mktexlsr \
+    && updmap-sys
 
 # ============================================================
 # 2. Verify Critical LaTeX Packages

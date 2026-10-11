@@ -13,16 +13,35 @@ import { Button } from "@/components/ui/button";
 interface CompileToolbarProps {
   onCompile: () => void;
   isCompiling: boolean;
+  engine?: string;
+  onEngineChange?: (engine: string) => void;
+  onDownloadPdf?: () => void;
 }
 
 export function CompileToolbar({
   onCompile,
   isCompiling,
+  engine: propEngine,
+  onEngineChange,
+  onDownloadPdf,
 }: CompileToolbarProps) {
   const [autoCompile, setAutoCompile] = useState(true);
-  const [engine, setEngine] = useState("pdfLaTeX");
+  const [internalEngine, setInternalEngine] = useState("pdfLaTeX");
+  const currentEngine = propEngine ?? internalEngine;
 
-  const handleDownloadPdf = () => {};
+  const handleEngineChange = (val: string) => {
+    if (onEngineChange) {
+      onEngineChange(val);
+    } else {
+      setInternalEngine(val);
+    }
+  };
+
+  const handleDownloadPdf = () => {
+    if (onDownloadPdf) {
+      onDownloadPdf();
+    }
+  };
 
   return (
     <div className="h-11 px-3 sm:px-4 border-b border-[#282A30] bg-[#141519] flex items-center justify-between gap-2 text-xs font-mono text-[#E2E4E9] overflow-x-auto shrink-0 select-none">
@@ -62,8 +81,9 @@ export function CompileToolbar({
         </button>
 
         <select
-          value={engine}
-          onChange={(e) => setEngine(e.target.value)}
+          value={currentEngine}
+          onChange={(e) => handleEngineChange(e.target.value)}
+          disabled={isCompiling}
           className="h-7 px-2.5 rounded-lg border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] outline-none text-[11px] font-mono shrink-0 cursor-pointer hover:border-[#282A30] transition-colors"
         >
           <option value="pdfLaTeX">pdfLaTeX</option>

@@ -309,11 +309,14 @@ def get_project_file(
     request: Request,
     project_id: str,
     file_path: str = "main.tex",
+    raw: bool = False,
+    download: bool = False,
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """
     Retrieves project file content from local disk or Supabase latex_documents table.
     Includes auto-creation fallback for main.tex when missing.
+    Returns FileResponse directly for binary assets or when raw/download is True.
     """
     supabase = get_supabase_client()
     user_id = auth_info.get("user_id")
@@ -322,11 +325,21 @@ def get_project_file(
 
     target_path = get_project_disk_path(project_id, file_path)
 
+    binary_extensions = (
+        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico", ".tiff",
+        ".pdf", ".zip", ".tar", ".gz", ".7z", ".rar",
+        ".otf", ".ttf", ".woff", ".woff2", ".eot"
+    )
+    is_binary = file_path.lower().endswith(binary_extensions)
+
     # 1. Check local disk first
     if target_path.exists():
-        if file_path.endswith((".png", ".jpg", ".jpeg", ".pdf", ".zip")):
-            return FileResponse(target_path)
-        content = target_path.read_text(encoding="utf-8")
+        if is_binary or raw or download:
+            return FileResponse(target_path, filename=target_path.name)
+        try:
+            content = target_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            return FileResponse(target_path, filename=target_path.name)
         return {
             "project_id": project_id,
             "file_path": file_path,
@@ -350,6 +363,8 @@ def get_project_file(
             # Save back to local disk
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_text(raw_code, encoding="utf-8")
+            if raw or download or is_binary:
+                return FileResponse(target_path, filename=target_path.name)
             return {
                 "project_id": project_id,
                 "file_path": file_path,
@@ -395,6 +410,9 @@ E = mc^2
             upsert_latex_document(supabase, project_id, file_path, starter_code)
         except Exception:
             pass
+
+        if raw or download:
+            return FileResponse(target_path, filename=target_path.name)
 
         return {
             "project_id": project_id,

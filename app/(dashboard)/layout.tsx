@@ -54,7 +54,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           onOpenCommandPalette={() => setCommandOpen(true)}
           onToggleMobileSidebar={() => setMobileOpen(!mobileOpen)}
         />
-        <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8 max-w-7xl mx-auto w-full min-w-0">
+        <main className="flex-1 px-4 py-6 md:px-6 lg:px-8 sm:py-8 max-w-7xl mx-auto w-full min-w-0">
           {children}
         </main>
       </div>

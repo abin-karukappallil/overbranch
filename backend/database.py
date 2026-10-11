@@ -35,6 +35,33 @@ _async_engine: Optional[AsyncEngine] = None
 _async_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
 
 
+# Monkeypatch AsyncAdapt_asyncpg_connection.close to supply a strict timeout.
+# By default, SQLAlchemy calls asyncpg Connection.close(timeout=None), which hangs
+# for minutes if the remote connection (e.g. Supabase PgBouncer pooler on port 6543)
+# was severed by cloud NAT / idle timeouts, triggering [Errno 110] Connection timed out.
+from sqlalchemy.dialects.postgresql.asyncpg import AsyncAdapt_asyncpg_connection
+
+def _safe_adapt_close(self):
+    try:
+        self.rollback()
+    except Exception:
+        pass
+
+    try:
+        if self._connection and not self._connection.is_closed():
+            # 2 second timeout for graceful termination handshake
+            self.await_(self._connection.close(timeout=2.0))
+    except Exception:
+        # If graceful close times out or fails on a dead socket, abort the transport immediately
+        try:
+            if self._connection:
+                self._connection._abort()
+        except Exception:
+            pass
+
+AsyncAdapt_asyncpg_connection.close = _safe_adapt_close
+
+
 def format_async_database_url(url: str) -> tuple[str, dict]:
     """
     Normalizes PostgreSQL URL for asyncpg:
@@ -45,6 +72,11 @@ def format_async_database_url(url: str) -> tuple[str, dict]:
     connect_args: dict = {
         # Supabase connection pooler (pgbouncer) requires statement_cache_size=0
         "statement_cache_size": 0,
+        "timeout": 10.0,
+        "command_timeout": 30.0,
+        "server_settings": {
+            "statement_timeout": "30000",
+        },
     }
 
     if url.startswith("postgres://"):
@@ -87,19 +119,33 @@ def get_engine() -> AsyncEngine:
 
         async_url, connect_args = format_async_database_url(raw_url)
 
-        pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
-        max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
-        pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "300"))
-
-        _async_engine = create_async_engine(
-            async_url,
-            connect_args=connect_args,
-            pool_size=pool_size,
-            max_overflow=max_overflow,
-            pool_recycle=pool_recycle,
-            pool_pre_ping=True,
-            echo=os.getenv("SQL_ECHO", "false").lower() in ("true", "1", "yes"),
+        # Supabase Transaction Pooler (port 6543 / PgBouncer) maintains server-side pooling.
+        # Running client-side QueuePool against it causes dead connections and Errno 110 on close.
+        is_supabase_pooler = (
+            ":6543" in async_url
+            or "pooler.supabase.com" in async_url
+            or os.getenv("DB_USE_NULL_POOL", "").lower() in ("true", "1", "yes")
         )
+
+        engine_kwargs: dict = {
+            "connect_args": connect_args,
+            "pool_pre_ping": True,
+            "echo": os.getenv("SQL_ECHO", "false").lower() in ("true", "1", "yes"),
+        }
+
+        if is_supabase_pooler:
+            from sqlalchemy.pool import NullPool
+            engine_kwargs["poolclass"] = NullPool
+            logger.info("Using NullPool for Supabase PgBouncer pooler (port 6543)")
+        else:
+            pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+            max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+            pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "120"))
+            engine_kwargs["pool_size"] = pool_size
+            engine_kwargs["max_overflow"] = max_overflow
+            engine_kwargs["pool_recycle"] = pool_recycle
+
+        _async_engine = create_async_engine(async_url, **engine_kwargs)
         logger.info("Initialized async SQLAlchemy database engine")
 
     return _async_engine
