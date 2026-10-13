@@ -728,3 +728,136 @@ def find_node(nodes: List[DocumentNode], ref: str) -> Optional[DocumentNode]:
         if len(hits) == 1:
             return hits[0]
     return None
+
+
+# ---------------------------------------------------------------------------
+# Expansion units
+# ---------------------------------------------------------------------------
+
+# Headings an "expand everything" request does not mean. Front matter is sacred
+# (the system prompt says so), a bibliography is not prose, and an abstract is a
+# summary — making it longer is the opposite of what it is for.
+_NON_EXPANDABLE_TITLE = re.compile(
+    r"^\s*(?:"
+    r"acknowledge?ments?|certificate|declaration|bonafide|dedication|preface|"
+    r"abstract|synopsis|"
+    r"(?:table\s+of\s+)?contents|list\s+of\s+(?:figures|tables|abbreviations|symbols|acronyms)|"
+    r"nomenclature|glossary|outline|agenda|overview\s+of\s+(?:the\s+)?(?:talk|presentation)|"
+    r"bibliography|references|works\s+cited|index|"
+    r"thank\s*you|questions?(?:\s*&\s*answers?)?|q\s*&\s*a"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+# Heading-like nodes, deepest level last.
+_HEADING_KINDS = ("part", "chapter", "section", "subsection", "subsubsection", "frame", "page")
+
+
+@dataclass
+class ExpansionUnit:
+    """One block an expansion request is expected to enlarge."""
+    unit_id: str          # a stable node ID: the edit tools accept it directly
+    title: str
+    kind: str
+    start_line: int
+    end_line: int
+    size: int             # characters of the unit's whole body (children included)
+    own_size: int = 0     # characters of its own prose (children excluded)
+
+
+def _is_expandable(node: "DocumentNode") -> bool:
+    if node.kind not in _HEADING_KINDS:
+        return False
+    title = (node.title or "").strip()
+    # An untitled frame is the title slide or a section divider, not content.
+    if node.kind == "frame" and not title:
+        return False
+    return not _NON_EXPANDABLE_TITLE.match(title)
+
+
+# Units never overlap. A heading that contains another heading is not a unit of
+# its own, however much prose it carries: the expansion tools are `rewrite_chunk`
+# / `replace_block`, which replace a block *and everything inside it*, so asking
+# the model to expand both a section and its subsection asks it to rewrite the
+# section — deleting the subsection — and then to restore the subsection it just
+# deleted. Measured on a real 56-block run: `subsec:design-rationale` went
+# 1555 -> 0 chars and the loop spent nine turns bouncing between the two.
+
+
+def get_expansion_regions(latex_code: str) -> List[ExpansionUnit]:
+    """
+    Every expandable heading, container or not, with the size of its whole
+    subtree — the *after* side of a growth measurement.
+
+    A unit that gains a subsection stops being a leaf, so it is absent from
+    ``get_expansion_units`` of the edited document even though it is right there
+    and twice the size. Measuring against regions instead makes "I added a
+    subsection to this section" count as the expansion it is.
+    """
+    regions: List[ExpansionUnit] = []
+    for n in index_nodes(latex_code):
+        if not _is_expandable(n):
+            continue
+        body = max(0, (n.body_end or n.end) - (n.body_start or n.start))
+        regions.append(ExpansionUnit(
+            unit_id=n.node_id, title=n.title or n.node_id, kind=n.kind,
+            start_line=n.start_line, end_line=n.end_line, size=body, own_size=body,
+        ))
+    if regions:
+        return regions
+    return [
+        ExpansionUnit(unit_id=c.chunk_id, title=c.title, kind=c.chunk_type,
+                      start_line=c.start_line, end_line=c.end_line,
+                      size=len(c.content), own_size=len(c.content))
+        for c in DocumentIndex().get_content_chunks(latex_code)
+    ]
+
+
+def get_expansion_units(latex_code: str) -> List[ExpansionUnit]:
+    """
+    The blocks an "expand / elaborate all sections" request must enlarge.
+
+    Deliberately *not* ``get_content_chunks``: ``index_document`` picks frames
+    **or** chapters **or** sections (see ``index_document``), so on a ``report``
+    with chapters a 59-section document is thirteen chunks and "all sections" is
+    checked at chapter level.
+
+    A unit is a heading with no heading inside it, so the units tile the
+    document without overlapping — see the note above ``get_expansion_units``
+    for why overlapping units are not merely redundant but destructive. A
+    chapter that is only a list of sections is therefore not a unit, and cannot
+    pass for free while its sections are each checked.
+
+    The ids are ``index_nodes`` node IDs (``sec:introduction``), derived from kind
+    + title rather than position, so they survive an expansion inserting blocks
+    earlier in the document — which the positional ``section_3`` ids do not.
+    ``rewrite_chunk`` / ``insert_into_chunk`` accept them directly.
+    """
+    nodes = [n for n in index_nodes(latex_code) if _is_expandable(n)]
+    if not nodes:
+        # No headings at all (an imported PDF, a one-page note): fall back to the
+        # chunk index, which yields a single `content_body`.
+        return [
+            ExpansionUnit(
+                unit_id=c.chunk_id, title=c.title, kind=c.chunk_type,
+                start_line=c.start_line, end_line=c.end_line,
+                size=len(c.content), own_size=len(c.content),
+            )
+            for c in DocumentIndex().get_content_chunks(latex_code)
+        ]
+
+    units: List[ExpansionUnit] = []
+    for n in nodes:
+        children = [
+            o for o in nodes
+            if o is not n and o.start >= n.start and o.end <= n.end
+        ]
+        if children:
+            continue  # a container: its children are the units
+        body = max(0, (n.body_end or n.end) - (n.body_start or n.start))
+        units.append(ExpansionUnit(
+            unit_id=n.node_id, title=n.title or n.node_id, kind=n.kind,
+            start_line=n.start_line, end_line=n.end_line,
+            size=body, own_size=body,
+        ))
+    return units

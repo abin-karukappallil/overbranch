@@ -218,8 +218,6 @@ const quickSymbols = [
   { label: "\\sum", insert: "\\sum_{i=1}^{N}" },
 ];
 
-export const DEFAULT_MODEL = "auto:smart";
-
 interface ModelsResponse {
   providers: ProviderGroup[];
   default_model: string;
@@ -432,7 +430,7 @@ export function EditorLayout({
   const announcedAttachmentsRef = useRef<Set<string>>(new Set());
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.5-flash-thinking");
+  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.7-flash");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
@@ -732,10 +730,10 @@ export function EditorLayout({
     {
       name: "Gemini Web2API",
       models: [
-        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: false },
+        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: true },
         { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", default: false },
         { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", default: false },
-        { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: true },
+        { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: false },
         { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite", default: false },
       ],
     },

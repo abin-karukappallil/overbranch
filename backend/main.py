@@ -116,6 +116,22 @@ class CompileRequest(BaseModel):
     files: Optional[List[FileAsset]] = []
 
 
+@app.get("/api/models")
+def list_models():
+    """
+    The models the editor may offer and which one is selected by default.
+
+    The frontend has always fetched this path (``trpc/routers/ai.ts``); until it
+    existed the call 404'd and the browser fell back to its own hardcoded list,
+    so the default model was really defined in TypeScript. The backend's
+    ``provider_router`` is the single source of truth, and this is how it reaches
+    the client.
+    """
+    from providers.router import provider_router
+
+    return provider_router.get_available_models()
+
+
 @app.get("/api/health")
 def health_check():
     return {

@@ -21,9 +21,10 @@ from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import DEFAULT_MODEL, provider_router
 from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
-from document_index import DocumentIndex, DocumentChunk
+from document_index import DocumentIndex, DocumentChunk, get_expansion_units
 from edit_validator import (
     validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
+    measure_expansion, expansion_target_delta,
 )
 from attached_context import AttachmentLimitError, attached_context_store
 from providers.multimodal import image_part, text_part
@@ -61,7 +62,8 @@ SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not 
 # turn. Without it `request_more_steps` is unusable: a model cannot judge
 # whether the remaining steps cover the work if it is never told how many it
 # has. Stripped and re-added rather than appended, so it never accumulates.
-_BUDGET_RE = re.compile(r"\n*(?:\[Figures in the project[^\]]*\]\s*)?\[Step \d+/\d+[^\]]*\]\s*$")
+_BUDGET_RE = re.compile(
+    r"\n*(?:\[Figures in the project[^\]]*\]\s*)?(?:\[Expansion[^\]]*\]\s*)?\[Step \d+/\d+[^\]]*\]\s*$")
 
 
 def _budget_note(step: int, total: int, can_extend: bool) -> str:
@@ -121,6 +123,47 @@ def _imported_figures_note(workspace: Any) -> str:
         caption = re.sub(r"[\[\]\s]+", " ", str(res.get("caption") or "")).strip()[:60]
         items.append(f"{res.get('path')} ({caption})" if caption else str(res.get("path")))
     return "[Figures in the project from the attached files \u2014 reference EXACTLY these paths: " + "; ".join(items) + "]"
+
+
+def _expansion_progress_note(rows: List[Dict[str, Any]], batch: int) -> str:
+    """
+    The expansion worklist, restated on the live user message every turn.
+
+    The model is not asked to remember a 56-item list across a compacted
+    history, and it is not asked to choose how much to do: the next few blocks
+    are named here with the size each one has and the size it must reach. This
+    is the same mechanism the imported-figure paths use, and for the same
+    reason — what is only said once does not survive the conversation.
+    """
+    if not rows:
+        return ""
+    pending = [r for r in rows if not r["ok"]]
+    done = len(rows) - len(pending)
+    if not pending:
+        return f"[Expansion: all {len(rows)} block(s) measurably expanded. Finish with done=true.]"
+    nxt = pending[:max(1, batch)]
+    items = "; ".join(
+        f"`{r['unit_id']}` ({r['before']} chars now, needs +{r['target']})" for r in nxt
+    )
+    rest = len(pending) - len(nxt)
+    tail = f" Then {rest} more block(s) remain." if rest else ""
+    return (f"[Expansion progress: {done}/{len(rows)} block(s) expanded. "
+            f"THIS TURN, expand exactly these: {items}.{tail} "
+            f"Use batched tool_calls, one call per block.]")
+
+
+def _expansion_status_note(rows: List[Dict[str, Any]]) -> str:
+    """One honest line about how much of the document actually grew."""
+    if not rows:
+        return ""
+    pending = [r for r in rows if not r["ok"]]
+    done = len(rows) - len(pending)
+    if not pending:
+        return f"\u2713 Expanded all {len(rows)} section(s)/block(s) of the document."
+    named = ", ".join(r["title"] or r["unit_id"] for r in pending[:6])
+    more = f" and {len(pending) - 6} more" if len(pending) > 6 else ""
+    return (f"Expanded {done} of {len(rows)} section(s). Not reached: {named}{more}. "
+            f"Ask again to continue with the rest.")
 
 
 # A tool result may carry images for the model (a rendered page, an imported
@@ -338,7 +381,7 @@ YOUR WORKFLOW & FAST EXECUTION MANDATE:
 2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), systematically expand chunks using `insert_into_chunk(chunk_id, content)` or `replace_text` or `rewrite_chunk(chunk_id, new_content)`. You can execute multiple chunks in a single turn using `tool_calls: [...]`.
 3. To insert new bibliography entries (`\\bibitem`), citations, or list items, use `insert_into_chunk(chunk_id, content, position='end')`. This automatically places items before `\\end{{thebibliography}}` without breaking the environment.
 4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `read_file_range`/`search_document` if line inspection is needed.
-5. FAST EDIT RULE: Aim to complete your edit in the minimum number of steps possible (1–2 steps for targeted edits). Set `done=true` immediately as soon as your edits are applied.
+5. FAST EDIT RULE (TARGETED EDITS ONLY): for a single, local change aim to finish in 1–2 steps and set `done=true` as soon as it is applied. This rule does NOT apply to a FULL DOCUMENT REWRITE or EXPANSION: there, finishing means every block in the worklist is done, and `done=true` before that is rejected and sent back to you.
 6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `search_document(query, file=filename)`.
 7. After editing, you may call `compile_latex` to check for LaTeX compilation errors; edits are also compiled automatically when you finish.
 8. When all edits are complete, respond with the done signal.
@@ -427,7 +470,8 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * When user asks for "one more additional slide for each topic", for EVERY topic/slide in the presentation, generate a new dedicated slide (e.g. `\\begin{{frame}}{{<Topic>: Detailed Analysis}}...\\end{{frame}}`) with deep technical detail, examples, or equations.
      * If an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
      * Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
-     * Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations.
+     * HOW MUCH, per section/slide/chapter you are asked to elaborate: 2–4 full paragraphs of substantive new technical prose, plus a displayed equation, a `tabular` of real values, an enumerated analysis or a worked example where the topic admits one. A sentence or two, a reworded heading, or one extra bullet is NOT an expansion and will be measured and sent back to you.
+     * Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations. Keep each heading's text exactly as it is: headings are how blocks are tracked.
      * NEVER declare done=true without having applied the requested content into the file.
 
 6. DOCUMENT CREATION & CONVERSION MANDATE (FROM SCRATCH OR ATTACHED FILES):
@@ -466,7 +510,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * Then use `read_file_range` on the document's preamble and `replace_text` to swap in the template's EXACT styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
 
 9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
-   - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines.
+   - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines. In a FULL DOCUMENT REWRITE or EXPANSION the smallest correct unit IS a whole chunk, and this rule never licenses leaving a requested chunk untouched or adding a token amount of text to it.
    - RAW LATEX ONLY (NO MARKDOWN FENCES): NEVER wrap tool arguments (`new_str`, `content`, `new_content`) in markdown code fences (```latex ... ``` or ``` ... ```). All tool parameters must be clean, RAW LaTeX strings.
    - DOCUMENT BOUNDARIES ARE IMMUTABLE: NEVER delete or omit `\\documentclass`, `\\begin{{document}}`, or `\\end{{document}}`. An edit that removes the document boundary will be rejected by validation.
    - COMPLETE OPENING & CLOSING LINES ON REPLACEMENTS:
@@ -933,6 +977,42 @@ ABSOLUTE_MAX_STEPS = 64      # hard stop however many extensions are asked for
 EXTENSION_CHUNK = 6          # steps granted per request
 MAX_STEP_EXTENSIONS = 4      # explicit grants to the model
 MAX_AUTO_EXTENSIONS = 2      # silent grants when the agent is mid-task
+MAX_COVERAGE_REFUNDS = 8     # empty done=true turns sent back without charging a step
+EXPANSION_COMPILE_EVERY = 4  # editing turns between an expansion's compile checkpoints
+
+# ---------------------------------------------------------------------------
+# Expansion worklist
+# ---------------------------------------------------------------------------
+# "Elaborate all sections" is not one edit, it is one edit per section, and the
+# ceilings above are sized for a handful of edits. An expansion run is therefore
+# budgeted from its own worklist and may exceed ABSOLUTE_MAX_STEPS; what bounds
+# it instead is measured progress — an extension is refused the moment a turn
+# stops completing blocks (see `grant_steps`), so a looping model still stops.
+#
+# Blocks are handed over a few at a time rather than all at once. The prompt used
+# to order "batched tool_calls across ALL chunks in a single turn" while the turn
+# was capped at 16K output tokens: on a 13-block document that is ~1.2K tokens of
+# JSON-escaped LaTeX per block, and overrunning discards the whole step. Asking
+# for everything at once is what produced three lines per section.
+EXPANSION_BATCH_MIN = 2
+EXPANSION_BATCH_MAX = 4
+EXPANSION_TARGET_TURNS = 8   # aim for this many editing turns before batching wider
+EXPANSION_OVERHEAD_STEPS = 6  # reading, compiling, repair
+
+
+def expansion_batch_size(total_units: int) -> int:
+    """How many blocks to hand the model in one turn."""
+    if total_units <= 0:
+        return EXPANSION_BATCH_MIN
+    want = -(-total_units // EXPANSION_TARGET_TURNS)  # ceil
+    return max(EXPANSION_BATCH_MIN, min(EXPANSION_BATCH_MAX, want))
+
+
+def expansion_step_budget(total_units: int) -> int:
+    """Steps an expansion of ``total_units`` blocks needs to finish."""
+    batch = expansion_batch_size(total_units)
+    turns = -(-total_units // batch)
+    return EXPANSION_OVERHEAD_STEPS + turns
 
 
 def determine_adaptive_step_budget(
@@ -944,6 +1024,7 @@ def determine_adaptive_step_budget(
     scope: str = "TARGETED_EDIT",
     mode: str = "edit",
     requested_steps: Optional[int] = None,
+    num_units: int = 0,
 ) -> int:
     """
     Dynamically determines the agent reasoning step budget from:
@@ -957,8 +1038,13 @@ def determine_adaptive_step_budget(
     uncapped latency bill: the previous ``max(16, chunks * 2 + 4)`` handed a
     20-section report 44 steps and a 40-frame deck 84 -- for work the prompt
     explicitly asks the model to *batch* into a handful of turns.
+
+    One scope is exempt from the cap: an expansion with a known worklist
+    (``num_units``) is budgeted from that worklist, because 32 steps cannot
+    elaborate 56 sections and a run that stops half way is the reported
+    failure. Progress still bounds it — see ``grant_steps``.
     """
-    return min(MAX_STEP_BUDGET, _raw_step_budget(
+    raw = _raw_step_budget(
         user_instruction=user_instruction,
         total_lines=total_lines,
         num_chapters=num_chapters,
@@ -967,7 +1053,11 @@ def determine_adaptive_step_budget(
         scope=scope,
         mode=mode,
         requested_steps=requested_steps,
-    ))
+        num_units=num_units,
+    )
+    if num_units > 0 and mode == "edit" and "FULL_DOCUMENT_EXPANSION" in scope:
+        return raw
+    return min(MAX_STEP_BUDGET, raw)
 
 
 def _raw_step_budget(
@@ -979,6 +1069,7 @@ def _raw_step_budget(
     scope: str = "TARGETED_EDIT",
     mode: str = "edit",
     requested_steps: Optional[int] = None,
+    num_units: int = 0,
 ) -> int:
     """Unclamped heuristic behind determine_adaptive_step_budget."""
     if mode == "ask":
@@ -994,8 +1085,12 @@ def _raw_step_budget(
         ScopeType.FULL_DOCUMENT_EXPANSION.value,
         "FULL_DOCUMENT_EXPANSION",
     ):
-        effective_chunks = max(num_chunks, num_chapters, num_sections, 1)
-        full_budget = 8 + (effective_chunks + 1) // 2
+        if num_units > 0 and "FULL_DOCUMENT_EXPANSION" in scope:
+            # An expansion visits every block in the worklist, a few per turn.
+            full_budget = expansion_step_budget(num_units)
+        else:
+            effective_chunks = max(num_chunks, num_chapters, num_sections, 1)
+            full_budget = 8 + (effective_chunks + 1) // 2
         if requested_steps and requested_steps > 0:
             return max(requested_steps, full_budget)
         return full_budget
@@ -1224,6 +1319,20 @@ def stream_opencode_agent(
     content_chunks = workspace.get_content_chunks()
     num_content_chunks = len(content_chunks)
 
+    # The expansion worklist: the blocks "elaborate all sections" means, at the
+    # level the user means them (see document_index.get_expansion_units — the
+    # chunk index collapses a chaptered report to its chapters, so "all
+    # sections" used to be satisfied by touching thirteen chapters).
+    expansion_units: List[Any] = []
+    expansion_batch = EXPANSION_BATCH_MIN
+    if is_expansion and mode == "edit":
+        try:
+            expansion_units = get_expansion_units(workspace.get_original())
+            expansion_batch = expansion_batch_size(len(expansion_units))
+        except Exception as unit_err:  # noqa: BLE001 — never fail a run over the worklist
+            logger.warning(f"Could not build the expansion worklist: {unit_err}")
+            expansion_units = []
+
     yield {
         "type": "status",
         "step": 0,
@@ -1434,6 +1543,7 @@ def stream_opencode_agent(
         scope=scope,
         mode=mode,
         requested_steps=max_steps,
+        num_units=len(expansion_units),
     )
 
     agent_trace = AgentTrace(
@@ -1653,32 +1763,98 @@ def stream_opencode_agent(
             "Start by applying your rewrites across the content chunks now using batched `tool_calls: [...]`.\n"
             "========================================================="
         )
-    elif is_expansion and content_chunks and mode == "edit":
-        chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}–{c.end_line})" for c in content_chunks])
-        user_content = (
-            f"USER REQUEST (EDIT MODE — FULL DOCUMENT EXPANSION):\n{user_instruction}\n\n"
-            f"{attached_block}\n\n"
-            f"FILE: {file_path} ({total_lines} lines)\n\n"
-            f"{task_state}\n\n"
-            f"{smart_document_context}\n\n"
-            f"{trans_block}\n\n"
-            f"{grounding_instruction}\n\n"
-            f"{visibility_diagnostic}\n\n"
-            f"{redesign_guidance}\n\n"
-            "=========================================================\n"
-            "MANDATE: The user explicitly requested to EXPAND / ADD MORE CONTENT across the document.\n"
-            f"Detected scope: FULL_DOCUMENT_EXPANSION ({num_content_chunks} content chunks to expand).\n\n"
-            f"ORDERED LIST OF DOCUMENT CHUNKS:\n{chunk_items}\n\n"
-            "CRITICAL INSTRUCTIONS FOR FAST FULL EXPANSION:\n"
-            "1. You MUST expand EVERY content chunk (chapters, sections, subtopics). Do NOT stop after only expanding the first section!\n"
-            "2. HIGH-SPEED BATCHING MANDATE: Use batched `tool_calls: [...]` with `rewrite_chunk(chunk_id, new_content)` or `insert_into_chunk(chunk_id, content)` across all chunks in a single turn to minimize agent latency.\n"
-            "3. Add rich academic paragraphs, mathematical formulations, benchmarks, subtopics, and analysis to every section.\n"
-            "4. To insert bibliography entries or list items, use `insert_into_chunk(chunk_id, content, position='end')`.\n"
-            "5. After expanding all chunks, call `compile_latex` ONCE to confirm zero LaTeX compilation errors before signaling done=true.\n"
-            "6. Coverage validation will verify that EVERY content chunk was expanded before allowing completion.\n"
-            "Start by expanding the chunks now using batched `tool_calls: [...]`.\n"
-            "========================================================="
-        )
+    elif is_expansion and (expansion_units or content_chunks) and mode == "edit":
+        # The worklist, and the first few blocks to do THIS turn. The old message
+        # listed every chunk and ordered "batched tool_calls across all chunks in
+        # a single turn" — inside a 16K-token turn, which on a document of any
+        # size is a couple of hundred words per section. Asking for everything at
+        # once is what produced three extra lines and a done=true.
+        if expansion_units:
+            units = expansion_units
+            total_units = len(units)
+            first = units[:expansion_batch]
+            worklist = "\n".join(
+                f"  - `{u.unit_id}`: {u.title} (lines {u.start_line}\u2013{u.end_line}, "
+                f"{u.size} chars now, must gain at least +{expansion_target_delta(u.size, u.kind)})"
+                for u in units
+            )
+            this_turn = "\n".join(
+                f"  - `{u.unit_id}`: {u.title} \u2014 add at least "
+                f"{expansion_target_delta(u.size, u.kind)} characters of new material"
+                for u in first
+            )
+            turns = -(-total_units // max(1, expansion_batch))
+            user_content = (
+                f"USER REQUEST (EDIT MODE \u2014 FULL DOCUMENT EXPANSION):\n{user_instruction}\n\n"
+                f"{attached_block}\n\n"
+                f"FILE: {file_path} ({total_lines} lines)\n\n"
+                f"{task_state}\n\n"
+                f"{smart_document_context}\n\n"
+                f"{trans_block}\n\n"
+                f"{grounding_instruction}\n\n"
+                f"{visibility_diagnostic}\n\n"
+                f"{redesign_guidance}\n\n"
+                "=========================================================\n"
+                "MANDATE: elaborate EVERY block listed below. This is measured, not assumed: a "
+                "block counts as expanded only when its text has actually grown by the amount "
+                "stated next to it. Touching it, reflowing it or adding a sentence does not count, "
+                "and the run will come back to you with the blocks that are still short.\n\n"
+                f"WORKLIST \u2014 {total_units} block(s), about {turns} turn(s) of "
+                f"{expansion_batch}:\n{worklist}\n\n"
+                f"DO THESE {len(first)} BLOCK(S) THIS TURN (and only these):\n{this_turn}\n\n"
+                "HOW TO EXPAND ONE BLOCK:\n"
+                "1. Write 2\u20134 full paragraphs of substantive technical prose \u2014 mechanisms, "
+                "trade-offs, worked reasoning, concrete figures \u2014 not a restatement of the "
+                "heading and not filler.\n"
+                "2. Add, where the topic admits one: a displayed equation, a `tabular` of real "
+                "values, an enumerated analysis, or a worked example.\n"
+                "3. Keep the existing text and its structure; you are adding to it, not replacing "
+                "it with a summary. Keep the heading exactly as it is \u2014 it is how the block is "
+                "tracked.\n"
+                "3b. ON SLIDES: a frame overflows if you stuff it. Add a FOLLOW-UP frame instead "
+                "(`insert_block(<unit_id>, new_frame, position='after')`, titled '<Topic>: "
+                "Detailed Analysis' or similar) and keep each frame to at most 6 bullets. A new "
+                "frame placed directly after a block counts as that block's expansion.\n"
+                "4. Use `rewrite_chunk(<unit_id>, new_content)` for a block you are rewriting whole, "
+                "or `insert_into_chunk(<unit_id>, content)` to append to it. Both accept the IDs "
+                "above. Batch this turn's blocks into one `tool_calls: [...]`.\n"
+                "4b. Edit ONLY the IDs in the worklist. `rewrite_chunk` on an enclosing block "
+                "(a chapter, or a section that contains subsections) replaces everything inside "
+                "it and DELETES those sub-blocks \u2014 the worklist already names the innermost "
+                "block for every piece of the document.\n"
+                "5. Do NOT call compile_latex yourself between blocks \u2014 the run compiles for "
+                "you every few turns and shows you anything that broke. Fix what it reports "
+                "before expanding more: errors left at the end discard the whole run.\n"
+                "Set done=true only when every block in the worklist has grown.\n"
+                "========================================================="
+            )
+        else:
+            chunk_items = "\n".join([f"  - Chunk ID `{c.chunk_id}`: {c.title} (Lines {c.start_line}\u2013{c.end_line})" for c in content_chunks])
+            user_content = (
+                f"USER REQUEST (EDIT MODE \u2014 FULL DOCUMENT EXPANSION):\n{user_instruction}\n\n"
+                f"{attached_block}\n\n"
+                f"FILE: {file_path} ({total_lines} lines)\n\n"
+                f"{task_state}\n\n"
+                f"{smart_document_context}\n\n"
+                f"{trans_block}\n\n"
+                f"{grounding_instruction}\n\n"
+                f"{visibility_diagnostic}\n\n"
+                f"{redesign_guidance}\n\n"
+                "=========================================================\n"
+                "MANDATE: The user explicitly requested to EXPAND / ADD MORE CONTENT across the document.\n"
+                f"Detected scope: FULL_DOCUMENT_EXPANSION ({num_content_chunks} content chunks to expand).\n\n"
+                f"ORDERED LIST OF DOCUMENT CHUNKS:\n{chunk_items}\n\n"
+                "CRITICAL INSTRUCTIONS:\n"
+                "1. You MUST expand EVERY content chunk. Do NOT stop after the first one.\n"
+                "2. Each chunk gains 2\u20134 full paragraphs of substantive technical prose, plus an "
+                "equation, table or worked example where the topic admits one. A sentence or two is "
+                "not an expansion.\n"
+                "3. Use `rewrite_chunk(chunk_id, new_content)` or `insert_into_chunk(chunk_id, content)`, "
+                "batched a few chunks per turn.\n"
+                "4. Compile once near the end, not between chunks.\n"
+                "5. Coverage is measured: a chunk counts only once its text has actually grown.\n"
+                "========================================================="
+            )
     elif is_creation_request:
         # Determine archetype guidance
         is_ppt = bool(re.search(r'\b(?:ppt|presentation|beamer|slides?|deck)\b', user_lower))
@@ -1828,6 +2004,26 @@ def stream_opencode_agent(
     auto_extensions = 0
     edits_at_last_extension = 0
 
+    expansion_rows_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    def expansion_rows(force: bool = False) -> List[Dict[str, Any]]:
+        """This run's worklist with each block's measured size right now."""
+        if not expansion_units:
+            return []
+        key = str(hash(workspace.get_buffer()))
+        if force or key not in expansion_rows_cache:
+            expansion_rows_cache.clear()
+            try:
+                rows = measure_expansion(workspace.get_original(), workspace.get_buffer())
+            except Exception as meas_err:  # noqa: BLE001
+                logger.warning(f"Expansion measurement failed: {meas_err}")
+                rows = []
+            expansion_rows_cache[key] = rows
+        return expansion_rows_cache[key]
+
+    def expansion_done_count() -> int:
+        return sum(1 for r in expansion_rows() if r["ok"])
+
     def grant_steps(requested: int, reason: str, *, automatic: bool) -> Dict[str, Any]:
         """
         Extends the step budget, or explains why not.
@@ -1840,24 +2036,37 @@ def stream_opencode_agent(
         planned a large job can legitimately know up front that it needs room.
         """
         nonlocal actual_max_steps, step_extensions, auto_extensions, edits_at_last_extension
+        # An expansion must reach every block in its worklist, so its grants are
+        # bounded by measured progress rather than by a fixed number of turns:
+        # the ceiling only matters if blocks stop getting expanded, and then the
+        # progress test below refuses the next grant anyway.
+        running_expansion = bool(expansion_units) and expansion_done_count() < len(expansion_units)
+        ceiling = ABSOLUTE_MAX_STEPS
+        if running_expansion:
+            ceiling = max(ABSOLUTE_MAX_STEPS,
+                          expansion_step_budget(len(expansion_units)) + ABSOLUTE_MAX_STEPS)
         limit = MAX_AUTO_EXTENSIONS if automatic else MAX_STEP_EXTENSIONS
+        if running_expansion:
+            limit = max(limit, len(expansion_units))
         used = auto_extensions if automatic else step_extensions
-        edits_now = workspace.get_edit_count()
+        # Progress for an expansion is a block that has measurably grown, not an
+        # edit: the whole point is that touching a block is not expanding it.
+        edits_now = expansion_done_count() if expansion_units else workspace.get_edit_count()
 
         if used >= limit:
             return {"granted": 0, "reason": "extension_limit_reached",
                     "steps_remaining": max(0, actual_max_steps - steps_taken)}
-        if actual_max_steps >= ABSOLUTE_MAX_STEPS:
+        if actual_max_steps >= ceiling:
             return {"granted": 0, "reason": "absolute_ceiling_reached",
                     "steps_remaining": max(0, actual_max_steps - steps_taken)}
         if (step_extensions or auto_extensions) and edits_now <= edits_at_last_extension:
             return {"granted": 0, "reason": "no_progress_since_last_extension",
-                    "hint": ("The document has not changed since the last extension. "
+                    "hint": ("No further progress since the last extension. "
                              "Make an edit, or finish with done=true."),
                     "steps_remaining": max(0, actual_max_steps - steps_taken)}
 
         size = max(1, min(int(requested or EXTENSION_CHUNK), EXTENSION_CHUNK))
-        size = min(size, ABSOLUTE_MAX_STEPS - actual_max_steps)
+        size = min(size, ceiling - actual_max_steps)
         actual_max_steps += size
         edits_at_last_extension = edits_now
         if automatic:
@@ -1873,6 +2082,8 @@ def stream_opencode_agent(
     compile_verified = False
     compile_available = True
     done_rejections = 0  # Track how many times we rejected a premature done=true
+    coverage_refunds = 0  # Empty done=true turns sent back over coverage, refunded
+    last_checkpoint_step = 0  # last step an expansion compile checkpoint ran
     pdf_conversion_job_id: Optional[str] = None  # set when convert_attached_pdf starts a job
     run_tx = workspace.begin_transaction()  # the whole run is one transaction
     compile_repairs = 0
@@ -1992,6 +2203,46 @@ def stream_opencode_agent(
                 agent_trace.retry_count += 1
                 return "repair", res
         return "failed", res
+
+    def expansion_compile_checkpoint() -> Optional[str]:
+        """
+        Compile part-way through a long expansion, and report any breakage now.
+
+        An expansion writes tens of thousands of characters of LaTeX over dozens
+        of turns, and the gate at the end is all-or-nothing: a run that reached
+        53/53 blocks and 40 K new characters was rolled back over three
+        undefined control sequences, after nine minutes, and the user received
+        nothing. Catching that at turn 8 costs one compile and leaves the model
+        plenty of turns to fix it. Returns feedback for the model, or None.
+
+        Deliberately not ``compile_gate``: this must not spend the end-of-run
+        repair budget, and a failure here is not a verdict on the run.
+        """
+        nonlocal compile_verified, compile_available
+        t0 = time.time()
+        res = execute_tool("compile_latex", {}, workspace)
+        agent_trace.record_compile(latency_ms=(time.time() - t0) * 1000,
+                                   success=bool(res.get("success")))
+        if res.get("infra_skip"):
+            compile_available = False
+            compile_verified = True
+            return None
+        if not res.get("success"):
+            repaired = deterministic_compile_repair(res)
+            if repaired is not None:
+                res = repaired
+        res.pop("failing_errors", None)
+        last_compile.clear()
+        last_compile.update(res)
+        if res.get("success"):
+            compile_verified = True
+            return None
+        errs = res.get("errors") or res.get("new_errors") or []
+        diag = (format_compile_diagnostics(errs, workspace.get_buffer(), file_path)
+                or res.get("summary", "Compilation failed"))
+        return ("COMPILE CHECKPOINT: the document does not compile right now. Fix these before "
+                "expanding anything else \u2014 if they are still here at the end, the whole run is "
+                f"discarded and the user gets nothing back.\n{diag}")
 
     def compile_feedback(res: Dict[str, Any]) -> str:
         # `errors` are the ones that fail the check: the new ones, or — for a fix
@@ -2225,8 +2476,26 @@ def stream_opencode_agent(
         # outcome the loop can produce, and the reason the budget is not fixed.
         # grant_steps refuses if the document has not moved, so an agent that is
         # merely looping still stops.
-        if (mode == "edit" and steps_taken == actual_max_steps
-                and workspace.has_changed() and not compile_verified):
+        # Long expansions compile part-way, not only at the end (see
+        # expansion_compile_checkpoint): all-or-nothing rollback after ten
+        # minutes of writing is the worst outcome this loop has.
+        if (expansion_units and mode == "edit" and workspace.has_changed()
+                and not compile_verified and compile_available
+                and steps_taken - last_checkpoint_step >= EXPANSION_COMPILE_EVERY):
+            last_checkpoint_step = steps_taken
+            yield _phase("compiling", "Checking the document still compiles…")
+            checkpoint_msg = expansion_compile_checkpoint()
+            if checkpoint_msg and messages and messages[-1].get("role") == "user":
+                messages[-1] = _map_text(messages[-1], lambda body: f"{body}\n\n{checkpoint_msg}")
+            elif checkpoint_msg:
+                messages.append({"role": "user", "content": checkpoint_msg})
+
+        # An expansion with blocks still unexpanded is also "work in progress",
+        # even once the document compiles: otherwise the run stops at the budget
+        # with half the sections untouched, which is the reported failure.
+        expansion_incomplete = bool(expansion_units) and expansion_done_count() < len(expansion_units)
+        if (mode == "edit" and steps_taken == actual_max_steps and workspace.has_changed()
+                and (not compile_verified or expansion_incomplete)):
             auto = grant_steps(EXTENSION_CHUNK, "work still in progress at the budget limit",
                                automatic=True)
             if auto.get("granted"):
@@ -2242,10 +2511,23 @@ def stream_opencode_agent(
             messages[-1] = _map_text(messages[-1], lambda body: f"{body}\n\n{_LAST_STEP_NOTE}")
 
         if messages and messages[-1].get("role") == "user":
+            # Only the live message carries the state note. Earlier turns kept
+            # theirs, so the conversation accumulated several contradicting
+            # "THIS TURN, expand exactly these" instructions (and a trail of
+            # stale step counts) that the model could act on instead of the
+            # current one.
+            for _i in range(len(messages) - 1):
+                if messages[_i].get("role") == "user":
+                    stripped = _map_text(messages[_i], lambda body: _BUDGET_RE.sub("", body))
+                    if stripped != messages[_i]:
+                        messages[_i] = stripped
             messages[-1] = _with_budget_note(
                 messages[-1], steps_taken, actual_max_steps,
                 can_extend=(mode == "edit" and actual_max_steps < ABSOLUTE_MAX_STEPS),
-                state=_imported_figures_note(workspace))
+                state="\n".join(x for x in (
+                    _imported_figures_note(workspace),
+                    _expansion_progress_note(expansion_rows(), expansion_batch),
+                ) if x))
 
         # Compact older conversation history to keep network payload lightweight and fast
         compact_messages = _compact_conversation_history(messages)
@@ -2493,14 +2775,32 @@ def stream_opencode_agent(
                     "message": cov_report.feedback_message,
                 }
 
-                if not cov_report.passed and steps_taken < actual_max_steps - 1:
-                    logger.info(f"Agent attempted completion at step {steps_taken} but failed coverage check. Missing: {cov_report.missing_chunk_ids}")
-                    messages.append({"role": "assistant", "content": content})
-                    messages.append({
-                        "role": "user",
-                        "content": cov_report.feedback_message,
-                    })
-                    continue
+                if not cov_report.passed:
+                    # Running low is not a reason to accept a half-done job: buy
+                    # steps instead. grant_steps refuses once progress stops, so
+                    # this terminates — it does not spin.
+                    if steps_taken >= actual_max_steps - 1:
+                        auto = grant_steps(EXTENSION_CHUNK,
+                                           "coverage incomplete at the budget limit",
+                                           automatic=True)
+                        if auto.get("granted"):
+                            yield {"type": "status", "step": steps_taken,
+                                   "message": f"Extending to {actual_max_steps} steps to finish the remaining sections…"}
+                    if steps_taken < actual_max_steps - 1:
+                        logger.info(f"Agent attempted completion at step {steps_taken} but failed coverage check. Missing: {cov_report.missing_chunk_ids}")
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({
+                            "role": "user",
+                            "content": cov_report.feedback_message,
+                        })
+                        # This turn produced no edit — it was a done=true we are
+                        # sending back. Charging a step for it spent 7 of 26 on
+                        # one measured run. Refund it, bounded, so a model that
+                        # only ever says "done" still runs out.
+                        if coverage_refunds < MAX_COVERAGE_REFUNDS:
+                            coverage_refunds += 1
+                            steps_taken -= 1
+                        continue
 
             # 3. For broad multi-chapter requests without explicit chunk IDs, enforce multi-chapter edit count
             min_expected_edits = min(3, len(valid_chapters) or 3)
@@ -2740,7 +3040,7 @@ def stream_opencode_agent(
                     # In compilation fix mode, require verified compilation before concluding
                     pass
                 # Check coverage if broad / full rewrite / expansion
-                elif mode == "edit" and (is_full_rewrite or is_expansion):
+                elif mode == "edit" and (is_full_rewrite or is_expansion or is_broad_request):
                     t_val_start = time.time()
                     cov_report = validate_coverage(
                         workspace=workspace,
@@ -2749,15 +3049,15 @@ def stream_opencode_agent(
                         forbidden_terms=scope_result.forbidden_terms,
                     )
                     agent_trace.record_validator((time.time() - t_val_start) * 1000)
+                    yield {
+                        "type": "coverage_check",
+                        "total_chunks": cov_report.total_chunks,
+                        "edited_chunks": cov_report.edited_chunks,
+                        "missing_chunk_ids": cov_report.missing_chunk_ids,
+                        "passed": cov_report.passed,
+                        "message": cov_report.feedback_message,
+                    }
                     if cov_report.passed:
-                        yield {
-                            "type": "coverage_check",
-                            "total_chunks": cov_report.total_chunks,
-                            "edited_chunks": cov_report.edited_chunks,
-                            "missing_chunk_ids": cov_report.missing_chunk_ids,
-                            "passed": True,
-                            "message": cov_report.feedback_message,
-                        }
                         more = after_done()
                         if more is not None:
                             yield _phase("checking_layout", more[0])
@@ -2766,6 +3066,29 @@ def stream_opencode_agent(
                             continue
                         agent_explanation = parsed.get("explanation", thought or "Edit completed.")
                         break
+                    # Failed. This branch used to have no `else` at all: the
+                    # completion was dropped on the floor, the UI got no
+                    # coverage event, and the model was sent nothing but the
+                    # ordinary tool-result follow-up. Since `done=true` arrives
+                    # here together with the tool calls — which is what the
+                    # batching mandate makes the model do — this was the path
+                    # most runs took, and the reason a half-expanded document
+                    # was delivered as finished.
+                    if steps_taken >= actual_max_steps - 1:
+                        auto = grant_steps(EXTENSION_CHUNK,
+                                           "coverage incomplete at the budget limit",
+                                           automatic=True)
+                        if auto.get("granted"):
+                            yield {"type": "status", "step": steps_taken,
+                                   "message": f"Extending to {actual_max_steps} steps to finish the remaining sections…"}
+                    if steps_taken < actual_max_steps:
+                        logger.info(
+                            f"done=true with tool calls at step {steps_taken} but coverage failed; "
+                            f"missing {len(cov_report.missing_chunk_ids)} block(s)."
+                        )
+                        messages.append({"role": "assistant", "content": content})
+                        messages.append({"role": "user", "content": cov_report.feedback_message})
+                        continue
                 else:
                     more = after_done()
                     if more is not None:
@@ -3162,6 +3485,11 @@ def stream_opencode_agent(
         status = _compile_status_note(last_compile, compile_available, compile_verified)
         if status:
             agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + status
+        # …and, for an expansion, how much of the document actually grew. The
+        # model's own explanation says "expanded all sections" either way.
+        exp_note = _expansion_status_note(expansion_rows(force=True)) if expansion_units else ""
+        if exp_note:
+            agent_explanation = (agent_explanation.rstrip() + "\n" + exp_note) if agent_explanation else exp_note
         # …and, for a request about how the page looks, what the page measures now.
         if (visual_request or creation_check) and visual_target:
             try:
