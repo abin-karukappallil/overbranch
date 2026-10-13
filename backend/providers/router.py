@@ -31,7 +31,7 @@ from .openrouter_provider import OpenRouterProvider
 
 logger = logging.getLogger("provider_router")
 
-DEFAULT_MODEL = "openrouter/free"
+DEFAULT_MODEL = "gemini-3.7-flash"
 
 
 class TaskType(str, Enum):
@@ -46,17 +46,17 @@ class TaskType(str, Enum):
 
 # Task type to recommended model class mapping
 TASK_ROUTING_TABLE: Dict[TaskType, str] = {
-    TaskType.TASK_CLASSIFICATION: DEFAULT_MODEL,
-    TaskType.QUERY_REWRITING: DEFAULT_MODEL,
-    TaskType.FAST_PLAN: DEFAULT_MODEL,
-    TaskType.OUTLINE_PLAN: DEFAULT_MODEL,
-    TaskType.NODE_EDITING: DEFAULT_MODEL,
-    TaskType.DOC_RESTRUCTURING: DEFAULT_MODEL,
+    TaskType.TASK_CLASSIFICATION: "llama-3.1-8b-instant",
+    TaskType.QUERY_REWRITING: "llama-3.1-8b-instant",
+    TaskType.FAST_PLAN: "llama-3.1-8b-instant",
+    TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
+    TaskType.NODE_EDITING: "gemini-3.7-flash",
+    TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
     TaskType.VISION_DIFF: "minimax/minimax-01",
 }
 
 
-DEFAULT_FALLBACK_CHAIN = "openrouter:nvidia/nemotron-3-super-120b-a12b:free,openrouter:nvidia/nemotron-3.5-lightning:free,gemini:gemini-3.7-flash"
+DEFAULT_FALLBACK_CHAIN = "openrouter:minimax/minimax-m3"
 
 
 def _fallback_entries() -> List[str]:
@@ -115,12 +115,12 @@ class ProviderRouter:
     def route(self, model: str) -> LLMProvider:
         """Determines which provider handles a given model name."""
         if not model:
-            return self.openrouter
+            return self.gemini
 
         clean_model = model.strip().lower()
 
-        if clean_model in ("auto:smart", "auto", "smart", "default", "openrouter/free", "openrouter:free", "free") or clean_model.startswith("auto"):
-            return self.openrouter
+        if clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
+            return self.gemini
 
         if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS or "gemini" in clean_model:
             return self.gemini
@@ -149,10 +149,6 @@ class ProviderRouter:
         return self.openrouter
 
     def get_fallback_model(self) -> str:
-        for entry in _fallback_entries():
-            _, _, fb_model = entry.partition(":")
-            if fb_model.strip():
-                return fb_model.strip()
         return self.openrouter.default_model
 
     def get_fast_model(self) -> str:
@@ -173,13 +169,6 @@ class ProviderRouter:
     def get_available_models(self) -> Dict[str, Any]:
         providers_list = []
 
-        openrouter_models = self.openrouter.get_available_models()
-        if openrouter_models:
-            providers_list.append({
-                "name": self.openrouter.get_provider_name(),
-                "models": openrouter_models,
-            })
-
         gemini_models = self.gemini.get_available_models()
         if gemini_models:
             providers_list.append({
@@ -192,6 +181,13 @@ class ProviderRouter:
             providers_list.append({
                 "name": "Groq (Ultra-Fast Inference)",
                 "models": groq_models,
+            })
+
+        openrouter_models = self.openrouter.get_available_models()
+        if openrouter_models:
+            providers_list.append({
+                "name": self.openrouter.get_provider_name(),
+                "models": openrouter_models,
             })
 
         return {

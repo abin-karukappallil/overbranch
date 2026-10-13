@@ -89,29 +89,24 @@ class OpenRouterProvider(LLMProvider):
 
     def get_available_models(self) -> List[Dict[str, Any]]:
         return [
-            {"id": "openrouter/free", "label": "OpenRouter Free (Auto-routed)", "default": True},
-            {"id": "nvidia/nemotron-3-super-120b-a12b:free", "label": "Nemotron 3 Super 120B Free", "default": False},
-            {"id": "nvidia/nemotron-3.5-lightning:free", "label": "Nemotron 3.5 Lightning Free", "default": False},
-            {"id": "google/gemma-4-31b-it:free", "label": "Gemma 4 31B Free", "default": False},
-            {"id": "cohere/north-mini-code:free", "label": "Cohere North Mini Code Free", "default": False},
-            {"id": "minimax/minimax-01", "label": "MiniMax Text-01", "default": False},
+            {"id": "minimax/minimax-m3", "label": "MiniMax M3", "default": True},
             {"id": "meta-llama/llama-3.3-70b-instruct", "label": "Llama 3.3 70B (Fast)", "default": False},
             {"id": "openai/gpt-4o-mini", "label": "GPT-4o Mini (Fast)", "default": False},
             {"id": "qwen/qwen-2.5-72b-instruct", "label": "Qwen 2.5 72B", "default": False},
+            {"id": "minimax/minimax-01", "label": "MiniMax Text-01", "default": False},
+            {"id": "minimax/minimax-m3:free", "label": "MiniMax M3 Free", "default": False},
+            {"id": "nvidia/nemotron-3-ultra-550b-a55b:free", "label": "Nemotron 3 Ultra Free", "default": False},
+            {"id": "deepseek/deepseek-v4-flash:free", "label": "DeepSeek V4 Flash Free", "default": False},
         ]
 
     def _normalize_model_name(self, model: str) -> str:
         clean = (model or "").strip().lower()
         if not clean:
             return self.default_model
-        if clean in ("openrouter/free", "openrouter:free", "openrouter-free", "free"):
-            return "openrouter/free"
-        if clean in ("nemotron", "nemotron-3", "nemotron-super", "nemotron-free", "nemotron 3 super"):
-            return "nvidia/nemotron-3-super-120b-a12b:free"
         if clean in ("minimax m3 free", "minimax/minimax-m3:free"):
-            return "openrouter/free"
+            return "minimax/minimax-m3:free"
         if clean in _MINIMAX_M3_ALIASES:
-            return "minimax/minimax-m3"
+            return self.default_model if "m3" in self.default_model.lower() else DEFAULT_FALLBACK_MODEL
         if clean in ("minimax-01", "text-01", "minimax/minimax-01", "minimax text-01"):
             return "minimax/minimax-01"
         return model
@@ -189,8 +184,6 @@ class OpenRouterProvider(LLMProvider):
             "X-Title": "OverBranch IDE",
         }
         payload = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens}
-        if "nemotron" in model.lower():
-            payload["reasoning"] = {"effort": "none"}
         resp = requests.post(OPENROUTER_API_BASE, headers=headers, json=payload, stream=True, timeout=self.timeout)
         if cancel_token:
             cancel_token.register_resource(resp)
@@ -235,11 +228,7 @@ class OpenRouterProvider(LLMProvider):
         if not choices:
             raise LLMProviderError("No choices returned from OpenRouter API", provider="OpenRouter",
                                    kind=FailureKind.UNAVAILABLE)
-        msg_obj = choices[0].get("message", {}) or {}
-        content = msg_obj.get("content") or ""
-        reasoning = msg_obj.get("reasoning") or msg_obj.get("reasoning_content") or ""
-        if not content.strip() and reasoning.strip():
-            content = reasoning.strip()
+        content = choices[0].get("message", {}).get("content", "") or ""
         if not content.strip():
             raise LLMProviderError("OpenRouter returned an empty response", provider="OpenRouter",
                                    kind=FailureKind.UNAVAILABLE)

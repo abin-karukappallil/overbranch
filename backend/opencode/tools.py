@@ -275,26 +275,6 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": [],
     },
     {
-        "name": "humanize_content",
-        "description": (
-            "Reword the document's bulk prose so it reads as a careful human author wrote it instead of "
-            "reading as generated text \u2014 and nothing else. Titles, headings, author names, captions, "
-            "labels, citations, references, math, tables, TikZ, listings, the preamble and the "
-            "bibliography are never touched, and every command, number and acronym of a passage must "
-            "come out identical or that passage keeps its original text. Each rewrite is measured: the "
-            "AI-register score must fall, the length must stay within ~15%, and the result is verified "
-            "again after it is written. Use it for 'humanize this', 'make it sound less like AI', "
-            "'remove the AI tone'. Do NOT hand-rewrite prose for this yourself."
-        ),
-        "parameters": {
-            "scope": {"type": "string", "description": "'document' (every prose passage in the body) or 'node'.", "default": "document"},
-            "node_id": {"type": "string", "description": "Restrict to one block (e.g. 'sec:introduction', 'frame:results')."},
-            "dry_run": {"type": "boolean", "description": "Measure and report what would change; write nothing.", "default": False},
-            "report_only": {"type": "boolean", "description": "Measure the document's current AI-register score without calling the model.", "default": False},
-        },
-        "required": [],
-    },
-    {
         "name": "list_attachment_figures",
         "description": (
             "List the figures (diagrams, charts, photographs) found in the files attached to this chat, with "
@@ -446,14 +426,12 @@ TOOL_ALIASES: Dict[str, str] = {
     "grep_search": "search_document",
     "verify_compile": "compile_latex",
     "read_document_summary": "inspect_document",
-    "humanize_text": "humanize_content",
-    "humanise_content": "humanize_content",
 }
 
 # Tools that change the document (used for transactions and tracing).
 EDIT_TOOLS = frozenset({
     "replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",
-    "insert_into_chunk", "justify_content", "generate_diagram", "humanize_content",
+    "insert_into_chunk", "justify_content", "generate_diagram",
 })
 
 
@@ -652,10 +630,6 @@ def execute_tool(
         elif tool_name == "view_rendered_pages":
             from .visual_tools import view_rendered_pages_tool
             return view_rendered_pages_tool(workspace, args)
-
-        elif tool_name == "humanize_content":
-            from .humanize import humanize_content_tool
-            return humanize_content_tool(workspace, args)
 
         elif tool_name == "list_attachment_figures":
             from .attachment_tools import list_attachment_figures_tool
