@@ -18,7 +18,6 @@ This module only *validates*. Repair lives in
 from __future__ import annotations
 
 import logging
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -760,87 +759,26 @@ class CoverageValidationResult:
 # capped so a very long one is not asked for an essay, floored so an empty or
 # near-empty section cannot pass on a sentence.
 EXPANSION_GROWTH_RATIO = 0.60
-
-# The floor is the number that decides whether an "elaborate this" is worth
-# having. At 200 characters a block cleared the gate on a long paragraph, which
-# is a reworded heading with a sentence under it — measured on real runs, and
-# the reason the gate was raised: an elaboration is at least a thousand
-# characters of new material, about two substantial paragraphs.
-EXPANSION_MIN_NEW_CHARS = max(200, int(os.getenv("EXPANSION_MIN_NEW_CHARS", "1000") or 1000))
-EXPANSION_GROWTH_FLOOR = EXPANSION_MIN_NEW_CHARS
-EXPANSION_GROWTH_CAP = max(EXPANSION_GROWTH_FLOOR, 2 * EXPANSION_MIN_NEW_CHARS)
+EXPANSION_GROWTH_CAP = 600
+EXPANSION_GROWTH_FLOOR = 200
 
 # A slide is not a section. A Beamer frame holds perhaps a dozen lines before it
-# overflows, so a thousand more characters *inside one frame* asks for a defect:
-# against the old 600-character prose target the model rewrote the same two
-# frames five times trying to clear it. The amount is the same — the user asked
-# for a thousand characters per block and a deck is not exempt — but on a deck
-# it is reached the way a deck grows: follow-up frames on the same topic, which
-# the attribution below credits to it. The prompt says so explicitly.
-# A slide owes exactly the minimum and never more, however long it already is:
-# the material goes into follow-up frames, and asking a 40-line slide for twice
-# as much again only invites the overfilling this constant exists to prevent.
-EXPANSION_SLIDE_FLOOR = EXPANSION_MIN_NEW_CHARS
-EXPANSION_SLIDE_CAP = EXPANSION_SLIDE_FLOOR
+# overflows, so demanding 600 more characters inside one asks for a defect: in
+# the first real run against this gate the model rewrote the same two frames
+# five times trying to clear it. Expanding a deck means more slides, which the
+# attribution below counts, plus a slide-sized amount more on each one.
+EXPANSION_SLIDE_CAP = 300
+EXPANSION_SLIDE_FLOOR = 150
 _SLIDE_KINDS = ("frame", "page")
-
-# What an expansion may NOT do: drop what was there. "Expand" means add to the
-# existing text, and a model that summarises a section while lengthening it
-# satisfies a pure growth test. Retention is the share of the block's original
-# content words still present afterwards; below this it is a rewrite, not an
-# elaboration, and it is reported as text lost.
-EXPANSION_MIN_RETENTION = 0.90
-# Below this many content words the measure is noise (a two-line stub), so a
-# short block is judged on growth alone.
-_RETENTION_MIN_WORDS = 12
-
-_RE_TEX_COMMAND = re.compile(r"\\[a-zA-Z@]+\*?")
-_RE_TEX_MATH = re.compile(r"\$\$.*?\$\$|\$[^$]*\$|\\\[.*?\\\]|\\\(.*?\\\)", re.DOTALL)
 
 
 def expansion_target_delta(before: int, kind: str = "section") -> int:
     """Characters a block of ``before`` characters must gain to count as expanded."""
     if kind in _SLIDE_KINDS:
-        return EXPANSION_SLIDE_FLOOR
+        return max(EXPANSION_SLIDE_FLOOR,
+                   min(int(before * EXPANSION_GROWTH_RATIO), EXPANSION_SLIDE_CAP))
     return max(EXPANSION_GROWTH_FLOOR,
                min(int(before * EXPANSION_GROWTH_RATIO), EXPANSION_GROWTH_CAP))
-
-
-def content_words(latex_text: str) -> List[str]:
-    """
-    The words a reader sees, with LaTeX markup and math removed.
-
-    Used to measure what an edit kept. Math is dropped rather than kept as
-    tokens because an equation is one opaque blob to a word measure and a
-    changed spacing inside it would read as lost prose.
-    """
-    if not latex_text:
-        return []
-    plain = _RE_TEX_MATH.sub(" ", latex_text)
-    plain = _RE_TEX_COMMAND.sub(" ", plain)
-    plain = re.sub(r"[{}\[\]~^&%$#_]", " ", plain)
-    return [w for w in re.split(r"[^0-9A-Za-z]+", plain.lower()) if len(w) >= 4]
-
-
-def measure_retention(before_text: str, after_text: str) -> Optional[float]:
-    """
-    Share of the original block's content words still present afterwards, as a
-    multiset (so deleting one of three occurrences of a word counts).
-
-    ``None`` when the block is too short for the measure to mean anything.
-    """
-    before = content_words(before_text)
-    if len(before) < _RETENTION_MIN_WORDS:
-        return None
-    after_counts: Dict[str, int] = {}
-    for w in content_words(after_text):
-        after_counts[w] = after_counts.get(w, 0) + 1
-    kept = 0
-    for w in before:
-        if after_counts.get(w, 0) > 0:
-            after_counts[w] -= 1
-            kept += 1
-    return kept / len(before)
 
 
 def _unit_match_key(unit: "ExpansionUnit") -> str:
@@ -951,7 +889,6 @@ def measure_expansion(original_code: str, current_code: str) -> List[Dict[str, A
         key=lambda pair: pair[0],
     )
     added: Dict[int, int] = {}
-    added_text: Dict[int, List[str]] = {}
     for new_unit in leftover:
         pos = after_pos[id(new_unit)]
         owner = None
@@ -962,22 +899,12 @@ def measure_expansion(original_code: str, current_code: str) -> List[Dict[str, A
                 break
         if owner is not None:
             added[owner] = added.get(owner, 0) + new_unit.size
-            added_text.setdefault(owner, []).append(new_unit.text)
 
     rows: List[Dict[str, Any]] = []
     for i, u in enumerate(before_units):
         m = match[i]
         after = (m.size if m is not None else 0) + added.get(i, 0)
         target = expansion_target_delta(u.size, u.kind)
-        grew = (after - u.size) >= target
-        # Did the block KEEP what it had? A model that lengthens a section while
-        # summarising away half of it passes a pure growth test, and the user
-        # loses text they wrote. Follow-up blocks credited to this topic count as
-        # part of it: text the edit moved into a new sibling slide is not lost.
-        kept_text = ((m.text if m is not None else "")
-                     + "\n" + "\n".join(added_text.get(i, [])))
-        retention = measure_retention(u.text, kept_text) if m is not None else 0.0
-        preserved = retention is None or retention >= EXPANSION_MIN_RETENTION
         rows.append({
             "unit_id": u.unit_id,
             "title": u.title,
@@ -986,9 +913,7 @@ def measure_expansion(original_code: str, current_code: str) -> List[Dict[str, A
             "after": after,
             "delta": after - u.size,
             "target": target,
-            "retention": None if retention is None else round(retention, 3),
-            "preserved": bool(preserved),
-            "ok": grew and preserved,
+            "ok": (after - u.size) >= target,
             "missing": m is None,
         })
     return rows
@@ -1025,11 +950,6 @@ def _expansion_coverage(workspace: Any) -> CoverageValidationResult:
         if r["delta"] < 0:
             return head + ("  [This block LOST text. Restore what you removed \u2014 expanding means "
                            "adding to what is there.]")
-        if not r.get("preserved", True):
-            pct = int((r.get("retention") or 0) * 100)
-            return head + (f"  [REWRITTEN, not expanded: only {pct}% of the original wording of this "
-                           "block survives. Put the original text back verbatim and ADD new material "
-                           "around it \u2014 do not summarise, reword or condense what the user wrote.]")
         return head
 
     listing = "\n".join(_line(r) for r in pending[:25])
@@ -1037,17 +957,12 @@ def _expansion_coverage(workspace: Any) -> CoverageValidationResult:
     feedback = (
         "EXPANSION COVERAGE FAILED: the user asked for every section to be elaborated, and "
         f"{len(done)}/{len(rows)} blocks have measurably grown.\n"
-        f"These {len(pending)} have not been expanded (too little added, or the original text was "
-        f"replaced rather than added to):\n"
+        f"These {len(pending)} are still at (or near) their original length:\n"
         f"{listing}{more}\n\n"
-        f"ACTION REQUIRED: for each one, add at least the stated number of characters of substantive "
-        "new material \u2014 2\u20134 full paragraphs of technical prose, plus an equation, table, "
-        "worked example or enumerated analysis where the topic admits one \u2014 with "
-        "`rewrite_chunk(unit_id, new_content)` or `insert_into_chunk(unit_id, content)`. "
-        "KEEP every sentence the block already has, verbatim and in place, and write the new text "
-        "around it; a block marked REWRITTEN lost the user's own wording and must have it restored. "
-        "Do not pad with restatements of what is already there, and do not invent facts, numbers or "
-        "citations the document and its sources do not support."
+        "ACTION REQUIRED: for each one, add substantive new material \u2014 2\u20134 full paragraphs of "
+        "technical prose, plus an equation, table, worked example or enumerated analysis where the "
+        "topic admits one \u2014 with `rewrite_chunk(unit_id, new_content)` or "
+        "`insert_into_chunk(unit_id, content)`. Do not pad with restatements of what is already there."
     )
     logger.warning(f"Expansion coverage failed: {len(pending)}/{len(rows)} blocks not expanded.")
     return CoverageValidationResult(

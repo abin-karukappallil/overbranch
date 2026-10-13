@@ -120,9 +120,7 @@ def test_sanitize_default_mode_unchanged_for_raw_latex():
 
 
 def test_system_prompt_states_the_escaping_rule():
-    from opencode.agent_loop import EXPANSION_MIN_NEW_CHARS
-    rendered = OPENCODE_SYSTEM_PROMPT.format(
-        tools_block="TOOLS", expansion_min_chars=EXPANSION_MIN_NEW_CHARS)
+    rendered = OPENCODE_SYSTEM_PROMPT.format(tools_block="TOOLS")
     assert ("write EVERY LaTeX backslash as two backslashes (`" + B + B + "begin{itemize}`") in rendered
     assert "a LaTeX line break `" + B + B + "` as `" + B * 4 + "`" in rendered
     assert "never use `" + B + "uXXXX` escapes" in rendered
