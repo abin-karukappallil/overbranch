@@ -430,7 +430,7 @@ export function EditorLayout({
   const announcedAttachmentsRef = useRef<Set<string>>(new Set());
   const [isFileAnalyzerOpen, setIsFileAnalyzerOpen] = useState<boolean>(false);
   const [isApiSettingsOpen, setIsApiSettingsOpen] = useState<boolean>(false);
-  const [activeModelName, setActiveModelName] = useState<string>("gemini-3.7-flash");
+  const [activeModelName, setActiveModelName] = useState<string>("openrouter/free");
   const [fallbackModelNotice, setFallbackModelNotice] = useState<string | null>(null);
   const [agentProgressSteps, setAgentProgressSteps] = useState<{ step: string; message: string; icon: string }[]>([]);
   const [filesRefreshTrigger, setFilesRefreshTrigger] = useState<number>(0);
@@ -565,20 +565,43 @@ export function EditorLayout({
     }, 250);
   };
 
-  // Instant selection-to-LaTeX synchronization
-  const handlePdfTextSelected = (selectedText: string) => {
-    // Suppress forward sync loop while navigating from PDF to code
-    if (forwardSyncTimerRef.current) {
-      clearTimeout(forwardSyncTimerRef.current);
-    }
-    isReverseSyncingRef.current = true;
-    setTimeout(() => {
-      isReverseSyncingRef.current = false;
-    }, 1000);
-
+  /**
+   * Jump to selected PDF text in the source.
+   *
+   * `hintLine` is where SyncTeX says the selection physically is. Without it
+   * the only thing available is a text search, which lands on the FIRST
+   * occurrence of the selected words — so selecting "Results" on page 9 jumped
+   * to the word "Results" in the abstract. With it, the occurrence nearest that
+   * line wins, which is the one the reader actually selected.
+   */
+  const jumpToSelectedPdfText = (
+    selectedText: string,
+    hintLine?: number | null,
+    hintFile?: string | null,
+  ) => {
     const monaco = monacoRef.current;
     const trimmed = selectedText.trim();
     if (!trimmed || trimmed.length < 2) return;
+
+    if (hintFile && hintFile !== activeFilePath) {
+      setActiveFilePath(hintFile);
+    }
+
+    /** The match the reader meant: nearest to SyncTeX's line, else the first. */
+    const pickMatch = (matches: any[]) => {
+      if (!matches || matches.length === 0) return null;
+      if (!hintLine || matches.length === 1) return matches[0];
+      let best = matches[0];
+      let bestDistance = Math.abs(best.range.startLineNumber - hintLine);
+      for (const m of matches.slice(1)) {
+        const d = Math.abs(m.range.startLineNumber - hintLine);
+        if (d < bestDistance) {
+          best = m;
+          bestDistance = d;
+        }
+      }
+      return best;
+    };
 
     const editors = [desktopEditorRef.current, mobileEditorRef.current].filter(Boolean);
     const uniqueEditors = Array.from(new Set(editors));
@@ -620,15 +643,24 @@ export function EditorLayout({
         if (!matches || matches.length === 0) {
           const cleanSnippet = trimmed.slice(0, 15).toLowerCase();
           const lineCount = model.getLineCount();
+          let bestLine = 0;
           for (let i = 1; i <= lineCount; i++) {
             const lineText = model.getLineContent(i).toLowerCase();
-            if (lineText.includes(cleanSnippet)) {
-              matchRange = new monaco.Range(i, 1, i, model.getLineMaxColumn(i));
+            if (!lineText.includes(cleanSnippet)) continue;
+            if (!hintLine) {
+              bestLine = i;
               break;
             }
+            if (!bestLine || Math.abs(i - hintLine) < Math.abs(bestLine - hintLine)) {
+              bestLine = i;
+            }
+          }
+          if (bestLine) {
+            matchRange = new monaco.Range(bestLine, 1, bestLine, model.getLineMaxColumn(bestLine));
           }
         } else {
-          matchRange = matches[0].range;
+          const picked = pickMatch(matches as any[]);
+          matchRange = picked ? picked.range : null;
         }
 
         if (matchRange) {
@@ -708,6 +740,51 @@ export function EditorLayout({
     }, 250);
   };
 
+  /**
+   * Text selected in the PDF. `anchor` is where that selection physically is;
+   * SyncTeX turns it into the source line, and the jump then goes to the
+   * occurrence there rather than to the first occurrence in the file.
+   *
+   * The search still runs when SyncTeX cannot answer (no .synctex.gz yet,
+   * a point in a region it has no record for), so the behaviour degrades to
+   * what it was rather than to nothing.
+   */
+  const handlePdfTextSelected = (
+    selectedText: string,
+    anchor?: { page: number; x: number; y: number },
+  ) => {
+    // Suppress forward sync loop while navigating from PDF to code
+    if (forwardSyncTimerRef.current) {
+      clearTimeout(forwardSyncTimerRef.current);
+    }
+    isReverseSyncingRef.current = true;
+    setTimeout(() => {
+      isReverseSyncingRef.current = false;
+    }, 1000);
+
+    const trimmed = selectedText.trim();
+    if (!trimmed || trimmed.length < 2) return;
+
+    if (!anchor || !projectId) {
+      jumpToSelectedPdfText(trimmed);
+      return;
+    }
+
+    trpcClient.synctex.backward
+      .mutate({
+        projectId,
+        page: anchor.page,
+        x: anchor.x,
+        y: anchor.y,
+      })
+      .then((data) => {
+        jumpToSelectedPdfText(trimmed, data?.line ?? null, data?.file ?? null);
+      })
+      .catch(() => {
+        jumpToSelectedPdfText(trimmed);
+      });
+  };
+
   // Re-sync jump whenever activeMobileTab switches to "code"
   useEffect(() => {
     if (activeMobileTab === "code") {
@@ -728,9 +805,19 @@ export function EditorLayout({
   // ─── Model Selector State ────────────────────────────────────────────────
   const [availableModels, setAvailableModels] = useState<ProviderGroup[]>([
     {
+      name: "OpenRouter",
+      models: [
+        { id: "openrouter/free", label: "OpenRouter Free", default: true },
+        { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super 120B Free", default: false },
+        { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning Free", default: false },
+        { id: "google/gemma-4-31b-it:free", label: "Gemma 4 31B Free", default: false },
+        { id: "minimax/minimax-01", label: "MiniMax Text-01", default: false },
+      ],
+    },
+    {
       name: "Gemini Web2API",
       models: [
-        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: true },
+        { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: false },
         { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", default: false },
         { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", default: false },
         { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: false },
@@ -744,14 +831,6 @@ export function EditorLayout({
         { id: "auto", label: "FreeLLM Auto Router", default: false },
         { id: "auto:fast", label: "FreeLLM Auto Fast", default: false },
         { id: "openai/gpt-oss-120b", label: "GPT-OSS-120B", default: false },
-      ],
-    },
-    {
-      name: "OpenRouter",
-      models: [
-        { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra Free", default: false },
-        { id: "minimax/minimax-m3:free", label: "Minimax 3 Free", default: false },
-        { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 Flash Free", default: false },
       ],
     },
   ]);
@@ -1002,6 +1081,34 @@ export function EditorLayout({
   const [editorsNonce, setEditorsNonce] = useState(0);
   const isMobileViewport = () =>
     typeof window !== "undefined" && window.innerWidth < 768;
+
+  /**
+   * Whether the only keyboard here is the on-screen one.
+   *
+   * On a phone there is no Shift+Enter, so Enter-to-send left no way to type a
+   * second line in the chat box at all: every newline sent the message. On such
+   * a device Enter inserts a newline and the send button sends, which is what
+   * every phone messaging app does.
+   *
+   * `(pointer: coarse)` is the right test rather than a width breakpoint: it
+   * asks whether the PRIMARY input is a finger, so a narrow desktop window
+   * keeps Enter-to-send and a tablet with a hardware keyboard — which does have
+   * Shift+Enter — is the one case this gets wrong, in the harmless direction.
+   */
+  const [softKeyboardOnly, setSoftKeyboardOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(pointer: coarse)");
+    const sync = () => setSoftKeyboardOnly(mq.matches);
+    sync();
+    // Safari < 14 has no addEventListener on MediaQueryList.
+    if (mq.addEventListener) {
+      mq.addEventListener("change", sync);
+      return () => mq.removeEventListener("change", sync);
+    }
+    mq.addListener(sync);
+    return () => mq.removeListener(sync);
+  }, []);
   const getActiveEditor = useCallback(() => {
     const mobile = mobileEditorRef.current;
     const desktop = desktopEditorRef.current;
@@ -3584,7 +3691,9 @@ export function EditorLayout({
                         e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
                       }}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
+                        // On a touch device Enter is a newline (there is no
+                        // Shift+Enter) and the send button sends.
+                        if (e.key === "Enter" && !e.shiftKey && !softKeyboardOnly) {
                           e.preventDefault();
                           if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
                             handleSendPrompt(e);
@@ -3715,8 +3824,8 @@ export function EditorLayout({
                 onReverseSync={(file, line, col) => {
                   handleReverseSyncJump(file, line, col);
                 }}
-                onTextSelected={(text) => {
-                  handlePdfTextSelected(text);
+                onTextSelected={(text, anchor) => {
+                  handlePdfTextSelected(text, anchor);
                 }}
                 onEnterPresentation={() => setIsPresentationMode(true)}
               />
@@ -3738,8 +3847,8 @@ export function EditorLayout({
               setActiveMobileTab("code");
               handleReverseSyncJump(file, line, col);
             }}
-            onTextSelected={(text) => {
-              handlePdfTextSelected(text);
+            onTextSelected={(text, anchor) => {
+              handlePdfTextSelected(text, anchor);
             }}
             onEnterPresentation={() => setIsPresentationMode(true)}
           />
@@ -3850,7 +3959,9 @@ export function EditorLayout({
             <textarea
               id="ai-chat-input-2"
               rows={1}
-              placeholder={chatMode === "ask" ? "Ask a question..." : "Ask agent to edit LaTeX..."}
+              placeholder={chatMode === "ask"
+                ? (softKeyboardOnly ? "Ask a question\u2026 (Enter = new line)" : "Ask a question...")
+                : (softKeyboardOnly ? "Ask agent to edit LaTeX\u2026 (Enter = new line)" : "Ask agent to edit LaTeX...")}
               value={chatInput}
               disabled={isAgentThinking}
               onChange={(e) => {
@@ -3859,7 +3970,9 @@ export function EditorLayout({
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
               }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                // On a touch device Enter is a newline (there is no
+                // Shift+Enter) and the send button sends.
+                if (e.key === "Enter" && !e.shiftKey && !softKeyboardOnly) {
                   e.preventDefault();
                   if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
                     handleSendPrompt(e);

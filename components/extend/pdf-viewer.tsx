@@ -130,6 +130,21 @@ export type PDFViewerHandle = {
   getViewportElement: () => HTMLDivElement | null
 }
 
+/**
+ * Where a text selection in the PDF physically is: the page and the top-left of
+ * its first rectangle, in PDF points (72 dpi).
+ *
+ * Without it, a selection can only be looked up by searching the source for the
+ * selected words — which lands on the FIRST occurrence of that text, not on the
+ * occurrence the reader actually selected. SyncTeX can answer the real question
+ * from a point on a page, so the point travels with the text.
+ */
+export type PDFSelectionAnchor = {
+  page: number
+  x: number
+  y: number
+}
+
 export type PDFViewerScrollAreaViewportResolver = (
   container: HTMLDivElement
 ) => HTMLDivElement | null
@@ -144,6 +159,15 @@ export type PDFViewerProps = {
   showRotateControls?: boolean
   showUpload?: boolean
   src?: string
+  /**
+   * Page to land on when a document finishes loading, instead of page 1.
+   *
+   * Recompiling replaces `src`, which opens a new document and remounts the
+   * viewer, so a reader who was looking at page 9 was thrown back to the top on
+   * every compile. The editor passes the page it last reported through
+   * `onActivePageChange`; the restore happens once per document id.
+   */
+  initialPage?: number
   toolbarActions?: React.ReactNode
   pageClassName?: (pageNumber: number) => string | undefined
   renderPageOverlay?: (props: PDFViewerPageOverlayProps) => React.ReactNode
@@ -166,7 +190,7 @@ export type PDFViewerProps = {
     event: React.PointerEvent<HTMLDivElement>,
     pageNumber: number
   ) => void
-  onTextSelected?: (text: string) => void
+  onTextSelected?: (text: string, anchor?: PDFSelectionAnchor) => void
 }
 
 const DEFAULT_ZOOM = "automatic"
@@ -1771,12 +1795,56 @@ function isEditableCopyTarget(target: EventTarget | null) {
   return Boolean(target.closest("input, textarea, [contenteditable='true']"))
 }
 
+/**
+ * The page and PDF-point coordinates of a DOM selection's start.
+ *
+ * Each rendered page carries its own size and the current zoom as data
+ * attributes (see `renderPage`), so a client rectangle divided by that scale is
+ * a point in the page's own coordinate space — which is what SyncTeX takes.
+ * Returns undefined for a selection that is not inside a page (the thumbnail
+ * pane, the toolbar).
+ */
+function selectionAnchor(
+  selection: Selection | null | undefined
+): PDFSelectionAnchor | undefined {
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return undefined
+  try {
+    const range = selection.getRangeAt(0)
+    const node = range.startContainer
+    const element = node instanceof Element ? node : node.parentElement
+    const pageEl = element?.closest?.("[data-pdf-viewer-page]") as HTMLElement | null
+    if (!pageEl) return undefined
+
+    const page = Number.parseInt(pageEl.getAttribute("data-pdf-viewer-page") || "", 10)
+    if (!Number.isFinite(page) || page < 1) return undefined
+
+    const rects = range.getClientRects()
+    const rect = rects.length > 0 ? rects[0] : range.getBoundingClientRect()
+    if (!rect || (rect.width === 0 && rect.height === 0)) return undefined
+
+    const pageRect = pageEl.getBoundingClientRect()
+    const attrWidth = Number.parseFloat(pageEl.getAttribute("data-page-width") || "0")
+    const attrScale = Number.parseFloat(pageEl.getAttribute("data-page-scale") || "0")
+    const scale =
+      attrScale > 0 ? attrScale : attrWidth > 0 ? pageRect.width / attrWidth : 1
+    if (!(scale > 0)) return undefined
+
+    return {
+      page,
+      x: (rect.left - pageRect.left) / scale,
+      y: (rect.top - pageRect.top) / scale,
+    }
+  } catch {
+    return undefined
+  }
+}
+
 function PDFViewerSelectionSyncListener({
   documentId,
   onTextSelected,
 }: {
   documentId: string
-  onTextSelected?: (text: string) => void
+  onTextSelected?: (text: string, anchor?: PDFSelectionAnchor) => void
 }) {
   const { provides: selection } = useSelectionCapability()
   const viewportRef = useViewportRef(documentId)
@@ -1810,7 +1878,7 @@ function PDFViewerSelectionSyncListener({
           if (domText && domText.length >= 2) {
             if (lastNotifiedTextRef.current !== domText) {
               lastNotifiedTextRef.current = domText
-              onTextSelected(domText)
+              onTextSelected(domText, selectionAnchor(sel))
             }
             return
           }
@@ -2226,6 +2294,7 @@ type PDFViewerInnerProps = {
   documentId: string
   document: PdfDocumentObject | null
   defaultZoom: number | string
+  initialPage?: number
   className?: string
   fileName?: string
   showDownload: boolean
@@ -2241,7 +2310,7 @@ type PDFViewerInnerProps = {
   onPagePointerMove?: PDFViewerProps["onPagePointerMove"]
   onPagePointerUp?: PDFViewerProps["onPagePointerUp"]
   onPagePointerCancel?: PDFViewerProps["onPagePointerCancel"]
-  onTextSelected?: (text: string) => void
+  onTextSelected?: (text: string, anchor?: PDFSelectionAnchor) => void
   onUploadFile: (file: File) => void
 }
 
@@ -2251,6 +2320,7 @@ function PDFViewerInner({
   documentId,
   document: pdfDocument,
   defaultZoom,
+  initialPage,
   className,
   fileName,
   showDownload,
@@ -2399,6 +2469,26 @@ function PDFViewerInner({
     initialZoomDocumentRef.current = documentId
     zoom.requestZoom(defaultZoom as any)
   }, [defaultZoom, documentId, pdfDocument, zoom])
+
+  // Land on the page the caller asked for, once per document. `scrollToPage`
+  // needs the page layout, which exists only after the document has loaded —
+  // hence an effect keyed on `pdfDocument` rather than a call at mount.
+  const restoredPageDocumentRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!pdfDocument || !scroll) return
+    if (restoredPageDocumentRef.current === documentId) return
+
+    restoredPageDocumentRef.current = documentId
+    if (!initialPage || initialPage <= 1) return
+    const page = Math.min(Math.max(1, Math.round(initialPage)), numPages || 1)
+    if (page <= 1) return
+    // One frame later: the scroll plugin measures pages on its own first pass,
+    // and a request sent before that lands on an unmeasured layout.
+    const raf = requestAnimationFrame(() =>
+      scroll.scrollToPage({ pageNumber: page, behavior: "auto" })
+    )
+    return () => cancelAnimationFrame(raf)
+  }, [documentId, initialPage, numPages, pdfDocument, scroll])
 
   const scrollToPage = React.useCallback(
     (pageNumber: number, options?: ScrollIntoViewOptions) => {
@@ -2888,6 +2978,7 @@ export const PDFViewer = React.forwardRef<PDFViewerHandle, PDFViewerProps>(
       showToolbar = true,
       showUpload = true,
       src,
+      initialPage,
       toolbarActions,
       pageClassName,
       renderPageOverlay,
@@ -3018,6 +3109,7 @@ export const PDFViewer = React.forwardRef<PDFViewerHandle, PDFViewerProps>(
             viewerRef={ref}
             pdfFile={pdfFile}
             defaultZoom={defaultZoom}
+            initialPage={initialPage}
             className={className}
             fileName={fileName}
             showDownload={showDownload}

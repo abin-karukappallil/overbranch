@@ -24,6 +24,7 @@ import {
   PDFViewer as ExtendPDFViewer,
   type PDFViewerHandle,
   type PDFViewerPageOverlayProps,
+  type PDFSelectionAnchor,
 } from "@/components/extend/pdf-viewer";
 import { trpcClient } from "@/trpc/client";
 
@@ -48,7 +49,7 @@ interface PDFViewerProps {
   compileErrors?: string[];
   projectId?: string;
   onReverseSync?: (file: string, line: number, column: number) => void;
-  onTextSelected?: (text: string) => void;
+  onTextSelected?: (text: string, anchor?: PDFSelectionAnchor) => void;
   onEnterPresentation?: () => void;
 }
 
@@ -75,6 +76,11 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
     const extendViewerRef = useRef<PDFViewerHandle>(null);
     const isUserScrollingRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // The page the reader is on. A recompile hands the viewer a new blob, which
+    // opens a new document and remounts it, so without this they were dropped
+    // back to page 1 on every compile — of a document they were reading page 9 of.
+    const lastPageRef = useRef<number>(1);
+    const [restorePage, setRestorePage] = useState<number>(1);
 
     useEffect(() => {
       const checkMobile = () => {
@@ -104,6 +110,9 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         }
         const blob = new Blob([bytes], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
+        // Read the page before the new document replaces it; the viewer lands
+        // there once the recompiled PDF has loaded.
+        setRestorePage(lastPageRef.current);
         setBlobUrl(url);
 
         return () => {
@@ -242,7 +251,22 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
 
           const domText = sel.toString().trim();
           if (domText && domText.length >= 2) {
-            onTextSelected?.(domText);
+            // The page and point the reader actually selected, so the jump can
+            // go to that occurrence in the source instead of the first one.
+            const rect = sel.getRangeAt(0).getClientRects()[0]
+              ?? sel.getRangeAt(0).getBoundingClientRect();
+            const pageBox = pageEl.getBoundingClientRect();
+            const s2 = parseFloat(pageEl.getAttribute("data-page-scale") || "0");
+            const w2 = parseFloat(pageEl.getAttribute("data-page-width") || "0");
+            const sc = s2 > 0 ? s2 : w2 > 0 ? pageBox.width / w2 : 1;
+            const anchor = rect && sc > 0
+              ? {
+                page: pageNumber,
+                x: (rect.left - pageBox.left) / sc,
+                y: (rect.top - pageBox.top) / sc,
+              }
+              : undefined;
+            onTextSelected?.(domText, anchor);
           }
         }, 30);
       },
@@ -373,6 +397,10 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
             <ExtendPDFViewer
               ref={extendViewerRef}
               src={blobUrl}
+              initialPage={restorePage}
+              onActivePageChange={(page) => {
+                if (page >= 1) lastPageRef.current = page;
+              }}
               defaultZoom="automatic"
               showUpload={false}
               showDownload={true}

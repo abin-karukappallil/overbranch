@@ -24,7 +24,7 @@ from scope_classifier import classify_scope, ScopeType, ScopeClassificationResul
 from document_index import DocumentIndex, DocumentChunk, get_expansion_units
 from edit_validator import (
     validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
-    measure_expansion, expansion_target_delta,
+    measure_expansion, expansion_target_delta, EXPANSION_MIN_NEW_CHARS,
 )
 from attached_context import AttachmentLimitError, attached_context_store
 from providers.multimodal import image_part, text_part
@@ -142,13 +142,19 @@ def _expansion_progress_note(rows: List[Dict[str, Any]], batch: int) -> str:
     if not pending:
         return f"[Expansion: all {len(rows)} block(s) measurably expanded. Finish with done=true.]"
     nxt = pending[:max(1, batch)]
-    items = "; ".join(
-        f"`{r['unit_id']}` ({r['before']} chars now, needs +{r['target']})" for r in nxt
-    )
+
+    def _item(r: Dict[str, Any]) -> str:
+        if not r.get("preserved", True):
+            return (f"`{r['unit_id']}` (RESTORE its original text first \u2014 only "
+                    f"{int((r.get('retention') or 0) * 100)}% of it is left \u2014 then add +{r['target']})")
+        return f"`{r['unit_id']}` ({r['before']} chars now, needs +{r['target']})"
+
+    items = "; ".join(_item(r) for r in nxt)
     rest = len(pending) - len(nxt)
     tail = f" Then {rest} more block(s) remain." if rest else ""
     return (f"[Expansion progress: {done}/{len(rows)} block(s) expanded. "
             f"THIS TURN, expand exactly these: {items}.{tail} "
+            f"Keep every existing sentence verbatim and add around it. "
             f"Use batched tool_calls, one call per block.]")
 
 
@@ -162,7 +168,13 @@ def _expansion_status_note(rows: List[Dict[str, Any]]) -> str:
         return f"\u2713 Expanded all {len(rows)} section(s)/block(s) of the document."
     named = ", ".join(r["title"] or r["unit_id"] for r in pending[:6])
     more = f" and {len(pending) - 6} more" if len(pending) > 6 else ""
-    return (f"Expanded {done} of {len(rows)} section(s). Not reached: {named}{more}. "
+    lost = [r for r in pending if not r.get("preserved", True)]
+    lost_note = ""
+    if lost:
+        lost_note = (" " + ", ".join(r["title"] or r["unit_id"] for r in lost[:4])
+                     + f"{' and others' if len(lost) > 4 else ''} came back shorter in original "
+                       "wording than before \u2014 review those before accepting.")
+    return (f"Expanded {done} of {len(rows)} section(s). Not reached: {named}{more}.{lost_note} "
             f"Ask again to continue with the rest.")
 
 
@@ -460,6 +472,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - Documents without sections or frames (e.g. an imported PDF) are addressed by page (`page:1`) and by text: lines containing the words the user mentioned are already shown to you (matched ignoring case), and `search_document` also matches ignoring case when the exact case finds nothing. Copy the document's own spelling/case into `old_str`.
    - Read only what you need: the target block is usually already in your context; otherwise `get_block(node_id)` (add include_style=true for title/colour/font changes) instead of reading large line ranges.
    - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `detect_overflow` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
+   - "Humanize this", "make it sound less like AI", "remove the AI tone", "anti-AI-slop": call `humanize_content(scope="document")`. Never hand-rewrite the prose for this — the tool rewords only bulk prose, leaves titles, author names, captions, labels, citations, math and tables untouched, and verifies every passage (same commands, same numbers, same meaning, measurably less generated-sounding). Hand-rewriting loses citations and reworks headings, which the tool is built to prevent.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
    - JSON ESCAPING OF LaTeX (CRITICAL): inside JSON strings write EVERY LaTeX backslash as two backslashes (`\\\\begin{{itemize}}`, `\\\\item`, `\\\\textbf{{x}}`, `Research \\\\& Development`), and a LaTeX line break `\\\\` as `\\\\\\\\` — every table row ends with those four backslashes, never two. Use `\\n` only for a newline. Write every other character as itself and never use `\\uXXXX` escapes (`&`, not `\\u0026`). JSON escaping is separate from LaTeX escaping and never replaces it: an ampersand in prose is LaTeX `\\&`, which is `\\\\&` inside a JSON string.
 
@@ -470,7 +483,9 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * When user asks for "one more additional slide for each topic", for EVERY topic/slide in the presentation, generate a new dedicated slide (e.g. `\\begin{{frame}}{{<Topic>: Detailed Analysis}}...\\end{{frame}}`) with deep technical detail, examples, or equations.
      * If an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
      * Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
-     * HOW MUCH, per section/slide/chapter you are asked to elaborate: 2–4 full paragraphs of substantive new technical prose, plus a displayed equation, a `tabular` of real values, an enumerated analysis or a worked example where the topic admits one. A sentence or two, a reworded heading, or one extra bullet is NOT an expansion and will be measured and sent back to you.
+     * HOW MUCH, per section/slide/chapter you are asked to elaborate: AT LEAST {expansion_min_chars} CHARACTERS OF NEW TEXT — about 2–4 full paragraphs of substantive new technical prose, plus a displayed equation, a `tabular` of real values, an enumerated analysis or a worked example where the topic admits one. A sentence or two, a reworded heading, or one extra bullet is NOT an expansion; the growth is measured per block and anything short is sent back to you.
+     * ADD, NEVER REPLACE (measured): keep every sentence that is already in the block, verbatim and in place, and write the new material around it. Do not summarise, condense, reword, re-order or delete the user's existing text while expanding it — at least 90% of a block's original wording must still be there afterwards, and a block that lost it is reported as rewritten, not expanded, and sent back.
+     * DO NOT INVENT FACTS: build the new material out of what the document, the attached sources and established knowledge of the subject actually support — mechanisms, definitions, trade-offs, worked reasoning, standard results. Never fabricate a measurement, a citation, a dataset, an author or a number that is not in the document or its sources. Where a concrete figure would be invented, explain the mechanism instead.
      * Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations. Keep each heading's text exactly as it is: headings are how blocks are tracked.
      * NEVER declare done=true without having applied the requested content into the file.
 
@@ -995,7 +1010,11 @@ EXPANSION_COMPILE_EVERY = 4  # editing turns between an expansion's compile chec
 # JSON-escaped LaTeX per block, and overrunning discards the whole step. Asking
 # for everything at once is what produced three lines per section.
 EXPANSION_BATCH_MIN = 2
-EXPANSION_BATCH_MAX = 4
+# Three, not four: each block now owes at least EXPANSION_MIN_NEW_CHARS of new
+# text *and* a verbatim copy of what it already held, so a four-block turn can
+# run past the 16K output budget and fall into truncation recovery — which
+# costs a second full call and then discards the answer.
+EXPANSION_BATCH_MAX = 3
 EXPANSION_TARGET_TURNS = 8   # aim for this many editing turns before batching wider
 EXPANSION_OVERHEAD_STEPS = 6  # reading, compiling, repair
 
@@ -1344,7 +1363,8 @@ def stream_opencode_agent(
 
     # 3. Build system prompt with tool definitions
     tools_block = get_tools_prompt_block()
-    system_prompt = OPENCODE_SYSTEM_PROMPT.format(tools_block=tools_block)
+    system_prompt = OPENCODE_SYSTEM_PROMPT.format(
+        tools_block=tools_block, expansion_min_chars=EXPANSION_MIN_NEW_CHARS)
 
     total_lines = workspace.get_line_count()
     user_lower = user_instruction.lower()
@@ -1803,18 +1823,28 @@ def stream_opencode_agent(
                 f"{expansion_batch}:\n{worklist}\n\n"
                 f"DO THESE {len(first)} BLOCK(S) THIS TURN (and only these):\n{this_turn}\n\n"
                 "HOW TO EXPAND ONE BLOCK:\n"
-                "1. Write 2\u20134 full paragraphs of substantive technical prose \u2014 mechanisms, "
-                "trade-offs, worked reasoning, concrete figures \u2014 not a restatement of the "
-                "heading and not filler.\n"
+                f"1. Add AT LEAST {EXPANSION_MIN_NEW_CHARS} characters of new text to it \u2014 about "
+                "2\u20134 full paragraphs of substantive technical prose (mechanisms, trade-offs, "
+                "worked reasoning, concrete detail), not a restatement of the heading and not filler.\n"
                 "2. Add, where the topic admits one: a displayed equation, a `tabular` of real "
                 "values, an enumerated analysis, or a worked example.\n"
-                "3. Keep the existing text and its structure; you are adding to it, not replacing "
-                "it with a summary. Keep the heading exactly as it is \u2014 it is how the block is "
-                "tracked.\n"
-                "3b. ON SLIDES: a frame overflows if you stuff it. Add a FOLLOW-UP frame instead "
-                "(`insert_block(<unit_id>, new_frame, position='after')`, titled '<Topic>: "
-                "Detailed Analysis' or similar) and keep each frame to at most 6 bullets. A new "
-                "frame placed directly after a block counts as that block's expansion.\n"
+                "3. KEEP WHAT IS THERE, VERBATIM. Copy every existing sentence of the block into your "
+                "replacement unchanged, in its original order, and write the new material around it. "
+                "Do not summarise, condense, reword, re-order or drop the user's text \u2014 retention "
+                "is measured per block and a block that lost its wording comes back to you as "
+                "rewritten, not expanded. Keep the heading exactly as it is: it is how the block is "
+                "tracked. (`insert_into_chunk` cannot lose text \u2014 prefer it when you are only "
+                "appending.)\n"
+                "3a. Do NOT invent facts. Draw the new material from this document, the attached "
+                "sources and established knowledge of the subject; never fabricate a measurement, a "
+                "citation, a dataset or a number. Where a figure would have to be invented, explain "
+                "the mechanism instead.\n"
+                "3b. ON SLIDES: a frame overflows if you stuff it, and the amount above still "
+                "applies \u2014 reach it with FOLLOW-UP frames, not by overfilling one. Add two or "
+                "three new frames after the slide (`insert_block(<unit_id>, new_frame, "
+                "position='after')`, titled '<Topic>: Detailed Analysis', '<Topic>: Worked Example' "
+                "or similar), each at most 6 bullets. A new frame placed directly after a block "
+                "counts toward that block's expansion, and the original slide keeps its own text.\n"
                 "4. Use `rewrite_chunk(<unit_id>, new_content)` for a block you are rewriting whole, "
                 "or `insert_into_chunk(<unit_id>, content)` to append to it. Both accept the IDs "
                 "above. Batch this turn's blocks into one `tool_calls: [...]`.\n"
@@ -2325,6 +2355,17 @@ def stream_opencode_agent(
     # the tool that would show it the page (observed with the configured model on a real
     # deck). So the look is not left to the model: it is the first step of the run, entered
     # into the conversation as the tool call it is.
+    # A humanize request is about WORDING, and every guarantee that matters about a
+    # rewording — same commands, same citations, same numbers, same meaning, measurably
+    # less of the register that gives generated prose away — is measurable. So it is a
+    # tool, and the run calls it rather than asking the model to rewrite prose by hand
+    # (which produces a rewrite of the document: reworded headings, dropped citations).
+    from .humanize import is_humanize_request, run_humanize, humanize_status_note
+    humanize_request = (mode == "edit" and not is_compilation_fix_request
+                        and bool(workspace.get_buffer().strip())
+                        and is_humanize_request(user_instruction))
+    humanize_report: Optional[Dict[str, Any]] = None
+
     from .visual_tools import auto_target, is_visual_request, thumbnail_data_url
     visual_request = (mode == "edit" and not is_compilation_fix_request and not is_creation_request
                       and bool(workspace.get_buffer().strip()) and is_visual_request(user_instruction))
@@ -2422,6 +2463,43 @@ def stream_opencode_agent(
         if still_visible is not None:
             return ("Checking the rendered page…", still_visible)
         return None
+
+    if humanize_request:
+        yield _phase("humanizing", "Rewording the document's prose…")
+        target = auto_target(workspace, user_instruction)
+        hum_args = {"scope": "node", "node_id": target["node_id"]} if target.get("node_id") \
+            else {"scope": "document"}
+        yield {"type": "tool_call", "tool": "humanize_content", "args": hum_args}
+        t_hum = time.time()
+        try:
+            humanize_report = run_humanize(workspace, hum_args.get("node_id"))
+        except LLMOperationCancelled:
+            raise
+        except Exception as hum_err:  # noqa: BLE001 — the run continues without it
+            logger.warning(f"humanize_content preflight failed: {hum_err}")
+            humanize_report = {"success": False, "error": str(hum_err)}
+        agent_trace.record_tool_call(
+            name="humanize_content", args=hum_args,
+            result_summary=json.dumps({k: humanize_report.get(k) for k in
+                                       ("success", "spans_total", "humanized", "slop_before",
+                                        "slop_after", "passages_above_target", "verified")
+                                       if k in humanize_report}, default=str),
+            latency_ms=(time.time() - t_hum) * 1000, success=bool(humanize_report.get("success")))
+        yield {"type": "tool_result", "tool": "humanize_content", "result": humanize_report}
+        if humanize_report.get("success"):
+            hum_json = json.dumps(humanize_report, indent=2, ensure_ascii=False)[:5000]
+            messages.append({"role": "assistant", "content": json.dumps({
+                "thought": "This request is about wording, which `humanize_content` rewrites and verifies "
+                           "without touching titles, citations, numbers, math or tables.",
+                "tool_call": {"name": "humanize_content", "arguments": hum_args}})})
+            messages.append({"role": "user", "content": (
+                f"TOOL RESULT from `humanize_content`:\n{hum_json}\n\n"
+                "The prose has been reworded and verified already \u2014 do NOT rewrite prose yourself, and "
+                "do not touch headings, author names, captions, citations, numbers, math or tables.\n"
+                "If `still_above_target` is empty, set done=true now and say in your explanation what was "
+                "reworded.\nIf it lists passages, reword ONLY those, on the source lines given, with "
+                "`replace_text` \u2014 keeping every command, citation and number exactly as it is \u2014 "
+                "or call `humanize_content(node_id=...)` on the block that holds them. Then set done=true.")})
 
     if visual_request:
         yield _phase("checking_layout", "Looking at the rendered page…")
@@ -2568,7 +2646,7 @@ def stream_opencode_agent(
             )
             if response.get("is_fallback"):
                 had_fallback = True
-                fallback_model_name = response.get("model_used") or "minimax/minimax-m3"
+                fallback_model_name = response.get("model_used") or provider_router.get_fallback_model()
                 fallback_provider_name = response.get("provider") or "OpenRouter"
                 fallback_key_id_name = response.get("key_id")
                 key_tag = f" ({fallback_key_id_name})" if fallback_key_id_name else ""
@@ -2618,7 +2696,7 @@ def stream_opencode_agent(
                 )
                 if continuation.get("is_fallback"):
                     had_fallback = True
-                    fallback_model_name = continuation.get("model_used") or "minimax/minimax-m3"
+                    fallback_model_name = continuation.get("model_used") or provider_router.get_fallback_model()
                     fallback_provider_name = continuation.get("provider") or "OpenRouter"
                     fallback_key_id_name = continuation.get("key_id")
                 cont_text = continuation.get("content", "")
@@ -2691,8 +2769,16 @@ def stream_opencode_agent(
                 })
                 continue
 
-            # 1. Enforce that Edit mode must have actually produced document modifications
-            if mode == "edit" and not (is_compilation_fix_request and compile_verified) and not workspace.has_changed() and not pdf_conversion_job_id:
+            # 1. Enforce that Edit mode must have actually produced document modifications.
+            #    Unless the RUN already did the work: a finished PDF conversion, or a
+            #    humanize pass that rewrote the prose itself (or measured that every
+            #    passage already reads as human writing, which is a legitimate "nothing
+            #    to do"). Without this, such a run spent its whole budget being told
+            #    "you made 0 edits" and ended on the safety cap.
+            humanize_handled = bool(humanize_report and humanize_report.get("success"))
+            if (mode == "edit" and not (is_compilation_fix_request and compile_verified)
+                    and not workspace.has_changed() and not pdf_conversion_job_id
+                    and not humanize_handled):
                 done_rejections += 1
                 logger.info(f"Agent attempted premature done in edit mode at step {steps_taken} (rejection #{done_rejections}); enforcing edits.")
 
@@ -3490,6 +3576,26 @@ def stream_opencode_agent(
         exp_note = _expansion_status_note(expansion_rows(force=True)) if expansion_units else ""
         if exp_note:
             agent_explanation = (agent_explanation.rstrip() + "\n" + exp_note) if agent_explanation else exp_note
+        # …and, for a humanize request, what the prose measures now — re-measured
+        # against the delivered buffer, since the model may have edited after the pass.
+        if humanize_request and humanize_report and humanize_report.get("success"):
+            try:
+                from .humanize import humanize_content_tool as _measure
+                measure_args: Dict[str, Any] = {"scope": humanize_report.get("scope", "document"),
+                                                "report_only": True}
+                if humanize_report.get("scope") == "node" and hum_args.get("node_id"):
+                    measure_args["node_id"] = hum_args["node_id"]
+                final = _measure(workspace, measure_args)
+                verified = dict(humanize_report)
+                verified["slop_after"] = final.get("slop_after", humanize_report.get("slop_after"))
+                verified["passages_above_target"] = final.get("passages_above_target", 0)
+            except Exception as measure_err:  # noqa: BLE001 — a status line must not fail the run
+                logger.warning(f"Final humanize measurement failed: {measure_err}")
+                verified = humanize_report
+            hum_note = humanize_status_note(verified)
+            if hum_note:
+                agent_explanation = (agent_explanation.rstrip() + "\n" + hum_note) if agent_explanation else hum_note
+
         # …and, for a request about how the page looks, what the page measures now.
         if (visual_request or creation_check) and visual_target:
             try:

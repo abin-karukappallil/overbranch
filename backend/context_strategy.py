@@ -56,6 +56,11 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
     "mixtral-8x7b-32768": 30_000,
     "gemma2-9b-it": 7_500,
     # OpenRouter models
+    "openrouter/free": 260_000,
+    "nvidia/nemotron-3-super-120b-a12b:free": 260_000,
+    "nvidia/nemotron-3.5-lightning:free": 900_000,
+    "google/gemma-4-31b-it:free": 260_000,
+    "cohere/north-mini-code:free": 250_000,
     "minimax/minimax-01": 900_000,
     "deepseek/deepseek-chat": 60_000,
     "deepseek/deepseek-coder": 60_000,
@@ -96,6 +101,10 @@ def get_model_context_window(model: str) -> int:
     # Gemini family fallback
     if "gemini" in clean:
         return 900_000
+
+    # Nemotron family fallback
+    if "nemotron" in clean:
+        return 260_000
 
     # Llama family fallback
     if "llama" in clean:
