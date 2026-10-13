@@ -22,7 +22,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from document_index import DocumentChunk, DocumentIndex
+from document_index import (
+    DocumentChunk, DocumentIndex, ExpansionUnit,
+    get_expansion_units, get_expansion_regions,
+)
 
 logger = logging.getLogger("edit_validator")
 
@@ -745,6 +748,230 @@ class CoverageValidationResult:
     missing_chunk_titles: List[str] = field(default_factory=list)
     leftover_terms_found: List[Dict[str, Any]] = field(default_factory=list)
     feedback_message: str = ""
+    # Expansion scope only: one entry per unit, measured before vs. after.
+    unit_growth: List[Dict[str, Any]] = field(default_factory=list)
+
+
+# How much a block must grow before it counts as "elaborated". Measured, because
+# the previous gate asked only whether a chunk had been *touched* — and a
+# one-line insert into every section satisfied that while the document stayed
+# the length it was. Proportional so a long section is not forced to double,
+# capped so a very long one is not asked for an essay, floored so an empty or
+# near-empty section cannot pass on a sentence.
+EXPANSION_GROWTH_RATIO = 0.60
+EXPANSION_GROWTH_CAP = 600
+EXPANSION_GROWTH_FLOOR = 200
+
+# A slide is not a section. A Beamer frame holds perhaps a dozen lines before it
+# overflows, so demanding 600 more characters inside one asks for a defect: in
+# the first real run against this gate the model rewrote the same two frames
+# five times trying to clear it. Expanding a deck means more slides, which the
+# attribution below counts, plus a slide-sized amount more on each one.
+EXPANSION_SLIDE_CAP = 300
+EXPANSION_SLIDE_FLOOR = 150
+_SLIDE_KINDS = ("frame", "page")
+
+
+def expansion_target_delta(before: int, kind: str = "section") -> int:
+    """Characters a block of ``before`` characters must gain to count as expanded."""
+    if kind in _SLIDE_KINDS:
+        return max(EXPANSION_SLIDE_FLOOR,
+                   min(int(before * EXPANSION_GROWTH_RATIO), EXPANSION_SLIDE_CAP))
+    return max(EXPANSION_GROWTH_FLOOR,
+               min(int(before * EXPANSION_GROWTH_RATIO), EXPANSION_GROWTH_CAP))
+
+
+def _unit_match_key(unit: "ExpansionUnit") -> str:
+    return re.sub(r"[^a-z0-9]+", "", (unit.title or unit.unit_id).lower())
+
+
+def _title_tokens(title: str) -> Set[str]:
+    """The distinctive words of a heading, for matching a block that was renamed."""
+    return {w for w in re.split(r"[^a-z0-9]+", (title or "").lower()) if len(w) >= 4}
+
+
+def measure_expansion(original_code: str, current_code: str) -> List[Dict[str, Any]]:
+    """
+    Every expansion unit of the ORIGINAL document, with the size it has now.
+
+    Units are paired by stable node ID first, then by normalized title, then by
+    ordinal among units of the same kind. Nothing here consults the workspace's
+    touched-chunk set: those ids are recorded against the live buffer's
+    positional index while the unit list comes from the original, so one
+    inserted section used to shift the credit onto the wrong block.
+    """
+    before_units = get_expansion_units(original_code)
+    # The after side is every expandable heading, not just the leaves: a block
+    # that gained a subsection is no longer a leaf, and matching leaves to
+    # leaves reported it as deleted.
+    after_units = get_expansion_regions(current_code)
+
+    # Three passes, in order of confidence, so one deleted block cannot shunt
+    # every later block onto its neighbour: stable node ID, then normalized
+    # title (the model renamed a heading while expanding it), then position
+    # among whatever is still unmatched on both sides.
+    match: Dict[int, Optional[ExpansionUnit]] = {i: None for i in range(len(before_units))}
+    used: Set[int] = set()
+
+    by_id: Dict[str, List[ExpansionUnit]] = {}
+    by_title: Dict[str, List[ExpansionUnit]] = {}
+    for u in after_units:
+        by_id.setdefault(u.unit_id, []).append(u)
+        by_title.setdefault(_unit_match_key(u), []).append(u)
+
+    for key_fn, table in ((lambda u: u.unit_id, by_id), (_unit_match_key, by_title)):
+        for i, u in enumerate(before_units):
+            if match[i] is not None:
+                continue
+            for cand in table.get(key_fn(u), []):
+                if id(cand) not in used:
+                    match[i] = cand
+                    used.add(id(cand))
+                    break
+
+    leftover = [u for u in after_units if id(u) not in used]
+
+    # A block the edit reshaped keeps its subject even when it loses its ID: a
+    # `\\section{Conclusion}` rewritten as three "Conclusion: …" frames is the
+    # conclusion, expanded. Matched by the words of the title, with a clear lead
+    # required over the runner-up — the same discipline the locator and the
+    # imported-figure matcher use, so an ambiguous title matches nothing.
+    # Only words that single out one block are usable: in a document of
+    # "Topic 1 / Topic 2 / Topic 3" the word "topic" identifies nothing, and a
+    # deleted Topic 3 must stay reported as deleted rather than claim Topic 1.
+    token_owners: Dict[str, int] = {}
+    for u in before_units:
+        for w in _title_tokens(u.title):
+            token_owners[w] = token_owners.get(w, 0) + 1
+    for i, u in enumerate(before_units):
+        if match[i] is not None or not leftover:
+            continue
+        want = {w for w in _title_tokens(u.title) if token_owners.get(w) == 1}
+        if not want:
+            continue
+        # Ties are expected and fine here: several new blocks on one subject
+        # ("Conclusion: Synthesis", "Conclusion: Outlook") all belong to it, and
+        # the positional sweep below gives the rest to whichever is taken first.
+        scored = [(len(want & _title_tokens(c.title)) / len(want), j)
+                  for j, c in enumerate(leftover)]
+        best = max(score for score, _ in scored)
+        if best >= 0.5:
+            j = min(j for score, j in scored if score == best)
+            match[i] = leftover.pop(j)
+            used.add(id(match[i]))
+
+    for i, u in enumerate(before_units):
+        if match[i] is not None:
+            continue
+        for j, cand in enumerate(leftover):
+            if cand.kind == u.kind:
+                match[i] = cand
+                used.add(id(cand))
+                leftover.pop(j)
+                break
+
+    # Blocks that are new in this edit belong to the topic they were added
+    # under: "one more slide on each topic" and "a subsection per section" are
+    # expansions of that topic, and scoring only the original block's own text
+    # would report them as no change at all.
+    # A region that overlaps a matched one is not new material: it is either a
+    # block inside it (already counted in that subtree) or the container around
+    # it (whose size is other units' text). Only a genuinely new, disjoint block
+    # can be attributed to the topic it was added under.
+    matched_spans = [(m.start_line, m.end_line) for m in match.values() if m is not None]
+    leftover = [
+        u for u in leftover
+        if not any(u.start_line <= hi and lo <= u.end_line for lo, hi in matched_spans)
+    ]
+    after_pos = {id(u): n for n, u in enumerate(after_units)}
+    matched_sorted = sorted(
+        ((after_pos[id(m)], i) for i, m in match.items() if m is not None),
+        key=lambda pair: pair[0],
+    )
+    added: Dict[int, int] = {}
+    for new_unit in leftover:
+        pos = after_pos[id(new_unit)]
+        owner = None
+        for mpos, i in matched_sorted:
+            if mpos < pos:
+                owner = i
+            else:
+                break
+        if owner is not None:
+            added[owner] = added.get(owner, 0) + new_unit.size
+
+    rows: List[Dict[str, Any]] = []
+    for i, u in enumerate(before_units):
+        m = match[i]
+        after = (m.size if m is not None else 0) + added.get(i, 0)
+        target = expansion_target_delta(u.size, u.kind)
+        rows.append({
+            "unit_id": u.unit_id,
+            "title": u.title,
+            "kind": u.kind,
+            "before": u.size,
+            "after": after,
+            "delta": after - u.size,
+            "target": target,
+            "ok": (after - u.size) >= target,
+            "missing": m is None,
+        })
+    return rows
+
+
+def _expansion_coverage(workspace: Any) -> CoverageValidationResult:
+    """Coverage for FULL_DOCUMENT_EXPANSION: did every block measurably grow?"""
+    original = workspace.get_original() if hasattr(workspace, "get_original") else ""
+    current = workspace.get_buffer() if hasattr(workspace, "get_buffer") else ""
+
+    rows = measure_expansion(original, current)
+    if not rows:
+        return CoverageValidationResult(
+            passed=True, total_chunks=0, edited_chunks=0,
+            feedback_message="Document has no distinct content blocks to expand.",
+        )
+
+    done = [r for r in rows if r["ok"]]
+    pending = [r for r in rows if not r["ok"]]
+    if not pending:
+        logger.info(f"Expansion coverage PASSED: all {len(rows)} blocks grew past their target.")
+        return CoverageValidationResult(
+            passed=True, total_chunks=len(rows), edited_chunks=len(rows),
+            unit_growth=rows,
+            feedback_message=f"Expansion verified: all {len(rows)} blocks measurably expanded.",
+        )
+
+    def _line(r: Dict[str, Any]) -> str:
+        head = (f"  - `{r['unit_id']}` ({r['title']}): {r['before']} \u2192 {r['after']} chars "
+                f"({r['delta']:+d}); needs at least +{r['target']}")
+        if r["missing"]:
+            return head + ("  [GONE from the document. If you replaced a block that contained it, "
+                           "put it back and edit the inner block instead.]")
+        if r["delta"] < 0:
+            return head + ("  [This block LOST text. Restore what you removed \u2014 expanding means "
+                           "adding to what is there.]")
+        return head
+
+    listing = "\n".join(_line(r) for r in pending[:25])
+    more = f"\n  \u2026 and {len(pending) - 25} more" if len(pending) > 25 else ""
+    feedback = (
+        "EXPANSION COVERAGE FAILED: the user asked for every section to be elaborated, and "
+        f"{len(done)}/{len(rows)} blocks have measurably grown.\n"
+        f"These {len(pending)} are still at (or near) their original length:\n"
+        f"{listing}{more}\n\n"
+        "ACTION REQUIRED: for each one, add substantive new material \u2014 2\u20134 full paragraphs of "
+        "technical prose, plus an equation, table, worked example or enumerated analysis where the "
+        "topic admits one \u2014 with `rewrite_chunk(unit_id, new_content)` or "
+        "`insert_into_chunk(unit_id, content)`. Do not pad with restatements of what is already there."
+    )
+    logger.warning(f"Expansion coverage failed: {len(pending)}/{len(rows)} blocks not expanded.")
+    return CoverageValidationResult(
+        passed=False, total_chunks=len(rows), edited_chunks=len(done),
+        missing_chunk_ids=[r["unit_id"] for r in pending],
+        missing_chunk_titles=[r["title"] for r in pending],
+        unit_growth=rows,
+        feedback_message=feedback,
+    )
 
 
 def validate_coverage(
@@ -758,6 +985,12 @@ def validate_coverage(
     1. Every content chunk in the original document was touched/rewritten in full-rewrite mode.
     2. No forbidden or obsolete topic terms remain in the updated shadow buffer.
     """
+    # Expansion is judged by measurement, not by which chunk ids were touched:
+    # a one-line insert into every section satisfied the touch test while leaving
+    # the document the length it was, which is exactly the reported failure.
+    if scope == "FULL_DOCUMENT_EXPANSION" or "FULL_DOCUMENT_EXPANSION" in scope:
+        return _expansion_coverage(workspace)
+
     doc_index = DocumentIndex()
     orig_code = workspace.get_original() if hasattr(workspace, "get_original") else ""
     current_code = workspace.get_buffer() if hasattr(workspace, "get_buffer") else ""

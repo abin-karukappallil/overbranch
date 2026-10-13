@@ -73,6 +73,7 @@ pytest tests/test_attachments.py -v             # chat attachments: five-file ca
 pytest tests/test_attachment_figures.py -v      # figures of an attached PDF: found by caption, rendered, imported, cleaned up
 pytest tests/test_visual_tools.py -v            # view_rendered_pages: page lookup, overlap / contrast / off-page, images in the loop, look-first
 pytest tests/test_diff_hunks.py -v              # review hunks: structurally closed, any subset valid, whole-document rewrites
+pytest tests/test_expansion_coverage.py -v      # "elaborate all sections": worklist, measured growth gate, slide targets, loop paths
 pytest tests/test_diagram_tool.py -v            # generate_diagram: layered layout, cycles, escaped labels, real-TeX compiles, write-gate insertion
 pytest tests/test_presentation_default.py -v    # default = light OverBranch Standard (not Regalia); named template routes to get_template_theme; diagram tool reachable
 ```
@@ -157,7 +158,7 @@ bash deploy.sh
    - [Feature 7: Multi-Turn Attached Context Session Store & File Injection](#feature-7-multi-turn-attached-context-session-store--file-injection)
    - [Feature 8: Smart Context Strategy Engine & Token Budgeting](#feature-8-smart-context-strategy-engine--token-budgeting)
    - [Feature 9: Scope Classification & AST Structural Chunk Replacement](#feature-9-scope-classification--ast-structural-chunk-replacement)
-   - [Feature 10: Full Document Rewrite Coverage Validation & Leftover Detection](#feature-10-full-document-rewrite-coverage-validation--leftover-detection)
+   - [Feature 10: Full-Document Expansion Worklist, Coverage & Leftover Detection](#feature-10-full-document-expansion-worklist-coverage--leftover-detection)
    - [Feature 11: Document Environment Integrity & Delimiter Auto-Balancing](#feature-11-document-environment-integrity--delimiter-auto-balancing)
    - [Feature 12: Pre-Commit Structural Validation](#feature-12-pre-commit-structural-validation)
    - [Feature 13: Shadow Compilation & Compiler-Feedback Self-Correction](#feature-13-shadow-compilation--compiler-feedback-self-correction)
@@ -302,13 +303,10 @@ OverBranch adopts a decoupled, microservice-inspired architecture designed for h
 2. **Model Registry**: Catalogs exact token limits for Gemini 3.7/2.5/2.0 (900K tokens), Groq LLaMA 3.3 70B (120K tokens), OpenRouter Claude 3.5 Sonnet (180K tokens), GPT-4o (120K tokens), and DeepSeek (60K tokens).
 
 #### F. Scope Classification & AST Structural Chunk Replacement
-1. **Scope Classification**: [`backend/scope_classifier.py`](file:///home/abin/overbranch/backend/scope_classifier.py) classifies incoming prompts into:
-   - `TARGETED_EDIT`: Surgical fixes, typos, single section additions.
-   - `FULL_DOCUMENT_REWRITE`: Topic overhauls, whole document replacements.
-   - `EXPAND_CONTENT`: Elaboration, adding slides for each topic, deepening theory.
-   - `STYLE_REDESIGN`: Theme/template switching, color updates.
+1. **Scope Classification**: [`backend/scope_classifier.py`](file:///home/abin/overbranch/backend/scope_classifier.py) classifies incoming prompts into `TARGETED_EDIT` (surgical fixes, typos, a single section), `FULL_DOCUMENT_REWRITE` (topic overhauls, whole-document replacements) and `FULL_DOCUMENT_EXPANSION` (elaborate/expand every section, a slide per topic, deepening theory). A redesign is a targeted edit with the theme tools. `SINGLE_TARGET_PATTERNS` keeps "expand the conclusion" targeted; `ALL_DOCUMENT_PATTERNS` overrides that for "every section".
 2. **Structural Document Indexing**: [`backend/document_index.py`](file:///home/abin/overbranch/backend/document_index.py) parses the LaTeX AST into discrete `DocumentChunk` entities with byte/character offsets and line numbers.
 3. **Chunk-Level Rewriting**: In `FULL_DOCUMENT_REWRITE` mode, the agent uses `rewrite_chunk(chunk_id, new_content)` to replace entire chapters/sections cleanly without exact-string matching errors.
+4. **Expansion is a worklist, measured** (`get_expansion_units` / `get_expansion_regions`, [Feature 10](#feature-10-full-document-expansion-worklist-coverage--leftover-detection)). `index_document` returns frames **or** chapters **or** sections, so on a `report` with chapters a 59-section document is thirteen chunks and "elaborate all sections" was satisfied by touching thirteen chapters. The expansion worklist is instead the **innermost** heading everywhere — sections inside chapters, subsections inside those — addressed by stable `index_nodes` IDs (`sec:introduction`), which the edit tools already accept and which survive insertions earlier in the document. Units never overlap: `rewrite_chunk` replaces a block *and everything inside it*, so listing a section and its subsection asks the model to delete the subsection and then restore it (observed on a real run: `subsec:design-rationale` 1555 → 0 chars, nine turns lost bouncing between the two).
 
 #### G. Document Environment Integrity & AST Auto-Repair
 1. **Structural Invariants**: [`backend/document_index.py`](file:///home/abin/overbranch/backend/document_index.py) provides `ensure_document_environment(code)`:
@@ -543,7 +541,7 @@ overbranch/
 │   │   └── tickets.py                          # One-time HMAC websocket admission tickets (identity only)
 │   ├── opencode/                               # OpenCode Bounded ReAct Agentic Pipeline
 │   │   ├── __init__.py                         # Package exports
-│   │   ├── agent_loop.py                       # ReAct loop, step budget, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, figure inventory & shared attachment preview budget, images on tool results, look-first visual preflight + render check, phase events, self-validating LaTeX-in-JSON parser, default light PPT standard vs. named-template branch, generate_diagram
+│   │   ├── agent_loop.py                       # ReAct loop, step budget (worklist-sized for an expansion), expansion worklist driven a few blocks per turn with progress restated each turn, targeted context, compile gate (converging deterministic repairs on located errors, fix-request preflight), located compile feedback (format_compile_diagnostics), run-level rollback / draft outcome for new documents, figure inventory & shared attachment preview budget, images on tool results, look-first visual preflight + render check, phase events, self-validating LaTeX-in-JSON parser, default light PPT standard vs. named-template branch, generate_diagram
 │   │   ├── apply_edits.py                      # Server-side all-or-nothing placement of edits the editor could not place (resolve-edits); whole-document items only over the unchanged original
 │   │   ├── attachment_tools.py                 # list_attachment_figures / import_attachment_figure; up-front import for documents built from attachments; removes imports the delivered document does not use (by file name)
 │   │   ├── context_builder.py                  # Levels 1-5 targeted context, node outline, request→node matching, ContextLedger
@@ -563,12 +561,12 @@ overbranch/
 │   │   ├── __init__.py                         # Package exports
 │   │   ├── base_provider.py                    # Abstract LLMProvider interface; LLMProviderError carries a FailureKind
 │   │   ├── errors.py                           # Failure classification (rate_limit/quota/auth/timeout/…) & which kinds fall back
-│   │   ├── gemini_provider.py                  # Google Gemini adapter (default Gemini 3.5 Flash Thinking; image input with a text-only retry remembered per endpoint)
+│   │   ├── gemini_provider.py                  # Google Gemini adapter (default Gemini 3.7 Flash; image input with a text-only retry remembered per endpoint)
 │   │   ├── groq_provider.py                    # High-speed Groq inference adapter (LLaMA 3.3 70B, 3.1 8B, Mixtral)
 │   │   ├── key_pool.py                         # Sticky, health-tracked key rotation with per-failure cooldowns
 │   │   ├── multimodal.py                       # OpenAI-style image content parts (build, detect, strip — with a note to the model that images were omitted)
 │   │   ├── openrouter_provider.py              # OpenRouter adapter (MiniMax M3 fallback) over a 5-key KeyPool; returns key_id, never keys
-│   │   ├── router.py                           # ProviderRouter: routing + LLM_FALLBACK_CHAIN walk on provider failures, attempt observer, image parts removed for providers without `supports_images`; DEFAULT_MODEL (gemini-3.5-flash-thinking)
+│   │   ├── router.py                           # ProviderRouter: routing + LLM_FALLBACK_CHAIN walk on provider failures, attempt observer, image parts removed for providers without `supports_images`; DEFAULT_MODEL (gemini-3.7-flash)
 │   │   └── web2api_keys.py                     # GEMINI_WEB2API_* base URL & rotating key loader used by GeminiProvider
 │   ├── pdf2latex/                              # Per-page PDF → LaTeX importer (uses the copilot's LLM)
 │   │   ├── __init__.py                         # Package exports
@@ -652,6 +650,7 @@ overbranch/
 │   │   ├── test_attachments.py                 # Store: kinds from bytes, five-file cap, size cap, restart, expiry; endpoints: upload/list/delete, per-user isolation, access
 │   │   ├── test_attachment_figures.py          # Caption pairing, column / label boundaries, real two-column TeX paper with a TikZ figure, import, overwrite guard, cleanup, agent runs
 │   │   ├── test_diff_hunks.py                  # Review hunks: closed, every subset validates, whole-document rewrites, edges, editor line numbering
+│   │   ├── test_expansion_coverage.py         # "Elaborate all sections": the worklist (innermost, non-overlapping, front matter excluded), the measured growth gate, slide-sized targets, pairing through renames / new blocks / deletions, worklist-sized budget, and the two loop paths that used to accept a half-done expansion
 │   │   ├── test_collab_auth.py                 # Realtime auth: ticket signing/expiry/replay/binding, roles, handshake codes, revocation, origins
 │   │   ├── test_collab_sync.py                 # Realtime rooms: CRDT merge, same-offset concurrency, late joiners, Viewer writes, restart, persistence, external writes
 │   │   ├── test_compile_pre_heal.py            # compile_latex pre-heal gating (editor / agent / importer) & line remap to source
@@ -679,13 +678,13 @@ overbranch/
 │   ├── context_strategy.py                     # Smart context strategy engine (TARGETED, WHOLE_FILE, SUMMARY_FIRST)
 │   ├── database.py                             # Asynchronous SQLAlchemy connection pool & sessionmaker
 │   ├── document_analyzer.py                    # Fast local LaTeX AST parser & structural metrics extractor (No LLM)
-│   ├── document_index.py                       # LaTeX AST chunk indexer & ensure_document_environment repairer (real \begin/\end{document} found on the masked view)
-│   ├── edit_validator.py                       # Coverage validation, single-pass literal masking & differential pre-commit checks (validate_edit: per-occurrence multiset + aggregate magnitudes; validation only — repair lives in latex_error_fixer)
+│   ├── document_index.py                       # LaTeX AST chunk indexer & ensure_document_environment repairer (real \begin/\end{document} found on the masked view); get_expansion_units / get_expansion_regions — the innermost, non-overlapping blocks an "expand every section" request must enlarge, addressed by stable node IDs
+│   ├── edit_validator.py                       # Coverage validation (an expansion is measured as growth: measure_expansion / expansion_target_delta), single-pass literal masking & differential pre-commit checks (validate_edit: per-occurrence multiset + aggregate magnitudes; validation only — repair lives in latex_error_fixer)
 │   ├── file_analyzer.py                        # Multimodal AI analysis for uploaded files & TikZ synthesizer
 │   ├── latex_diagnostics.py                    # TeX log → one record per error occurrence, located on the line/column its token is really on (context pairs, enclosing_span, .vrb mapping)
 │   ├── latex_error_fixer.py                    # LaTeX error log parser & deterministic repairer (env balance, lonely \item, TikZ semicolons, \bottom→\bottomrule, the latex_specials passes, colors; structure-based alignment repair from located errors; masked-view structure, discarded if it raises the error count)
 │   ├── latex_specials.py                       # Where `&` is legal, by structure: verdict per `&`, \& / aligned repairs, lone-backslash row breaks, tabular column analysis & widening
-│   ├── main.py                                 # FastAPI application entry point, CORS, lifespan, compile & synctex
+│   ├── main.py                                 # FastAPI application entry point, CORS, lifespan, compile & synctex; GET /api/models (the editor's model list & default, straight from provider_router)
 │   ├── models.py                               # SQLAlchemy ORM models for Better-Auth schema (User, Session, Account)
 │   ├── project_storage.py                      # Local filesystem disk storage & Supabase storage manager; save_project_asset_bytes / delete_project_asset shared by uploads and agent figure imports
 │   ├── prompt_builder.py                       # Structured system prompt assembler enforcing surgical edits; default PPT = built-in light OverBranch Standard, templates only on request
@@ -998,7 +997,8 @@ overbranch/
   - **The loop also grants one itself** when it reaches the limit with edits still unverified, rather than rolling back a half-finished job.
   - **An extension is earned.** It is refused unless the document has actually changed since the last one: an agent re-reading the same block and asking again is precisely the case the ceiling exists for, and more turns make a bad run slower, not better. Bounded three ways at once — `EXTENSION_CHUNK` (6) per grant, `MAX_STEP_EXTENSIONS` (4) requested plus `MAX_AUTO_EXTENSIONS` (2) automatic, and `ABSOLUTE_MAX_STEPS` (64) overall. `AgentTrace.step_extensions` records how often it happened.
   - `TARGETED_EDIT`: 4–12 steps (4 for a typo or citation, 10–12 for creation / redesign).
-  - `FULL_DOCUMENT_REWRITE` / `FULL_DOCUMENT_EXPANSION`: `8 + ceil(chunks / 2)`, capped at 32.
+  - `FULL_DOCUMENT_REWRITE`: `8 + ceil(chunks / 2)`, capped at 32.
+  - `FULL_DOCUMENT_EXPANSION`: sized from the **worklist** instead — `expansion_step_budget` = overhead + `ceil(units / batch)`, and **exempt from the 32 cap**, because 32 steps cannot elaborate 53 sections and stopping half way is precisely the reported failure. What bounds it is measured progress: `grant_steps` extends an expansion only while blocks keep clearing their growth target, and an empty `done=true` turn that is sent back is refunded rather than charged (`MAX_COVERAGE_REFUNDS`). See [Feature 10](#feature-10-full-document-expansion-worklist-coverage--leftover-detection).
   - Ask mode: 4 steps.
   - **Every step is a full LLM round trip, and round trips dominate wall-clock time, so an uncapped budget is an uncapped latency bill.** The previous `max(16, chunks * 2 + 4)` had no ceiling at all: it handed a 20-section report 44 steps and a 40-frame deck 84 — and gave even a 2-chunk rewrite a floor of 16 — for work the prompt explicitly asks the model to **batch** into a handful of turns (and that `compute_step_max_tokens` funds with 16 K output tokens precisely so batching is possible). The budget now assumes several chunks land per turn, plus headroom for `verify_compile` and self-correction.
 - **In-Memory Shadow Workspace**:
@@ -1105,13 +1105,38 @@ overbranch/
 
 ---
 
-### Feature 10: Full Document Rewrite Coverage Validation & Leftover Detection
+### Feature 10: Full-Document Expansion Worklist, Coverage & Leftover Detection
 
-- **File Implementation**: [`backend/edit_validator.py`](file:///home/abin/overbranch/backend/edit_validator.py), [`backend/tests/test_full_document_rewrite.py`](file:///home/abin/overbranch/backend/tests/test_full_document_rewrite.py)
+- **File Implementation**: [`backend/edit_validator.py`](file:///home/abin/overbranch/backend/edit_validator.py), [`backend/document_index.py`](file:///home/abin/overbranch/backend/document_index.py), [`backend/opencode/agent_loop.py`](file:///home/abin/overbranch/backend/opencode/agent_loop.py), [`backend/tests/test_expansion_coverage.py`](file:///home/abin/overbranch/backend/tests/test_expansion_coverage.py), [`backend/tests/test_full_document_rewrite.py`](file:///home/abin/overbranch/backend/tests/test_full_document_rewrite.py)
+
+**Why it was rebuilt.** "Elaborate all sections in the report" added three or four lines somewhere and stopped, and the run was delivered as complete. Everything passed, because:
+- Coverage asked whether a chunk had been **touched** (`workspace.get_touched_chunks()`), never whether it had **grown** — a one-line `insert_into_chunk` into every chunk satisfied it while the document stayed the length it was.
+- The touched ids were recorded against the **live** buffer's positional index (`section_3`) while the check enumerated the **original**, so one inserted block shifted the credit onto the wrong chunk.
+- On a chaptered report the chunks are chapters, so "all sections" was never checked at section level.
+- `done=true` arriving **together with** the tool calls — which the prompt's batching mandate makes the model do — hit a branch with no `else`: a failed coverage check emitted no event and no feedback, and the loop carried on as if it had passed.
+- The system prompt said both *"Set `done=true` immediately as soon as your edits are applied"* and *"RETURN MINIMAL EDITS … **CRITICAL**"*, and gave expansion no number at all while giving creation explicit counts. The cheapest behaviour satisfying every live check was one small edit per chunk.
+
 - **How It Works**:
-  1. `validate_coverage(original_chunks, modified_code, modified_chunk_ids)` checks if all content sections were rewritten during full document overhaul requests.
-  2. `detect_leftovers(modified_code, forbidden_terms)` scans for residual terms from old topics or unedited boilerplate.
-  3. Rejection & Retries: If the agent attempts to signal `done=true` while chunks remain untouched, the validator rejects completion and prompts the agent to finish unedited sections.
+  1. **Worklist** — `get_expansion_units(original)` returns the innermost, non-overlapping headings (section F.4), each with its current size.
+  2. **Growth gate** — `validate_coverage` dispatches `FULL_DOCUMENT_EXPANSION` to `_expansion_coverage`, which *measures*: `measure_expansion(original, current)` pairs every original unit against the edited document and reports `before → after (+delta)`. A unit counts as expanded only when it gains `expansion_target_delta(before, kind)` characters — `max(200, min(60 % , 600))` for prose, `max(150, min(60 %, 300))` for a **frame**, because a slide holds a dozen lines before it overflows (measured: with the prose target the model rewrote the same two frames five times trying to clear it).
+  3. **Pairing survives real edits**, in four passes of decreasing confidence: stable node ID → normalized title → *distinctive* title words (a `\section{Conclusion}` the model reshaped into three "Conclusion: …" frames is still the conclusion; a word every heading shares, like "Topic", identifies nothing and is ignored, so a deleted block stays reported as deleted) → position among what is still unmatched. Blocks that are **new** and disjoint from every matched one are credited to the block they were added under, so "one more slide per topic" and "a subsection per section" count as the expansions they are.
+  4. **The loop drives the worklist**: a few blocks per turn (`expansion_batch_size`, 2–4), named in the first message with each one's current and required size, and restated on the live user message every turn (`_expansion_progress_note`, the same mechanism as the imported-figure paths, so it survives history compaction). The step budget is sized from the worklist (`expansion_step_budget`) and is exempt from `MAX_STEP_BUDGET`; `grant_steps` extends it only while blocks keep completing, so a looping model still stops.
+  5. **Both completion paths are closed**: the same-turn `done=true` branch now includes broad requests, emits the `coverage_check` event whether it passed or failed, and sends the feedback back; and a failing check near the budget limit buys steps instead of being waived. An empty `done=true` turn that is sent back is refunded (bounded by `MAX_COVERAGE_REFUNDS`), since it produced no edit.
+  6. `detect_leftovers(modified_code, forbidden_terms)` scans for residual terms from old topics. `FULL_DOCUMENT_REWRITE` keeps its touched-chunk semantics unchanged.
+  7. **A long expansion compiles part-way through** (`expansion_compile_checkpoint`, every `EXPANSION_COMPILE_EVERY` editing turns). The end-of-run gate is all-or-nothing: on a real run the expansion reached 53/53 and 40 K new characters, the final compile found three undefined control sequences, and nine minutes of work was rolled back with *"The document was not modified"*. A checkpoint costs one compile, runs the deterministic repairs, and hands anything left to the model while it still has turns — without spending the end-of-run repair budget, since a failure half way is not a verdict on the run.
+  8. The explanation ends with what actually happened: *"✓ Expanded all 53 section(s)/block(s)"* or *"Expanded 7 of 56 section(s). Not reached: … Ask again to continue with the rest."*
+
+- **Measured** on the user's own 1,049-line, 59-section report (`uploads/projects/3ce2d832-…`), prompt *"elaborate all sections in the report"*, real gateway and real pdfLaTeX:
+
+  | | before (recorded trace) | after |
+  |---|---|---|
+  | steps used | 5 | 51 |
+  | blocks expanded | 4 of 13 chunks (38.5 % coverage) | **53 of 53** |
+  | document | 88,918 chars / 57 pages | 126,068 chars / 67 pages |
+  | new compile errors | — | 0 (the `Extra \endgroup` on line 344 and the missing `images.png` are pre-existing in the user's own file, verified by compiling the original) |
+  | wall clock | — | ~9.5 min, which is what visiting 53 sections costs |
+
+  The same prompt on a 7-block deck: 5 steps, 56 s, 7/7, +6,293 chars, compiles clean.
 
 ---
 
@@ -1206,7 +1231,8 @@ overbranch/
 
 - **File Implementation**: [`backend/providers/router.py`](file:///home/abin/overbranch/backend/providers/router.py), [`backend/providers/gemini_provider.py`](file:///home/abin/overbranch/backend/providers/gemini_provider.py), [`backend/providers/groq_provider.py`](file:///home/abin/overbranch/backend/providers/groq_provider.py), [`backend/providers/openrouter_provider.py`](file:///home/abin/overbranch/backend/providers/openrouter_provider.py)
 - **Supported Providers**:
-  - **Google Gemini** (Web2API gateway): Gemini 3.5 Flash Thinking (**default**, `providers.router.DEFAULT_MODEL` — the one definition the agent loop, the agent route, `/api/models` and the importer all read), 3.7 / 3.6 / 3.5 Flash, 3.5 Flash Thinking Lite.
+  - **Google Gemini** (Web2API gateway): **Gemini 3.7 Flash** (`gemini-3.7-flash`, the default — `providers.router.DEFAULT_MODEL`, the one definition the agent loop, the agent route, `/api/models`, the diagram tool, the vision pass and the PDF importer all read), 3.6 / 3.5 Flash, 3.5 Flash Thinking, 3.5 Flash Thinking Lite.
+  - The default reaches the browser through **`GET /api/models`** ([`backend/main.py`](file:///home/abin/overbranch/backend/main.py)), which returns `provider_router.get_available_models()`. The frontend had always fetched that path ([`trpc/routers/ai.ts`](file:///home/abin/overbranch/trpc/routers/ai.ts)) and it **404'd** — no such route existed — so the editor silently used its own hardcoded list and the real default lived in TypeScript. The TS literals remain as an offline fallback only.
   - **Groq**: LLaMA 3.3 70B Versatile, LLaMA 3.1 8B Instant (Ultra-fast inference).
   - **OpenRouter**: Claude 3.5 Sonnet, GPT-4o, DeepSeek Chat/Coder, MiniMax-01.
 - **Failover**: failures are classified (`providers/errors.py`). Rate limits, exhausted quota, timeouts, outages and unavailable models walk `LLM_FALLBACK_CHAIN` (default OpenRouter **MiniMax M3**, `minimax/minimax-m3`); a cancellation or a malformed request does not. OpenRouter's five server-side keys rotate through a health-tracked `KeyPool` (sticky selection, per-failure cooldowns, automatic recovery). See [T](#t-provider-fallback-chain--key-health).
@@ -1411,6 +1437,7 @@ overbranch/
   9a. `test_attachments.py`: kinds from bytes; the five-file cap (and that replacing a name is not a sixth file); size and empty-file refusals; a second store on the same folder restoring a session with its bytes; removal and expiry deleting the disk copy; the JSON-body path; endpoints — figure count on upload, 409 / 413 with a reason, delete and clear, **one user's attachments invisible to another on the same project**, no upload without project access; and, in the agent, seven attachments in one request skipping two instead of failing, and five large papers staying under one preview budget.
   9b. `test_attachment_figures.py`: on a generated two-column page — three captioned figures found, the logo / ruled table / "Fig. 1 shows …" not; the raster figure not reaching into the next column; the chart keeping its tick labels and axis title but not its caption; a table set as vector outlines listed as `table` (`p1-t1`) with its own caption and not its "Table 2 summarizes …" paragraph; with real TeX, a `twocolumn` article whose TikZ block diagram is found by its caption with its node labels inside the region. Tools: listing, import for a slide vs. an article, short IDs, idempotent re-import, **never overwriting a different existing asset**, attached images passed through, table file names, cleanup of unused and rolled-back imports. Image paths: similarity by the words of the name; a mistyped path corrected to the imported file; an unmatched one reported while the user's own unresolved reference and a commented-out one are left alone; a run that imported nothing not checked. Agent runs: **the reported failure replayed step for step** (batched import under model-chosen names → two failed edits → outline read → frames written with paths typed from memory) ending with corrected paths, both files kept and named in the explanation; a deck built from a paper getting its figures before the first turn and keeping only the ones it shows; a deck showing none asked once to add them; an ordinary edit importing nothing; an image path that matches no file going back to the model and into the explanation; a rolled-back run leaving no files; nothing binary in any event.
   9c. `test_visual_tools.py`: page parsing and lookup; a clean page reporting nothing; overprinted text (faked bold excluded); contrast from rendered pixels (light-on-dark fine, dark-on-dark not); text crossing an image edge vs. a caption on it; overlapping images; an image off the page; WCAG ratios; the tool's targets and its no-PDF answer; with real TeX, a slide whose overlap and invisible sentence are mapped to their exact source lines; budget notes and history compaction on image messages; the model shown the page once and the client never sent the bytes; the router stripping images (with a note) for a provider that cannot see; which requests count as visual; the look happening before the model's first turn; a defect still measured after the edit going back to the model once; an unfixed defect reported rather than hidden; an ordinary request rendering nothing; and an edit to a TikZ document not adding libraries the document already lacked; a right-aligned page number outside the text width not being a margin violation (while a real overflow on one slide still is, also when only that page is scanned); a single page having no running lines; which defect classes count as unambiguous; a created deck with a clipped title going back to the model once and ending with a clean render check; and a created deck that renders fine taking no extra turn.
+  9e. `test_expansion_coverage.py`: the growth target (proportional, capped, floored, monotone, slide-sized for a frame); the worklist — sections are the unit on a chaptered report, front matter / outline / untitled title slides are not targets, a container heading is not a unit and never overlaps its children, a document with no headings is one unit; the gate — three extra lines is not an expansion, expanding every block passes, a partial run names the rest, an inserted section does not misplace the credit, a deleted block is reported deleted and not matched to a sibling by a shared word, a block rewritten under a new id still counts, a follow-up slide and a new subsection count toward their topic, rewrite scope unchanged; the budget exempt from the cap only for expansion; and in the loop — a token edit per block is rejected and sent back by name, expanding everything is accepted, the worklist and this turn's batch are in the first message, progress is restated every turn, and an ordinary targeted edit is not treated as an expansion.
   9d. `test_diff_hunks.py`: all hunks reproduce the proposal and none the original; an environment the edit opens and closes is one hunk; every hunk structurally closed; **every subset of hunks validates**; a rewrite that collapses `edits` to one whole-document item still has one hunk per changed paragraph; a document created from nothing; trailing newline, CRLF, top insertion and end deletion; lines numbered as the editor numbers them (not `str.splitlines`).
   10. `scripts/run-collab-tests.sh` (Node, outside pytest): the Yjs ↔ Monaco binding — loop safety, two-editor convergence, offline merge, per-user undo/redo, remote cursor decorations and name labels, read-only — and `computeLineEdits` / `applyTextToEditor` round trips including 300 randomized cases; and the inline review's block logic (`scripts/test_inline_diff.mjs`): hunks → blocks with only changed lines as segments, any subset replaying exactly, untrusted hunks falling back to one block, blocks following the document when the user typed above them, a block the user edited left unplaced, CRLF, and 300 randomized proposals.
 
