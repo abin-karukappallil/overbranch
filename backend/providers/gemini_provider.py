@@ -22,7 +22,7 @@ logger = logging.getLogger("gemini_provider")
 
 # Only these models are exposed to users
 ALLOWED_GEMINI_MODELS = [
-    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": True},
+    {"id": "gemini-3.7-flash", "label": "Gemini 3.7 Flash", "default": False},
     {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash", "default": False},
     {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash", "default": False},
     {"id": "gemini-3.5-flash-thinking", "label": "Gemini 3.5 Flash Thinking", "default": False},
@@ -45,7 +45,7 @@ class GeminiProvider(LLMProvider):
 
     def __init__(self):
         self.base_url = get_web2api_base_url()
-        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "30.0"))
+        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "20.0"))
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
@@ -54,13 +54,21 @@ class GeminiProvider(LLMProvider):
 
     def _load_server_keys(self) -> List[Dict[str, str]]:
         """Loads up to 5 server-side Gemini Web2API keys via the shared loader."""
-        keys = [{"name": k.name, "key": k.key} for k in load_web2api_keys()]
-        logger.info(f"Gemini Web2API provider initialized with {len(keys)} server-side key(s)")
+        keys = []
+        for k in load_web2api_keys():
+            entry = {"name": k.name, "key": k.key}
+            if k.key.startswith("AIza"):
+                entry["base_url"] = "https://generativelanguage.googleapis.com/v1beta/openai/"
+            keys.append(entry)
+        logger.info(f"Gemini provider initialized with {len(keys)} server-side key(s)")
         return keys
 
     def _get_client_for_key(self, api_key: str, base_url: Optional[str] = None):
         """Lazy-initializes an OpenAI client for a given API key."""
-        target_base = (base_url or self.base_url).rstrip("/")
+        if api_key.startswith("AIza") and (not base_url or "abinthomas.dev" in (base_url or "")):
+            target_base = "https://generativelanguage.googleapis.com/v1beta/openai/"
+        else:
+            target_base = (base_url or self.base_url).rstrip("/")
         if not target_base:
             raise LLMProviderError(
                 "Gemini Web2API not configured. Set GEMINI_WEB2API_BASE_URL and "

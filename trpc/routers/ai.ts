@@ -21,22 +21,24 @@ export interface ProviderGroup {
 
 const DEFAULT_PROVIDER_GROUPS: ProviderGroup[] = [
   {
+    name: "OpenRouter",
+    models: [
+      { id: "openrouter/free", label: "OpenRouter Free", default: true },
+      { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "Nemotron 3 Super 120B Free", default: false },
+      { id: "nvidia/nemotron-3.5-lightning:free", label: "Nemotron 3.5 Lightning Free", default: false },
+      { id: "google/gemma-4-31b-it:free", label: "Gemma 4 31B Free", default: false },
+      { id: "cohere/north-mini-code:free", label: "Cohere North Mini Code Free", default: false },
+      { id: "minimax/minimax-01", label: "MiniMax Text-01", default: false },
+    ],
+  },
+  {
     name: "Gemini Web2API",
     models: [
-      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: true },
+      { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash", default: false },
       { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", default: false },
       { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", default: false },
       { id: "gemini-3.5-flash-thinking", label: "Gemini 3.5 Flash Thinking", default: false },
       { id: "gemini-3.5-flash-thinking-lite", label: "Gemini 3.5 Flash Thinking Lite", default: false },
-    ],
-  },
-  {
-    name: "OpenRouter",
-    models: [
-      { id: "minimax/minimax-01", label: "MiniMax M3 (Text-01)", default: false },
-      { id: "nvidia/nemotron-3-ultra-550b-a55b:free", label: "Nemotron 3 Ultra Free", default: false },
-      { id: "minimax/minimax-m3:free", label: "Minimax 3 Free", default: false },
-      { id: "deepseek/deepseek-v4-flash:free", label: "DeepSeek V4 Flash Free", default: false },
     ],
   },
 ];
@@ -56,7 +58,7 @@ export const aiRouter = router({
           : DEFAULT_PROVIDER_GROUPS;
 
         const defaultModel: string =
-          data?.default_model || "gemini-3.7-flash";
+          data?.default_model || "openrouter/free";
 
         return {
           providers: providers.length > 0 ? providers : DEFAULT_PROVIDER_GROUPS,
@@ -69,7 +71,7 @@ export const aiRouter = router({
 
     return {
       providers: DEFAULT_PROVIDER_GROUPS,
-      defaultModel: "gemini-3.7-flash",
+      defaultModel: "openrouter/free",
     };
   }),
 
