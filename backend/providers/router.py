@@ -18,15 +18,17 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from .base_provider import LLMProvider, LLMProviderError
-from .errors import FALLBACK_KINDS, classify_exception
+from .errors import FALLBACK_KINDS, FailureKind, classify_exception
 from .groq_provider import GroqProvider
 from .multimodal import has_image_parts, strip_image_parts
 from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
+from .nvidia_provider import NvidiaProvider
 from .openrouter_provider import OpenRouterProvider
 
 logger = logging.getLogger("provider_router")
@@ -56,14 +58,63 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
 }
 
 
-DEFAULT_FALLBACK_CHAIN = "openrouter:minimax/minimax-m3"
+# Primary is the Gemini Web2API endpoint. When it times out the next stop is its
+# twin deployment (same provider class, GEMINI2_* env), then OpenRouter MiniMax M3.
+DEFAULT_FALLBACK_CHAIN = "gemini2,openrouter:minimax/minimax-m3"
+
+
+# Total wall-clock budget for ONE provider's attempt, when a fallback is still
+# waiting behind it. Gemini rotates its own keys on timeout (GEMINI_TIMEOUT x up to
+# 5 keys), so without a bound the caller can give up before the router ever sees a
+# failure. The default clears one full GEMINI_TIMEOUT attempt and part of a second,
+# so a slow-but-working endpoint still answers while a dead one is handed on rather
+# than burning every key slot. 0 disables the bound.
+DEFAULT_PROVIDER_ATTEMPT_TIMEOUT = 120.0
+
+
+def _attempt_timeout() -> float:
+    try:
+        return float(os.getenv("LLM_PROVIDER_ATTEMPT_TIMEOUT", DEFAULT_PROVIDER_ATTEMPT_TIMEOUT))
+    except ValueError:
+        return DEFAULT_PROVIDER_ATTEMPT_TIMEOUT
+
+
+def _call_with_deadline(fn: Callable[[], Dict[str, Any]], timeout: float, label: str) -> Dict[str, Any]:
+    """Runs fn() and gives up after ``timeout`` seconds with a TIMEOUT-kind error.
+    The abandoned call finishes (or hits its own client timeout) on a daemon thread."""
+    if timeout <= 0:
+        return fn()
+    box: Dict[str, Any] = {}
+
+    def runner() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # re-raised in the caller's thread
+            box["error"] = e
+
+    t = threading.Thread(target=runner, daemon=True, name=f"llm-{label}")
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        raise LLMProviderError(
+            f"{label} timed out after {timeout:.0f}s (provider attempt budget)",
+            status_code=504, provider=label, kind=FailureKind.TIMEOUT,
+        )
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 def _fallback_entries() -> List[str]:
+    """LLM_FALLBACK_CHAIN entries first, then the default entry unless already named,
+    so a configured chain can never shrink the router to a single candidate."""
     raw = os.getenv("LLM_FALLBACK_CHAIN", DEFAULT_FALLBACK_CHAIN)
-    if not raw.strip():
-        return []
-    return [e.strip() for e in raw.split(",") if e.strip()]
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    for default in DEFAULT_FALLBACK_CHAIN.split(","):
+        default = default.strip()
+        if default and default.lower() not in (e.lower() for e in entries):
+            entries.append(default)
+    return entries
 
 
 def _is_configured(provider: LLMProvider, name: str, api_keys: Optional[Dict[str, str]]) -> bool:
@@ -105,11 +156,17 @@ class ProviderRouter:
     def __init__(self):
         self.groq = GroqProvider()
         self.gemini = GeminiProvider()
+        # The same Web2API provider against a second deployment, so a timed-out
+        # primary endpoint falls over to its twin before leaving Gemini entirely.
+        self.gemini2 = GeminiProvider(namespace="GEMINI2", label="Gemini (secondary)")
         self.openrouter = OpenRouterProvider()
+        self.nvidia = NvidiaProvider()
         self._providers: Dict[str, LLMProvider] = {
             "groq": self.groq,
             "gemini": self.gemini,
+            "gemini2": self.gemini2,
             "openrouter": self.openrouter,
+            "nvidia": self.nvidia,
         }
 
     def route(self, model: str) -> LLMProvider:
@@ -213,7 +270,8 @@ class ProviderRouter:
         [(provider_name, provider, model)] to try in order: the provider that
         serves ``model`` first, then every configured fallback that is not the
         same provider+model. Fallbacks come from LLM_FALLBACK_CHAIN
-        ("provider:model,provider:model"), default OpenRouter + MiniMax M3.
+        ("provider:model,provider:model"), plus DEFAULT_FALLBACK_CHAIN entries it
+        does not already name — the second Web2API endpoint, then MiniMax M3.
         """
         primary = self.route(model)
         primary_name = next((n for n, p in self._providers.items() if p is primary), primary.get_provider_name())
@@ -222,15 +280,19 @@ class ProviderRouter:
             return chain
         for entry in _fallback_entries():
             name, _, fb_model = entry.partition(":")
-            provider = self._providers.get(name.strip().lower())
+            name = name.strip().lower()
+            provider = self._providers.get(name)
             if provider is None:
+                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: unknown provider '{name}'")
                 continue
             fb_model = fb_model.strip() or (self.get_fallback_model() if provider is self.openrouter else model)
             if provider is primary and fb_model == model:
+                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: same provider and model as the primary")
                 continue
-            if not _is_configured(provider, name.strip().lower(), api_keys):
+            if not _is_configured(provider, name, api_keys):
+                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: provider '{name}' has no API key configured")
                 continue
-            chain.append((name.strip().lower(), provider, fb_model))
+            chain.append((name, provider, fb_model))
         return chain
 
     def chat(
@@ -272,14 +334,20 @@ class ProviderRouter:
             provider_messages = messages
             if not getattr(provider, "supports_images", False) and has_image_parts(messages):
                 provider_messages = strip_image_parts(messages)
+            is_last_in_chain = idx == len(chain) - 1
             try:
-                resp = provider.chat(
-                    messages=provider_messages,
-                    model=target_model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    api_keys=api_keys,
-                    **cancel_kwargs,
+                resp = _call_with_deadline(
+                    lambda: provider.chat(
+                        messages=provider_messages,
+                        model=target_model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        api_keys=api_keys,
+                        **cancel_kwargs,
+                    ),
+                    # Nothing to fall back to after the last provider: let it run to its own timeouts.
+                    0 if is_last_in_chain else _attempt_timeout(),
+                    name,
                 )
             except LLMOperationCancelled:
                 raise

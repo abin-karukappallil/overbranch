@@ -78,6 +78,11 @@ def router(monkeypatch, clock):
     monkeypatch.setenv("LLM_FALLBACK_CHAIN", "openrouter:minimax/minimax-m3")
     monkeypatch.setattr(orp, "load_openrouter_keys", lambda: list(KEYS))
     r = ProviderRouter()
+    # The second Web2API endpoint is in the default chain and this repo's .env
+    # configures it, so it would answer after openrouter here — and with a real
+    # network call. These tests are about gemini -> openrouter, so unregister it;
+    # an entry naming no registered provider is dropped with a warning.
+    r._providers.pop("gemini2", None)
     r.openrouter = orp.OpenRouterProvider(pool=KeyPool("openrouter", list(KEYS), clock=clock))
     r._providers["openrouter"] = r.openrouter
     return r
@@ -266,3 +271,141 @@ def test_pdf2latex_llm_chat_disables_fallback(monkeypatch):
     assert res == "latex body"
     assert captured_kwargs.get("allow_fallback") is False
 
+
+
+# --- additive chain, NVIDIA registration, bounded primary --------------------
+
+class StubNamed(LLMProvider):
+    def __init__(self, error: Optional[Exception] = None):
+        self.error = error
+        self.calls = 0
+        self.candidates = [{"key_id": "stub#1"}]
+
+    def get_provider_name(self) -> str:
+        return "Stub"
+
+    def get_available_models(self):
+        return []
+
+    def chat(self, messages, model, temperature=0.1, max_tokens=4096, api_keys=None, cancel_token=None):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return {"content": "ok", "model_used": model, "finish_reason": "stop", "usage": {}}
+
+
+def _plain_messages():
+    return [{"role": "user", "content": "x"}]
+
+
+def test_configured_chain_is_additive_and_includes_openrouter(router, monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "nvidia:z-ai/glm-5.3")
+    nvidia = StubNamed()
+    router.register_provider("nvidia", nvidia)
+    chain = router.fallback_chain("gemini-3.7-flash")
+    assert [n for n, _, _ in chain] == ["gemini", "nvidia", "openrouter"]
+    assert chain[1][2] == "z-ai/glm-5.3"
+
+
+def test_nvidia_is_registered_by_default(router):
+    assert "nvidia" in router._providers
+
+
+def test_dropped_entries_are_logged(router, monkeypatch, caplog):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "bogus:m")
+    with caplog.at_level(logging.WARNING, logger="provider_router"):
+        router.fallback_chain("gemini-3.7-flash")
+    assert "unknown provider 'bogus'" in caplog.text
+
+
+def test_timeout_on_primary_advances_and_second_attempt_succeeds(router, monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "nvidia:z-ai/glm-5.3")
+    primary = StubPrimary(LLMProviderError("timed out", status_code=504, provider="Gemini", kind=FailureKind.TIMEOUT))
+    router.gemini = primary
+    router._providers["gemini"] = primary
+    nvidia = StubNamed()
+    router.register_provider("nvidia", nvidia)
+    resp = router.chat(_plain_messages(), model="gemini-3.7-flash")
+    assert resp["provider"] == "nvidia" and resp["is_fallback"] is True
+    ok = [a["ok"] for a in resp["attempts"]]
+    assert ok == [False, True]  # trace.py: >=2 attempts and a later one succeeding -> fallback_used
+    assert resp["attempts"][0]["failure"] == FailureKind.TIMEOUT.value
+
+
+def test_bad_request_raises_without_fallback(router, monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "nvidia:z-ai/glm-5.3")
+    primary = StubPrimary(LLMProviderError("bad", status_code=400, provider="Gemini", kind=FailureKind.BAD_REQUEST))
+    router.gemini = primary
+    router._providers["gemini"] = primary
+    nvidia = StubNamed()
+    router.register_provider("nvidia", nvidia)
+    with pytest.raises(LLMProviderError):
+        router.chat(_plain_messages(), model="gemini-3.7-flash")
+    assert primary.calls == 1 and nvidia.calls == 0
+
+
+def test_allow_fallback_false_makes_one_attempt(router, monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "nvidia:z-ai/glm-5.3")
+    primary = StubPrimary(LLMProviderError("timed out", status_code=504, provider="Gemini", kind=FailureKind.TIMEOUT))
+    router.gemini = primary
+    router._providers["gemini"] = primary
+    nvidia = StubNamed()
+    router.register_provider("nvidia", nvidia)
+    with pytest.raises(LLMProviderError) as ei:
+        router.chat(_plain_messages(), model="gemini-3.7-flash", allow_fallback=False)
+    assert primary.calls == 1 and nvidia.calls == 0
+    assert len(ei.value.attempts) == 1
+
+
+def test_slow_primary_is_abandoned_so_fallback_runs(router, monkeypatch):
+    import threading
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "nvidia:z-ai/glm-5.3")
+    monkeypatch.setenv("LLM_PROVIDER_ATTEMPT_TIMEOUT", "0.2")
+    release = threading.Event()
+
+    class Hanging(StubPrimary):
+        def chat(self, *a, **kw):
+            release.wait(5)
+            return super().chat(*a, **kw)
+
+    hanging = Hanging()
+    router.gemini = hanging
+    router._providers["gemini"] = hanging
+    nvidia = StubNamed()
+    router.register_provider("nvidia", nvidia)
+    try:
+        resp = router.chat(_plain_messages(), model="gemini-3.7-flash")
+    finally:
+        release.set()
+    assert resp["provider"] == "nvidia"
+    assert resp["attempts"][0]["failure"] == FailureKind.TIMEOUT.value
+
+
+def test_second_web2api_endpoint_sits_between_gemini_and_openrouter(router, monkeypatch):
+    """The chain the deployment asks for: primary Web2API, its twin, then MiniMax M3.
+
+    A timed-out primary endpoint is usually the gateway, not Gemini, so the next
+    stop is the same provider class against the other host before leaving Gemini.
+    """
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "gemini2,openrouter:minimax/minimax-m3")
+    monkeypatch.setenv("GEMINI2_WEB2API_BASE_URL", "https://second.example/v1")
+    monkeypatch.setenv("GEMINI2_WEB2API_API_KEY", "sk-second")
+    from providers.gemini_provider import GeminiProvider
+
+    second = GeminiProvider(namespace="GEMINI2", label="Gemini (secondary)")
+    router.register_provider("gemini2", second)
+
+    assert second.base_url == "https://second.example/v1"
+    assert [k["key"] for k in second.candidates] == ["sk-second"]
+    # Its own endpoint, not the primary's.
+    assert second.base_url != router.gemini.base_url
+
+    chain = router.fallback_chain("gemini-3.7-flash")
+    assert [n for n, _, _ in chain] == ["gemini", "gemini2", "openrouter"]
+    # The twin is asked for the same Gemini model; only OpenRouter switches model.
+    assert [m for _, _, m in chain] == ["gemini-3.7-flash", "gemini-3.7-flash", "minimax/minimax-m3"]
+
+
+def test_nvidia_is_not_in_the_default_chain(router):
+    """nvidia stays registered for anyone who configures it, but is no longer a default hop."""
+    assert "nvidia" not in [n for n, _, _ in router.fallback_chain("gemini-3.7-flash")]

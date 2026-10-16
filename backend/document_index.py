@@ -763,6 +763,7 @@ class ExpansionUnit:
     end_line: int
     size: int             # characters of the unit's whole body (children included)
     own_size: int = 0     # characters of its own prose (children excluded)
+    text: str = ""        # the unit's body text, for measuring what an edit kept
 
 
 def _is_expandable(node: "DocumentNode") -> bool:
@@ -798,17 +799,19 @@ def get_expansion_regions(latex_code: str) -> List[ExpansionUnit]:
     for n in index_nodes(latex_code):
         if not _is_expandable(n):
             continue
-        body = max(0, (n.body_end or n.end) - (n.body_start or n.start))
+        b0, b1 = (n.body_start or n.start), (n.body_end or n.end)
+        body = max(0, b1 - b0)
         regions.append(ExpansionUnit(
             unit_id=n.node_id, title=n.title or n.node_id, kind=n.kind,
             start_line=n.start_line, end_line=n.end_line, size=body, own_size=body,
+            text=latex_code[b0:b1],
         ))
     if regions:
         return regions
     return [
         ExpansionUnit(unit_id=c.chunk_id, title=c.title, kind=c.chunk_type,
                       start_line=c.start_line, end_line=c.end_line,
-                      size=len(c.content), own_size=len(c.content))
+                      size=len(c.content), own_size=len(c.content), text=c.content)
         for c in DocumentIndex().get_content_chunks(latex_code)
     ]
 
@@ -841,7 +844,7 @@ def get_expansion_units(latex_code: str) -> List[ExpansionUnit]:
             ExpansionUnit(
                 unit_id=c.chunk_id, title=c.title, kind=c.chunk_type,
                 start_line=c.start_line, end_line=c.end_line,
-                size=len(c.content), own_size=len(c.content),
+                size=len(c.content), own_size=len(c.content), text=c.content,
             )
             for c in DocumentIndex().get_content_chunks(latex_code)
         ]
@@ -854,10 +857,11 @@ def get_expansion_units(latex_code: str) -> List[ExpansionUnit]:
         ]
         if children:
             continue  # a container: its children are the units
-        body = max(0, (n.body_end or n.end) - (n.body_start or n.start))
+        b0, b1 = (n.body_start or n.start), (n.body_end or n.end)
+        body = max(0, b1 - b0)
         units.append(ExpansionUnit(
             unit_id=n.node_id, title=n.title or n.node_id, kind=n.kind,
             start_line=n.start_line, end_line=n.end_line,
-            size=body, own_size=body,
+            size=body, own_size=body, text=latex_code[b0:b1],
         ))
     return units

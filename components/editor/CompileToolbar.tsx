@@ -4,38 +4,115 @@ import React, { useState } from "react";
 import {
   Play,
   Loader2,
-  CheckCircle2,
-  AlertTriangle,
   FileDown,
+  RotateCw,
+  ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+
+export const TEX_ENGINES = ["pdfLaTeX", "XeLaTeX", "LuaLaTeX"] as const;
+export type TexEngine = (typeof TEX_ENGINES)[number];
+
+export function isTexEngine(value: unknown): value is TexEngine {
+  return typeof value === "string" && (TEX_ENGINES as readonly string[]).includes(value);
+}
+
+interface CompileSplitButtonProps {
+  onCompile: () => void;
+  isCompiling: boolean;
+  engine: TexEngine;
+  onEngineChange: (engine: TexEngine) => void;
+  /** Hide the "Compile" label below the `xs` breakpoint (compact header). */
+  compact?: boolean;
+  className?: string;
+}
+
+/**
+ * The Compile button with the TeX engine fused to it: the green button
+ * compiles, the narrow chevron beside it opens the engine list. The one engine
+ * control in the app — the header uses it at every breakpoint.
+ */
+export function CompileSplitButton({
+  onCompile,
+  isCompiling,
+  engine,
+  onEngineChange,
+  compact = false,
+  className,
+}: CompileSplitButtonProps) {
+  return (
+    <div className={cn("flex items-stretch h-8 shrink-0 rounded-lg shadow-sm", className)}>
+      <Button
+        size="sm"
+        onClick={onCompile}
+        disabled={isCompiling}
+        className={cn(
+          "h-8 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold text-xs border border-[#10B981]/30 border-r-0 flex items-center gap-1.5 cursor-pointer rounded-l-lg rounded-r-none shadow-none",
+          compact ? "px-2 sm:px-2.5" : "px-3.5"
+        )}
+        title={`Compile TeX with ${engine} (Ctrl+Enter / Cmd+Enter)`}
+      >
+        {isCompiling ? (
+          <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
+        ) : (
+          <Play className="w-3.5 h-3.5 fill-current text-white" />
+        )}
+        <span className={compact ? "hidden xs:inline text-[11px]" : undefined}>Compile</span>
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild disabled={isCompiling}>
+          <button
+            type="button"
+            disabled={isCompiling}
+            aria-label={`TeX engine: ${engine}. Change engine`}
+            title={`TeX engine: ${engine}`}
+            className="h-8 w-6 flex items-center justify-center rounded-r-lg bg-[#10B981] hover:bg-[#059669] text-white border border-[#10B981]/30 border-l border-l-white/30 cursor-pointer disabled:opacity-50 disabled:pointer-events-none transition-colors"
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[10rem] font-mono">
+          <DropdownMenuLabel className="text-[11px] text-muted-foreground font-normal">
+            TeX engine
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          {TEX_ENGINES.map((name) => (
+            <DropdownMenuCheckboxItem
+              key={name}
+              checked={engine === name}
+              onCheckedChange={() => onEngineChange(name)}
+              className="text-xs cursor-pointer"
+            >
+              {name}
+            </DropdownMenuCheckboxItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
 
 interface CompileToolbarProps {
   onCompile: () => void;
   isCompiling: boolean;
-  engine?: string;
-  onEngineChange?: (engine: string) => void;
   onDownloadPdf?: () => void;
 }
 
 export function CompileToolbar({
   onCompile,
   isCompiling,
-  engine: propEngine,
-  onEngineChange,
   onDownloadPdf,
 }: CompileToolbarProps) {
   const [autoCompile, setAutoCompile] = useState(true);
-  const [internalEngine, setInternalEngine] = useState("pdfLaTeX");
-  const currentEngine = propEngine ?? internalEngine;
-
-  const handleEngineChange = (val: string) => {
-    if (onEngineChange) {
-      onEngineChange(val);
-    } else {
-      setInternalEngine(val);
-    }
-  };
 
   const handleDownloadPdf = () => {
     if (onDownloadPdf) {
@@ -80,16 +157,6 @@ export function CompileToolbar({
           <span className="sm:hidden">Auto</span>
         </button>
 
-        <select
-          value={currentEngine}
-          onChange={(e) => handleEngineChange(e.target.value)}
-          disabled={isCompiling}
-          className="h-7 px-2.5 rounded-lg border border-[#282A30] bg-[#1A1C22] text-[#E2E4E9] outline-none text-[11px] font-mono shrink-0 cursor-pointer hover:border-[#282A30] transition-colors"
-        >
-          <option value="pdfLaTeX">pdfLaTeX</option>
-          <option value="XeLaTeX">XeLaTeX</option>
-          <option value="LuaLaTeX">LuaLaTeX</option>
-        </select>
       </div>
 
       <div className="flex items-center gap-2 shrink-0">

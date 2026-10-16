@@ -24,7 +24,7 @@ from scope_classifier import classify_scope, ScopeType, ScopeClassificationResul
 from document_index import DocumentIndex, DocumentChunk, get_expansion_units
 from edit_validator import (
     validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
-    measure_expansion, expansion_target_delta,
+    measure_expansion, expansion_target_delta, EXPANSION_MIN_NEW_CHARS,
 )
 from attached_context import AttachmentLimitError, attached_context_store
 from providers.multimodal import image_part, text_part
@@ -62,8 +62,65 @@ SAFE_FAILURE_MESSAGE = "Couldn't safely apply this change. The document was not 
 # turn. Without it `request_more_steps` is unusable: a model cannot judge
 # whether the remaining steps cover the work if it is never told how many it
 # has. Stripped and re-added rather than appended, so it never accumulates.
+# The step note is only shown near the end of the budget (see BUDGET_NOTE_WINDOW),
+# so the trailing state block may hold any of the three notes, or only some.
 _BUDGET_RE = re.compile(
-    r"\n*(?:\[Figures in the project[^\]]*\]\s*)?(?:\[Expansion[^\]]*\]\s*)?\[Step \d+/\d+[^\]]*\]\s*$")
+    r"\n*(?=\[(?:Figures in the project|Expansion|Step \d))"
+    r"(?:\[Figures in the project[^\]]*\]\s*)?(?:\[Expansion[^\]]*\]\s*)?(?:\[Step \d+/\d+[^\]]*\]\s*)?$")
+# Steps left at or below which the model is told its budget. Earlier than that the
+# note only invited the model to narrate it ("I have reached the maximum number of
+# tool calls, so I will now synthesize...") in the explanation the user reads.
+BUDGET_NOTE_WINDOW = 3
+
+# Sentences about the agent's own step budget, which is internal and must never
+# reach the user. Matched per sentence; the whole sentence is dropped.
+_BUDGET_TALK_RE = re.compile(
+    r"(?:max(?:imum)? number of tool[- ]?calls?"
+    r"|tool[- ]?calls? (?:limit|budget|cap|allowance)"
+    r"|\b(?:my|our|the agent'?s?) (?:step|turn|tool[- ]?call) (?:budget|limit|allowance|cap)"
+    r"|\bstep budget\b"
+    r"|\bran out of (?:steps|turns|tool[- ]?calls)"
+    r"|\b(?:I|we)(?: have|'ve)? (?:reached|hit|exhausted|used up) (?:the|my|our|all (?:of )?(?:my|the)) "
+    r"(?:max(?:imum)?(?: number of)? (?:steps|turns|tool)|limit|budget|steps|turns|tool[- ]?calls|available steps)"
+    r"|max(?:imum)? number of (?:steps|turns) (?:allowed|available|permitted|for this)"
+    r"|\[Step \d+/\d+"
+    r"|\b\d+ steps? (?:remaining|left)\b)",
+    re.IGNORECASE)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])(\s+)")
+
+
+def scrub_budget_talk(text: str) -> str:
+    """
+    Drops every sentence of ``text`` that talks about the agent's step / tool-call
+    budget, and any stale ``[Step n/m ...]`` note. Fenced code blocks and ordinary
+    prose are left exactly as they are.
+    """
+    if not text or not _BUDGET_TALK_RE.search(text):
+        return text
+    out_lines: List[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(line)
+            continue
+        if in_fence or not _BUDGET_TALK_RE.search(line):
+            out_lines.append(line)
+            continue
+        line = re.sub(r"\[Step \d+/\d+[^\]]*\]", "", line)
+        parts = _SENTENCE_SPLIT_RE.split(line)
+        kept: List[str] = []
+        for i in range(0, len(parts), 2):
+            sentence = parts[i]
+            if not sentence.strip() or _BUDGET_TALK_RE.search(sentence):
+                continue
+            if kept:
+                kept.append(parts[i - 1] if i > 0 else " ")
+            kept.append(sentence)
+        new_line = "".join(kept).rstrip()
+        if new_line.strip():
+            out_lines.append(new_line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines)).strip()
 
 
 def _budget_note(step: int, total: int, can_extend: bool) -> str:
@@ -99,8 +156,16 @@ def _map_text(message: Dict[str, Any], fn: Any) -> Dict[str, Any]:
 
 
 def _with_budget_note(message: Dict[str, Any], step: int, total: int, can_extend: bool,
-                      state: str = "") -> Dict[str, Any]:
-    note = (f"{state}\n" if state else "") + _budget_note(step, total, can_extend)
+                      state: str = "", show_budget: bool = True) -> Dict[str, Any]:
+    """
+    The live message with its state notes refreshed. The step note itself is
+    included only when ``show_budget`` (the caller passes True near the end of the
+    budget); otherwise only ``state`` is appended, or nothing at all.
+    """
+    budget = _budget_note(step, total, can_extend) if show_budget else ""
+    note = "\n".join(x for x in (state, budget) if x)
+    if not note:
+        return _map_text(message, lambda body: _BUDGET_RE.sub("", body))
     return _map_text(message, lambda body: f"{_BUDGET_RE.sub('', body)}\n\n{note}")
 
 
@@ -142,13 +207,20 @@ def _expansion_progress_note(rows: List[Dict[str, Any]], batch: int) -> str:
     if not pending:
         return f"[Expansion: all {len(rows)} block(s) measurably expanded. Finish with done=true.]"
     nxt = pending[:max(1, batch)]
-    items = "; ".join(
-        f"`{r['unit_id']}` ({r['before']} chars now, needs +{r['target']})" for r in nxt
-    )
+
+    def _item(r: Dict[str, Any]) -> str:
+        if not r.get("preserved", True):
+            return (f"`{r['unit_id']}` (RESTORE its original text first \u2014 only "
+                    f"{int((r.get('retention') or 0) * 100)}% of it is left \u2014 "
+                    f"then add +{r['target']})")
+        return f"`{r['unit_id']}` ({r['before']} chars now, needs +{r['target']})"
+
+    items = "; ".join(_item(r) for r in nxt)
     rest = len(pending) - len(nxt)
     tail = f" Then {rest} more block(s) remain." if rest else ""
     return (f"[Expansion progress: {done}/{len(rows)} block(s) expanded. "
             f"THIS TURN, expand exactly these: {items}.{tail} "
+            f"Keep every existing sentence verbatim and add around it. "
             f"Use batched tool_calls, one call per block.]")
 
 
@@ -162,7 +234,13 @@ def _expansion_status_note(rows: List[Dict[str, Any]]) -> str:
         return f"\u2713 Expanded all {len(rows)} section(s)/block(s) of the document."
     named = ", ".join(r["title"] or r["unit_id"] for r in pending[:6])
     more = f" and {len(pending) - 6} more" if len(pending) > 6 else ""
-    return (f"Expanded {done} of {len(rows)} section(s). Not reached: {named}{more}. "
+    lost = [r for r in pending if not r.get("preserved", True)]
+    lost_note = ""
+    if lost:
+        lost_note = (" " + ", ".join(r["title"] or r["unit_id"] for r in lost[:4])
+                     + f"{' and others' if len(lost) > 4 else ''} came back with less of their "
+                       "original wording than before \u2014 review those before accepting.")
+    return (f"Expanded {done} of {len(rows)} section(s). Not reached: {named}{more}.{lost_note} "
             f"Ask again to continue with the rest.")
 
 
@@ -193,7 +271,9 @@ _BATCH_RESULT_CHAR_LIMITS = {"view_rendered_pages": 3500, "list_attachment_figur
 
 _LAST_STEP_NOTE = (
     "FINAL STEP: this is your last step. If your edits are complete, respond with done=true now; "
-    "they are compiled automatically and you may get a turn to repair compile errors."
+    "they are compiled automatically and you may get a turn to repair compile errors. "
+    "The step budget is internal: never mention steps, tool calls or limits in `explanation` "
+    "\u2014 describe what you changed."
 )
 _LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry", "view_rendered_pages"}
 
@@ -201,6 +281,22 @@ _LAYOUT_TOOLS = {"detect_overflow", "justify_content", "inspect_pdf_geometry", "
 def _phase(phase: str, message: str, **extra: Any) -> Dict[str, Any]:
     """A user-facing progress state (Finding target… / Compiling… / Done)."""
     return {"type": "phase", "phase": phase, "message": message, **extra}
+
+
+def llm_salvage_decision(*, mode: str, has_changed: bool, compile_verified: bool,
+                         compile_available: bool, compile_failed: bool) -> str:
+    """
+    What to do with the buffer when the LLM provider dropped out mid-run.
+
+    ``"commit"``   — there are edits and the final compile gate verified them (no
+                     new errors): keep them as a partial result.
+    ``"rollback"`` — anything else: nothing to keep, the compile failed, or no
+                     compile could run (no LaTeX engine), so nothing was verified.
+    """
+    if (mode == "edit" and has_changed and compile_available and compile_verified
+            and not compile_failed):
+        return "commit"
+    return "rollback"
 
 
 def _compile_status_note(last_compile: Dict[str, Any], compile_available: bool, compile_verified: bool) -> str:
@@ -377,12 +473,13 @@ All documents, code listings, benchmarks, and discussions (including scientific,
 You operate on an IN-MEMORY SHADOW BUFFER of the user's LaTeX file. You NEVER write directly to the user's file on disk. All your edits happen in a safe sandbox.
 
 YOUR WORKFLOW & FAST EXECUTION MANDATE:
-1. When doing a FULL DOCUMENT REWRITE / TOPIC OVERHAUL, use `rewrite_chunk(chunk_id, new_content)` or batched `tool_calls: [...]` to replace content cleanly by chunk ID.
-2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), systematically expand chunks using `insert_into_chunk(chunk_id, content)` or `replace_text` or `rewrite_chunk(chunk_id, new_content)`. You can execute multiple chunks in a single turn using `tool_calls: [...]`.
+1. When doing a FULL DOCUMENT REWRITE / TOPIC OVERHAUL, replace each block whole by its ID with `replace_block(node_id, new_content)`. When the task lists CHUNK IDs (a worklist), use the call it names for them: `rewrite_chunk(chunk_id, new_content)`. Batch several blocks per turn with `tool_calls: [...]`.
+2. When doing a FULL DOCUMENT EXPANSION ("add more content", "expand document", "make longer"), work through the worklist you are given with the calls it names — `insert_into_chunk(chunk_id, content)` to append to a block, `rewrite_chunk(chunk_id, new_content)` to rewrite it whole — or `insert_block` / `replace_text`. You can execute multiple blocks in a single turn using `tool_calls: [...]`.
 3. To insert new bibliography entries (`\\bibitem`), citations, or list items, use `insert_into_chunk(chunk_id, content, position='end')`. This automatically places items before `\\end{{thebibliography}}` without breaking the environment.
-4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `read_file_range`/`search_document` if line inspection is needed.
+4. For TARGETED EDITS, apply your change directly on Step 1 if the location is known from the outline, or use `get_block(node_id)` / `search_document` if inspection is needed.
 5. FAST EDIT RULE (TARGETED EDITS ONLY): for a single, local change aim to finish in 1–2 steps and set `done=true` as soon as it is applied. This rule does NOT apply to a FULL DOCUMENT REWRITE or EXPANSION: there, finishing means every block in the worklist is done, and `done=true` before that is rejected and sent back to you.
-6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)` or `search_uploaded_references(query)`. You can also read reference files via `read_file_range(file=filename)` or search them with `search_document(query, file=filename)`.
+5b. Your step budget is internal. NEVER mention steps, tool calls, turns or limits in `explanation` or `thought` text meant for the user — describe what you changed in the document.
+6. To inspect attached reference documents or PDFs, use `read_attached_document(filename, start_page, end_page)`, or search them with `search_document(query, file=filename)`.
 7. After editing, you may call `compile_latex` to check for LaTeX compilation errors; edits are also compiled automatically when you finish.
 8. When all edits are complete, respond with the done signal.
 9. PDF IMPORT: When the user asks to convert / import / recreate an attached PDF as LaTeX, call `convert_attached_pdf()` instead of transcribing it yourself, then finish immediately with done=true (no document edits). Every page is reproduced as compilable LaTeX with the same text, images, colors, font sizes and spacing as closely as possible, then compiled and compared with the original. Results are best-effort and come with measured per-page similarity — never promise an identical copy.
@@ -451,7 +548,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - A bare `&` is ONLY a column separator, at the top level of a `tabular` / `align` / `matrix` row. Inside `\\textbf{{...}}`, `\\multicolumn{{2}}{{c}}{{...}}`, `\\caption{{...}}`, `\\section{{...}}`, a frame title or subtitle, an `\\item`, or a TikZ `\\node {{...}};` it MUST be written `\\&`.
    - Wrap mathematical variables and equations in `$ ... $`, `\\[ ... \\]`, or `\\begin{{equation}} ... \\end{{equation}}`. `&` and `\\\\` are NOT allowed directly inside `equation` or `\\[ ... \\]`: for aligned or multi-line equations use `align`, or `\\begin{{aligned}} ... \\end{{aligned}}` inside the equation.
    - Table consistency: in `tabular` / `tabularx`, every row has exactly as many cells as the column specification declares (`{{lcc}}` is 3 cells, so 2 `&`) and ends with `\\\\`.
-   - Image assets: Use `list_assets` to discover existing images. Reference images using `\\includegraphics[width=\\linewidth,keepaspectratio]{{assets/<filename>}}`. Never invent filenames or insert raw multi-page `.pdf` files into `\\includegraphics`.
+   - Image assets: Use `list_project_files` to discover existing images (files under assets/). Reference images using `\\includegraphics[width=\\linewidth,keepaspectratio]{{assets/<filename>}}`. Never invent filenames or insert raw multi-page `.pdf` files into `\\includegraphics`.
 
 4. TARGETING EDITS (SMALLEST EDIT, STABLE TARGETS):
    - Every block has a stable `node_id` in the outline (e.g. `sec:introduction`, `frame:results`, `meta:title`, `env:tabular@sec:results#1`). node_ids stay valid while other blocks are edited — use them instead of line numbers or long copied anchors.
@@ -459,7 +556,9 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
    - `old_str` for `replace_text` should be copied from the latest content you were shown; small whitespace/quote drift is tolerated. If a target cannot be found, NOTHING is changed and the current region is returned — correct the target from that region in one step; do not retry the same text blindly.
    - Documents without sections or frames (e.g. an imported PDF) are addressed by page (`page:1`) and by text: lines containing the words the user mentioned are already shown to you (matched ignoring case), and `search_document` also matches ignoring case when the exact case finds nothing. Copy the document's own spelling/case into `old_str`.
    - Read only what you need: the target block is usually already in your context; otherwise `get_block(node_id)` (add include_style=true for title/colour/font changes) instead of reading large line ranges.
-   - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `detect_overflow` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
+   - Horizontal layout problems (text running past the right edge, misaligned right edge, an over-long word or ID): use `view_rendered_pages` to find them and `justify_content(node_id|text)` to fix them — do not hand-insert line breaks or shrink fonts yourself.
+   - "Elaborate this", "expand this section", "add more detail", "make the document longer": call `elaborate_content(target=…)`. It ADDS to the block and never replaces it, writes at least the required amount, and verifies that the original text survived — which is what the request is measured against.
+   - "Humanize this", "make it sound less like AI", "remove the AI tone", "anti-AI-slop": call `humanize_document(scope="document")`. Never hand-rewrite the prose for this — the tool rewords only bulk prose, leaves titles, author names, captions, labels, citations, math and tables untouched, and verifies every passage (same commands, same numbers, same meaning, measurably less generated-sounding). Hand-rewriting loses citations and reworks headings, which the tool is built to prevent.
    - Output ONLY valid JSON. No conversational commentary outside the JSON object.
    - JSON ESCAPING OF LaTeX (CRITICAL): inside JSON strings write EVERY LaTeX backslash as two backslashes (`\\\\begin{{itemize}}`, `\\\\item`, `\\\\textbf{{x}}`, `Research \\\\& Development`), and a LaTeX line break `\\\\` as `\\\\\\\\` — every table row ends with those four backslashes, never two. Use `\\n` only for a newline. Write every other character as itself and never use `\\uXXXX` escapes (`&`, not `\\u0026`). JSON escaping is separate from LaTeX escaping and never replaces it: an ampersand in prose is LaTeX `\\&`, which is `\\\\&` inside a JSON string.
 
@@ -468,9 +567,11 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * YOU ARE IN EDIT MODE: YOU MUST MODIFY `main.tex` IMMEDIATELY. NEVER just explain in chat.
      * Analyze all main topics in the document and elaborate each topic thoroughly using rich LLM-generated technical text, math, tables, and diagrams using the exact same context without hesitation.
      * When user asks for "one more additional slide for each topic", for EVERY topic/slide in the presentation, generate a new dedicated slide (e.g. `\\begin{{frame}}{{<Topic>: Detailed Analysis}}...\\end{{frame}}`) with deep technical detail, examples, or equations.
-     * If an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document`, `search_uploaded_references`, or `read_file_range`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
+     * If an attached reference document or PDF is provided, treat it as the PRIMARY SOURCE OF TRUTH. Read its contents with `read_attached_document` or `search_document(query, file=...)`, extract its real architectural diagrams, benchmark numbers, equations, algorithms, and section outlines, and synthesize them directly into the LaTeX code.
      * Ground all new paragraphs, slides, and subsections in real technical explanations from the attached source material (e.g. specific model names, percentage gaps, system components, citations).
-     * HOW MUCH, per section/slide/chapter you are asked to elaborate: 2–4 full paragraphs of substantive new technical prose, plus a displayed equation, a `tabular` of real values, an enumerated analysis or a worked example where the topic admits one. A sentence or two, a reworded heading, or one extra bullet is NOT an expansion and will be measured and sent back to you.
+     * HOW MUCH, per section/slide/chapter you are asked to elaborate: AT LEAST {expansion_min_chars} CHARACTERS OF NEW TEXT — about 2–4 full paragraphs of substantive new technical prose, plus a displayed equation, a `tabular` of real values, an enumerated analysis or a worked example where the topic admits one. A sentence or two, a reworded heading, or one extra bullet is NOT an expansion; the growth is measured per block and anything short is sent back to you.
+     * ADD, NEVER REPLACE (measured): keep every sentence that is already in the block, verbatim and in place, and write the new material around it. Do not summarise, condense, reword, re-order or delete the user's existing text while expanding it — at least 90% of a block's original wording must still be there afterwards, and a block that lost it is reported as rewritten, not expanded, and sent back. On a slide, reach the amount with FOLLOW-UP frames after it rather than by overfilling the frame.
+     * DO NOT INVENT FACTS: build the new material out of what the document, the attached sources and established knowledge of the subject actually support — mechanisms, definitions, trade-offs, worked reasoning, standard results. Never fabricate a measurement, a citation, a dataset, an author or a number that is not in the document or its sources, and never cite a key that is not already in the bibliography. Where a concrete figure would be invented, explain the mechanism instead.
      * Never write superficial or repetitive generic filler — write thorough, rigorous, publication-grade academic prose and equations. Keep each heading's text exactly as it is: headings are how blocks are tracked.
      * NEVER declare done=true without having applied the requested content into the file.
 
@@ -507,7 +608,7 @@ CRITICAL RULES & DOMAIN GUIDELINES (FROM OVERBRANCH PROMPT BUILDER):
      * YOU MUST MAKE A TOOL CALL TO `get_template_theme(category="ppt", theme_name=...)` to fetch that template from the library, and apply it without hesitation.
      * Available PPT themes include: 'regalia' (navy/gold formal), 'nordlight' (dark modern teal/orange), 'prism' (vibrant geometric), 'minimalist' (Focus clean), 'basic' (custom Madrid), 'sorbonne', 'uwm'.
      * If the user asks to change template without naming one, call `get_template_theme(category="ppt", theme_name="list")` to see available themes, then fetch the chosen one with `extract_section="preamble"`.
-     * Then use `read_file_range` on the document's preamble and `replace_text` to swap in the template's EXACT styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
+     * Then use `get_block('preamble')` to read the document's preamble and `replace_text` to swap in the template's EXACT styling while PRESERVING all of the user's slide contents, formulas, equations, and text!
 
 9. SURGICAL MINIMAL EDITS & COMPLETE ENVIRONMENT PRESERVATION (CRITICAL INTEGRITY RULES):
    - RETURN MINIMAL EDITS: Emit surgical, minimal edits targeting only the lines that need to change. Do NOT rewrite entire files or large enclosing blocks when only modifying a few lines. In a FULL DOCUMENT REWRITE or EXPANSION the smallest correct unit IS a whole chunk, and this rule never licenses leaving a requested chunk untouched or adding a token amount of text to it.
@@ -995,7 +1096,11 @@ EXPANSION_COMPILE_EVERY = 4  # editing turns between an expansion's compile chec
 # JSON-escaped LaTeX per block, and overrunning discards the whole step. Asking
 # for everything at once is what produced three lines per section.
 EXPANSION_BATCH_MIN = 2
-EXPANSION_BATCH_MAX = 4
+# Three, not four: each block now owes at least EXPANSION_MIN_NEW_CHARS of new
+# text *and* a verbatim copy of what it already held, so a four-block turn can
+# run past the 16K output budget and fall into truncation recovery — which costs
+# a second full call and then discards the answer.
+EXPANSION_BATCH_MAX = 3
 EXPANSION_TARGET_TURNS = 8   # aim for this many editing turns before batching wider
 EXPANSION_OVERHEAD_STEPS = 6  # reading, compiling, repair
 
@@ -1200,6 +1305,7 @@ def stream_opencode_agent(
     user_context: Optional[Dict[str, Any]] = None,
     base_version: Optional[int] = None,
     base_sha256: Optional[str] = None,
+    selection: Optional[Dict[str, Any]] = None,
 ) -> Generator[Dict[str, Any], None, None]:
     """
     Generator-based OpenCode agent loop that yields SSE events.
@@ -1343,8 +1449,9 @@ def stream_opencode_agent(
     }
 
     # 3. Build system prompt with tool definitions
-    tools_block = get_tools_prompt_block()
-    system_prompt = OPENCODE_SYSTEM_PROMPT.format(tools_block=tools_block)
+    tools_block = get_tools_prompt_block(mode="ask" if mode == "ask" else "edit")
+    system_prompt = OPENCODE_SYSTEM_PROMPT.format(
+        tools_block=tools_block, expansion_min_chars=EXPANSION_MIN_NEW_CHARS)
 
     total_lines = workspace.get_line_count()
     user_lower = user_instruction.lower()
@@ -1803,18 +1910,28 @@ def stream_opencode_agent(
                 f"{expansion_batch}:\n{worklist}\n\n"
                 f"DO THESE {len(first)} BLOCK(S) THIS TURN (and only these):\n{this_turn}\n\n"
                 "HOW TO EXPAND ONE BLOCK:\n"
-                "1. Write 2\u20134 full paragraphs of substantive technical prose \u2014 mechanisms, "
-                "trade-offs, worked reasoning, concrete figures \u2014 not a restatement of the "
-                "heading and not filler.\n"
+                f"1. Add AT LEAST {EXPANSION_MIN_NEW_CHARS} characters of new text to it \u2014 about "
+                "2\u20134 full paragraphs of substantive technical prose (mechanisms, trade-offs, "
+                "worked reasoning, concrete detail), not a restatement of the heading and not filler.\n"
                 "2. Add, where the topic admits one: a displayed equation, a `tabular` of real "
                 "values, an enumerated analysis, or a worked example.\n"
-                "3. Keep the existing text and its structure; you are adding to it, not replacing "
-                "it with a summary. Keep the heading exactly as it is \u2014 it is how the block is "
-                "tracked.\n"
-                "3b. ON SLIDES: a frame overflows if you stuff it. Add a FOLLOW-UP frame instead "
-                "(`insert_block(<unit_id>, new_frame, position='after')`, titled '<Topic>: "
-                "Detailed Analysis' or similar) and keep each frame to at most 6 bullets. A new "
-                "frame placed directly after a block counts as that block's expansion.\n"
+                "3. KEEP WHAT IS THERE, VERBATIM. Copy every existing sentence of the block into your "
+                "replacement unchanged, in its original order, and write the new material around it. "
+                "Do not summarise, condense, reword, re-order or drop the user's text \u2014 retention "
+                "is measured per block and a block that lost its wording comes back to you as "
+                "rewritten, not expanded. Keep the heading exactly as it is: it is how the block is "
+                "tracked. (`insert_into_chunk` cannot lose text \u2014 prefer it when you are only "
+                "appending.)\n"
+                "3a. Do NOT invent facts. Draw the new material from this document, the attached "
+                "sources and established knowledge of the subject; never fabricate a measurement, a "
+                "citation, a dataset or a number. Where a figure would have to be invented, explain "
+                "the mechanism instead.\n"
+                "3b. ON SLIDES: a frame overflows if you stuff it, and the amount above still "
+                "applies \u2014 reach it with FOLLOW-UP frames, not by overfilling one. Add two or "
+                "three new frames after the slide (`insert_block(<unit_id>, new_frame, "
+                "position='after')`, titled '<Topic>: Detailed Analysis', '<Topic>: Worked Example' "
+                "or similar), each at most 6 bullets. A new frame placed directly after a block "
+                "counts toward that block's expansion, and the original slide keeps its own text.\n"
                 "4. Use `rewrite_chunk(<unit_id>, new_content)` for a block you are rewriting whole, "
                 "or `insert_into_chunk(<unit_id>, content)` to append to it. Both accept the IDs "
                 "above. Batch this turn's blocks into one `tool_calls: [...]`.\n"
@@ -2020,6 +2137,29 @@ def stream_opencode_agent(
                 rows = []
             expansion_rows_cache[key] = rows
         return expansion_rows_cache[key]
+
+    def coverage_truth_note() -> str:
+        """
+        One measured line on how much of a whole-document job was really done, so the
+        model's own "expanded all sections" never stands alone (A3).
+        """
+        if expansion_units:
+            return _expansion_status_note(expansion_rows(force=True))
+        if mode != "edit" or not (is_expansion or is_full_rewrite) or not workspace.has_changed():
+            return ""
+        try:
+            cov = validate_coverage(workspace, user_instruction, scope=scope)
+        except Exception as cov_err:  # noqa: BLE001 — a status line must not fail the run
+            logger.warning(f"Final coverage measurement failed: {cov_err}")
+            return ""
+        if cov.passed or not cov.total_chunks:
+            return ""
+        verb = "Expanded" if is_expansion else "Rewrote"
+        missing = [t or i for t, i in zip(cov.missing_chunk_titles or [], cov.missing_chunk_ids or [])]
+        named = ", ".join(missing[:6]) + (f" and {len(missing) - 6} more" if len(missing) > 6 else "")
+        tail = f" Not reached: {named}." if named else ""
+        return (f"{verb} {cov.edited_chunks} of {cov.total_chunks} section(s).{tail} "
+                f"Ask again to continue with the rest.")
 
     def expansion_done_count() -> int:
         return sum(1 for r in expansion_rows() if r["ok"])
@@ -2325,6 +2465,43 @@ def stream_opencode_agent(
     # the tool that would show it the page (observed with the configured model on a real
     # deck). So the look is not left to the model: it is the first step of the run, entered
     # into the conversation as the tool call it is.
+    # A humanize request is about WORDING, and every guarantee that matters about a
+    # rewording — same commands, same citations, same numbers, same names, same meaning,
+    # measurably less of the register that gives generated prose away — is measurable. So
+    # it is a tool, and the run calls it rather than asking the model to rewrite prose by
+    # hand (which produces a rewrite of the document: reworded headings, dropped
+    # citations, a table turned into a sentence).
+    # What the user had highlighted in the editor when they asked. "Elaborate
+    # this" and "humanize this" mean the selection when there is one, and the
+    # request text alone cannot say which block that was.
+    if selection and (selection.get("text") or selection.get("start_line")):
+        workspace.user_selection = dict(selection)
+
+    from .humanize import is_humanize_request, run_humanize, humanize_status_note
+
+    # An elaboration request is "ADD substance", which is measurable; a model
+    # asked to do it by hand returns a reworded replacement for the block, with
+    # the user's own sentences gone. So the addition is a tool, and the run
+    # calls it — the same reason the render check and the compile pre-heal are
+    # loop-driven rather than prompt-driven with this model.
+    #
+    # It does NOT run for the document-wide expansion scope: that already has a
+    # measured worklist loop (`expansion_units`) which the model drives a few
+    # blocks per turn, and running both would elaborate every block twice.
+    from .elaborate import is_elaborate_request, run_elaborate, elaborate_status_note
+    elaborate_request = (
+        mode == "edit" and not is_compilation_fix_request and not is_creation_request
+        and not expansion_units and not is_full_rewrite
+        and bool(workspace.get_buffer().strip())
+        and is_elaborate_request(user_instruction)
+        and not is_humanize_request(user_instruction))
+    elaborate_report: Optional[Dict[str, Any]] = None
+    humanize_request = (mode == "edit" and not is_compilation_fix_request
+                        and bool(workspace.get_buffer().strip())
+                        and is_humanize_request(user_instruction))
+    humanize_report: Optional[Dict[str, Any]] = None
+    hum_args: Dict[str, Any] = {}
+
     from .visual_tools import auto_target, is_visual_request, thumbnail_data_url
     visual_request = (mode == "edit" and not is_compilation_fix_request and not is_creation_request
                       and bool(workspace.get_buffer().strip()) and is_visual_request(user_instruction))
@@ -2422,6 +2599,88 @@ def stream_opencode_agent(
         if still_visible is not None:
             return ("Checking the rendered page…", still_visible)
         return None
+
+    if elaborate_request:
+        yield _phase("elaborating", "Adding new material to the document…")
+        el_target = auto_target(workspace, user_instruction)
+        el_node = el_target.get("node_id")
+        el_args: Dict[str, Any] = ({"target": "section", "node_id": el_node} if el_node
+                                   else {"target": "document"})
+        el_args["instruction"] = user_instruction
+        yield {"type": "tool_call", "tool": "elaborate_content", "args": el_args}
+        t_el = time.time()
+        try:
+            elaborate_report = run_elaborate(workspace, user_instruction, el_node)
+        except LLMOperationCancelled:
+            raise
+        except Exception as el_err:  # noqa: BLE001 — the run continues without it
+            logger.warning(f"elaborate_content preflight failed: {el_err}")
+            elaborate_report = {"success": False, "error": str(el_err)}
+        agent_trace.record_tool_call(
+            name="elaborate_content", args=el_args,
+            result_summary=json.dumps({k: elaborate_report.get(k) for k in
+                                       ("success", "target", "units_total", "elaborated",
+                                        "added_chars", "compile_result")
+                                       if k in elaborate_report}, default=str),
+            latency_ms=(time.time() - t_el) * 1000,
+            success=bool(elaborate_report.get("success")))
+        yield {"type": "tool_result", "tool": "elaborate_content", "result": elaborate_report}
+        if elaborate_report.get("success"):
+            el_json = json.dumps(elaborate_report, indent=2, ensure_ascii=False)[:5000]
+            messages.append({"role": "assistant", "content": json.dumps({
+                "thought": "This request is to ADD material, which `elaborate_content` writes and "
+                           "verifies without replacing any of the existing text.",
+                "tool_call": {"name": "elaborate_content", "arguments": el_args}})})
+            messages.append({"role": "user", "content": (
+                f"TOOL RESULT from `elaborate_content`:\n{el_json}\n\n"
+                "The new material has been written, measured and inserted already \u2014 the "
+                "existing text was kept in place. Do NOT rewrite or re-word the blocks that were "
+                "elaborated.\n"
+                "If `failed` is empty, set done=true now and say in your explanation what was "
+                "added.\nIf it lists blocks, elaborate ONLY those: call "
+                "`elaborate_content(target=\"section\", node_id=...)` again for one, or write the "
+                "material yourself with `insert_into_chunk(<node_id>, content)` \u2014 at least "
+                f"{EXPANSION_MIN_NEW_CHARS} characters of new text, keeping everything that is "
+                "already there. Then set done=true.")})
+
+    if humanize_request:
+        yield _phase("humanizing", "Rewording the document's prose…")
+        hum_target = auto_target(workspace, user_instruction)
+        hum_args = ({"scope": "node", "node_id": hum_target["node_id"]}
+                    if hum_target.get("node_id") else {"scope": "document"})
+        yield {"type": "tool_call", "tool": "humanize_document", "args": hum_args}
+        t_hum = time.time()
+        try:
+            humanize_report = run_humanize(workspace, hum_args.get("node_id"))
+        except LLMOperationCancelled:
+            raise
+        except Exception as hum_err:  # noqa: BLE001 — the run continues without it
+            logger.warning(f"humanize_document preflight failed: {hum_err}")
+            humanize_report = {"success": False, "error": str(hum_err)}
+        agent_trace.record_tool_call(
+            name="humanize_document", args=hum_args,
+            result_summary=json.dumps({k: humanize_report.get(k) for k in
+                                       ("success", "spans_total", "humanized", "slop_before",
+                                        "slop_after", "passages_above_target", "verified",
+                                        "compile_result")
+                                       if k in humanize_report}, default=str),
+            latency_ms=(time.time() - t_hum) * 1000, success=bool(humanize_report.get("success")))
+        yield {"type": "tool_result", "tool": "humanize_document", "result": humanize_report}
+        if humanize_report.get("success"):
+            hum_json = json.dumps(humanize_report, indent=2, ensure_ascii=False)[:5000]
+            messages.append({"role": "assistant", "content": json.dumps({
+                "thought": "This request is about wording, which `humanize_document` rewrites and "
+                           "verifies without touching titles, citations, numbers, math or tables.",
+                "tool_call": {"name": "humanize_document", "arguments": hum_args}})})
+            messages.append({"role": "user", "content": (
+                f"TOOL RESULT from `humanize_document`:\n{hum_json}\n\n"
+                "The prose has been reworded and verified already \u2014 do NOT rewrite prose yourself, "
+                "and do not touch headings, author names, captions, citations, numbers, math or tables.\n"
+                "If `still_above_target` is empty, set done=true now and say in your explanation what was "
+                "reworded.\nIf it lists passages, reword ONLY those, on the source lines given, with "
+                "`replace_text` \u2014 keeping every command, citation, name and number exactly as it is "
+                "\u2014 or call `humanize_document(node_id=...)` on the block that holds them. Then set "
+                "done=true.")})
 
     if visual_request:
         yield _phase("checking_layout", "Looking at the rendered page…")
@@ -2524,6 +2783,7 @@ def stream_opencode_agent(
             messages[-1] = _with_budget_note(
                 messages[-1], steps_taken, actual_max_steps,
                 can_extend=(mode == "edit" and actual_max_steps < ABSOLUTE_MAX_STEPS),
+                show_budget=(actual_max_steps - steps_taken) <= BUDGET_NOTE_WINDOW,
                 state="\n".join(x for x in (
                     _imported_figures_note(workspace),
                     _expansion_progress_note(expansion_rows(), expansion_batch),
@@ -2586,12 +2846,17 @@ def stream_opencode_agent(
             logger.error(f"LLM call failed at step {steps_taken}: {type(e).__name__}: {str(e)[:200]}")
             llm_failure = _friendly_llm_error(e)
             agent_trace.failure_reason = f"llm_unavailable:{getattr(getattr(e, 'kind', None), 'value', type(e).__name__)}"
+            salvageable = mode == "edit" and workspace.has_changed()
             yield {
                 "type": "status",
                 "step": steps_taken,
-                "message": llm_failure,
+                "message": (f"{llm_failure} Checking the {workspace.get_edit_count()} edit(s) already made\u2026"
+                            if salvageable else llm_failure),
             }
-            yield _phase("failed", llm_failure)
+            if not salvageable:
+                # With edits in the buffer the outcome is decided by the final
+                # compile gate below: verified edits are kept, not discarded.
+                yield _phase("failed", llm_failure)
             break
 
         raw_content = response.get("content", "")
@@ -2671,7 +2936,7 @@ def stream_opencode_agent(
             continue
 
         # Extract thought
-        thought = parsed.get("thought", "")
+        thought = scrub_budget_talk(str(parsed.get("thought", "") or ""))
         if thought:
             yield {"type": "thought", "content": thought}
 
@@ -2691,8 +2956,17 @@ def stream_opencode_agent(
                 })
                 continue
 
-            # 1. Enforce that Edit mode must have actually produced document modifications
-            if mode == "edit" and not (is_compilation_fix_request and compile_verified) and not workspace.has_changed() and not pdf_conversion_job_id:
+            # 1. Enforce that Edit mode must have actually produced document modifications.
+            #    Unless the RUN already did the work: a finished PDF conversion, or a
+            #    humanize pass that rewrote the prose itself (or measured that every
+            #    passage already reads as human writing, which is a legitimate "nothing
+            #    to do"). Without this, such a run spent its whole budget being told
+            #    "you made 0 edits" and ended on the safety cap.
+            humanize_handled = bool(humanize_report and humanize_report.get("success"))
+            elaborate_handled = bool(elaborate_report and elaborate_report.get("elaborated"))
+            if (mode == "edit" and not (is_compilation_fix_request and compile_verified)
+                    and not workspace.has_changed() and not pdf_conversion_job_id
+                    and not humanize_handled and not elaborate_handled):
                 done_rejections += 1
                 logger.info(f"Agent attempted premature done in edit mode at step {steps_taken} (rejection #{done_rejections}); enforcing edits.")
 
@@ -3269,10 +3543,16 @@ def stream_opencode_agent(
             ),
         })
 
+    # The step budget is internal; whatever the model said about it never
+    # reaches the user (server-side notes are appended after this point).
+    agent_explanation = scrub_budget_talk(agent_explanation or "")
+
     # 4a. Safety net: the loop can end without `done` (step budget exhausted, the
-    # legacy proposed_chunk reply). Those edits used to ship without ever being
-    # compiled; the gate runs here with its deterministic repairs, but no LLM turn.
-    if (mode == "edit" and compile_failed_final is None and llm_failure is None
+    # legacy proposed_chunk reply, or the LLM provider dropping out mid-run).
+    # Those edits used to ship without ever being compiled — or, for a provider
+    # failure, be thrown away uncompiled; the gate runs here with its
+    # deterministic repairs, but no LLM turn.
+    if (mode == "edit" and compile_failed_final is None
             and workspace.has_changed() and not compile_verified and compile_available):
         yield _phase("compiling", "Compiling…")
         gate, gate_res = compile_gate(final=True)
@@ -3286,6 +3566,7 @@ def stream_opencode_agent(
     # could not remove the rest keeps its progress and says what still fails.
     failure_payload: Optional[Dict[str, Any]] = None
     partial_payload: Optional[Dict[str, Any]] = None
+    llm_salvaged = False  # provider dropped out; the verified edits are kept
     errored_code: Optional[str] = None
     detailed_errors: List[Dict[str, Any]] = []
     compile_log: str = ""
@@ -3420,10 +3701,32 @@ def stream_opencode_agent(
                 "errored_code": errored_code,
                 "compile_log": compile_log[-4000:] if compile_log else "",
             }
+    elif llm_failure is not None and llm_salvage_decision(
+            mode=mode, has_changed=workspace.has_changed(), compile_verified=compile_verified,
+            compile_available=compile_available, compile_failed=False) == "commit":
+        # The provider dropped out, but every edit made before that compiled with no
+        # new errors (the differential gate above). Keep them: rolling them back is
+        # what turned a run with three good sections into "Failed Compilation".
+        llm_salvaged = True
+        agent_trace.compile_result = "partial"
+        n_edits = workspace.get_edit_count()
+        partial_payload = {
+            "message": (f"{llm_failure.rstrip('.')} before the run finished. The {n_edits} edit(s) completed "
+                        f"before that were compiled and verified, and are kept."),
+            "operation": "edit",
+            "reason": "The AI provider stopped responding mid-run; ask again to continue with the rest.",
+            "errors": [],
+            "detailed_errors": [],
+            "compile_log": "",
+            "document_unchanged": False,
+            "partial": True,
+        }
     elif llm_failure is not None:
         if workspace.has_changed():
-            errored_code = workspace.get_buffer()
             workspace.rollback_transaction(run_tx)
+        # Nothing was compiled here (no edits, or no LaTeX engine), so there is no
+        # "code that failed compilation" to show: errored_code stays None.
+        errored_code = None
         agent_trace.compile_result = "not_run"
         failure_payload = {
             "message": f"{llm_failure} The document was not modified.",
@@ -3431,7 +3734,7 @@ def stream_opencode_agent(
             "reason": llm_failure,
             "attempts": [f"{a.get('provider')}:{a.get('failure') or 'ok'}" for a in agent_trace.llm_attempts[-6:]],
             "document_unchanged": True,
-            "errored_code": errored_code,
+            "errored_code": None,
         }
     else:
         agent_trace.compile_result = (
@@ -3469,6 +3772,17 @@ def stream_opencode_agent(
                 diag_parts.append(f"\n\n### Candidate LaTeX Code That Failed Compilation:\n```latex\n{errored_code}\n```")
 
             agent_explanation = "".join(diag_parts)
+    elif partial_payload and llm_salvaged:
+        yield _phase("partial", partial_payload["message"], details=partial_payload)
+        parts = [agent_explanation.strip()] if agent_explanation and agent_explanation.strip() else []
+        parts.append(partial_payload["message"])
+        status = _compile_status_note(last_compile, compile_available, compile_verified)
+        if status:
+            parts.append(status)
+        cov_note = coverage_truth_note()
+        if cov_note:
+            parts.append(cov_note)
+        agent_explanation = "\n\n".join(parts)
     elif partial_payload:
         yield _phase("partial", partial_payload["message"], details=partial_payload)
         diag_items = []
@@ -3487,9 +3801,36 @@ def stream_opencode_agent(
             agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + status
         # …and, for an expansion, how much of the document actually grew. The
         # model's own explanation says "expanded all sections" either way.
-        exp_note = _expansion_status_note(expansion_rows(force=True)) if expansion_units else ""
+        exp_note = coverage_truth_note()
         if exp_note:
             agent_explanation = (agent_explanation.rstrip() + "\n" + exp_note) if agent_explanation else exp_note
+        # …and, for an elaboration request, how much was really added.
+        if elaborate_request and elaborate_report:
+            el_note = elaborate_status_note(elaborate_report)
+            if el_note:
+                agent_explanation = ((agent_explanation.rstrip() + "\n" + el_note)
+                                     if agent_explanation else el_note)
+
+        # …and, for a humanize request, what the prose measures now — re-measured
+        # against the delivered buffer, since the model may have edited after the pass.
+        if humanize_request and humanize_report and humanize_report.get("success"):
+            try:
+                from .humanize import humanize_document_tool as _measure
+                measure_args: Dict[str, Any] = {"scope": humanize_report.get("scope", "document"),
+                                                "report_only": True}
+                if humanize_report.get("scope") == "node" and hum_args.get("node_id"):
+                    measure_args["node_id"] = hum_args["node_id"]
+                final_m = _measure(workspace, measure_args)
+                verified = dict(humanize_report)
+                verified["slop_after"] = final_m.get("slop_after", humanize_report.get("slop_after"))
+                verified["passages_above_target"] = final_m.get("passages_above_target", 0)
+            except Exception as measure_err:  # noqa: BLE001 — a status line must not fail the run
+                logger.warning(f"Final humanize measurement failed: {measure_err}")
+                verified = humanize_report
+            hum_note = humanize_status_note(verified)
+            if hum_note:
+                agent_explanation = ((agent_explanation.rstrip() + "\n" + hum_note)
+                                     if agent_explanation else hum_note)
         # …and, for a request about how the page looks, what the page measures now.
         if (visual_request or creation_check) and visual_target:
             try:
@@ -3532,7 +3873,11 @@ def stream_opencode_agent(
     agent_trace.steps_used = steps_taken
     touched_chunks = workspace.get_touched_chunks()
     agent_trace.nodes_touched = list(touched_chunks)
-    if num_content_chunks > 0:
+    exp_rows_final = expansion_rows() if expansion_units else []
+    if exp_rows_final:
+        agent_trace.coverage_pct = round(
+            sum(1 for r in exp_rows_final if r["ok"]) / len(exp_rows_final) * 100.0, 1)
+    elif num_content_chunks > 0:
         touched_content = [c.chunk_id for c in content_chunks if c.chunk_id in touched_chunks]
         agent_trace.coverage_pct = round((len(touched_content) / num_content_chunks) * 100.0, 1)
     else:
@@ -3572,11 +3917,14 @@ def stream_opencode_agent(
                     + "\n\nThe original document was preserved to prevent compilation failure."
                     + "\n\n### Candidate LaTeX Code That Failed Validation:\n```latex\n" + invalid_candidate_code + "\n```"
                 )
+                # errored_code is reserved for code that was compiled and failed;
+                # this candidate failed structural validation (it is shown in the
+                # explanation instead).
                 yield {
                     "type": "compile_error",
                     "message": f"Pre-commit validation failed: {'; '.join(val_errors[:2])}",
                     "errors": val_errors,
-                    "errored_code": invalid_candidate_code,
+                    "errored_code": None,
                 }
                 yield {
                     "type": "result",
@@ -3592,7 +3940,7 @@ def stream_opencode_agent(
                         "elapsed_ms": elapsed_ms,
                         "trace": trace_summary,
                         "validation_errors": val_errors,
-                        "errored_code": invalid_candidate_code,
+                        "errored_code": None,
                     },
                 }
                 yield compute_final_diff(
