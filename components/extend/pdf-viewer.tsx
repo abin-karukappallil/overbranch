@@ -2479,92 +2479,235 @@ function PDFViewerInner({
     return () => window.cancelAnimationFrame(frame)
   }, [activePage, documentId, thumbnailSidebarVisible, thumbnails])
 
-  // The zoom plugin only releases its viewport gate for mode-based zoom
-  // levels (automatic/fit); with a numeric default the gate would never
-  // lift, so apply the initial zoom explicitly once the document loads.
-  const initialZoomDocumentRef = React.useRef<string | null>(null)
-  React.useEffect(() => {
-    if (!pdfDocument || !zoom) return
-    if (initialZoomDocumentRef.current === documentId) return
-
-    initialZoomDocumentRef.current = documentId
-    // A recompile opens a NEW document id, so this fires again and used to
-    // force `defaultZoom` — throwing away the zoom the reader had chosen. The
-    // caller's remembered level wins when there is one.
-    const wanted = initialView?.zoom
-    zoom.requestZoom((wanted === undefined || wanted === null ? defaultZoom : wanted) as any)
-  }, [defaultZoom, documentId, initialView?.zoom, pdfDocument, zoom])
-
-  // Land on the page the caller asked for, once per document. `scrollToPage`
-  // needs the page layout, which exists only after the document has loaded —
-  // hence an effect keyed on `pdfDocument` rather than a call at mount. The
-  // page is clamped to the document that actually arrived, so page 9 of a
-  // document an edit shortened to 7 pages lands on 7 rather than on 1.
+  // Landing the reader back where they were after a recompile opened a NEW
+  // embedpdf document. Three things inside the plugins fight a naive restore,
+  // and all three win it — which is why this is a sequence and not one call:
+  //
+  //  1. The zoom plugin gates the viewport the moment a document starts
+  //     loading (`viewport.gate("zoom", id)`), and a gated viewport renders
+  //     no children (see `PDFViewerScrollAreaViewport`). The scroll container
+  //     then holds no content, so any scrollTop handed to it is clamped to 0.
+  //  2. Releasing that gate scrolls to the top: the release happens inside the
+  //     zoom plugin's own request handler, which ends by scrolling to the
+  //     position it just computed — for the automatic-zoom recalc on load,
+  //     that is the top of the document.
+  //  3. The scroll plugin's `setLayoutReady`, fired by the Scroller as soon as
+  //     it has layout, does `viewport.scrollTo(docState.scrollOffset)`; before
+  //     layout-ready the plugin deliberately keeps that stored offset stale,
+  //     so it is 0 and the viewer is pinned to the top once more.
+  //
+  // So the restore waits until the viewport is ungated, sized AND scrollable,
+  // applies the remembered zoom FIRST (the scale decides the layout a scroll
+  // is measured against), then scrolls — and then verifies it actually landed,
+  // re-scrolling if it did not and watching a moment longer in case one of the
+  // plugins slams the scroll back afterwards. `scrollToPage` is a silent no-op
+  // whenever the layout has not been measured yet, so an unverified one-shot
+  // call looks correct in code and loses the reader's place in practice.
+  //
+  // This is the ordering Overleaf uses: wait for pdf.js `pagesinit`, set the
+  // scale, then `scrollToPosition(position, scale)`.
   //
   // A hidden pane (desktop collapses it to zero width, mobile `display:none`s
-  // it) has a zero-sized viewport that cannot scroll, so the restore waits
+  // it) has a zero-sized viewport that cannot scroll, so nothing is attempted
   // until the viewport has a size. The stable capabilities are used rather
   // than `useScroll().provides`, which is a new object every render and would
-  // cancel the pending frame on each one.
+  // restart the sequence on each one.
   const { provides: scrollCapability } = useScrollCapability()
   const { provides: viewportCapability } = useViewportCapability()
-  // Set once the restore for a document id has been applied (or there was
-  // nothing to restore). Until then the fresh document sits on page 1, and
-  // reporting that would overwrite the very place being restored.
-  const restoredViewDocumentRef = React.useRef<string | null>(null)
-  // After the restore's scroll is sent, the plugin's metrics still describe
-  // the old position for a moment; ignore reports that disagree with the
-  // restored page until they catch up (or a short deadline passes).
-  const restoreSettleRef = React.useRef<{
-    documentId: string
-    page: number
-    until: number
-  } | null>(null)
+  // `zoom` is a fresh object on every render, so it is read through a ref: it
+  // must not restart the sequence.
+  const zoomRef = React.useRef(zoom)
   React.useEffect(() => {
-    if (!pdfDocument || !scrollCapability) return
-    if (restoredViewDocumentRef.current === documentId) return
+    zoomRef.current = zoom
+  })
+  // Set once the restore for a document id is finished (landed, or given up
+  // on). Until then the fresh document sits on page 1, and reporting that
+  // would overwrite the very place being restored — which is what made the
+  // loss permanent instead of a one-compile glitch.
+  const restoredViewDocumentRef = React.useRef<string | null>(null)
+  // The sequence's own progress. It lives in a ref, not in the effect's
+  // closure, because `pdfDocument` and the capabilities change identity on
+  // store updates: the effect is torn down and re-created while the restore is
+  // still in flight. With the progress in the closure, every re-run started a
+  // fresh sequence and the viewer stayed pinned to the restored place, so a
+  // reader could no longer scroll or type a page number afterwards.
+  const restoreRunRef = React.useRef<{
+    documentId: string | null
+    raf: number
+    stop: (() => void) | null
+  }>({ documentId: null, raf: 0, stop: null })
+
+  // Only the unmount — which, for this keyed component, is the document going
+  // away — stops a sequence in flight.
+  React.useEffect(
+    () => () => {
+      window.cancelAnimationFrame(restoreRunRef.current.raf)
+      restoreRunRef.current.stop?.()
+      restoreRunRef.current = { documentId: null, raf: 0, stop: null }
+    },
+    []
+  )
+
+  React.useEffect(() => {
+    if (!pdfDocument || !scrollCapability || numPages < 1) return
+    // Started (or finished) for this document already: a re-run of this effect
+    // must not start a second sequence.
+    if (restoreRunRef.current.documentId === documentId) return
+    window.cancelAnimationFrame(restoreRunRef.current.raf)
+    restoreRunRef.current.stop?.()
+    restoreRunRef.current = { documentId, raf: 0, stop: null }
 
     const viewportScope = viewportCapability?.forDocument(documentId)
-    let raf = 0
-    const attempt = () => {
-      if (restoredViewDocumentRef.current === documentId) return
-      try {
-        const vm = viewportScope?.getMetrics()
-        if (vm && (vm.clientWidth <= 0 || vm.clientHeight <= 0)) return
-      } catch {
-        return
-      }
-      const wanted = clampRestore(initialView, numPages)
-      if (!wanted || ((wanted.page ?? 1) <= 1 && !wanted.scrollOffset)) {
-        restoredViewDocumentRef.current = documentId
-        return
-      }
-      window.cancelAnimationFrame(raf)
-      // One frame later: the scroll plugin measures pages on its own first
-      // pass, and a request sent before that lands on an unmeasured layout.
-      raf = window.requestAnimationFrame(() => {
-        if (restoredViewDocumentRef.current === documentId) return
-        restoredViewDocumentRef.current = documentId
-        restoreSettleRef.current = {
-          documentId,
-          page: wanted.page ?? 1,
-          until: performance.now() + 800,
-        }
-        scrollCapability.forDocument(documentId).scrollToPage({
-          pageNumber: wanted.page ?? 1,
-          pageCoordinates: wanted.scrollOffset,
-          behavior: "auto",
-        })
-      })
+    // Bound once: `tick` is a hoisted function declaration, so the narrowing
+    // from the guard above does not reach inside it.
+    const scrollScope = scrollCapability.forDocument(documentId)
+    const target = clampRestore(initialView, numPages)
+    const wantedZoom = initialView?.zoom
+    const targetPage = target?.page ?? 1
+
+    let finished = false
+    let zoomRequests = 0
+    let lastZoomAt = 0
+    let scrollAttempts = 0
+    let lastScrollAt = 0
+    let landedAt = 0
+    // Generous, because it is only ever reached when something is wrong: a
+    // document that never becomes scrollable, or a pane that stays hidden.
+    const deadline = performance.now() + 6000
+
+    const finish = () => {
+      if (finished) return
+      finished = true
+      window.cancelAnimationFrame(restoreRunRef.current.raf)
+      restoreRunRef.current.raf = 0
+      restoreRunRef.current.stop?.()
+      restoreRunRef.current.stop = null
+      // Reporting opens only now: until the restore has landed, the fresh
+      // document sits on page 1, and reporting that would overwrite the very
+      // place being restored.
+      restoredViewDocumentRef.current = documentId
     }
 
-    attempt()
-    const unsubscribe = viewportScope?.onViewportChange(() => attempt())
-    return () => {
-      window.cancelAnimationFrame(raf)
+    const schedule = () => {
+      if (finished || restoreRunRef.current.raf) return
+      restoreRunRef.current.raf = window.requestAnimationFrame(tick)
+    }
+
+    /** Where the viewer is right now, in the same terms as the target. */
+    const currentAnchor = () => {
+      try {
+        const metrics = scrollScope.getMetrics()
+        return anchorFromVisibility(metrics?.pageVisibilityMetrics, {
+          viewportGap: viewportCapability?.getViewportGap() ?? 0,
+        })
+      } catch {
+        return null
+      }
+    }
+
+    const isGated = () => {
+      try {
+        return viewportScope?.isGated() ?? false
+      } catch {
+        return false
+      }
+    }
+
+    function tick() {
+      restoreRunRef.current.raf = 0
+      if (finished) return
+      const now = performance.now()
+      // The live element, not the plugin's stored metrics: the plugin does not
+      // re-measure while the viewport is gated, and the whole question here is
+      // whether the container has mounted content to scroll through.
+      const el = viewportElementRef.current
+      const sized = !!el && el.clientWidth > 0 && el.clientHeight > 0
+      const scrollable = !!el && el.scrollHeight > el.clientHeight + 1
+
+      // The zoom plugin ignores a request while its viewport is 0x0, so the
+      // remembered level is asked for once the viewport has a size, and asked
+      // for again while the gate is still up (the gate comes down inside a
+      // request that was actually honoured).
+      if (sized && zoomRef.current && (zoomRequests === 0 || (isGated() && zoomRequests < 6 && now - lastZoomAt > 150))) {
+        zoomRequests += 1
+        lastZoomAt = now
+        try {
+          // A recompile opens a NEW document id, so this runs again and used
+          // to force `defaultZoom` — throwing away the zoom the reader had
+          // chosen. The caller's remembered level wins when there is one.
+          zoomRef.current.requestZoom(
+            (wantedZoom === undefined || wantedZoom === null ? defaultZoom : wantedZoom) as any
+          )
+        } catch {
+          /* the next frame tries again */
+        }
+        // The new scale re-lays out the pages; measure the scroll against that
+        // layout, not this one.
+        schedule()
+        return
+      }
+
+      if (!target) {
+        // Page 1 at the default zoom is where a fresh document already is, so
+        // there is nothing to scroll — just open the reporting gate once the
+        // zoom has been dealt with.
+        if (zoomRequests > 0 || now > deadline) finish()
+        else schedule()
+        return
+      }
+
+      if (!sized || !scrollable || isGated() || zoomRequests === 0) {
+        if (now > deadline) finish()
+        else schedule()
+        return
+      }
+
+      const anchor = currentAnchor()
+      const landed =
+        !!anchor &&
+        anchor.page === targetPage &&
+        (!target.scrollOffset || Math.abs(anchor.scrollOffset.y - target.scrollOffset.y) <= 2)
+
+      if (landed) {
+        // Hold on a moment before trusting it: `setLayoutReady` and the zoom
+        // gate release can both still scroll this viewport, and if one of them
+        // does, the next frames put the reader back.
+        if (!landedAt) landedAt = now
+        if (now - landedAt > 250) finish()
+        else schedule()
+        return
+      }
+      landedAt = 0
+
+      if (scrollAttempts >= 10 || now > deadline) {
+        finish()
+        return
+      }
+      if (now - lastScrollAt > 80) {
+        scrollAttempts += 1
+        lastScrollAt = now
+        try {
+          scrollScope.scrollToPage({
+            pageNumber: targetPage,
+            pageCoordinates: target.scrollOffset,
+            behavior: "auto",
+          })
+        } catch {
+          /* the next frame tries again */
+        }
+      }
+      schedule()
+    }
+
+    const unsubscribe = viewportScope?.onViewportChange(() => schedule())
+    restoreRunRef.current.stop = () => {
+      finished = true
       unsubscribe?.()
     }
-  }, [documentId, initialView, numPages, pdfDocument, scrollCapability, viewportCapability])
+    schedule()
+    // No teardown here on purpose: see `restoreRunRef` above. The unmount
+    // effect stops a sequence in flight, and `finish` unsubscribes.
+  }, [defaultZoom, documentId, initialView, numPages, pdfDocument, scrollCapability, viewportCapability])
 
   // Report where the reader is, so the caller still has it when a recompile
   // replaces this document. The anchor is chosen from the plugin's visibility
@@ -2572,7 +2715,9 @@ function PDFViewerInner({
   // of it at the viewport's top-left corner — which is what `scrollToPage`
   // takes back — so a reader part-way down page 9, or straddling pages 3 and
   // 4, returns to exactly that place. Nothing is reported while the viewport
-  // is zero-sized (a hidden pane) or before this document's restore has run.
+  // is zero-sized (a hidden pane) or before this document's restore has
+  // finished — a report of the fresh document's page 1 would erase the place
+  // the restore is on its way to.
   const reportedZoom = zoomState?.zoomLevel ?? currentZoomLevel
   const reportView = React.useCallback(() => {
     if (!onViewerStateChange || !pdfDocument || !scrollCapability) return
@@ -2589,11 +2734,6 @@ function PDFViewerInner({
       return
     }
     if (!anchor) return
-    const settle = restoreSettleRef.current
-    if (settle && settle.documentId === documentId) {
-      if (anchor.page !== settle.page && performance.now() < settle.until) return
-      restoreSettleRef.current = null
-    }
     onViewerStateChange({
       page: anchor.page,
       zoom: reportedZoom,
