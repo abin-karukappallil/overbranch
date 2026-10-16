@@ -135,3 +135,127 @@ export function anchorFromVisibility(
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { page: Math.round(best.pageNumber), scrollOffset: { x, y } };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Surviving a page reload, not just a recompile.
+ *
+ * The in-memory anchor dies with the tab, so reopening a project dropped the
+ * reader on page 1 of a document they had read half of. The anchor is small and
+ * per-project, so it lives in `localStorage` under one key per project — the
+ * same thing Overleaf does with its PDF position.
+ *
+ * Storage is treated as a cache that may be absent, blocked (private windows,
+ * blocked site data), or hand-edited: every path is wrapped, and anything that
+ * does not parse into a usable anchor reads back as `null`.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** `localStorage` key holding the remembered view of one project's PDF. */
+export function storedViewKey(projectId: string): string {
+  return `ob:pdf-view:${projectId}`;
+}
+
+/** Older than this and the remembered place is not worth honouring. */
+export const STORED_VIEW_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+type StoredView = PDFViewState & { savedAt?: number };
+
+/**
+ * The zoom plugin's mode names. A stored zoom has to be a positive number or
+ * one of these; anything else came from a hand-edited entry or a future
+ * version of this code, and the viewer's default is the safer answer.
+ */
+const ZOOM_MODES = new Set(["automatic", "fit-page", "fit-width"]);
+
+/**
+ * `localStorage`, or `null` where there is none (SSR) or reaching it throws
+ * (a private window, blocked site data). Accessing the property itself can
+ * throw, which is why even that is inside the `try`.
+ */
+function storage(): Storage | null {
+  try {
+    return typeof window === "undefined" ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The remembered view for a project, or `null` when there is none, it cannot be
+ * read, it does not parse, or it has gone stale. The page is NOT clamped here —
+ * the page count of the document being opened is not known yet; `clampRestore`
+ * does that once it is.
+ */
+export function readStoredView(
+  projectId: string | null | undefined,
+  now: number = Date.now(),
+): PDFViewState | null {
+  if (!projectId) return null;
+  const store = storage();
+  if (!store) return null;
+
+  let raw: string | null = null;
+  try {
+    raw = store.getItem(storedViewKey(projectId));
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const saved = parsed as StoredView;
+
+  if (Number.isFinite(saved.savedAt) && now - (saved.savedAt as number) > STORED_VIEW_MAX_AGE_MS) {
+    return null;
+  }
+
+  // Stricter than `clampRestore`, which is fed by the viewer itself and so
+  // only has to cope with rounding. This is fed by whatever is in the
+  // browser's storage, so a page that is not a page, or a zoom that is neither
+  // a scale nor a mode the plugin knows, discards the whole entry rather than
+  // moving the reader somewhere arbitrary.
+  if (!Number.isFinite(saved.page) || (saved.page as number) < 1) return null;
+  if (
+    saved.zoom !== undefined &&
+    saved.zoom !== null &&
+    !(typeof saved.zoom === "number" && Number.isFinite(saved.zoom) && saved.zoom > 0) &&
+    !(typeof saved.zoom === "string" && ZOOM_MODES.has(saved.zoom))
+  ) {
+    return null;
+  }
+
+  // Then the clamp, with no page count: it normalises the offset and answers
+  // `null` for an entry that only says "page 1".
+  return clampRestore({ page: saved.page, zoom: saved.zoom, scrollOffset: saved.scrollOffset }, 0);
+}
+
+/**
+ * Remember where the reader is in a project's PDF. Callers should debounce this
+ * — the viewer reports on every scroll frame. A failure is ignored: losing the
+ * reader's place on the next reload is not worth an error in their face.
+ */
+export function writeStoredView(
+  projectId: string | null | undefined,
+  view: PDFViewState | null | undefined,
+  now: number = Date.now(),
+): void {
+  if (!projectId) return;
+  const store = storage();
+  if (!store) return;
+
+  const key = storedViewKey(projectId);
+  // Nothing worth remembering (page 1, default zoom): drop the entry rather
+  // than leave a stale one behind to restore to.
+  const keep = clampRestore(view, 0);
+  try {
+    if (!keep) store.removeItem(key);
+    else store.setItem(key, JSON.stringify({ ...keep, savedAt: now } satisfies StoredView));
+  } catch {
+    /* storage full or blocked: the in-memory anchor still covers recompiles */
+  }
+}

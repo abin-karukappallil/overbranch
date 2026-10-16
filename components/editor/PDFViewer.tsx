@@ -28,6 +28,7 @@ import {
   type PDFViewerViewState,
 } from "@/components/extend/pdf-viewer";
 import { trpcClient } from "@/trpc/client";
+import { writeStoredView } from "@/lib/pdf-view-state";
 
 export interface PDFViewerRefHandle {
   scrollToDestination: (
@@ -107,7 +108,39 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
     const ownViewRef = useRef<PDFViewerViewState>({ page: 1 });
     const lastViewRef = viewMemoryRef ?? ownViewRef;
     const downloadFileName = pdfDownloadFileName(projectName);
-    const [restoreView, setRestoreView] = useState<PDFViewerViewState | null>(null);
+    // Seeded from the shared memory at mount, not only when a new blob
+    // arrives: after a page reload the memory carries the place the reader
+    // left off on (see `readStoredView`), and the first compiled PDF of the
+    // session has to land there too.
+    const [restoreView, setRestoreView] = useState<PDFViewerViewState | null>(
+      () => ({ ...lastViewRef.current })
+    );
+
+    // Remembering where the reader is: in the shared ref for the next
+    // recompile, and in storage for the next time they open the project. The
+    // viewer reports on every scroll frame, so the write is debounced. The
+    // callback is stable, because the viewer rebuilds its reporting and
+    // re-subscribes to the scroll stream whenever this identity changes.
+    const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const handleViewerStateChange = useCallback(
+      (state: PDFViewerViewState) => {
+        if (!state.page || state.page < 1) return;
+        lastViewRef.current = state;
+        if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = setTimeout(() => {
+          persistTimerRef.current = null;
+          writeStoredView(projectId, state);
+        }, 400);
+      },
+      [lastViewRef, projectId]
+    );
+
+    useEffect(
+      () => () => {
+        if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      },
+      []
+    );
 
     useEffect(() => {
       const checkMobile = () => {
@@ -435,9 +468,7 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
               ref={extendViewerRef}
               src={blobUrl}
               initialView={restoreView ?? undefined}
-              onViewerStateChange={(state) => {
-                if (state.page && state.page >= 1) lastViewRef.current = state;
-              }}
+              onViewerStateChange={handleViewerStateChange}
               defaultZoom="automatic"
               showUpload={false}
               showDownload={true}

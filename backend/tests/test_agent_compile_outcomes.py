@@ -180,14 +180,18 @@ def test_compile_failure_returns_errored_code_and_detailed_diagnostics(scripted_
     assert res["failure"]["errored_code"] == compile_err_ev["errored_code"]
     assert res["failure"]["detailed_errors"] == compile_err_ev["detailed_errors"]
 
-    # 4. Agent explanation details how it errored and includes the candidate code
+    # 4. The explanation names the error and its line — in one short line.
+    #    It used to recite a "How It Errored (Diagnostics)" section with a
+    #    suggested fix per error and then the entire failing document in a code
+    #    block. All of that is still in the payload above, where the UI and the
+    #    trace can reach it; the person gets a sentence.
     explanation = res["explanation"]
-    assert "### How It Errored (Diagnostics):" in explanation
-    assert f"Line {de['line']}" in explanation
     assert "Undefined control sequence." in explanation
-    assert "\\badmacro" in explanation
-    assert "### Candidate LaTeX Code That Failed Compilation:" in explanation
-    assert "```latex" in explanation
+    assert f"line {de['line']}" in explanation
+    assert "### How It Errored (Diagnostics):" not in explanation
+    assert "### Candidate LaTeX Code That Failed Compilation:" not in explanation
+    assert "```latex" not in explanation
+    assert len(explanation) < 400, explanation
 
 
 
@@ -338,7 +342,7 @@ def test_feedback_to_the_model_names_the_true_line(scripted_llm, beamer_compiler
     assert "Lines 11-18" in feedback and "offending token is somewhere inside it" in feedback
 
 
-# --- a new document that still builds is kept as a draft ----------------------------------------
+# --- a document that still builds to a PDF is kept, errors and all ------------------------------
 
 NEW_DOC = ("\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nSome \\badmacro text.\n"
            "\\end{document}\n")
@@ -354,7 +358,7 @@ def test_new_document_with_a_surviving_error_is_kept_as_a_draft(scripted_llm, ru
     assert not data.get("failure")
     assert data["partial"]["draft"] is True and data["partial"]["document_unchanged"] is False
     assert data["has_changes"] is True
-    assert "Created the document, but 1 LaTeX error remains" in data["explanation"]
+    assert "Created the document, with 1 LaTeX error still in it" in data["explanation"]
     assert "Undefined control sequence." in data["explanation"]
     assert data["trace"]["compile_result"] == "draft"
 
@@ -368,9 +372,42 @@ def test_new_document_that_produces_no_pdf_is_still_rolled_back(scripted_llm, ru
     assert data["failure"]["document_unchanged"] is True and data["trace"]["compile_result"] == "failed"
 
 
-def test_an_edit_to_a_document_with_content_is_never_kept_as_a_draft(scripted_llm, rule_compiler):
+def test_an_edit_whose_document_still_builds_is_kept(scripted_llm, rule_compiler):
+    """
+    TeX walks past most errors and emits a PDF anyway — `\\hspace{5}` gives three
+    "Illegal unit of measure (pt inserted)" and a perfectly good PDF. Discarding
+    such an edit threw away work the reader could already see, and replaced it
+    with a page of diagnostics; if a PDF came out, the edit stands.
+    """
     rule_compiler["rules"] = [("\\badmacro", "Undefined control sequence.")]
     rule_compiler["pdf"] = True
+    edited = DOC.replace("Closing words.", "Closing \\badmacro words.")
+    _agent(scripted_llm, [_edit("Closing words.", "Closing \\badmacro words.", done=True)])
+    events = run_agent("In the End section, change the closing words", DOC, max_steps=1)
+    data = result_event(events)
+    assert final_buffer(events, DOC) == edited
+    assert not data.get("failure")
+    assert data["partial"]["document_unchanged"] is False
+    assert data["partial"]["operation"] == "edit"
+    assert "Applied, with 1 LaTeX error still in it" in data["explanation"]
+
+
+def test_an_edit_that_builds_is_not_given_a_wall_of_diagnostics(scripted_llm, rule_compiler):
+    """The kept edit gets one line, not a diagnostics section and a code dump."""
+    rule_compiler["rules"] = [("\\badmacro", "Undefined control sequence.")]
+    rule_compiler["pdf"] = True
+    _agent(scripted_llm, [_edit("Closing words.", "Closing \\badmacro words.", done=True)])
+    events = run_agent("In the End section, change the closing words", DOC, max_steps=1)
+    explanation = result_event(events)["explanation"]
+    assert "How It Errored" not in explanation
+    assert "Candidate LaTeX Code" not in explanation
+    assert "```latex" not in explanation
+    assert len(explanation.splitlines()) <= 3
+
+
+def test_an_edit_that_produces_no_pdf_is_still_rolled_back(scripted_llm, rule_compiler):
+    """The protection that matters is still there: no PDF, no edit."""
+    rule_compiler["rules"] = [("\\badmacro", "Undefined control sequence.")]
     _agent(scripted_llm, [_edit("Closing words.", "Closing \\badmacro words.", done=True)])
     events = run_agent("In the End section, change the closing words", DOC, max_steps=1)
     assert final_buffer(events, DOC) == DOC

@@ -65,6 +65,7 @@ import { collabLog } from "@/lib/collab/log";
 import { authClient } from "@/lib/auth-client";
 import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
 import type { PDFViewerViewState } from "@/components/extend/pdf-viewer";
+import { readStoredView } from "@/lib/pdf-view-state";
 import { CompileSplitButton, isTexEngine, type TexEngine } from "@/components/editor/CompileToolbar";
 import { PresentationView } from "@/components/editor/PresentationView";
 import { ModelSelector, type ProviderGroup } from "@/components/editor/ModelSelector";
@@ -488,6 +489,17 @@ export function EditorLayout({
   // mounts (desktop pane, mobile split, mobile PDF tab), so a recompile restores
   // where the reader actually is whichever pane they read it in.
   const pdfViewMemoryRef = useRef<PDFViewerViewState>({ page: 1 });
+  // ...and seeded from the last session, so reopening the project returns the
+  // reader to the page they left off on instead of page 1. Seeded in an effect
+  // rather than in the ref's initialiser: `localStorage` does not exist while
+  // this renders on the server, and a compile cannot finish before this runs.
+  const pdfViewSeededRef = useRef(false);
+  useEffect(() => {
+    if (pdfViewSeededRef.current) return;
+    pdfViewSeededRef.current = true;
+    const stored = readStoredView(projectId);
+    if (stored) pdfViewMemoryRef.current = stored;
+  }, [projectId]);
   const desktopEditorRef = useRef<any>(null);
   const mobileEditorRef = useRef<any>(null);
   const isReverseSyncingRef = useRef<boolean>(false);

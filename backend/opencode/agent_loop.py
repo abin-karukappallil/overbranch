@@ -54,6 +54,14 @@ logger = logging.getLogger("opencode.agent_loop")
 
 DEFAULT_MAX_STEPS = 16
 MAX_COMPILE_REPAIRS = int(os.getenv("SHADOW_COMPILE_MAX_RETRIES", "2"))
+# A repair round that removed errors has earned another one. The flat ceiling
+# gave up on a run that was two rounds from compiling and handed the user a page
+# of diagnostics instead, so the budget stretches to this while each round
+# strictly reduces the error count, and snaps back to MAX_COMPILE_REPAIRS the
+# moment a round stops making progress.
+MAX_COMPILE_REPAIRS_WHILE_PROGRESSING = int(
+    os.getenv("SHADOW_COMPILE_MAX_RETRIES_PROGRESSING", str(MAX_COMPILE_REPAIRS + 4))
+)
 MAX_TARGET_RETRIES = 1  # a target that failed is corrected once, then given up on
 ATTACHED_PREVIEW_TOTAL_CHARS = int(os.getenv("AGENT_ATTACH_PREVIEW_CHARS", "48000") or 48000)
 ATTACHED_PREVIEW_MIN_CHARS = 6000
@@ -2227,6 +2235,9 @@ def stream_opencode_agent(
     pdf_conversion_job_id: Optional[str] = None  # set when convert_attached_pdf starts a job
     run_tx = workspace.begin_transaction()  # the whole run is one transaction
     compile_repairs = 0
+    # Failing-error count at the previous repair round, so a round that removed
+    # some can be granted another (see `compile_gate`).
+    errors_at_last_repair: Optional[int] = None
     compile_failed_final: Optional[Dict[str, Any]] = None
     llm_failure: Optional[str] = None
     target_failures: Dict[str, int] = {}
@@ -2307,6 +2318,7 @@ def stream_opencode_agent(
         after the loop has ended, when no LLM turn is left.
         """
         nonlocal compile_verified, compile_available, compile_repairs, actual_max_steps, repair_steps_granted
+        nonlocal errors_at_last_repair
         t0 = time.time()
         res = execute_tool("compile_latex", {}, workspace)
         agent_trace.record_compile(latency_ms=(time.time() - t0) * 1000, success=bool(res.get("success")))
@@ -2334,8 +2346,15 @@ def stream_opencode_agent(
             logger.warning("Cycle detected in compile repairs (repeated candidate and error signatures).")
         repair_states_seen.add(repair_signature)
 
-        if not final and compile_repairs < MAX_COMPILE_REPAIRS:
-            if steps_taken >= actual_max_steps and repair_steps_granted < MAX_COMPILE_REPAIRS:
+        # Rounds that are still removing errors keep their budget; a round that
+        # fixes nothing ends the run on the flat ceiling.
+        error_count = len(res.get("errors") or res.get("new_errors") or [])
+        progressing = errors_at_last_repair is not None and error_count < errors_at_last_repair
+        errors_at_last_repair = error_count
+        budget = MAX_COMPILE_REPAIRS_WHILE_PROGRESSING if progressing else MAX_COMPILE_REPAIRS
+
+        if not final and compile_repairs < budget:
+            if steps_taken >= actual_max_steps and repair_steps_granted < budget:
                 actual_max_steps += 1
                 repair_steps_granted += 1
             if steps_taken < actual_max_steps:
@@ -2395,7 +2414,7 @@ def stream_opencode_agent(
         tried = res.get("auto_repairs") or []
         already = ("Already repaired automatically (do not redo these): " + "; ".join(tried[:4]) + "\n\n") if tried else ""
         return (
-            f"{what} (repair {compile_repairs}/{MAX_COMPILE_REPAIRS}):\n{diag}\n\n"
+            f"{what} (repair {compile_repairs}):\n{diag}\n\n"
             f"{already}"
             f"ORIGINAL USER INSTRUCTION: \"{user_instruction}\"\n\n"
             "HOW TO REPAIR:\n"
@@ -3604,13 +3623,18 @@ def stream_opencode_agent(
             and compile_failed_final.get("new_error_count", 0) == 0
             and isinstance(before_n, int) and isinstance(after_n, int) and after_n < before_n
         )
-        # A brand-new document that still builds is kept as a draft. Rollback exists
-        # to protect what the user had; an empty file had nothing, so discarding a
-        # whole generated document over an error TeX itself carried on past only
-        # returned "the document was not modified" after a two-minute wait. The
+        # A document that still builds to a PDF is kept, errors and all.
+        #
+        # TeX carries on past most errors and emits a PDF anyway: `\hspace{5}`
+        # gives three "Illegal unit of measure (pt inserted)" and a perfectly
+        # good 12 KB PDF. Rolling the edit back over errors the compiler itself
+        # walked past threw away work the reader could see and use, and replaced
+        # it with a page of diagnostics. If a PDF came out, the edit stands; the
         # remaining errors are listed with the result, located, ready for a fix.
-        draft = (
-            not partial and was_empty_document and workspace.has_changed()
+        # (This used to apply only to a brand-new document — `was_empty_document`
+        # — which is why an ordinary edit was discarded instead.)
+        builds_despite_errors = (
+            not partial and workspace.has_changed()
             and compile_failed_final.get("pdf_produced")
             and not (bool(errs) and all("[timeout]" in str(e.get("error", "")).lower() for e in errs))
         )
@@ -3635,29 +3659,33 @@ def stream_opencode_agent(
                 "detailed_errors": detailed_errors[:10],
                 "compile_log": compile_log[-4000:] if compile_log else "",
             }
-        elif draft:
+        elif builds_despite_errors:
             agent_trace.compile_result = "draft"
-            agent_trace.failure_reason = "compile_errors_remain_in_new_document"
+            agent_trace.failure_reason = "compile_errors_remain_but_pdf_built"
             n_left = after_n if isinstance(after_n, int) and after_n else len(errs)
+            created = bool(was_empty_document)
             partial_payload = {
-                "message": (f"Created the document, but {n_left} LaTeX error{'s' if n_left != 1 else ''} "
-                            f"remain{'s' if n_left == 1 else ''}."),
-                "operation": "create",
-                "reason": ("The document builds to a PDF, so it is kept as a draft instead of being discarded. "
-                           "Use \"Ask AI to Fix\" on the errors listed."),
+                "message": (f"{'Created the document' if created else 'Applied'}, with "
+                            f"{n_left} LaTeX error{'s' if n_left != 1 else ''} still in it."),
+                "operation": "create" if created else "edit",
+                "reason": "The document builds to a PDF, so the change was kept.",
                 "errors": [str(e.get("error", ""))[:200] for e in errs[:5]],
                 "detailed_errors": detailed_errors[:10],
                 "compile_log": compile_log[-4000:] if compile_log else "",
                 "document_unchanged": False,
                 "partial": True,
                 "draft": True,
+                # One line, no diagnostics wall: the errors are in `details` for
+                # "Ask AI to Fix" and the PDF pane shows them on the next compile.
+                "quiet": True,
             }
+            # Deliberately no `compile_error` event: the document built, so this
+            # is an ordinary applied edit, not a failure to explain.
             yield {
-                "type": "compile_error",
+                "type": "compile_note",
                 "message": partial_payload["message"],
                 "errors": errs[:5],
                 "detailed_errors": detailed_errors[:10],
-                "compile_log": compile_log[-4000:] if compile_log else "",
             }
         else:
             workspace.rollback_transaction(run_tx)
@@ -3757,19 +3785,21 @@ def stream_opencode_agent(
             if failure_payload.get("reason") and failure_payload["reason"] not in failure_payload["message"]:
                 diag_parts.append(f" {failure_payload['reason']}")
 
+            # One short line per error, and no more than a few. This used to be a
+            # "How It Errored (Diagnostics)" section with the offending line and a
+            # suggested fix for each error, followed by the whole failing document
+            # in a code block — a wall of explanation in place of the work the
+            # person asked for. Everything is still in `failure_payload` for
+            # "Ask AI to Fix" and for the trace; it is just not recited here.
             if detailed_errors:
-                diag_parts.append("\n\n### How It Errored (Diagnostics):")
-                for de in detailed_errors[:6]:
-                    loc = f"Line {de['line']}" if de.get("line") else "Document / Preamble"
+                lines = []
+                for de in detailed_errors[:3]:
+                    loc = f"line {de['line']}" if de.get("line") else "preamble"
                     if de.get("file") and de.get("file") != file_path:
-                        loc += f" ({de['file']})"
-                    etype = f"[{de['type']}] " if de.get("type") else ""
-                    src = f"\n  - **Offending line**: `{de['source']}`" if de.get("source") else ""
-                    act = f"\n  - **Suggested fix**: {de['suggested_action']}" if de.get("suggested_action") else ""
-                    diag_parts.append(f"\n- **{loc}**: {etype}{de['error']}{src}{act}")
-
-            if errored_code:
-                diag_parts.append(f"\n\n### Candidate LaTeX Code That Failed Compilation:\n```latex\n{errored_code}\n```")
+                        loc += f" in {de['file']}"
+                    lines.append(f"{de['error']} ({loc})")
+                more = len(detailed_errors) - len(lines)
+                diag_parts.append(" " + "; ".join(lines) + (f"; +{more} more." if more > 0 else ""))
 
             agent_explanation = "".join(diag_parts)
     elif partial_payload and llm_salvaged:
@@ -3783,6 +3813,15 @@ def stream_opencode_agent(
         if cov_note:
             parts.append(cov_note)
         agent_explanation = "\n\n".join(parts)
+    elif partial_payload and partial_payload.get("quiet"):
+        # The document built; this is an applied edit with a footnote, not a
+        # failure report (see the `draft` branch above). The errors get one
+        # compact clause — enough to know what is still wrong, nowhere near the
+        # diagnostics section and failing-code dump this used to print.
+        yield _phase("partial", partial_payload["message"], details=partial_payload)
+        named = "; ".join(str(e) for e in partial_payload["errors"][:2])
+        agent_explanation = ((agent_explanation.strip() + "\n\n") if agent_explanation else "") + (
+            partial_payload["message"] + (f" {named}" if named else ""))
     elif partial_payload:
         yield _phase("partial", partial_payload["message"], details=partial_payload)
         diag_items = []
