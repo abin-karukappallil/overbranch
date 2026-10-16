@@ -125,12 +125,26 @@ def test_compile_errors_already_in_the_original_do_not_block(scripted_llm, stub_
 
 # --- provider failure ----------------------------------------------------------------
 
-def test_provider_failure_leaves_document_unchanged(scripted_llm, stub_compiler):
+def test_provider_failure_keeps_the_edits_that_compile(scripted_llm, stub_compiler):
+    """
+    A provider that drops out mid-run no longer discards the edits already made:
+    they are compiled, and kept as a partial result when they introduce no new
+    error (see test_agent_salvage.py for the rollback cases).
+    """
     scripted_llm([
         {"thought": "edit", "tool_call": {"name": "replace_text", "arguments": {
             "old_str": "Intro text here.", "new_str": "Partial."}}},
         LLMProviderError("HTTP 429: rate limited", status_code=429, provider="Gemini"),
     ])
+    events = run_agent("Rewrite the intro sentence and then the closing sentence", DOC)
+    assert "Partial." in final_buffer(events, DOC)
+    data = result_event(events)
+    assert data["has_changes"] is True and data["partial"]["document_unchanged"] is False
+    assert "rate-limited" in data["partial"]["message"]
+
+
+def test_provider_failure_before_any_edit_leaves_document_unchanged(scripted_llm, stub_compiler):
+    scripted_llm([LLMProviderError("HTTP 429: rate limited", status_code=429, provider="Gemini")])
     events = run_agent("Rewrite the intro sentence and then the closing sentence", DOC)
     assert final_buffer(events, DOC) == DOC
     failure = result_event(events)["failure"]

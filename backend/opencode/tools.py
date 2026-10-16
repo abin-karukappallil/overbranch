@@ -275,6 +275,48 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "required": [],
     },
     {
+        "name": "humanize_document",
+        "description": (
+            "Reword the document's bulk prose so it reads as a careful human author wrote it instead of "
+            "reading as generated text \u2014 and nothing else. Titles, headings, author names, captions, "
+            "labels, citations, references, math, tables, TikZ, listings, the preamble and the bibliography "
+            "are never touched, and every command, number, acronym and name of a passage must come out "
+            "identical or that passage keeps its original text. It covers EVERY prose passage of the "
+            "document in one call. Each rewrite is measured: the AI-register score must fall, the length "
+            "must stay within ~20%, and the result is verified and compiled after it is written. Use it for "
+            "'humanize this', 'make it sound less like AI', 'remove the AI tone', 'remove the AI slop'. Do "
+            "NOT hand-rewrite prose for this yourself."
+        ),
+        "parameters": {
+            "scope": {"type": "string", "description": "'document' (every prose passage in the body) or 'node'.", "default": "document"},
+            "node_id": {"type": "string", "description": "Restrict to one block (e.g. 'sec:introduction', 'frame:results')."},
+            "dry_run": {"type": "boolean", "description": "Measure and report what would change; write nothing.", "default": False},
+            "report_only": {"type": "boolean", "description": "Measure the document's current AI-register score without calling the model.", "default": False},
+        },
+        "required": [],
+    },
+    {
+        "name": "elaborate_content",
+        "description": (
+            "ADD new material to a block (or to every block of the document) without replacing a word of "
+            "what is there. Use it for 'elaborate this', 'expand this section', 'add more detail', 'explain "
+            "this in more depth', 'make the document longer'. It writes at least the required amount of new "
+            "substantive prose, inserts it after the existing text (and, on a slide, as follow-up frames so "
+            "no frame overflows), then verifies that the original text survived byte for byte, that enough "
+            "was really added, that it is not a restatement of what was there, that no citation or reference "
+            "was invented, and that the document still compiles \u2014 rolling the insert back if not. "
+            "Omit `content` to have the material written for you; pass `content` to insert your own."
+        ),
+        "parameters": {
+            "target": {"type": "string", "description": "'section' (one block, with node_id), 'selection' (what the user highlighted), or 'document' (every block).", "default": "section"},
+            "node_id": {"type": "string", "description": "The block to elaborate, e.g. 'sec:introduction' or 'frame:results'."},
+            "content": {"type": "string", "description": "LaTeX to add. Omit to have it generated and verified for you."},
+            "instruction": {"type": "string", "description": "What the elaboration should cover, if the request named something specific."},
+            "dry_run": {"type": "boolean", "description": "Report what would be added; write nothing.", "default": False},
+        },
+        "required": [],
+    },
+    {
         "name": "list_attachment_figures",
         "description": (
             "List the figures (diagrams, charts, photographs) found in the files attached to this chat, with "
@@ -292,7 +334,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "Copy one figure from an attached file into the project's assets/ folder so the document can show "
             "it. Returns the saved path and ready-to-use LaTeX (\\includegraphics with a caption). Then place "
             "that LaTeX in the slide or section that discusses the figure. Only reference image paths that this "
-            "tool or list_assets returned — never invent a filename."
+            "tool or list_project_files returned — never invent a filename."
         ),
         "parameters": {
             "figure_id": {"type": "string", "description": "ID from the figure list, e.g. '3f2a9c1b-p3-f1'."},
@@ -426,12 +468,53 @@ TOOL_ALIASES: Dict[str, str] = {
     "grep_search": "search_document",
     "verify_compile": "compile_latex",
     "read_document_summary": "inspect_document",
+    # The wording tool and the additive tool, under the names a model reaches
+    # for. Both are canonical elsewhere in the codebase under the names below.
+    "humanize_content": "humanize_document",
+    "humanize_text": "humanize_document",
+    "humanise_document": "humanize_document",
+    "humanise_content": "humanize_document",
+    "expand_content": "elaborate_content",
+    "elaborate_section": "elaborate_content",
+    "elaborate": "elaborate_content",
 }
 
 # Tools that change the document (used for transactions and tracing).
 EDIT_TOOLS = frozenset({
     "replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",
     "insert_into_chunk", "justify_content", "generate_diagram",
+    "humanize_document", "elaborate_content",
+})
+
+
+# Tools that stay EXECUTABLE (older prompts, worklists and the model's habits still
+# call them) but are no longer described in the prompt: each duplicates a tool that
+# is. They are deliberately NOT entries in TOOL_ALIASES — every one of them takes
+# different arguments, or does something different, from its modern counterpart,
+# so a rename would change behaviour (see the notes):
+#   read_file_range            line ranges (start_line/end_line/file) vs get_block's node_id
+#   rewrite_chunk              chunk_id namespace + touched-chunk coverage tracking;
+#                              replace_block takes a node id only
+#   insert_into_chunk          chunk_id, position 'end'/'begin' (bibliography/list/frame
+#                              aware) vs insert_block's node id + before/after/start/end
+#   detect_overflow,
+#   inspect_pdf_geometry       measurements, not page images (view_rendered_pages)
+#   list_assets                assets/ images only; list_project_files lists every file
+#   list_attached_documents    chat attachments, not project files
+#   search_uploaded_references searches attachments, not the document (search_document)
+#   validate_edit              the loop validates after every write and before commit
+#   rollback_edit              the run is one transaction; undo is the loop's job
+HIDDEN_FROM_PROMPT = frozenset({
+    "read_file_range", "rewrite_chunk", "insert_into_chunk", "detect_overflow",
+    "inspect_pdf_geometry", "list_assets", "list_attached_documents",
+    "search_uploaded_references", "validate_edit", "rollback_edit",
+})
+
+# What ask mode (answer a question, never edit) is shown: reading and searching only.
+ASK_MODE_TOOLS = frozenset({
+    "inspect_document", "get_block", "search_document", "view_rendered_pages",
+    "list_attachment_figures", "get_template_theme", "list_project_files",
+    "read_attached_document", "request_more_steps",
 })
 
 
@@ -439,13 +522,23 @@ def canonical_tool_name(name: str) -> str:
     return TOOL_ALIASES.get(name, name)
 
 
-def get_tools_prompt_block() -> str:
+def prompt_tool_definitions(mode: str = "edit") -> List[Dict[str, Any]]:
+    """The tool definitions shown to the model in ``mode`` ('edit' or 'ask')."""
+    tools = [t for t in TOOL_DEFINITIONS if t["name"] not in HIDDEN_FROM_PROMPT]
+    if mode == "ask":
+        tools = [t for t in tools if t["name"] in ASK_MODE_TOOLS]
+    return tools
+
+
+def get_tools_prompt_block(mode: str = "edit") -> str:
     """
     Generates the tool documentation block for the LLM system prompt.
     Formatted as a clear reference for the model to use in tool calls.
+    Only the tools for ``mode`` are listed (see prompt_tool_definitions); hidden
+    tools remain executable through ``execute_tool``.
     """
     lines = ["AVAILABLE TOOLS:"]
-    for i, tool in enumerate(TOOL_DEFINITIONS, 1):
+    for i, tool in enumerate(prompt_tool_definitions(mode), 1):
         params_desc = []
         params = tool.get("parameters", {})
         required = tool.get("required", [])
@@ -631,6 +724,14 @@ def execute_tool(
             from .visual_tools import view_rendered_pages_tool
             return view_rendered_pages_tool(workspace, args)
 
+        elif tool_name == "humanize_document":
+            from .humanize import humanize_document_tool
+            return humanize_document_tool(workspace, args)
+
+        elif tool_name == "elaborate_content":
+            from .elaborate import elaborate_content_tool
+            return elaborate_content_tool(workspace, args)
+
         elif tool_name == "list_attachment_figures":
             from .attachment_tools import list_attachment_figures_tool
             return list_attachment_figures_tool(workspace, args)
@@ -765,7 +866,7 @@ def execute_tool(
 
         else:
             return {
-                "error": f"Unknown tool: '{tool_name}'. Available tools: {[t['name'] for t in TOOL_DEFINITIONS]}",
+                "error": f"Unknown tool: '{tool_name}'. Available tools: {[t['name'] for t in prompt_tool_definitions()]}",
             }
 
     except Exception as e:

@@ -43,9 +43,16 @@ class GeminiProvider(LLMProvider):
 
     supports_images = True  # with a text-only retry if the gateway rejects them (see chat)
 
-    def __init__(self):
-        self.base_url = get_web2api_base_url()
-        self.default_timeout = float(os.getenv("GEMINI_TIMEOUT", "30.0"))
+    def __init__(self, namespace: str = "GEMINI", label: str = "Gemini"):
+        # A second Web2API deployment is the same provider against another host:
+        # namespace="GEMINI2" reads GEMINI2_WEB2API_BASE_URL / GEMINI2_WEB2API_API_KEY_1..5,
+        # so the chain can hand a timed-out primary endpoint to its twin.
+        self.namespace = (namespace or "GEMINI").rstrip("_")
+        self.label = label
+        self.base_url = get_web2api_base_url(self.namespace)
+        self.default_timeout = float(
+            os.getenv(f"{self.namespace}_TIMEOUT") or os.getenv("GEMINI_TIMEOUT", "30.0")
+        )
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
@@ -54,9 +61,14 @@ class GeminiProvider(LLMProvider):
 
     def _load_server_keys(self) -> List[Dict[str, str]]:
         """Loads up to 5 server-side Gemini Web2API keys via the shared loader."""
-        keys = [{"name": k.name, "key": k.key} for k in load_web2api_keys()]
-        logger.info(f"Gemini Web2API provider initialized with {len(keys)} server-side key(s)")
+        keys = [{"name": k.name, "key": k.key} for k in load_web2api_keys(self.namespace)]
+        logger.info(f"{self.label} Web2API provider initialized with {len(keys)} server-side key(s)")
         return keys
+
+    def reload_keys(self) -> None:
+        """Re-reads the endpoint's keys, so a chain entry configured after import is not dead."""
+        self.base_url = get_web2api_base_url(self.namespace) or self.base_url
+        self.candidates = self._load_server_keys()
 
     def _get_client_for_key(self, api_key: str, base_url: Optional[str] = None):
         """Lazy-initializes an OpenAI client for a given API key."""
@@ -86,7 +98,7 @@ class GeminiProvider(LLMProvider):
         return self._clients[cache_key]
 
     def get_provider_name(self) -> str:
-        return "Gemini"
+        return self.label
 
     def get_available_models(self) -> List[Dict[str, Any]]:
         return list(ALLOWED_GEMINI_MODELS)

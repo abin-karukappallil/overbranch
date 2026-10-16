@@ -29,13 +29,11 @@ import {
   ShieldAlert,
   AlertTriangle,
   Lock,
-  Copy,
   ClipboardPaste,
   CheckSquare,
   MousePointerClick,
   Paperclip,
   Square,
-  FileText,
   File,
   AlertCircle,
   Palette,
@@ -66,6 +64,8 @@ import { applyTextToEditor, computeLineEdits } from "@/lib/collab/text-diff";
 import { collabLog } from "@/lib/collab/log";
 import { authClient } from "@/lib/auth-client";
 import { PDFViewer, type PDFViewerRefHandle } from "@/components/editor/PDFViewer";
+import type { PDFViewerViewState } from "@/components/extend/pdf-viewer";
+import { CompileSplitButton, isTexEngine, type TexEngine } from "@/components/editor/CompileToolbar";
 import { PresentationView } from "@/components/editor/PresentationView";
 import { ModelSelector, type ProviderGroup } from "@/components/editor/ModelSelector";
 import type { SyncTeXForwardResult, SyncState } from "@/types/sync";
@@ -89,6 +89,8 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { trpc, trpcClient } from "@/trpc/client";
+import { pickLine, pickOccurrence, pickWithinLine } from "@/lib/pdf-sync";
+import { COARSE_POINTER_QUERY, shouldSendOnEnter } from "@/lib/chat-input";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 import { ChatModeToggle, type ChatMode } from "@/components/editor/ChatModeToggle";
 import { EditHistoryStore, type EditHistory } from "@/lib/EditHistoryStore";
@@ -140,7 +142,6 @@ interface ChatMessage {
     explanation: string;
   };
   failure?: any;
-  erroredCode?: string;
   detailedErrors?: any[];
 }
 
@@ -313,11 +314,30 @@ export function EditorLayout({
   const [activeFilePath, setActiveFilePath] = useState("main.tex");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isCompiling, setIsCompiling] = useState(false);
-  const [engine, setEngine] = useState<"pdfLaTeX" | "XeLaTeX" | "LuaLaTeX">("pdfLaTeX");
+  const [engine, setEngineState] = useState<TexEngine>("pdfLaTeX");
+  // The engine is remembered per project (a XeLaTeX document stays XeLaTeX).
+  const engineStorageKey = `overbranch:engine:${projectId || "default"}`;
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(engineStorageKey);
+      if (isTexEngine(saved)) setEngineState(saved);
+    } catch {
+      // Storage blocked (private window, sandboxed iframe): keep the default.
+    }
+  }, [engineStorageKey]);
+  const setEngine = useCallback(
+    (next: TexEngine) => {
+      setEngineState(next);
+      try {
+        window.localStorage.setItem(engineStorageKey, next);
+      } catch {
+        // Not persisted; the choice still applies to this session.
+      }
+    },
+    [engineStorageKey]
+  );
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [errorLog, setErrorLog] = useState<string | null>(null);
-  // TeX error lines from a compile that still produced a PDF (shown next to the PDF).
-  const [compileErrors, setCompileErrors] = useState<string[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [diffData, setDiffData] = useState<DiffData | null>(null);
@@ -464,9 +484,18 @@ export function EditorLayout({
 
   const monacoRef = useRef<any>(null);
   const pdfViewerRef = useRef<PDFViewerRefHandle>(null);
+  // One remembered PDF view (page/zoom/offset) shared by all three PDFViewer
+  // mounts (desktop pane, mobile split, mobile PDF tab), so a recompile restores
+  // where the reader actually is whichever pane they read it in.
+  const pdfViewMemoryRef = useRef<PDFViewerViewState>({ page: 1 });
   const desktopEditorRef = useRef<any>(null);
   const mobileEditorRef = useRef<any>(null);
   const isReverseSyncingRef = useRef<boolean>(false);
+  // When the coordinate (SyncTeX) path last placed the cursor. A ctrl- or
+  // double-click is both a sync click and a word selection, so both paths fire
+  // for one gesture and whichever resolved last used to win; the coordinate one
+  // is the accurate one, so the text-search path stands down just after it.
+  const lastReverseSyncAtRef = useRef<number>(0);
   const pendingJumpRef = useRef<{ line: number; col?: number; matchRange?: any; timestamp: number } | null>(null);
   const [isPresentationMode, setIsPresentationMode] = useState<boolean>(false);
   const forwardSyncTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -484,6 +513,7 @@ export function EditorLayout({
   }, []);
 
   const handleReverseSyncJump = (file: string, line: number, column: number) => {
+    lastReverseSyncAtRef.current = Date.now();
     // Suppress forward sync loop while navigating from PDF to code
     if (forwardSyncTimerRef.current) {
       clearTimeout(forwardSyncTimerRef.current);
@@ -565,20 +595,28 @@ export function EditorLayout({
     }, 250);
   };
 
-  // Instant selection-to-LaTeX synchronization
-  const handlePdfTextSelected = (selectedText: string) => {
-    // Suppress forward sync loop while navigating from PDF to code
-    if (forwardSyncTimerRef.current) {
-      clearTimeout(forwardSyncTimerRef.current);
-    }
-    isReverseSyncingRef.current = true;
-    setTimeout(() => {
-      isReverseSyncingRef.current = false;
-    }, 1000);
-
+  /**
+   * Jump to selected PDF text in the source.
+   *
+   * `hintLine` is where SyncTeX says the selection physically is. Without it the
+   * only thing available is a text search, which lands on the FIRST occurrence
+   * of the selected words — so selecting the second copy of a repeated sentence
+   * jumped to the first copy, often in another section entirely. With it, the
+   * occurrence nearest that line wins, which is the one the reader selected.
+   */
+  const jumpToSelectedPdfText = (
+    selectedText: string,
+    hintLine?: number | null,
+    hintFile?: string | null,
+    xFraction?: number | null,
+  ) => {
     const monaco = monacoRef.current;
     const trimmed = selectedText.trim();
     if (!trimmed || trimmed.length < 2) return;
+
+    if (hintFile && hintFile !== activeFilePath) {
+      setActiveFilePath(hintFile);
+    }
 
     const editors = [desktopEditorRef.current, mobileEditorRef.current].filter(Boolean);
     const uniqueEditors = Array.from(new Set(editors));
@@ -620,15 +658,27 @@ export function EditorLayout({
         if (!matches || matches.length === 0) {
           const cleanSnippet = trimmed.slice(0, 15).toLowerCase();
           const lineCount = model.getLineCount();
+          const candidates: number[] = [];
           for (let i = 1; i <= lineCount; i++) {
-            const lineText = model.getLineContent(i).toLowerCase();
-            if (lineText.includes(cleanSnippet)) {
-              matchRange = new monaco.Range(i, 1, i, model.getLineMaxColumn(i));
-              break;
+            if (model.getLineContent(i).toLowerCase().includes(cleanSnippet)) {
+              candidates.push(i);
+              // With no hint the first hit is the answer, as before.
+              if (!hintLine) break;
             }
           }
+          const line = pickLine(candidates, hintLine);
+          if (line) {
+            matchRange = new monaco.Range(line, 1, line, model.getLineMaxColumn(line));
+          }
         } else {
-          matchRange = matches[0].range;
+          // The occurrence SyncTeX points at, not the first one in the file.
+          // Within a single line that holds the phrase twice, SyncTeX gives no
+          // column (it reports -1), so the selection's horizontal position on
+          // the page breaks the tie.
+          const picked =
+            pickWithinLine(matches as any[], hintLine, xFraction) ??
+            pickOccurrence(matches as any[], hintLine);
+          matchRange = picked ? picked.range : null;
         }
 
         if (matchRange) {
@@ -706,6 +756,52 @@ export function EditorLayout({
         } catch (_) { }
       }
     }, 250);
+  };
+
+  /**
+   * Text selected in the PDF. `anchor` is where that selection physically is;
+   * SyncTeX turns it into the source line, and the jump then goes to the
+   * occurrence there rather than to the first occurrence in the file.
+   *
+   * The search still runs when SyncTeX cannot answer (no .synctex.gz yet, or a
+   * point it has no record for), so the behaviour degrades to what it was
+   * rather than to nothing.
+   */
+  const handlePdfTextSelected = (
+    selectedText: string,
+    anchor?: { page: number; x: number; y: number; xFraction?: number },
+  ) => {
+    // Suppress forward sync loop while navigating from PDF to code
+    if (forwardSyncTimerRef.current) {
+      clearTimeout(forwardSyncTimerRef.current);
+    }
+    isReverseSyncingRef.current = true;
+    setTimeout(() => {
+      isReverseSyncingRef.current = false;
+    }, 1000);
+
+    const trimmed = selectedText.trim();
+    if (!trimmed || trimmed.length < 2) return;
+
+    // A ctrl/double-click is BOTH a sync click and a word selection, so both
+    // paths fire for one gesture. The coordinate path is the accurate one, so
+    // if it has just landed, leave its result alone.
+    if (Date.now() - lastReverseSyncAtRef.current < 1200) return;
+
+    if (!anchor || !projectId) {
+      jumpToSelectedPdfText(trimmed);
+      return;
+    }
+
+    trpcClient.synctex.backward
+      .mutate({ projectId, page: anchor.page, x: anchor.x, y: anchor.y })
+      .then((data) => {
+        jumpToSelectedPdfText(trimmed, data?.line ?? null, data?.file ?? null,
+          anchor.xFraction ?? null);
+      })
+      .catch(() => {
+        jumpToSelectedPdfText(trimmed, null, null, anchor.xFraction ?? null);
+      });
   };
 
   // Re-sync jump whenever activeMobileTab switches to "code"
@@ -1002,6 +1098,75 @@ export function EditorLayout({
   const [editorsNonce, setEditorsNonce] = useState(0);
   const isMobileViewport = () =>
     typeof window !== "undefined" && window.innerWidth < 768;
+
+  /**
+   * Whether the only keyboard here is the on-screen one.
+   *
+   * On a phone there is no Shift+Enter, so Enter-to-send left no way to type a
+   * second line in the chat box at all: every newline sent the message
+   * half-written. On such a device Enter inserts a newline and the send button
+   * sends, which is what every phone messaging app does.
+   *
+   * `(pointer: coarse)` is the right test rather than a width breakpoint: it
+   * asks whether the PRIMARY input is a finger, so a narrow desktop window
+   * keeps Enter-to-send and a tablet with a hardware keyboard — which does have
+   * Shift+Enter — is the one case this gets wrong, in the harmless direction.
+   */
+  const [softKeyboardOnly, setSoftKeyboardOnly] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia(COARSE_POINTER_QUERY);
+    const sync = () => setSoftKeyboardOnly(mq.matches);
+    sync();
+    // Safari < 14 has no addEventListener on MediaQueryList.
+    if (mq.addEventListener) {
+      mq.addEventListener("change", sync);
+      return () => mq.removeEventListener("change", sync);
+    }
+    mq.addListener(sync);
+    return () => mq.removeListener(sync);
+  }, []);
+
+  /**
+   * What the user has highlighted in the visible editor, for the agent.
+   *
+   * `elaborate_content(target="selection")` and `humanize_document` act on this
+   * when it is present; without it they fall back to resolving the block from
+   * the request's own words.
+   */
+  const activeSelection = () => {
+    try {
+      const editor = getActiveEditor();
+      const sel = editor?.getSelection?.();
+      const model = editor?.getModel?.();
+      if (!editor || !sel || !model || sel.isEmpty()) return null;
+      const text = model.getValueInRange(sel);
+      if (!text || !text.trim()) return null;
+      return {
+        text,
+        start_line: sel.startLineNumber,
+        end_line: sel.endLineNumber,
+        file: activeFilePath || "main.tex",
+      };
+    } catch (_) {
+      return null;
+    }
+  };
+
+  /** One Enter-key policy for both chat boxes (see lib/chat-input.ts). */
+  const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!shouldSendOnEnter({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      isComposing: (e.nativeEvent as KeyboardEvent)?.isComposing,
+      keyCode: e.keyCode,
+      softKeyboardOnly,
+    })) return;
+    e.preventDefault();
+    if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
+      handleSendPrompt(e as unknown as React.FormEvent);
+    }
+  };
   const getActiveEditor = useCallback(() => {
     const mobile = mobileEditorRef.current;
     const desktop = desktopEditorRef.current;
@@ -1733,7 +1898,6 @@ export function EditorLayout({
     if (!targetCode) return;
     setIsCompiling(true);
     setErrorLog(null);
-    setCompileErrors([]);
     try {
       const res = await authFetch(`${BACKEND_URL}/api/compile`, {
         method: "POST",
@@ -1746,10 +1910,9 @@ export function EditorLayout({
       });
       const data = await res.json();
       if (data.success) {
+        // A PDF was produced: show it, and nothing else. TeX's recoverable
+        // complaints in nonstopmode are not surfaced as a warning band.
         setPdfBase64(data.pdf_base64);
-        // TeX in nonstopmode produces a PDF despite errors. They used to be dropped
-        // here, so the document looked clean and "Ask AI to Fix" never appeared.
-        setCompileErrors(Array.isArray(data.errors) ? data.errors.filter((e: unknown) => typeof e === "string" && e) : []);
       } else {
         setErrorLog(data.error_log || "Compilation failed.");
         toast.error("LaTeX compilation failed.");
@@ -1841,6 +2004,10 @@ export function EditorLayout({
           // Attached files are already on the server (see useChatAttachments); the
           // agent reads them from this chat's session.
           mode: effectiveMode,
+          // What the user had highlighted when they asked. "Elaborate this" and
+          // "humanize this" mean the selection when there is one, and the
+          // request text alone cannot say which block that was.
+          selection: activeSelection() || undefined,
           api_keys: customApiKeys || undefined,
         }),
       });
@@ -2095,7 +2262,6 @@ export function EditorLayout({
           editsFile: data.file || activeFilePath || "main.tex",
           isApplied: false,
           failure: data.failure,
-          erroredCode: data.errored_code || data.failure?.errored_code,
           detailedErrors: data.detailed_errors || data.failure?.detailed_errors,
         },
       ]);
@@ -2718,55 +2884,6 @@ export function EditorLayout({
   };
 
   const renderMessageEditsCard = (m: ChatMessage) => {
-    if ((!m.edits || m.edits.length === 0) && m.erroredCode) {
-      return (
-        <div className="mt-2.5 p-2.5 rounded-xl bg-amber-500/10 dark:bg-amber-950/20 border border-amber-300 dark:border-amber-700/40 text-xs font-mono space-y-2">
-          <div className="flex items-center justify-between font-bold text-amber-700 dark:text-amber-300">
-            <span className="flex items-center gap-1.5 text-xs">
-              <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
-              Candidate LaTeX (Failed Compilation)
-            </span>
-            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700/40">
-              Preserved
-            </span>
-          </div>
-          <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 font-sans">
-            The candidate LaTeX code was not auto-applied to keep your document safe. You can copy it or load it into the editor to inspect and fix it manually.
-          </p>
-          <div className="flex items-center gap-2 pt-1 font-bold">
-            <button
-              type="button"
-              onClick={() => {
-                if (m.erroredCode) {
-                  navigator.clipboard.writeText(m.erroredCode);
-                  toast.success("Candidate LaTeX code copied to clipboard!");
-                }
-              }}
-              className="flex-1 h-7 rounded-lg bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 border border-slate-300 dark:border-zinc-700 text-slate-800 dark:text-zinc-200 text-xs font-mono flex items-center justify-center gap-1 transition-colors cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy Code</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (m.erroredCode) {
-                  handleCodeChange(m.erroredCode);
-                  toast.info("Loaded candidate LaTeX code into editor for manual inspection.");
-                  if (typeof window !== "undefined" && window.innerWidth < 768) {
-                    setActiveMobileTab("code");
-                  }
-                }
-              }}
-              className="flex-1 h-7 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-mono font-bold flex items-center justify-center gap-1 transition-colors border border-amber-700 shadow-sm cursor-pointer"
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Load into Editor</span>
-            </button>
-          </div>
-        </div>
-      );
-    }
     if (!m.edits || m.edits.length === 0) return null;
     const firstEdit = m.edits[0];
     // The first line that actually changes. An edit's chunks carry context (a
@@ -3044,33 +3161,13 @@ export function EditorLayout({
             </button>
           </div>
 
-          {/* Engine Selector */}
-          <select
-            value={engine}
-            onChange={(e) => setEngine(e.target.value as "pdfLaTeX" | "XeLaTeX" | "LuaLaTeX")}
-            disabled={isCompiling}
-            className="h-8 px-2 rounded-lg border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] text-slate-800 dark:text-[#E2E4E9] outline-none text-xs font-mono shrink-0 cursor-pointer hover:border-slate-300 dark:hover:border-[#383A42] transition-colors"
-            title="TeX Compilation Engine"
-          >
-            <option value="pdfLaTeX">pdfLaTeX</option>
-            <option value="XeLaTeX">XeLaTeX</option>
-            <option value="LuaLaTeX">LuaLaTeX</option>
-          </select>
-
-          <Button
-            size="sm"
-            onClick={() => handleCompile()}
-            disabled={isCompiling}
-            className="h-8 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1.5 cursor-pointer shadow-sm shrink-0"
-            title="Compile TeX (Ctrl+Enter / Cmd+Enter)"
-          >
-            {isCompiling ? (
-              <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
-            ) : (
-              <Play className="w-3.5 h-3.5 fill-current text-white" />
-            )}
-            <span>Compile</span>
-          </Button>
+          {/* Compile, with the TeX engine fused to it */}
+          <CompileSplitButton
+            onCompile={() => handleCompile()}
+            isCompiling={isCompiling}
+            engine={engine}
+            onEngineChange={setEngine}
+          />
         </div>
 
         {/* Compact & Mobile Header Actions (< xl) */}
@@ -3101,32 +3198,13 @@ export function EditorLayout({
             </button>
           </div>
 
-          <select
-            value={engine}
-            onChange={(e) => setEngine(e.target.value as "pdfLaTeX" | "XeLaTeX" | "LuaLaTeX")}
-            disabled={isCompiling}
-            className="h-8 px-1.5 rounded-lg border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#1A1C22] text-slate-800 dark:text-[#E2E4E9] outline-none text-[11px] font-mono shrink-0 cursor-pointer hover:border-slate-300 dark:hover:border-[#383A42] transition-colors"
-            title="TeX Compilation Engine"
-          >
-            <option value="pdfLaTeX">pdf</option>
-            <option value="XeLaTeX">Xe</option>
-            <option value="LuaLaTeX">Lua</option>
-          </select>
-
-          <Button
-            size="sm"
-            onClick={() => handleCompile()}
-            disabled={isCompiling}
-            className="h-8 px-2 sm:px-2.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg text-xs border border-[#10B981]/30 flex items-center gap-1 cursor-pointer shadow-sm shrink-0"
-            title="Compile TeX"
-          >
-            {isCompiling ? (
-              <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
-            ) : (
-              <Play className="w-3.5 h-3.5 fill-current text-white" />
-            )}
-            <span className="hidden xs:inline text-[11px]">Compile</span>
-          </Button>
+          <CompileSplitButton
+            onCompile={() => handleCompile()}
+            isCompiling={isCompiling}
+            engine={engine}
+            onEngineChange={setEngine}
+            compact
+          />
         </div>
 
         {/* Right Column: Status & Action Toggles */}
@@ -3416,8 +3494,9 @@ export function EditorLayout({
                 onRecompile={() => handleCompile()}
                 onAskAiToFix={handleAskAiToFix}
                 errorLog={errorLog}
-                compileErrors={compileErrors}
                 projectId={projectId}
+                projectName={projectDetail?.name}
+                viewMemoryRef={pdfViewMemoryRef}
                 onReverseSync={handleReverseSyncJump}
                 onTextSelected={handlePdfTextSelected}
                 onEnterPresentation={() => setIsPresentationMode(true)}
@@ -3583,14 +3662,7 @@ export function EditorLayout({
                         e.target.style.height = "auto";
                         e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
-                            handleSendPrompt(e);
-                          }
-                        }
-                      }}
+                      onKeyDown={handleChatKeyDown}
                       className="w-full min-h-[38px] max-h-44 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono scrollbar-thin"
                     />
                   </div>
@@ -3710,13 +3782,14 @@ export function EditorLayout({
                 onRecompile={() => handleCompile()}
                 onAskAiToFix={handleAskAiToFix}
                 errorLog={errorLog}
-                compileErrors={compileErrors}
                 projectId={projectId}
+                projectName={projectDetail?.name}
+                viewMemoryRef={pdfViewMemoryRef}
                 onReverseSync={(file, line, col) => {
                   handleReverseSyncJump(file, line, col);
                 }}
-                onTextSelected={(text) => {
-                  handlePdfTextSelected(text);
+                onTextSelected={(text, anchor) => {
+                  handlePdfTextSelected(text, anchor);
                 }}
                 onEnterPresentation={() => setIsPresentationMode(true)}
               />
@@ -3732,14 +3805,15 @@ export function EditorLayout({
             onRecompile={() => handleCompile()}
             onAskAiToFix={handleAskAiToFix}
             errorLog={errorLog}
-            compileErrors={compileErrors}
             projectId={projectId}
+            projectName={projectDetail?.name}
+            viewMemoryRef={pdfViewMemoryRef}
             onReverseSync={(file, line, col) => {
               setActiveMobileTab("code");
               handleReverseSyncJump(file, line, col);
             }}
-            onTextSelected={(text) => {
-              handlePdfTextSelected(text);
+            onTextSelected={(text, anchor) => {
+              handlePdfTextSelected(text, anchor);
             }}
             onEnterPresentation={() => setIsPresentationMode(true)}
           />
@@ -3850,7 +3924,9 @@ export function EditorLayout({
             <textarea
               id="ai-chat-input-2"
               rows={1}
-              placeholder={chatMode === "ask" ? "Ask a question..." : "Ask agent to edit LaTeX..."}
+              placeholder={chatMode === "ask"
+                ? (softKeyboardOnly ? "Ask a question\u2026 (Enter = new line)" : "Ask a question...")
+                : (softKeyboardOnly ? "Ask agent to edit LaTeX\u2026 (Enter = new line)" : "Ask agent to edit LaTeX...")}
               value={chatInput}
               disabled={isAgentThinking}
               onChange={(e) => {
@@ -3858,14 +3934,7 @@ export function EditorLayout({
                 e.target.style.height = "auto";
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
               }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if ((chatInput.trim() || hasAttachments) && !isAgentThinking) {
-                    handleSendPrompt(e);
-                  }
-                }
-              }}
+              onKeyDown={handleChatKeyDown}
               className="flex-1 min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
             />
 

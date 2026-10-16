@@ -44,6 +44,11 @@ class OpenCodeRequest(BaseModel):
     current_code: Optional[str] = Field(None, description="Current editor LaTeX content")
     base_version: Optional[int] = Field(None, description="Client document version number at time of prompt")
     base_sha256: Optional[str] = Field(None, description="Client document SHA-256 hash at time of prompt")
+    # What the user had highlighted when they asked. "Elaborate this" and
+    # "humanize this" mean the selection when there is one, and the request text
+    # alone cannot say which block that was.
+    selection: Optional[Dict[str, Any]] = Field(
+        None, description="Active editor selection: {text, start_line, end_line, file}")
     model: Optional[str] = Field(None, description="LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'edit' (default) or 'ask'")
     attached_file: Optional[Dict[str, Any]] = Field(None, description="Attached PDF/text document reference")
@@ -465,6 +470,7 @@ async def agent_opencode(
                         user_context={"user_id": user_id, "is_guest": is_guest},
                         base_version=req.base_version,
                         base_sha256=req.base_sha256,
+                        selection=req.selection,
                     ):
                         if token.is_cancelled():
                             break

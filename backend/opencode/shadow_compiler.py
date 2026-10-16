@@ -169,6 +169,12 @@ def _errors_from_diagnostics(diagnostics: List[Dict[str, Any]]) -> List[Dict[str
         message = str(d.get("message") or "").strip()
         if not message or any(c in message.lower() for c in _LOG_CONSEQUENCES):
             continue
+        # Warnings are not errors. The compiler reports bibliography notes (a
+        # generated placeholder .bib, a biber-to-bibtex fallback) as diagnostics
+        # with severity "warning"; without this they became agent compile errors,
+        # which failed the gate and rolled back a run whose edits were fine.
+        if str(d.get("severity") or "").lower() == "warning":
+            continue
         errors.append({
             "error": message,
             "line": d.get("line"),

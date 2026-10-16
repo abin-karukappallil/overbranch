@@ -24,6 +24,8 @@ import {
   PDFViewer as ExtendPDFViewer,
   type PDFViewerHandle,
   type PDFViewerPageOverlayProps,
+  type PDFSelectionAnchor,
+  type PDFViewerViewState,
 } from "@/components/extend/pdf-viewer";
 import { trpcClient } from "@/trpc/client";
 
@@ -44,15 +46,37 @@ interface PDFViewerProps {
   onRecompile: () => void;
   onAskAiToFix?: (errorLog: string) => void;
   errorLog?: string | null;
-  /** TeX error lines from a compile that still produced a PDF. */
-  compileErrors?: string[];
   projectId?: string;
+  /** Names the downloaded file (`<slug>.pdf`); falls back to "document.pdf". */
+  projectName?: string;
+  /**
+   * Where the reader is, shared by every mounted PDFViewer (the layout mounts
+   * one per breakpoint/tab). Without a shared ref each pane kept its own memory
+   * and a recompile restored whichever one happened to be stale.
+   */
+  viewMemoryRef?: React.MutableRefObject<PDFViewerViewState>;
   onReverseSync?: (file: string, line: number, column: number) => void;
-  onTextSelected?: (text: string) => void;
+  onTextSelected?: (text: string, anchor?: PDFSelectionAnchor) => void;
   onEnterPresentation?: () => void;
 }
 
 
+
+/**
+ * `<project-name-slug>.pdf`, or "document.pdf" when there is no usable name.
+ * The PDF is a client-side blob, so this only names the saved file.
+ */
+export function pdfDownloadFileName(projectName?: string | null): string {
+  const slug = (projectName ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "");
+  return `${slug || "document"}.pdf`;
+}
 
 export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
   function PDFViewer(
@@ -62,8 +86,9 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       onRecompile,
       onAskAiToFix,
       errorLog,
-      compileErrors = [],
       projectId,
+      projectName,
+      viewMemoryRef,
       onReverseSync,
       onTextSelected,
       onEnterPresentation,
@@ -75,6 +100,14 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
     const extendViewerRef = useRef<PDFViewerHandle>(null);
     const isUserScrollingRef = useRef(false);
     const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    // Where the reader is. A recompile hands the viewer a new blob, which opens
+    // a new document and remounts the page renderer, so without this they were
+    // dropped back to page 1 at the default zoom — of the document they were
+    // reading page 9 of at 150%.
+    const ownViewRef = useRef<PDFViewerViewState>({ page: 1 });
+    const lastViewRef = viewMemoryRef ?? ownViewRef;
+    const downloadFileName = pdfDownloadFileName(projectName);
+    const [restoreView, setRestoreView] = useState<PDFViewerViewState | null>(null);
 
     useEffect(() => {
       const checkMobile = () => {
@@ -104,6 +137,9 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         }
         const blob = new Blob([bytes], { type: "application/pdf" });
         const url = URL.createObjectURL(blob);
+        // Read where the reader was BEFORE the new document replaces it; the
+        // viewer lands back there once the recompiled PDF has loaded.
+        setRestoreView({ ...lastViewRef.current });
         setBlobUrl(url);
 
         return () => {
@@ -167,20 +203,18 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       getBlobUrl: () => blobUrl,
     }));
 
-    // Reverse SyncTeX click handler (triggered on Ctrl/Cmd + click or double-click)
-    const handlePagePointerDown = useCallback(
-      async (
-        event: React.PointerEvent<HTMLDivElement>,
-        pageNumber: number
-      ) => {
-        // Only trigger reverse SyncTeX on Ctrl/Cmd + click or double-click (event.detail >= 2)
-        const isSyncAction = event.ctrlKey || event.metaKey || event.detail >= 2;
-        if (!isSyncAction) return;
-
-        const pageEl = event.currentTarget;
+    // Reverse SyncTeX: a click in the PDF jumps to the source line SyncTeX
+    // maps that point to. A plain click counts (it used to need Ctrl/Cmd or a
+    // double-click, and a plain click fell through to a text search that
+    // landed on the FIRST occurrence of the clicked words). Plain clicks are
+    // resolved on pointer-up, and only when the pointer barely moved and the
+    // selection is collapsed, so dragging to select text still selects text.
+    // Ctrl/Cmd+click and double-click still sync immediately on pointer-down.
+    const runReverseSync = useCallback(
+      async (pageEl: HTMLElement, clientX: number, clientY: number, pageNumber: number) => {
         const rect = pageEl.getBoundingClientRect();
-        const clickX = event.clientX - rect.left;
-        const clickY = event.clientY - rect.top;
+        const clickX = clientX - rect.left;
+        const clickY = clientY - rect.top;
 
         // Standard TeX resolution is 72 dpi (big points)
         const attrWidth = parseFloat(pageEl.getAttribute("data-page-width") || "0");
@@ -213,6 +247,29 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       [projectId, onReverseSync]
     );
 
+    // Pointer-down of a potential plain click, resolved on pointer-up.
+    const pendingClickRef = useRef<{ x: number; y: number; page: number } | null>(null);
+    const CLICK_SLOP_PX = 4;
+
+    const handlePagePointerDown = useCallback(
+      (event: React.PointerEvent<HTMLDivElement>, pageNumber: number) => {
+        pendingClickRef.current = null;
+        if (event.ctrlKey || event.metaKey || event.detail >= 2) {
+          void runReverseSync(event.currentTarget, event.clientX, event.clientY, pageNumber);
+          return;
+        }
+        if (event.button !== 0 || event.shiftKey || event.altKey) return;
+        // Pointing devices only. On touch, every tap and every scroll flick
+        // starts as a tap on a page, and the mobile layout answers a reverse
+        // sync by switching to the Code tab — so a tap-to-sync would throw the
+        // reader out of the PDF they were reading. Touch keeps the old
+        // double-tap route, handled above.
+        if (event.pointerType === "touch") return;
+        pendingClickRef.current = { x: event.clientX, y: event.clientY, page: pageNumber };
+      },
+      [runReverseSync]
+    );
+
     const handleDownloadPDF = () => {
       if (!blobUrl) {
         toast.error("No compiled PDF available to download.");
@@ -220,7 +277,7 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
       }
       const anchor = document.createElement("a");
       anchor.href = blobUrl;
-      anchor.download = "document.pdf";
+      anchor.download = downloadFileName;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -229,9 +286,21 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
     const handlePagePointerUp = useCallback(
       (event: React.PointerEvent<HTMLDivElement>, pageNumber: number) => {
         const pageEl = event.currentTarget;
+        const down = pendingClickRef.current;
+        pendingClickRef.current = null;
+        const upX = event.clientX;
+        const upY = event.clientY;
+        const isPlainClick = Boolean(
+          down &&
+          down.page === pageNumber &&
+          Math.hypot(upX - down.x, upY - down.y) < CLICK_SLOP_PX
+        );
         setTimeout(() => {
           const sel = window.getSelection();
-          if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+          if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+            if (isPlainClick) void runReverseSync(pageEl, upX, upY, pageNumber);
+            return;
+          }
           const anchorNode = sel.anchorNode;
           const focusNode = sel.focusNode;
           const isInsidePage = Boolean(
@@ -242,11 +311,28 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
 
           const domText = sel.toString().trim();
           if (domText && domText.length >= 2) {
-            onTextSelected?.(domText);
+            // The page and point the reader actually selected, so the jump can
+            // go to THAT occurrence in the source instead of the first one.
+            const range = sel.getRangeAt(0);
+            const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+            const pageBox = pageEl.getBoundingClientRect();
+            const attrScale = parseFloat(pageEl.getAttribute("data-page-scale") || "0");
+            const attrWidth = parseFloat(pageEl.getAttribute("data-page-width") || "0");
+            const scale = attrScale > 0 ? attrScale : attrWidth > 0 ? pageBox.width / attrWidth : 1;
+            const anchor =
+              rect && scale > 0
+                ? {
+                  page: pageNumber,
+                  x: (rect.left - pageBox.left) / scale,
+                  y: (rect.top - pageBox.top) / scale,
+                  xFraction: pageBox.width > 0 ? (rect.left - pageBox.left) / pageBox.width : undefined,
+                }
+                : undefined;
+            onTextSelected?.(domText, anchor);
           }
         }, 30);
       },
-      [onTextSelected]
+      [onTextSelected, runReverseSync]
     );
 
     return (
@@ -259,10 +345,10 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
             </span>
             <span
               className="hidden lg:flex items-center gap-1 text-[10px] text-slate-600 dark:text-[#9E9E9E] font-mono bg-white dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] px-2 py-0.5 rounded-full"
-              title="Ctrl + Click (Cmd + Click on Mac) any text in the PDF to jump directly to its LaTeX line."
+              title="Click any text in the PDF to jump directly to its LaTeX line. Drag to select text."
             >
               <HelpCircle className="w-3 h-3 text-[#10B981]" />
-              <span>Ctrl+Click to Sync</span>
+              <span>Click to Sync</span>
             </span>
           </div>
 
@@ -345,37 +431,17 @@ export const PDFViewer = forwardRef<PDFViewerRefHandle, PDFViewerProps>(
         {/* PDF Render Block */}
         {blobUrl && !errorLog && (
           <div className="w-full h-full max-w-full min-w-0 flex-1 flex flex-col items-center bg-slate-100 dark:bg-[#0E0F12] overflow-hidden">
-            {/* Errors in a document that still compiled to a PDF: shown, not hidden. */}
-            {compileErrors.length > 0 && !isCompiling && (
-              <div className="w-full shrink-0 flex flex-wrap items-start gap-2 px-3 py-2 border-b border-amber-300/60 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10">
-                <details className="flex-1 min-w-0">
-                  <summary className="cursor-pointer text-xs font-mono font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                    {compileErrors.length} LaTeX error{compileErrors.length === 1 ? "" : "s"} — the PDF may be incomplete
-                  </summary>
-                  <pre className="mt-1.5 text-[11px] text-slate-900 dark:text-[#E2E4E9] font-mono max-h-40 overflow-auto whitespace-pre-wrap select-all">
-                    {compileErrors.join("\n")}
-                  </pre>
-                </details>
-                {onAskAiToFix && (
-                  <Button
-                    size="sm"
-                    onClick={() => onAskAiToFix(compileErrors.join("\n"))}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-archivo font-bold rounded-xl h-7 text-xs border border-emerald-600 shadow-sm cursor-pointer flex items-center gap-1.5"
-                    title="Ask AI to fix these LaTeX errors"
-                  >
-                    <Bot className="w-3.5 h-3.5 text-white" />
-                    <span>Ask AI to Fix</span>
-                  </Button>
-                )}
-              </div>
-            )}
             <ExtendPDFViewer
               ref={extendViewerRef}
               src={blobUrl}
+              initialView={restoreView ?? undefined}
+              onViewerStateChange={(state) => {
+                if (state.page && state.page >= 1) lastViewRef.current = state;
+              }}
               defaultZoom="automatic"
               showUpload={false}
               showDownload={true}
+              fileName={downloadFileName}
               showRotateControls={true}
               className="w-full h-full max-w-full min-w-0 overflow-hidden"
               onPagePointerDown={handlePagePointerDown}
