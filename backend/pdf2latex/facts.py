@@ -8,8 +8,9 @@ pre-escaped for pdfLaTeX, and colors use the preamble's color names.
 
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from .models import Line, PageExtract, Span
-from .preamble import FontPlan, Geometry, color_name, family_of, font_class
+from .models import Line, PageExtract, Span, StyleProfile
+from .preamble import (HEADING_COMMANDS, FontPlan, Geometry, accent_color, color_name, family_of, font_class,
+                       style_role)
 from .texutil import fmt, latex_text
 
 MAX_LINES = 700
@@ -116,9 +117,30 @@ def _fit_width(ln: Line, fonts: FontPlan, src_w: float) -> Optional[float]:
     return None
 
 
+def style_facts(profile: StyleProfile) -> Dict[str, Any]:
+    """The template-mode style commands as the model sees them (facts["style"])."""
+    out: Dict[str, Any] = {
+        "body": {"cmd": "\\obBodyFont", "font": profile.body_font, "sz": profile.body_size_pt,
+                 "line_spacing": profile.line_spacing, "note": "the document default: write body text plain"},
+    }
+    for h in profile.heading_levels:
+        out[h.name] = {"cmd": "\\" + HEADING_COMMANDS[h.name], "font": h.font, "sz": h.size_pt,
+                       "b": int(h.bold), "i": int(h.italic), "color": h.color}
+    out["accent"] = {"cmd": "\\obAccentColor", "color": accent_color(profile)}
+    return out
+
+
 def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
-               default_color: str) -> Tuple[Dict[str, Any], Set[str]]:
-    """Returns (facts dict, characters that could not be represented in pdfLaTeX)."""
+               default_color: str, profile: Optional[StyleProfile] = None) -> Tuple[Dict[str, Any], Set[str]]:
+    """
+    Returns (facts dict, characters that could not be represented in pdfLaTeX).
+
+    With ``profile`` (template mode, the MEASURED style) a run whose size and family match the
+    body or a heading style carries ``st`` ("body" / "H1".."H3") instead of sz/f, plus b / i / c
+    only where its weight, slant or colour differ from that style (modifiers: b=1 \\bfseries,
+    b=0 \\mdseries, i likewise, c = \\textcolor). A body line's gap is computed at the
+    document's own leading. Without a profile the facts are exactly the exact-mode facts.
+    """
     ox, oy = geom.left, geom.top
     unknown: Set[str] = set()
     entries: List[Dict[str, Any]] = []
@@ -128,7 +150,23 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
     side_blocks = 0
     for ln in page.lines[:MAX_LINES]:
         runs = []
+        sizes: List[float] = []
         for (size, color, bold, italic, family, sup), text, _x in _runs(ln):
+            sizes.append(size)
+            match = style_role(profile, size, bold, italic, family, color, default_color) if profile else None
+            if match:
+                # The style's command, plus only the modifiers where this run differs from it.
+                run_st: Dict[str, Any] = {"t": latex_text(text, unknown), "st": match.role}
+                if match.bold is not None:
+                    run_st["b"] = int(match.bold)
+                if match.italic is not None:
+                    run_st["i"] = int(match.italic)
+                if match.color is not None:
+                    run_st["c"] = match.color
+                if sup:
+                    run_st["sup"] = 1
+                runs.append(run_st)
+                continue
             run: Dict[str, Any] = {"t": latex_text(text, unknown), "sz": size}
             if color != default_color:
                 run["c"] = color
@@ -149,7 +187,10 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
         # The vertical space to put BEFORE this line, already worked out. y is a baseline, and a
         # baseline is not where \vspace takes effect: deriving one from the other needs the font's
         # ascent and the leading, so asking the model to do it made every page drift downwards.
-        size = max(runs[0]["sz"], 1.0)
+        size = max(sizes[0], 1.0)
+        lead = NATURAL_LEAD
+        if profile is not None and runs[0].get("st") == "body":
+            lead = profile.line_spacing  # \obBodyFont sets the document's own leading
         if ln.column != prev_column:
             # A new region: the previous line is somewhere else on the page, so the distance
             # between the two baselines is not a gap to typeset. Emitting one anyway is what
@@ -162,7 +203,7 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
                 entry["bw"] = _r(box["x1"] - box["x0"])
                 side_blocks += 1
         elif prev_baseline is not None:
-            gap = baseline - prev_baseline - NATURAL_LEAD * size
+            gap = baseline - prev_baseline - lead * size
             if abs(gap) >= MIN_GAP:
                 entry["gap"] = _r(gap)
         prev_baseline, prev_column = baseline, ln.column
@@ -217,6 +258,8 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
         "default_color": default_color,
         "lines": entries,
     }
+    if profile is not None:
+        facts["style"] = style_facts(profile)
     if images:
         facts["images"] = images
     if shapes:
@@ -242,8 +285,14 @@ def page_facts(page: PageExtract, geom: Geometry, fonts: FontPlan, n_pages: int,
 _FAMILY_CMD = {"serif": "\\rmfamily", "sans": "\\sffamily", "mono": "\\ttfamily"}
 
 
-def fallback_body(page: PageExtract, geom: Geometry, fonts: FontPlan) -> str:
-    """Positioned TikZ layout of the page facts. Compiles reliably; used when the LLM path fails."""
+
+def fallback_body(page: PageExtract, geom: Geometry, fonts: FontPlan,
+                  profile: Optional[StyleProfile] = None, default_color: str = "") -> str:
+    """
+    Positioned TikZ layout of the page facts. Compiles reliably; used when the LLM path fails.
+    With ``profile`` (template mode) runs matching the document style use its commands plus
+    only the modifiers they differ by (``font={\\obBodyFont\\bfseries}``, text in \\textcolor).
+    """
     ox, oy = geom.left, geom.top
     out = [
         "\\noindent\\begin{tikzpicture}[x=1bp,y=-1bp,inner sep=0pt,outer sep=0pt]",
@@ -268,9 +317,17 @@ def fallback_body(page: PageExtract, geom: Geometry, fonts: FontPlan) -> str:
     for ln in page.lines:
         y = fmt(ln.baseline - oy)
         for (size, color, bold, italic, family, sup), text, x in _runs(ln):
-            font = f"\\fontsize{{{fmt(size)}bp}}{{{fmt(size * 1.2)}bp}}\\selectfont{_FAMILY_CMD[family]}"
-            font += ("\\bfseries" if bold else "") + ("\\itshape" if italic else "")
+            match = style_role(profile, size, bold, italic, family, color, default_color) if profile else None
+            content = latex_text(text.strip())
+            if match:
+                # The semantic command plus only the modifiers that differ from the style. A colour
+                # goes on the text itself: a heading command's own \color would override text=.
+                font = match.font()
+                content = match.wrap(content)
+            else:
+                font = f"\\fontsize{{{fmt(size)}bp}}{{{fmt(size * 1.2)}bp}}\\selectfont{_FAMILY_CMD[family]}"
+                font += ("\\bfseries" if bold else "") + ("\\itshape" if italic else "")
             out.append(f"\\node[anchor=base west,text={color},font={{{font}}}{hidden}] "
-                       f"at ({fmt(x - ox)},{y}) {{{latex_text(text.strip())}}};")
+                       f"at ({fmt(x - ox)},{y}) {{{content}}};")
     out.append("\\end{tikzpicture}")
     return "\n".join(out)

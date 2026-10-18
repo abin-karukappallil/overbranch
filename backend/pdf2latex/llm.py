@@ -36,7 +36,11 @@ def model_name() -> str:
 
 
 def llm_available() -> bool:
-    return bool(get_web2api_base_url() and load_web2api_keys())
+    if get_web2api_base_url() and load_web2api_keys():
+        return True
+    if get_web2api_base_url("GEMINI2") and load_web2api_keys("GEMINI2"):
+        return True
+    return bool(getattr(provider_router.openrouter, "candidates", None))
 
 
 def _slots_for(n: int) -> threading.BoundedSemaphore:
@@ -76,7 +80,7 @@ def _chat(messages: List[Dict[str, Any]], max_tokens: int, token: CancellationTo
         temperature=0.0,
         max_tokens=max_tokens,
         cancel_token=token,
-        allow_fallback=False,
+        allow_fallback=True,
     )
     return str(resp.get("content") or "")
 
@@ -120,3 +124,4 @@ async def complete(system: str, user: str, image_png: Optional[bytes] = None, *,
     if last_error == "empty response":
         return ""  # the caller decides whether an empty page is worth another try
     raise LLMCallFailed(last_error)
+

@@ -6,8 +6,8 @@ are not re-sent; a one-step edit costs one LLM call.
 
 from conftest import final_buffer, result_event, run_agent
 
-from opencode.context_builder import ContextLedger, build_targeted_context, match_nodes
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.context_builder import ContextLedger, build_targeted_context, match_nodes
+from agent.shadow_workspace import ShadowWorkspace
 from document_index import index_nodes
 
 

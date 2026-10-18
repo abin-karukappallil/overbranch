@@ -70,8 +70,8 @@ def test_exact_code_callers_are_not_healed(fake_tex, kwargs):
 
 
 def test_shadow_compiler_disables_pre_heal(monkeypatch):
-    from opencode import shadow_compiler
-    from opencode.shadow_workspace import ShadowWorkspace
+    from agent import shadow_compiler
+    from agent.shadow_workspace import ShadowWorkspace
 
     captured = {}
 

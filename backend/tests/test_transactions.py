@@ -7,7 +7,7 @@ document unchanged.
 
 from conftest import final_buffer, result_event, run_agent
 
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.shadow_workspace import ShadowWorkspace
 from providers.base_provider import LLMProviderError
 
 BODY = "\n".join(f"Filler line {i} about the topic." for i in range(30))
@@ -70,7 +70,7 @@ def test_transaction_rollback_restores_everything():
 
 
 def test_rollback_edit_tool_undoes_last_edit():
-    from opencode.tools import execute_tool
+    from agent.tools import execute_tool
     ws = ShadowWorkspace(DOC)
     ws.str_replace("Intro text here.", "One.")
     ws.str_replace("Closing words.", "Two.")

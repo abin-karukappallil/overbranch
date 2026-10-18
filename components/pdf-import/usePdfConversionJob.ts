@@ -8,10 +8,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authFetch } from "@/lib/api-client";
+import {
+  LOST_CONTACT_MESSAGE,
+  classifyPollResponse,
+  nextPollDelay,
+  shouldGiveUp,
+} from "@/lib/pdf-import-poll";
 
 export const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
-const POLL_MS = 1500;
 const TERMINAL = new Set(["done", "error", "needs_confirmation", "cancelled"]);
 
 export interface ConversionConfig {
@@ -64,7 +69,18 @@ export interface ConversionReport {
   llm_used: boolean;
   disclaimer: string;
   mean_similarity: number | null;
+  /** Template mode only; present when the document states formatting rules. Every field is optional (LLM output). */
+  template_rules?: TemplateRules | null;
+  style_profile?: Record<string, unknown> | null;
 }
+
+export interface TemplateRules {
+  is_template?: boolean;
+  rules?: Record<string, unknown> | null;
+  evidence?: unknown[] | null;
+}
+
+export type ConversionMode = "exact";
 
 export interface ConversionJob {
   job_id: string;
@@ -151,6 +167,7 @@ export interface StartOptions {
   projectName?: string;
   overwrite?: boolean;
   cancelPrevious?: boolean;
+  mode?: ConversionMode;
 }
 
 export function usePdfConversionJob() {
@@ -160,34 +177,59 @@ export function usePdfConversionJob() {
   const [starting, setStarting] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeId = useRef<string | null>(null);
+  // Bumped whenever polling is stopped or restarted. An in-flight poll compares its own
+  // generation after every await, so a stale chain can never schedule a second timer.
+  const generation = useRef(0);
+  const failures = useRef(0);
 
   const stopPolling = useCallback(() => {
+    generation.current += 1;
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
   }, []);
 
   const poll = useCallback(
-    async (jobId: string) => {
-      if (activeId.current !== jobId) return;
+    async (jobId: string, gen: number) => {
+      const stale = () => activeId.current !== jobId || generation.current !== gen;
+      if (stale()) return;
+      let transient = false;
       try {
         const res = await authFetch(`${BACKEND_URL}/api/convert/pdf/${jobId}`);
-        if (!res.ok) {
-          const err = await readError(res);
-          throw new ConversionRequestError(err.message, res.status, err.jobId);
+        let body: any = null;
+        try {
+          body = await res.json();
+        } catch {
+          /* empty or non-JSON body */
         }
-        const data: ConversionJob = await res.json();
-        if (activeId.current !== jobId) return;
-        setJob(data);
-        if (data.status === "error") setError(data.error || "Conversion failed.");
-        if (TERMINAL.has(data.status)) return;
-      } catch (e) {
-        // Transient network errors: keep polling; a missing job is final
-        if (e instanceof ConversionRequestError && e.status === 404) {
-          setError("This conversion job no longer exists.");
+        if (stale()) return;
+        const outcome = classifyPollResponse(res.status, body);
+        if (outcome.kind === "ok" && (!body || typeof body !== "object")) {
+          transient = true;
+        } else if (outcome.kind === "ok") {
+          failures.current = 0;
+          const data: ConversionJob = outcome.job;
+          setJob(data);
+          if (data.status === "error") setError(data.error || "Conversion failed.");
+          if (TERMINAL.has(data.status)) return;
+        } else if (outcome.kind === "gone" || outcome.kind === "forbidden") {
+          setError(outcome.message);
+          return;
+        } else {
+          transient = true;
+        }
+      } catch {
+        // Offline, DNS, aborted: the job is still running server-side, so keep going.
+        if (stale()) return;
+        transient = true;
+      }
+      if (transient) {
+        failures.current += 1;
+        if (shouldGiveUp(failures.current)) {
+          setError(LOST_CONTACT_MESSAGE);
           return;
         }
       }
-      timer.current = setTimeout(() => poll(jobId), POLL_MS);
+      timer.current = setTimeout(() => poll(jobId, gen), nextPollDelay(failures.current));
     },
     []
   );
@@ -196,9 +238,10 @@ export function usePdfConversionJob() {
     (jobId: string) => {
       stopPolling();
       activeId.current = jobId;
+      failures.current = 0;
       setError(null);
       setErrorJobId(null);
-      poll(jobId);
+      poll(jobId, generation.current);
     },
     [poll, stopPolling]
   );
@@ -215,6 +258,7 @@ export function usePdfConversionJob() {
         if (opts.projectName) form.append("project_name", opts.projectName);
         if (opts.overwrite) form.append("overwrite", "true");
         if (opts.cancelPrevious) form.append("cancel_previous", "true");
+        form.append("mode", "exact");
         const res = await authFetch(`${BACKEND_URL}/api/convert/pdf`, { method: "POST", body: form });
         if (!res.ok) {
           const err = await readError(res);
@@ -299,6 +343,7 @@ export function usePdfConversionJob() {
   const reset = useCallback(() => {
     stopPolling();
     activeId.current = null;
+    failures.current = 0;
     setJob(null);
     setError(null);
     setErrorJobId(null);

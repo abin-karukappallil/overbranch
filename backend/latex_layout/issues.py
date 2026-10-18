@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .blocks import TextBlock, text_blocks
-from .overflow import SEVERE_OVERFULL_PT, parse_overfull, text_right_edge
+from .overflow import parse_overfull, text_right_edge
 
 logger = logging.getLogger("latex_layout.issues")
 

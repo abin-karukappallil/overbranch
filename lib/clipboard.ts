@@ -9,24 +9,11 @@
  */
 
 /**
- * Writes `text` to the clipboard. Returns false only when every path failed.
- *
- * `navigator.clipboard.writeText` needs a secure context and, in some browsers,
- * an active user gesture; the hidden-textarea `execCommand("copy")` fallback
- * works in the cases it does not.
+ * Synchronous clipboard write via a hidden textarea and `execCommand("copy")`.
+ * Returns false when the browser refuses.
  */
-export async function copyText(text: string): Promise<boolean> {
+export function copyTextSync(text: string): boolean {
   if (!text) return false;
-
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch (_) {
-    // fall through to execCommand
-  }
-
   try {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -45,6 +32,34 @@ export async function copyText(text: string): Promise<boolean> {
   } catch (_) {
     return false;
   }
+}
+
+/**
+ * Writes `text` to the clipboard. Returns false only when every path failed.
+ *
+ * `navigator.clipboard.writeText` needs a secure context and, in some browsers,
+ * an active user gesture; the hidden-textarea `execCommand("copy")` fallback
+ * works in the cases it does not.
+ *
+ * Order matters: `writeText` is called synchronously, with no `await` before
+ * it, and the fallback runs straight from its rejection. Awaiting anything
+ * first consumes the transient user activation, so a later `execCommand` can
+ * fail — which is why copy worked only sometimes.
+ */
+export function copyText(text: string): Promise<boolean> {
+  if (!text) return Promise.resolve(false);
+
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      return navigator.clipboard.writeText(text).then(
+        () => true,
+        () => copyTextSync(text),
+      );
+    } catch (_) {
+      // writeText threw synchronously; fall through to the textarea path.
+    }
+  }
+  return Promise.resolve(copyTextSync(text));
 }
 
 /**

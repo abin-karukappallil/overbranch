@@ -88,12 +88,6 @@ def text_width(text: str, family: str = "helvetica", size: float = 10.0,
     return float(_font(family, bold, italic).text_length(text, fontsize=size))
 
 
-def char_widths_ratio(text: str, family_a: str, family_b: str, bold: bool = False) -> float:
-    """Width of ``text`` in family_a relative to family_b (1.0 = same)."""
-    wb = text_width(text, family_b, 10.0, bold)
-    return text_width(text, family_a, 10.0, bold) / wb if wb else 1.0
-
-
 _RE_COMMENT = re.compile(r"(?<!\\)%.*")
 _RE_ESCAPED = {r"\&": "&", r"\%": "%", r"\$": "$", r"\#": "#", r"\_": "_", r"\{": "{", r"\}": "}",
                r"\textbackslash": "\\", r"\ldots": "...", r"\dots": "...", r"\textendash": "-",
@@ -124,6 +118,3 @@ def latex_to_plain(fragment: str) -> str:
     return re.sub(r"[ \t]+", " ", s).strip()
 
 
-@lru_cache(maxsize=1)
-def available_families() -> Tuple[str, ...]:
-    return tuple(f for f, files in _FILES.items() if kpsewhich(files[0]))

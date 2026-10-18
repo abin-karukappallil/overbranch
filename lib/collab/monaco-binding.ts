@@ -299,14 +299,93 @@ export class MonacoYBinding {
 
   private resetModelToYText(): void {
     const target = this.ytext.toString();
-    if (this.model.getValue() === target) return;
+    const current = this.model.getValue();
+    if (current === target) return;
     this.applyingRemote = true;
     try {
-      // A whole-model replace is correct exactly once: at bind time, before any
-      // local edit exists to preserve.
-      this.model.setValue(target);
+      // `setValue` clears every selection and the undo stack, so a Ctrl+C that
+      // lands while a collaborator types would copy nothing. When someone has
+      // a selection, patch the model with a minimal edit and put it back.
+      if (!this.patchModelPreservingSelections(current, target)) {
+        // A whole-model replace is correct at bind time, before any local edit
+        // or selection exists to preserve, and when no diff is computable.
+        this.model.setValue(target);
+      }
     } finally {
       this.applyingRemote = false;
+    }
+  }
+
+  /**
+   * Applies `current -> target` as one common-prefix/suffix edit and restores
+   * every non-empty editor selection, shifted by the edit. Returns false (and
+   * changes nothing) when no editor has a selection or anything goes wrong, so
+   * the caller falls back to `setValue`.
+   */
+  private patchModelPreservingSelections(current: string, target: string): boolean {
+    try {
+      const saved: Array<{ editor: any; anchor: number; head: number }> = [];
+      for (const editor of this.editors.keys()) {
+        const sel = editor.getSelection?.();
+        if (!sel || sel.isEmpty()) continue;
+        saved.push({
+          editor,
+          anchor: this.model.getOffsetAt({
+            lineNumber: sel.selectionStartLineNumber,
+            column: sel.selectionStartColumn,
+          }),
+          head: this.model.getOffsetAt({
+            lineNumber: sel.positionLineNumber,
+            column: sel.positionColumn,
+          }),
+        });
+      }
+      if (saved.length === 0) return false;
+
+      let prefix = 0;
+      const maxPrefix = Math.min(current.length, target.length);
+      while (prefix < maxPrefix && current.charCodeAt(prefix) === target.charCodeAt(prefix)) {
+        prefix++;
+      }
+      let suffix = 0;
+      const maxSuffix = Math.min(current.length, target.length) - prefix;
+      while (
+        suffix < maxSuffix &&
+        current.charCodeAt(current.length - 1 - suffix) ===
+          target.charCodeAt(target.length - 1 - suffix)
+      ) {
+        suffix++;
+      }
+
+      const oldEnd = current.length - suffix;
+      const newEnd = target.length - suffix;
+      const start = this.model.getPositionAt(prefix);
+      const end = this.model.getPositionAt(oldEnd);
+      this.model.applyEdits([
+        {
+          range: new this.monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+          text: target.slice(prefix, newEnd),
+          forceMoveMarkers: true,
+        },
+      ]);
+
+      const delta = newEnd - oldEnd;
+      const shift = (offset: number): number =>
+        offset <= prefix ? offset : offset >= oldEnd ? offset + delta : prefix;
+      for (const { editor, anchor, head } of saved) {
+        const a = this.model.getPositionAt(shift(anchor));
+        const h = this.model.getPositionAt(shift(head));
+        editor.setSelection({
+          selectionStartLineNumber: a.lineNumber,
+          selectionStartColumn: a.column,
+          positionLineNumber: h.lineNumber,
+          positionColumn: h.column,
+        });
+      }
+      return true;
+    } catch (error) {
+      collabLog("COLLAB_ERROR", { stage: "patch_preserving_selection", error: String(error) });
+      return false;
     }
   }
 

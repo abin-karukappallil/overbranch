@@ -107,8 +107,8 @@ def test_tex_measurement_matches_document_font():
 
 @needs_tex
 def test_justify_tool_removes_right_edge_overflow():
-    from opencode.layout_tools import detect_overflow_tool, justify_content_tool
-    from opencode.shadow_workspace import ShadowWorkspace
+    from agent.layout_tools import detect_overflow_tool, justify_content_tool
+    from agent.shadow_workspace import ShadowWorkspace
 
     para = "Body text that fills the full width of the text block so the right edge is known. " * 4
     doc = (PRE + "\\begin{document}\n" + para + "\n\n\\noindent\\makebox[\\linewidth][l]{Left label\\hfill "
@@ -134,8 +134,8 @@ def test_justify_content_tool_exact_io():
     - Exact output dictionary structure (success, lines_affected, verified, justify details)
     - Automatic injection of required package (\\usepackage{graphicx}) into preamble
     """
-    from opencode.layout_tools import justify_content_tool
-    from opencode.shadow_workspace import ShadowWorkspace
+    from agent.layout_tools import justify_content_tool
+    from agent.shadow_workspace import ShadowWorkspace
 
     doc = (
         "\\documentclass{article}\n"

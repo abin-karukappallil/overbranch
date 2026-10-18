@@ -57,13 +57,13 @@ The app is split: a **Next.js frontend** (port 3000) communicates with a **FastA
 
 ### Backend
 - **`main.py`** — FastAPI app; routes compilation (`/api/compile`), SyncTeX (`/api/synctex/*`), and mounts the agent, collab, and storage routers.
-- **`opencode/agent_loop.py`** — The core AI agent (ReAct loop). Reads the LaTeX document, makes tool-called edits in a `ShadowWorkspace`, shadow-compiles each step to verify correctness, and streams SSE events to the frontend `AgentReasoningWindow`.
-- **`opencode/tools.py`** — Tool definitions (`replace_text`, `grep_document`, etc.) executed inside the agent loop.
+- **`agent/agent_loop.py`** — The core AI agent (ReAct loop). Reads the LaTeX document, makes tool-called edits in a `ShadowWorkspace`, shadow-compiles each step to verify correctness, and streams SSE events to the frontend `AgentReasoningWindow`.
+- **`agent/tools.py`** — Tool definitions (`replace_text`, `grep_document`, etc.) executed inside the agent loop.
 - **`providers/router.py`** — `ProviderRouter` selects among Groq, Gemini (Web2API), OpenRouter, and NVIDIA based on availability and fallback chain (`LLM_FALLBACK_CHAIN` env var). The Web2API gateway **rejects image parts**; do not send images through it.
 - **`compiler.py`** / **`compile_queue.py`** — Bounded async queue wrapping `pdflatex`/`latexmk` subprocess calls.
 - **`collab/`** — Server-side Yjs room management using `pycrdt`. One room per project, one process only (see scaling note in COLLABORATION.md). `routes/collab_routes.py` handles WebSocket auth (Better Auth cookie or one-time HMAC ticket).
 - **`project_storage.py`** — File storage under `uploads/projects/<id>/` + Supabase `latex_documents` table. Exposes `/api/projects/get-file` — always use this proxy for asset downloads, never direct backend URLs.
-- **`routes/agent_routes.py`** — SSE endpoint `/api/agent/opencode` that drives the agent loop.
+- **`routes/agent_routes.py`** — SSE endpoint `/api/agent/run` that drives the agent loop.
 - **`synctex_service.py`** — Forward/backward SyncTeX lookups against the last compiled `.synctex.gz`.
 - **`edit_validator.py`** — Coverage and expansion validation; guards against AI edits that delete too much content.
 - **`document_index.py`** — Chunking / indexing the LaTeX document for targeted context delivery to the agent.

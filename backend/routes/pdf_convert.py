@@ -3,7 +3,7 @@ pdf_convert.py — FastAPI router for the per-page PDF → LaTeX importer (pdf2l
 
 Endpoints:
 - GET  /api/convert/pdf/config                  — limits, similarity target, LLM availability and model
-- POST /api/convert/pdf                         — multipart upload (file, project_id?, project_name?, overwrite?) → job id
+- POST /api/convert/pdf                         — multipart upload (file, project_id?, project_name?, overwrite?, mode?) → job id
 - GET  /api/convert/pdf/{job_id}                — job progress, per-page status/similarity, report, result
 - POST /api/convert/pdf/{job_id}/commit         — finish a job waiting for overwrite confirmation
 - GET  /api/convert/pdf/{job_id}/preview/{page} — PNG render of original / converted / diff page
@@ -15,6 +15,7 @@ import asyncio
 import io
 import logging
 import os
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -30,7 +31,7 @@ from pdf2latex.config import get_settings
 from pdf2latex.extract import PdfValidationError, open_pdf
 from pdf2latex.llm import llm_available, model_name
 from pdf2latex.pipeline import ConversionError, commit_pending_output
-from pdf2latex.runner import start_job
+from pdf2latex.runner import is_job_running, start_job
 from pdf2latex.storage import FileConflictError, create_project_for_conversion, sanitize_target_path
 
 logger = logging.getLogger("pdf_convert")
@@ -60,9 +61,72 @@ def _supabase_or_503():
 
 
 def _owned_job(job_id: str, auth: Dict[str, Any]) -> Dict[str, Any]:
+    # Unknown and forbidden are distinct so the client can tell "your job was lost" from
+    # "this is someone else's job"; the code field lets it branch without parsing the message.
     state = jobs.load_job(job_id)
-    if not state or state.get("owner") != auth["user_id"]:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversion job not found.")
+    if not state:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail={"code": "job_unknown", "message": "Conversion job not found."})
+    if state.get("owner") != auth["user_id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail={"code": "job_forbidden",
+                                    "message": "You do not have access to this conversion job."})
+    return state
+
+
+RESUME_DEBOUNCE_S = 30   # the poll fires every 1.5s; never relaunch more often than this
+MAX_RESUMES = 3          # a job that cannot make progress must not loop forever
+
+
+def _running_in_other_worker(state: Dict[str, Any]) -> bool:
+    """
+    is_job_running only knows this process's tasks. With several uvicorn workers a poll can land
+    on one that is not running the job, and relaunching would run the pipeline twice over the
+    same directory. A live runner_pid that is not ours means another worker has it. A stale job
+    is exempt: its pid may be recycled, and it has shown no progress for STALE_AFTER_S anyway.
+    """
+    pid = state.get("runner_pid")
+    if not pid or pid == os.getpid() or state.get("stale"):
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (ProcessLookupError, ValueError, OverflowError, TypeError):
+        return False
+    except PermissionError:
+        return True  # the process exists, it just is not ours to signal
+    return True
+
+
+def _resume_if_interrupted(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Relaunches a job whose task died with its worker (recycle, restart, crash). Returns the state
+    to report. Uses jobs.is_resumable rather than the status field: load_job reports a job that
+    stopped updating as "error", but that is synthesised and the job on disk is still resumable.
+    """
+    if not jobs.is_resumable(state) or is_job_running(job_id) or _running_in_other_worker(state):
+        return state
+    now = time.time()
+    if now - (state.get("resumed_at") or 0) < RESUME_DEBOUNCE_S:
+        return state
+    attempts = int(state.get("resume_count") or 0)
+    if attempts >= MAX_RESUMES:
+        return jobs.update_job(
+            job_id, status="error", stage="error", error="The conversion was interrupted too many times.",
+            message=f"Conversion failed: it was interrupted {MAX_RESUMES} times without finishing. Please retry.")
+    # Written before the launch so a concurrent poll sees the debounce window already open.
+    state = jobs.update_job(job_id, status="running", error=None,
+                            message="Resuming after an interruption…",
+                            resumed_at=now, resume_count=attempts + 1)
+    # The stored mode goes back in (M11); exact is start_job's default, so only template is passed.
+    extra = {} if jobs.job_mode(state) == jobs.DEFAULT_MODE else {"mode": jobs.job_mode(state)}
+    try:
+        start_job(state.get("owner", ""), bool(state.get("is_guest")), state.get("project_id", ""),
+                  state.get("filename", ""), b"", int(state.get("page_count") or 0),
+                  resume=True, job_id=job_id, **extra)
+    except Exception as e:  # noqa: BLE001 — a failed relaunch must surface, not 500 every poll
+        logger.error(f"Could not resume conversion job {job_id}: {e}", exc_info=True)
+        return jobs.update_job(job_id, status="error", stage="error", error=str(e),
+                               message=f"Conversion failed: {e}")
     return state
 
 
@@ -112,8 +176,12 @@ async def start_conversion(
     project_name: Optional[str] = Form(None),
     overwrite: bool = Form(False),
     cancel_previous: bool = Form(False),
+    mode: str = Form(jobs.DEFAULT_MODE),
     auth: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
+    if mode not in jobs.MODES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail={"code": "bad_mode", "message": "mode must be 'exact'."})
     settings = get_settings()
     data = await _read_limited(file, settings.max_file_bytes)
     try:
@@ -171,7 +239,7 @@ async def start_conversion(
             logger.warning(f"Could not record guest conversion: {e}")
 
     state = start_job(user_id, is_guest, project["project_id"], file.filename or "document.pdf",
-                      data, page_count, overwrite)
+                      data, page_count, overwrite, mode=mode)
 
     body = {"job_id": state["job_id"], "project_id": project["project_id"], "project_name": project.get("name"),
             "project_created": project["created"], "page_count": page_count}
@@ -187,7 +255,10 @@ async def start_conversion(
 
 @router.get("/api/convert/pdf/{job_id}")
 async def get_conversion(job_id: str, auth: Dict[str, Any] = Depends(get_current_user_or_guest)):
-    return jobs.public_view(_owned_job(job_id, auth))
+    state = _owned_job(job_id, auth)
+    # On the loop thread, not a worker thread: start_job needs the running loop to schedule onto.
+    state = _resume_if_interrupted(job_id, state)
+    return jobs.public_view(state)
 
 
 @router.post("/api/convert/pdf/{job_id}/commit")

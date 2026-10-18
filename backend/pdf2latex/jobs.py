@@ -46,8 +46,20 @@ def _write_atomic(path: Path, data: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+DEFAULT_MODE = "exact"
+MODES = ("exact",)
+
+
+def job_mode(state: Optional[Dict[str, Any]]) -> str:
+    """The conversion mode stored in a job state; directories written before M13 have none."""
+    mode = (state or {}).get("mode")
+    return mode if mode in MODES else DEFAULT_MODE
+
+
 def create_job(owner: str, project_id: str, filename: str, page_count: int,
-               is_guest: bool = False) -> Dict[str, Any]:
+               is_guest: bool = False, mode: str = DEFAULT_MODE) -> Dict[str, Any]:
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {', '.join(MODES)}, not {mode!r}.")
     job_id = uuid.uuid4().hex
     d = job_root() / job_id
     d.mkdir(parents=True)
@@ -71,11 +83,16 @@ def create_job(owner: str, project_id: str, filename: str, page_count: int,
         "created_at": now,
         "updated_at": now,
     }
+    # Only a non-default mode is written, so an exact-mode job's status.json is exactly what it
+    # was before M13; job_mode() and public_view() read the missing key as "exact".
+    if mode != DEFAULT_MODE:
+        state["mode"] = mode
     _write_atomic(d / "status.json", state)
     return state
 
 
-def load_job(job_id: str) -> Optional[Dict[str, Any]]:
+def _read_raw(job_id: str) -> Optional[Dict[str, Any]]:
+    """status.json exactly as stored on disk, with no stale rewrite."""
     try:
         path = job_dir(job_id) / "status.json"
     except ValueError:
@@ -83,18 +100,37 @@ def load_job(job_id: str) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def load_job(job_id: str) -> Optional[Dict[str, Any]]:
+    state = _read_raw(job_id)
+    if state is None:
+        return None
     if state.get("status") not in TERMINAL and time.time() - state.get("updated_at", 0) > STALE_AFTER_S:
+        # Deliberately applied to the RETURNED dict only and never persisted: a worker that died
+        # mid-conversion leaves a job that can still be resumed from its finished pages, so it
+        # must not be written off on disk. Every caller recomputes this on each read.
+        # The synthesised "error" is therefore NOT terminal: `stale` marks it so is_resumable()
+        # can tell it apart from a job the pipeline itself failed (which is persisted as "error").
         state["status"] = "error"
         state["error"] = "The conversion worker stopped responding. Please retry."
+        state["stale"] = True
     return state
+
+
+def is_resumable(state: Dict[str, Any]) -> bool:
+    """Whether a job may be relaunched: unfinished on disk, whether or not it has since gone stale."""
+    return state.get("status") not in TERMINAL or bool(state.get("stale"))
 
 
 def update_job(job_id: str, **fields: Any) -> Dict[str, Any]:
     with _write_lock:
-        state = load_job(job_id) or {}
+        # Read-modify-write on the raw state: going through load_job would persist the
+        # synthesised stale "error" the moment anything touched the job.
+        state = _read_raw(job_id) or {}
         state.update(fields)
         state["updated_at"] = time.time()
         _write_atomic(job_dir(job_id) / "status.json", state)
@@ -103,7 +139,7 @@ def update_job(job_id: str, **fields: Any) -> Dict[str, Any]:
 
 def update_page(job_id: str, number: int, **fields: Any) -> None:
     with _write_lock:
-        state = load_job(job_id)
+        state = _read_raw(job_id)
         if not state:
             return
         for p in state.get("pages", []):
@@ -126,7 +162,9 @@ def active_job_for(owner: str) -> Optional[Dict[str, Any]]:
 
 def public_view(state: Dict[str, Any]) -> Dict[str, Any]:
     """Job state as returned to clients (internal fields removed)."""
-    return {k: v for k, v in state.items() if k not in ("owner",)}
+    view = {k: v for k, v in state.items() if k not in ("owner",)}
+    view["mode"] = job_mode(state)   # always present, so older job directories read as "exact"
+    return view
 
 
 def purge_old_jobs(max_age_s: int = JOB_TTL_S) -> int:
@@ -144,7 +182,3 @@ def purge_old_jobs(max_age_s: int = JOB_TTL_S) -> int:
         except OSError:
             continue
     return removed
-
-
-def list_files(directory: Path) -> List[Path]:
-    return sorted(p for p in directory.rglob("*") if p.is_file())

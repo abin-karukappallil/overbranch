@@ -209,13 +209,6 @@ def diff_heatmap_png(original: np.ndarray, rendered: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def gray_to_png(arr: np.ndarray) -> bytes:
-    from PIL import Image
-    buf = io.BytesIO()
-    Image.fromarray(arr).save(buf, format="PNG")
-    return buf.getvalue()
-
-
 def describe_regions(regions: List[Region]) -> str:
     if not regions:
         return "No localized differences."
@@ -360,15 +353,3 @@ def compare_words(source: List[str], rendered: List[str], top_k: int = 25,
                         missing_total=sum(missing_c.values()), extra_total=sum(extra_c.values()))
 
 
-def describe_text_coverage(cov: TextCoverage, max_show: int = 15) -> str:
-    """Human-readable summary for repair prompts."""
-    if cov.ok:
-        return "Text coverage: all source words present."
-    parts: List[str] = [f"Text coverage: {cov.coverage * 100:.1f}% of source words present."]
-    if cov.missing:
-        shown = ", ".join(f"{w}×{n}" if n > 1 else w for w, n in cov.missing[:max_show])
-        parts.append(f"MISSING from your output (restore these verbatim): {shown}")
-    if cov.extra:
-        shown = ", ".join(f"{w}×{n}" if n > 1 else w for w, n in cov.extra[:max_show])
-        parts.append(f"EXTRA in your output (not in source — remove or correct): {shown}")
-    return "\n".join(parts)

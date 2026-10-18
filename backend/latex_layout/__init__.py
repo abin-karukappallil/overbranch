@@ -13,7 +13,7 @@ tools) and the PDF importer (pre-emptive width facts and post-compile repair):
 * vision    — an optional, advisory second opinion on how a page looks
 
 ``issues`` + ``repair`` are the detect → fix half of the render-aware loop that
-``opencode.layout_tools.justify_content_tool`` drives; nothing in this package
+``agent.layout_tools.justify_content_tool`` drives; nothing in this package
 compiles anything or touches a document.
 """
 

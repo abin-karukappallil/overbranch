@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from auth import get_current_user_or_guest
-from opencode.apply_edits import resolve_and_apply
-from opencode.diff_generator import compute_edit_items
+from agent.apply_edits import resolve_and_apply
+from agent.diff_generator import compute_edit_items
 from routes.agent_routes import router
 
 ORIGINAL = (

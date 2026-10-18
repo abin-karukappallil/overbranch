@@ -19,8 +19,10 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { isResumeMessage } from "@/lib/pdf-import-poll";
 import {
   ConversionJob,
+  TemplateRules,
   useConversionConfig,
   usePagePreview,
   usePdfConversionJob,
@@ -320,6 +322,7 @@ function ImportPdfPanel({
   );
 }
 
+
 function DialogTitleOrHeading({ inline, children }: { inline?: boolean; children: React.ReactNode }) {
   const cls = "text-sm font-semibold uppercase tracking-wide";
   return inline ? <h2 className={cls}>{children}</h2> : <DialogTitle className={cls}>{children}</DialogTitle>;
@@ -373,7 +376,9 @@ function JobView({
             ) : (
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
             )}
-            <span className="truncate">{job.message || "Working…"}</span>
+            <span className={`truncate ${running && isResumeMessage(job.message) ? "text-amber-300" : ""}`}>
+              {job.message || "Working…"}
+            </span>
           </span>
           <span className="font-mono text-[#8A8F98] tabular-nums">{progress}%</span>
         </div>
@@ -506,6 +511,8 @@ function ReportView({ job, threshold }: { job: ConversionJob; threshold: number 
         · {report.disclaimer}
       </p>
 
+      <TemplateRulesPanel rules={report.template_rules} />
+
       {canPreview && (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
@@ -562,6 +569,83 @@ function ReportView({ job, threshold }: { job: ConversionJob; threshold: number 
             {report.pages.flatMap((p) => p.warnings.map((w, i) => <li key={`p${p.number}-${i}`}>Page {p.number}: {w}</li>))}
           </ul>
         </details>
+      )}
+    </div>
+  );
+}
+
+const RULE_LABELS: [string, string][] = [
+  ["body_font", "Font"],
+  ["body_size_pt", "Size"],
+  ["line_spacing", "Line spacing"],
+  ["margins_mm", "Margins"],
+  ["heading_levels", "Headings"],
+];
+
+/** One short human-readable value for a rule; rules come from an LLM, so anything may be missing or odd. */
+function ruleText(key: string, value: unknown): string | null {
+  if (value == null || value === "") return null;
+  if (key === "body_size_pt" && typeof value === "number") return `${value} pt`;
+  if (key === "margins_mm" && typeof value === "object" && !Array.isArray(value)) {
+    const m = value as Record<string, unknown>;
+    const parts = ["top", "bottom", "left", "right"]
+      .filter((side) => m[side] != null && m[side] !== "")
+      .map((side) => `${side} ${String(m[side])} mm`);
+    return parts.length ? parts.join(", ") : null;
+  }
+  if (key === "heading_levels" && Array.isArray(value)) {
+    const parts = value
+      .map((h) => {
+        if (!h || typeof h !== "object") return typeof h === "string" ? h : "";
+        const o = h as Record<string, unknown>;
+        const bits = [o.font, o.size_pt != null ? `${o.size_pt} pt` : "", o.bold ? "bold" : "", o.italic ? "italic" : ""]
+          .filter((b) => b != null && b !== "" && b !== false)
+          .map(String);
+        return [o.name != null ? String(o.name) : "", bits.join(" ")].filter(Boolean).join(": ");
+      })
+      .filter(Boolean);
+    return parts.length ? parts.join("; ") : null;
+  }
+  if (typeof value === "object") return null;
+  return String(value);
+}
+
+function TemplateRulesPanel({ rules }: { rules?: TemplateRules | null }) {
+  if (!rules || rules.is_template !== true) return null;
+  const stated =
+    rules.rules && typeof rules.rules === "object" && !Array.isArray(rules.rules)
+      ? RULE_LABELS.map(([key, label]) => [label, ruleText(key, (rules.rules as Record<string, unknown>)[key])] as const).filter(
+          (row): row is readonly [string, string] => row[1] != null
+        )
+      : [];
+  const evidence = Array.isArray(rules.evidence)
+    ? rules.evidence.filter((e): e is string => typeof e === "string" && e.trim() !== "")
+    : [];
+  if (!stated.length && !evidence.length) return null;
+  return (
+    <div className="p-3 rounded-lg border border-[#5E6AD2]/30 bg-[#5E6AD2]/8 text-xs space-y-2">
+      <div className="flex items-center gap-2 font-semibold text-[#C7CAD1]">
+        <Info className="w-3.5 h-3.5 text-[#5E6AD2] shrink-0" />
+        Template rules detected
+      </div>
+      {stated.length > 0 && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px]">
+          {stated.map(([label, text]) => (
+            <React.Fragment key={label}>
+              <dt className="text-[#8A8F98]">{label}</dt>
+              <dd className="text-[#F7F8F8] break-words min-w-0">{text}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      )}
+      {evidence.length > 0 && (
+        <ul className="space-y-1 text-[11px] text-[#8A8F98] list-disc pl-4">
+          {evidence.map((e, i) => (
+            <li key={i} className="break-words">
+              {e}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

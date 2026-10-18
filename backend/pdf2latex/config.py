@@ -6,11 +6,11 @@ ones the agentic edit feature uses (providers.router / GEMINI_WEB2API_*).
 """
 
 import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-_root_env = Path(__file__).resolve().parent.parent.parent / ".env"
+_repo_root = Path(__file__).resolve().parent.parent.parent
+_root_env = _repo_root / ".env"
 if _root_env.exists():
     try:
         from dotenv import load_dotenv
@@ -63,7 +63,10 @@ class Pdf2LatexSettings:
 
 def get_settings() -> Pdf2LatexSettings:
     """Reads settings from the environment on every call so tests can monkeypatch env vars."""
-    job_dir = os.getenv("PDF2LATEX_JOB_DIR") or os.path.join(tempfile.gettempdir(), "overbranch_pdf2latex_jobs")
+    # Default under ./uploads, the one directory both compose files bind-mount. The old default
+    # (system temp) lived in the container's ephemeral /tmp, so a worker recycle or restart
+    # deleted in-flight jobs and the next poll 404'd.
+    job_dir = os.getenv("PDF2LATEX_JOB_DIR") or str(_repo_root / "uploads" / "pdf2latex_jobs")
     return Pdf2LatexSettings(
         concurrency=max(1, _env_int("PDF2LATEX_CONCURRENCY", 4)),
         page_timeout=max(10.0, _env_float("PDF2LATEX_PAGE_TIMEOUT", 180.0)),

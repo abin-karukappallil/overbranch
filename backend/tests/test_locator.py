@@ -6,8 +6,8 @@ fuzzy text matching, ambiguity refusal and structured failure.
 import pytest
 
 from document_index import find_node, index_nodes
-from opencode.locator import Target, resolve
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.locator import Target, resolve
+from agent.shadow_workspace import ShadowWorkspace
 
 DOC = r"""\documentclass{article}
 \usepackage{xcolor}

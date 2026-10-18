@@ -29,6 +29,8 @@ export function isTexEngine(value: unknown): value is TexEngine {
 interface CompileSplitButtonProps {
   onCompile: () => void;
   isCompiling: boolean;
+  /** Compiling is waiting out a "server busy" backoff, not running TeX yet. */
+  busy?: boolean;
   engine: TexEngine;
   onEngineChange: (engine: TexEngine) => void;
   /** Hide the "Compile" label below the `xs` breakpoint (compact header). */
@@ -44,6 +46,7 @@ interface CompileSplitButtonProps {
 export function CompileSplitButton({
   onCompile,
   isCompiling,
+  busy = false,
   engine,
   onEngineChange,
   compact = false,
@@ -59,14 +62,21 @@ export function CompileSplitButton({
           "h-8 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold text-xs border border-[#10B981]/30 border-r-0 flex items-center gap-1.5 cursor-pointer rounded-l-lg rounded-r-none shadow-none",
           compact ? "px-2 sm:px-2.5" : "px-3.5"
         )}
-        title={`Compile TeX with ${engine} (Ctrl+Enter / Cmd+Enter)`}
+        title={
+          isCompiling && busy
+            ? "Server busy: queued behind other compiles, retrying shortly"
+            : `Compile TeX with ${engine} (Ctrl+Enter / Cmd+Enter)`
+        }
+        aria-busy={isCompiling || undefined}
       >
         {isCompiling ? (
           <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
         ) : (
           <Play className="w-3.5 h-3.5 fill-current text-white" />
         )}
-        <span className={compact ? "hidden xs:inline text-[11px]" : undefined}>Compile</span>
+        <span className={compact ? "hidden xs:inline text-[11px]" : undefined}>
+          {isCompiling && busy ? "Queued\u2026" : "Compile"}
+        </span>
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild disabled={isCompiling}>
