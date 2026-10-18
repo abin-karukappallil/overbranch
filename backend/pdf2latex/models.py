@@ -115,6 +115,37 @@ class DocExtract:
 
 
 @dataclass
+class HeadingStyle:
+    """One heading level of a document's style (template mode, M13)."""
+    name: str               # "H1" | "H2" | "H3"
+    font: str               # PDF font name (subset prefix removed) or a stated font name
+    size_pt: float
+    bold: bool
+    italic: bool
+    color: str              # "#rrggbb"
+    spacing_before_pt: float
+
+
+@dataclass
+class StyleProfile:
+    """
+    The document's typographic rules (template mode, M13): what a student edits to
+    restyle the whole document. Measured from the extracted spans, then optionally
+    overridden by rules the document states about itself (M14).
+    """
+    body_font: str
+    body_size_pt: float
+    line_spacing: float     # baseline-to-baseline distance / body size
+    margins_mm: Dict[str, float]  # {"top","bottom","left","right"}
+    colors: List[str]       # ["#rrggbb", ...], most used first
+    heading_levels: List[HeadingStyle]
+    source: str = "measured"  # "measured" | "stated" | "merged"
+    # Which values came from rules the document states (M14), e.g. "body_size_pt",
+    # "margins_mm.top", "H1": the preamble comments say "stated" for these.
+    stated_fields: List[str] = field(default_factory=list)
+
+
+@dataclass
 class PageReport:
     number: int
     status: str = "pending"  # pending | generating | compiling | repairing | verifying | rerunning | done | below_threshold | failed
@@ -147,6 +178,9 @@ class ConversionReport:
     compiled_page_count: Optional[int] = None
     model: str = ""
     llm_used: bool = True
+    # Template mode only (M13/M14); dropped from to_dict() when unset so exact mode is unchanged.
+    template_rules: Optional[Dict[str, Any]] = None
+    style_profile: Optional[Dict[str, Any]] = None
     disclaimer: str = (
         "Best-effort conversion. A page is accepted when it compiles to a single page carrying "
         "every word of the source; the similarity figure is a visual comparison (SSIM + pixel "
@@ -161,5 +195,8 @@ class ConversionReport:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
+        for key in ("template_rules", "style_profile"):
+            if d.get(key) is None:
+                d.pop(key, None)
         d["mean_similarity"] = self.mean_similarity
         return d

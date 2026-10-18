@@ -27,7 +27,7 @@ def rule_compiler(monkeypatch):
     Shadow compile whose errors follow rules: every line containing ``needle``
     reports ``message`` at that line (like TeX would).
     """
-    from opencode import shadow_compiler
+    from agent import shadow_compiler
     # "pdf": TeX carries on past most errors and still writes a PDF; set it to get that.
     state = {"rules": [], "calls": 0, "pdf": False}
 
@@ -218,7 +218,7 @@ def beamer_compiler(monkeypatch):
     `&` outside a tabular, every one of them at the closing line of its frame —
     never on the line the `&` is on. A PDF is still produced.
     """
-    from opencode import shadow_compiler
+    from agent import shadow_compiler
     state = {"calls": 0, "seen": []}
 
     def fake_run(workspace, code, engine, timeout_seconds):

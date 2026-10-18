@@ -17,9 +17,9 @@ import pytest
 from conftest import final_buffer, result_event, run_agent
 from pdf2latex_fixtures import ticket_pdf
 
-from opencode.context_builder import build_targeted_context
-from opencode.shadow_workspace import ShadowWorkspace
-from opencode.tools import execute_tool
+from agent.context_builder import build_targeted_context
+from agent.shadow_workspace import ShadowWorkspace
+from agent.tools import execute_tool
 
 PREAMBLE = ("\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{xcolor}\n"
             "\\definecolor{c000000}{RGB}{0,0,0}\n\\definecolor{c2961A6}{RGB}{41,97,166}\n")

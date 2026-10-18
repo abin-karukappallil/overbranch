@@ -35,7 +35,7 @@ from .facts import fallback_body, page_facts
 from .geometry import (describe_unresolved, drop_condensed_sizes, fitted_texts, page_mismatches,
                        repair_body, source_blocks)
 from .llm import LLMCallFailed, complete, llm_available, model_name
-from .models import RGB, ConversionReport, DocExtract, PageExtract, PageReport
+from .models import RGB, ConversionReport, DocExtract, PageExtract, PageReport, StyleProfile
 from .preamble import (
     FontPlan,
     Geometry,
@@ -76,6 +76,7 @@ FALLBACK_MARGIN = 0.03  # the positioned layout rescues an unacceptable page onl
 EXTRA_TOLERANCE = 0.05  # invented words tolerated, as a share of the page's source words
 QUEUE_RETRIES = 6       # compile_queue already waits COMPILE_QUEUE_TIMEOUT for a slot on each try
 QUEUE_BACKOFF_MAX_S = 8.0
+MODES = ("exact",)  # "exact" is the original coordinate-faithful pipeline
 
 
 class ConversionError(RuntimeError):
@@ -130,6 +131,9 @@ class Ctx:
     src_words: Dict[int, List[WordBox]] = field(default_factory=dict)
     src_blocks: Dict[int, Tuple[list, Tuple[float, float]]] = field(default_factory=dict)
     doc_lock: threading.Lock = field(default_factory=threading.Lock)
+    # Reserved style profile hook (always None now); the positioned-layout fallback checks it.
+    style: Optional[StyleProfile] = None
+    mode: str = "exact"
 
     @property
     def threshold(self) -> float:
@@ -148,10 +152,11 @@ class Ctx:
         replaced by the positioned-layout fallback. Text coverage is the signal that actually
         separates a faithful page from a broken one.
         """
-        return (sc is not None and not sc.overflow and not sc.clipped
-                and sc.coverage >= self.settings.coverage_target
-                and sc.extra_ratio <= EXTRA_TOLERANCE
-                and sc.value >= self.settings.visual_floor
+        if (sc is None or sc.overflow or sc.clipped
+                or sc.coverage < self.settings.coverage_target
+                or sc.extra_ratio > EXTRA_TOLERANCE):
+            return False
+        return (sc.value >= self.settings.visual_floor
                 and (sc.displacement is None or sc.displacement <= self.settings.max_displacement))
 
     @property
@@ -165,10 +170,6 @@ class Ctx:
 # ---------------------------------------------------------------------------
 # Progress
 # ---------------------------------------------------------------------------
-
-def _progress(ctx: Ctx, stage: str, message: str, progress: float) -> None:
-    jobs.update_job(ctx.job_id, status="running", stage=stage, message=message, progress=round(progress, 3))
-
 
 def _page_status(ctx: Ctx, pr: PageReport, status: Optional[str] = None) -> None:
     if status:
@@ -295,7 +296,8 @@ async def _generate(ctx: Ctx, page: PageExtract, facts: Dict, png: bytes, pr: Pa
     for attempt in range(2 if allow_short_retry else 1):
         pr.attempts += 1
         try:
-            raw = await _llm(ctx, PAGE_SYSTEM_PROMPT, page_user_prompt(facts, colors, extra), png, f"p{page.number}")
+            system = PAGE_SYSTEM_PROMPT
+            raw = await _llm(ctx, system, page_user_prompt(facts, colors, extra), png, f"p{page.number}")
         except LLMCallFailed as e:
             pr.warnings.append(f"LLM generation failed: {e}")
             return None
@@ -355,9 +357,16 @@ async def _compile_page(ctx: Ctx, page: PageExtract, body: str, pr: PageReport,
         body = fixed
 
 
+def _layout(ctx: Ctx, page: PageExtract) -> str:
+    """The positioned-layout body; in template mode its runs use the document's style commands."""
+    if ctx.style is None:
+        return fallback_body(page, ctx.geom, ctx.fonts)
+    return fallback_body(page, ctx.geom, ctx.fonts, ctx.style, ctx.default_color)
+
+
 async def _fallbacks(ctx: Ctx, page: PageExtract, pr: PageReport) -> Tuple[str, Optional[bytes]]:
     """Positioned layout of the facts; if even that fails to compile, the page image."""
-    body = fallback_body(page, ctx.geom, ctx.fonts)
+    body = _layout(ctx, page)
     body, pdf, _log = await _compile_page(ctx, page, body, pr, allow_llm=False)
     if pdf is not None:
         pr.fallback = "layout"
@@ -464,12 +473,40 @@ def _differences(sc: Score) -> str:
     return "\n".join(parts)
 
 
+def _body_path(jd: Path, n: int) -> Path:
+    return jd / "pages" / f"page_{n}.tex"
+
+
+def _save_body(ctx: Ctx, n: int, body: str) -> None:
+    """Keeps the finished page body on disk so run_conversion(resume=True) can reuse it."""
+    path = _body_path(ctx.jd, n)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(body, encoding="utf-8")
+    tmp.replace(path)  # atomic: a kill mid-write must not leave a truncated page behind
+
+
+def _reuse_saved(ctx: Ctx, page: PageExtract, saved: Dict[int, dict]) -> bool:
+    """Resume only: restores a page already marked done in status.json from its saved .tex."""
+    entry = saved.get(page.number)
+    path = _body_path(ctx.jd, page.number)
+    if not entry or entry.get("status") != "done" or not path.exists():
+        return False
+    ctx.bodies[page.number] = path.read_text(encoding="utf-8")
+    pr = ctx.page_report(page.number)
+    for key, value in entry.items():
+        if key != "number" and hasattr(pr, key):
+            setattr(pr, key, value)
+    return True
+
+
 async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> None:
     n = page.number
     pr = ctx.page_report(n)
     async with sem:
         _page_status(ctx, pr, "generating")
-        facts, unknown = page_facts(page, ctx.geom, ctx.fonts, len(ctx.extract.pages), ctx.default_color)
+        facts, unknown = page_facts(page, ctx.geom, ctx.fonts, len(ctx.extract.pages), ctx.default_color,
+                                    profile=ctx.style)
         if unknown:
             pr.warnings.append(f"{len(unknown)} character(s) have no pdfLaTeX equivalent and were dropped: "
                                f"{''.join(sorted(unknown))[:40]}")
@@ -482,11 +519,12 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
             png = await asyncio.to_thread(_render)
             body = await _generate(ctx, page, facts, png, pr)
         if body is None:
-            body = fallback_body(page, ctx.geom, ctx.fonts)
+            body = _layout(ctx, page)
             pr.fallback = "layout"
 
         if not ctx.has_tex:
             ctx.bodies[n] = body
+            _save_body(ctx, n, body)
             _page_status(ctx, pr, "done")
             return
 
@@ -547,9 +585,8 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
             #    is the point of the import. So it only takes over a page that is still not
             #    acceptable — never one that just reflowed differently, as it used to whenever
             #    the visual score missed the target (i.e. nearly always).
-            if sc is not None and pr.fallback is None and not ctx.acceptable(sc):
-                fb_body, fb_pdf, _ = await _compile_page(ctx, page, fallback_body(page, ctx.geom, ctx.fonts), pr,
-                                                         allow_llm=False)
+            if (sc is not None and pr.fallback is None and not ctx.acceptable(sc)):
+                fb_body, fb_pdf, _ = await _compile_page(ctx, page, _layout(ctx, page), pr, allow_llm=False)
                 fb = await _score(ctx, page, fb_pdf) if fb_pdf is not None else None
                 if fb is not None and not fb.overflow and fb.rank > sc.rank + FALLBACK_MARGIN:
                     pr.warnings.append(f"The positioned layout reproduced this page more faithfully "
@@ -563,7 +600,8 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
             pr.text_coverage, pr.overflow = round(sc.coverage, 4), sc.overflow
             pr.extra_ratio, pr.shift_pt = round(sc.extra_ratio, 4), sc.shift_pt
             pr.displacement = round(sc.displacement, 2) if sc.displacement is not None else None
-            if sc.displacement is not None and sc.displacement > ctx.settings.max_displacement:
+            if (sc.displacement is not None
+                    and sc.displacement > ctx.settings.max_displacement):
                 pr.warnings.append(f"The text is placed differently from the PDF: the typical word is "
                                    f"{sc.displacement:.0f}pt away from its position in the original.")
             if sc.missing:
@@ -576,6 +614,7 @@ async def _process_page(ctx: Ctx, page: PageExtract, sem: asyncio.Semaphore) -> 
         else:
             status = "failed" if pdf is None else "done"
         ctx.bodies[n] = body
+        _save_body(ctx, n, body)
         _page_status(ctx, pr, status)
 
 
@@ -604,7 +643,7 @@ async def _merge_and_compile(ctx: Ctx) -> Tuple[str, Optional[bytes]]:
             break
         for n in sorted(failing):
             pr = ctx.page_report(n)
-            ctx.bodies[n] = fallback_body(pages[n], ctx.geom, ctx.fonts)
+            ctx.bodies[n] = _layout(ctx, pages[n])
             pr.fallback = "layout"
             pr.warnings.append("Broke the merged document; replaced by the positioned-layout fallback.")
             _page_status(ctx, pr)
@@ -614,17 +653,40 @@ async def _merge_and_compile(ctx: Ctx) -> Tuple[str, Optional[bytes]]:
 
 
 # ---------------------------------------------------------------------------
+# Mode
+# ---------------------------------------------------------------------------
+
+def _resolve_mode(mode: Optional[str], saved_state: Dict) -> str:
+    """The job's mode: a resumed job keeps the mode it was started in."""
+    if saved_state.get("mode") in MODES:
+        return saved_state["mode"]
+    if mode in MODES:
+        return mode
+    logger.warning(f"Unknown PDF conversion mode {mode!r}; using exact.")
+    return "exact"
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 async def run_conversion(job_id: str, pdf_bytes: bytes, project_id: str,
-                         overwrite: bool = False, target_path: str = "main.tex") -> None:
+                         overwrite: bool = False, target_path: str = "main.tex",
+                         resume: bool = False, mode: str = "exact") -> None:
+    """
+    Runs one conversion job with the exact coordinate-faithful pipeline.
+    """
     settings = get_settings()
     jd = jobs.job_dir(job_id)
     out_dir = jd / "output"
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     doc = None
+    # Pages finished before an interruption, read before any progress write below can touch them.
+    saved_state = (jobs.load_job(job_id) or {}) if resume else {}
+    saved_pages = {p["number"]: p for p in saved_state.get("pages", [])} if resume else {}
+    mode = _resolve_mode(mode, saved_state)
+
     report = ConversionReport(page_count=0, threshold=settings.sim_threshold, model=model_name(),
                               coverage_target=settings.coverage_target,
                               max_displacement=settings.max_displacement)
@@ -651,9 +713,11 @@ async def run_conversion(job_id: str, pdf_bytes: bytes, project_id: str,
         fonts = plan_fonts(extract)
         if len({(round(p.width), round(p.height)) for p in extract.pages}) > 1:
             report.warnings.append("Pages have different sizes; all pages use the most common size.")
+        style: Optional[StyleProfile] = None
+        preamble = build_preamble(geom, colors, fonts)
         ctx = Ctx(job_id=job_id, settings=settings, jd=jd, out_dir=out_dir, doc=doc, extract=extract, geom=geom,
-                  fonts=fonts, colors=colors, preamble=build_preamble(geom, colors, fonts), has_tex=has_tex,
-                  use_llm=use_llm, report=report)
+                  fonts=fonts, colors=colors, preamble=preamble, has_tex=has_tex,
+                  use_llm=use_llm, report=report, style=style, mode=mode)
 
         _set(stage="rendering", message="Rendering reference pages…", progress=0.08)
         ctx.originals = await asyncio.to_thread(render_pdf_pages, jd / "source.pdf", settings.render_dpi)
@@ -663,7 +727,8 @@ async def run_conversion(job_id: str, pdf_bytes: bytes, project_id: str,
 
         _set(stage="converting", message=f"Converting {len(extract.pages)} page(s)…", progress=0.15)
         sem = asyncio.Semaphore(settings.concurrency)
-        await asyncio.gather(*(_process_page(ctx, p, sem) for p in extract.pages))
+        await asyncio.gather(*(_process_page(ctx, p, sem) for p in extract.pages
+                               if not _reuse_saved(ctx, p, saved_pages)))
 
         _set(stage="merging", message="Merging pages and compiling the document…", progress=0.92)
         tex, pdf = await _merge_and_compile(ctx)

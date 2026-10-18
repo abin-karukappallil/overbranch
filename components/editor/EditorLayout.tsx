@@ -89,6 +89,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "sonner";
+import { classifyCompileResponse, nextRetryDelay, type CompileOutcome } from "@/lib/compile-retry";
 import { trpc, trpcClient } from "@/trpc/client";
 import { pickLine, pickOccurrence, pickWithinLine } from "@/lib/pdf-sync";
 import { COARSE_POINTER_QUERY, shouldSendOnEnter } from "@/lib/chat-input";
@@ -107,10 +108,11 @@ import {
 } from "@/lib/latex-edit-apply";
 import { resolveEditsOnServer } from "@/lib/latex-validate";
 import { ChatAttachments } from "@/components/editor/ChatAttachments";
+import { MentionChips } from "@/components/editor/MentionChips";
+import { addMention, makeMention, removeMention, type MentionRef } from "@/lib/mentions";
 import { blockStats, buildReviewBlocks, placeBlocks, type ReviewHunk } from "@/lib/inline-diff";
 import { InlineDiffController, type InlineDiffState } from "@/lib/inline-diff-monaco";
 import { ATTACHMENT_ACCEPT, useChatAttachments } from "@/components/editor/useChatAttachments";
-import { copyText, readClipboard } from "@/lib/clipboard";
 
 const SHOW_EDIT_DEBUG = process.env.NODE_ENV !== "production";
 
@@ -315,6 +317,8 @@ export function EditorLayout({
   const [activeFilePath, setActiveFilePath] = useState("main.tex");
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [isCompiling, setIsCompiling] = useState(false);
+  // True while a compile is waiting out a 429 backoff rather than running TeX.
+  const [compileBusy, setCompileBusy] = useState(false);
   const [engine, setEngineState] = useState<TexEngine>("pdfLaTeX");
   // The engine is remembered per project (a XeLaTeX document stays XeLaTeX).
   const engineStorageKey = `overbranch:engine:${projectId || "default"}`;
@@ -340,6 +344,8 @@ export function EditorLayout({
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
   const [errorLog, setErrorLog] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState("");
+  // Selections pinned to the next chat message with "@ Mention".
+  const [mentions, setMentions] = useState<MentionRef[]>([]);
   const [isAgentThinking, setIsAgentThinking] = useState(false);
   const [diffData, setDiffData] = useState<DiffData | null>(null);
   const [diffEditsList, setDiffEditsList] = useState<EditItem[]>([]);
@@ -1054,6 +1060,9 @@ export function EditorLayout({
     } catch (e) {
       console.warn("Failed to load chat messages from localStorage:", e);
     }
+    // Mentions point at lines of the previous project's files.
+    setMentions([]);
+    mentionsRef.current = [];
   }, [projStorageKey]);
 
   // Save chat messages to localStorage whenever they update
@@ -1071,6 +1080,8 @@ export function EditorLayout({
 
   const handleNewChat = () => {
     setMessages([]);
+    setMentions([]);
+    mentionsRef.current = [];
     void chatAttachments.clear();
     announcedAttachmentsRef.current = new Set();
     setDiffData(null);
@@ -1184,6 +1195,48 @@ export function EditorLayout({
     const desktop = desktopEditorRef.current;
     return (isMobileViewport() ? mobile ?? desktop : desktop ?? mobile) ?? null;
   }, []);
+
+  // The list is mirrored in a ref so back-to-back mentions (and the Monaco
+  // command / widget, which are registered once at mount) never see a stale one.
+  const mentionsRef = useRef<MentionRef[]>([]);
+  mentionsRef.current = mentions;
+
+  const addMentionFromSelection = useCallback(() => {
+    const editor = getActiveEditor();
+    const sel = editor?.getSelection?.();
+    const model = editor?.getModel?.();
+    if (!editor || !model || !sel || sel.isEmpty()) return;
+    const next = makeMention(
+      activeFilePath || "main.tex",
+      sel.startLineNumber,
+      sel.endLineNumber,
+      model.getValueInRange(sel),
+    );
+    const result = addMention(mentionsRef.current, next);
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    mentionsRef.current = result.list;
+    setMentions(result.list);
+  }, [getActiveEditor, activeFilePath]);
+
+  const removeMentionById = useCallback((id: string) => {
+    const list = removeMention(mentionsRef.current, id);
+    mentionsRef.current = list;
+    setMentions(list);
+  }, []);
+
+  // Monaco registrations below outlive the render that created them.
+  const addMentionRef = useRef<() => void>(() => {});
+  addMentionRef.current = addMentionFromSelection;
+  const isAgentThinkingRef = useRef(false);
+  isAgentThinkingRef.current = isAgentThinking;
+  // One "re-evaluate the floating @ Mention button" function per desktop editor.
+  const mentionWidgetSyncs = useRef<Set<() => void>>(new Set());
+  useEffect(() => {
+    mentionWidgetSyncs.current.forEach((sync) => sync());
+  }, [isAgentThinking]);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   // Last (file, content) handleCodeChange acted on, to collapse the duplicate
   // notifications the two shared-model editors produce for one edit.
@@ -1279,43 +1332,6 @@ export function EditorLayout({
       }
       return next;
     });
-  };
-
-  /**
-   * Copy the selection (or the whole buffer) from the visible editor.
-   *
-   * The clipboard fallbacks live in lib/clipboard.ts so this, the chat
-   * CopyButton and the mobile touch callout all behave identically.
-   *
-   * NOTE: this and the three helpers below are not wired to any control today;
-   * they are the primitives the mobile callout and accessory bar build on.
-   */
-  const handleCustomCopy = async () => {
-    const editor = getActiveEditor();
-    const selection = editor?.getSelection?.();
-    const model = editor?.getModel?.();
-    const selected =
-      selection && model && !selection.isEmpty() ? model.getValueInRange(selection) : "";
-    const textToCopy = selected || editor?.getValue?.() || code;
-    if (!textToCopy) return;
-
-    if (await copyText(textToCopy)) {
-      // The execCommand fallback steals the selection; put it back.
-      if (editor && selection) editor.setSelection(selection);
-      return;
-    }
-    toast.error("Unable to access clipboard. Use Ctrl+C or Cmd+C.");
-  };
-
-  const handleCustomPaste = async () => {
-    const text = await readClipboard();
-    if (text) {
-      insertSymbol(text);
-      return;
-    }
-    // iOS Safari has no readText; focus the editor so the user can paste
-    // with the keyboard or the OS callout.
-    getActiveEditor()?.focus();
   };
 
   const handleSelectAll = () => {
@@ -1762,10 +1778,84 @@ export function EditorLayout({
       monaco.editor.setTheme(isCurrentlyDark ? "kinetic-emerald" : "kinetic-emerald-light");
     } catch (_) {}
 
+    // Desktop only: a floating "@ Mention" button over a non-empty selection.
+    // Touch has no hover surface; MobileEditorAssist carries its own button.
+    let syncMentionWidget: () => void = () => {};
+    if (isDesktop) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = "@ Mention";
+      button.setAttribute("aria-label", "Mention selection to the AI");
+      const dark = () => document.documentElement.classList.contains("dark");
+      Object.assign(button.style, {
+        padding: "2px 8px",
+        borderRadius: "6px",
+        fontSize: "11px",
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+        lineHeight: "16px",
+        cursor: "pointer",
+        border: "1px solid transparent",
+      });
+      // mousedown + preventDefault: a click would first blur the editor and
+      // clear the very selection we are about to read.
+      button.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        addMentionRef.current();
+      });
+      const widget = {
+        getId: () => "overbranch.mention.widget",
+        getDomNode: () => button,
+        getPosition: () => {
+          const sel = editor.getSelection();
+          if (!sel) return null;
+          return {
+            position: { lineNumber: sel.startLineNumber, column: sel.startColumn },
+            preference: [
+              monaco.editor.ContentWidgetPositionPreference.ABOVE,
+              monaco.editor.ContentWidgetPositionPreference.BELOW,
+            ],
+          };
+        },
+      };
+      let shown = false;
+      syncMentionWidget = () => {
+        const sel = editor.getSelection?.();
+        const want = !!sel && !sel.isEmpty() && !isAgentThinkingRef.current;
+        if (want) {
+          const isDark = dark();
+          button.style.background = isDark ? "#1A1C22" : "#ffffff";
+          button.style.color = isDark ? "#F7F8F8" : "#0f172a";
+          button.style.borderColor = isDark ? "#282A30" : "#cbd5e1";
+          if (shown) {
+            editor.layoutContentWidget(widget);
+          } else {
+            editor.addContentWidget(widget);
+            shown = true;
+          }
+        } else if (shown) {
+          editor.removeContentWidget(widget);
+          shown = false;
+        }
+      };
+      mentionWidgetSyncs.current.add(syncMentionWidget);
+      editor.onDidDispose(() => {
+        mentionWidgetSyncs.current.delete(syncMentionWidget);
+        if (shown) {
+          try {
+            editor.removeContentWidget(widget);
+          } catch {
+            /* editor already torn down */
+          }
+          shown = false;
+        }
+      });
+    }
+
     editor.onDidChangeCursorSelection((e: any) => {
       if (e.selection) {
         lastSelectionRef.current = e.selection;
       }
+      syncMentionWidget();
     });
 
     editor.onDidChangeCursorPosition((e: any) => {
@@ -1774,50 +1864,16 @@ export function EditorLayout({
       }
     });
 
-    // Attach touch/mobile fallback paste listener only on touch-enabled devices
-    try {
-      const isTouchDevice = typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
-      const containerNode = editor.getContainerDomNode();
-      if (containerNode && isTouchDevice && !isDesktop) {
-        containerNode.addEventListener(
-          "paste",
-          (e: ClipboardEvent) => {
-            try {
-              const pastedText = e.clipboardData?.getData("text/plain");
-              if (pastedText !== undefined && pastedText !== null) {
-                const activeEd = editor;
-                const selection = activeEd.getSelection();
-                if (selection && !selection.isEmpty()) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  activeEd.pushUndoStop();
-                  activeEd.executeEdits("safe-mobile-paste", [
-                    {
-                      range: selection,
-                      text: pastedText,
-                      forceMoveMarkers: true,
-                    },
-                  ]);
-                  activeEd.pushUndoStop();
-                  handleCodeChange(activeEd.getValue());
-                }
-              }
-            } catch (pasteErr) {
-              console.warn("Handled mobile paste fallback exception:", pasteErr);
-            }
-          },
-          false
-        );
-      }
-    } catch (err) {
-      console.warn("Failed to attach touch paste event listener:", err);
-    }
-
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       const currentVal = editor.getValue();
       saveDocument(currentVal, true);
       handleCompile(currentVal);
+    });
+
+    // Ctrl/Cmd+M: pin the selection to the chat message (both editors).
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyM, () => {
+      addMentionRef.current();
     });
 
     // Our own find bar deliberately replaces Monaco's built-in widget: the
@@ -1909,30 +1965,67 @@ export function EditorLayout({
     const targetCode = currentCodeOverride ?? currentDocumentText();
     if (!targetCode) return;
     setIsCompiling(true);
+    setCompileBusy(false);
     setErrorLog(null);
+    // One toast id for the whole retry sequence, so retries update a single
+    // toast rather than stacking (M8).
+    const busyToastId = "compile-busy";
     try {
-      const res = await authFetch(`${BACKEND_URL}/api/compile`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          latex_code: targetCode,
-          project_id: projectId || "",
-          engine: engine,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        // A PDF was produced: show it, and nothing else. TeX's recoverable
-        // complaints in nonstopmode are not surfaced as a warning band.
-        setPdfBase64(data.pdf_base64);
-      } else {
-        setErrorLog(data.error_log || "Compilation failed.");
-        toast.error("LaTeX compilation failed.");
+      let attempt = 0;
+      for (;;) {
+        let outcome: CompileOutcome;
+        try {
+          const res = await authFetch(`${BACKEND_URL}/api/compile`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              latex_code: targetCode,
+              project_id: projectId || "",
+              engine: engine,
+            }),
+          });
+          const data = await res.json().catch(() => null);
+          outcome = classifyCompileResponse(res.status, data);
+        } catch {
+          outcome = {
+            kind: "network",
+            message: "Network error or Python backend is not running.",
+          };
+        }
+
+        if (outcome.kind === "ok") {
+          // A PDF was produced: show it, and nothing else. TeX's recoverable
+          // complaints in nonstopmode are not surfaced as a warning band.
+          toast.dismiss(busyToastId);
+          setPdfBase64(outcome.body.pdf_base64);
+          return;
+        }
+        if (outcome.kind === "busy") {
+          // The server is queueing work, not rejecting the LaTeX: never touch errorLog.
+          const delay = nextRetryDelay(attempt);
+          if (delay === null) {
+            toast.dismiss(busyToastId);
+            toast.error("Server is busy. Try again in a moment.");
+            return;
+          }
+          attempt += 1;
+          setCompileBusy(true);
+          toast.loading("Server busy \u2014 retrying\u2026", { id: busyToastId });
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          continue;
+        }
+        toast.dismiss(busyToastId);
+        if (outcome.kind === "failed") {
+          setErrorLog(outcome.errorLog);
+          toast.error("LaTeX compilation failed.");
+        } else {
+          setErrorLog(outcome.message);
+          toast.error("Failed to connect to backend compiler.");
+        }
+        return;
       }
-    } catch (err) {
-      setErrorLog("Network error or Python backend is not running.");
-      toast.error("Failed to connect to backend compiler.");
     } finally {
+      setCompileBusy(false);
       setIsCompiling(false);
     }
   };
@@ -1971,6 +2064,8 @@ export function EditorLayout({
 
     if (customPrompt === undefined) {
       setChatInput("");
+      setMentions([]);
+      mentionsRef.current = [];
       if (typeof document !== "undefined") {
         document.querySelectorAll<HTMLTextAreaElement>("textarea[id*='chat-input']").forEach((el) => {
           el.style.height = "auto";
@@ -2001,7 +2096,7 @@ export function EditorLayout({
         console.warn("Failed to parse API keys from localStorage", e);
       }
 
-      const response = await authFetch(`${BACKEND_URL}/api/agent/opencode`, {
+      const response = await authFetch(`${BACKEND_URL}/api/agent/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abortControllerRef.current.signal,
@@ -2019,7 +2114,26 @@ export function EditorLayout({
           // What the user had highlighted when they asked. "Elaborate this" and
           // "humanize this" mean the selection when there is one, and the
           // request text alone cannot say which block that was.
-          selection: activeSelection() || undefined,
+          // With mentions the first one stands in for `selection`, so
+          // elaborate/humanize keep working unchanged.
+          selection: mentions.length > 0
+            ? {
+                text: mentions[0].text,
+                start_line: mentions[0].start_line,
+                end_line: mentions[0].end_line,
+                file: mentions[0].file,
+              }
+            : activeSelection() || undefined,
+          mentions: mentions.length > 0
+            ? mentions.map((m) => ({
+                id: m.id,
+                file: m.file,
+                start_line: m.start_line,
+                end_line: m.end_line,
+                text: m.text,
+                label: m.label,
+              }))
+            : undefined,
           api_keys: customApiKeys || undefined,
         }),
       });
@@ -3177,6 +3291,7 @@ export function EditorLayout({
           <CompileSplitButton
             onCompile={() => handleCompile()}
             isCompiling={isCompiling}
+            busy={compileBusy}
             engine={engine}
             onEngineChange={setEngine}
           />
@@ -3213,6 +3328,7 @@ export function EditorLayout({
           <CompileSplitButton
             onCompile={() => handleCompile()}
             isCompiling={isCompiling}
+            busy={compileBusy}
             engine={engine}
             onEngineChange={setEngine}
             compact
@@ -3650,6 +3766,8 @@ export function EditorLayout({
                   disabled={isAgentThinking}
                 />
 
+                <MentionChips mentions={mentions} onRemove={removeMentionById} disabled={isAgentThinking} />
+
                 {/* Chat Input Form */}
                 <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
                   <button
@@ -3769,6 +3887,9 @@ export function EditorLayout({
                 active={activeMobileTab === "code" || activeMobileTab === "split"}
                 onOpenSearch={() => setSearchOpen(true)}
                 onDocumentChange={handleCodeChange}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                onMention={addMentionFromSelection}
               />
 
               <EditorSearchBar
@@ -3921,6 +4042,8 @@ export function EditorLayout({
             onRemove={chatAttachments.remove}
             disabled={isAgentThinking}
           />
+
+          <MentionChips mentions={mentions} onRemove={removeMentionById} disabled={isAgentThinking} />
 
           <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
             <button

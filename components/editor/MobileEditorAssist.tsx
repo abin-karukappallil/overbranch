@@ -1,7 +1,17 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ClipboardPaste, Copy, Scissors, Search, TextSelect, X } from "lucide-react";
+import {
+  AtSign,
+  ClipboardPaste,
+  Copy,
+  Redo2,
+  Scissors,
+  Search,
+  TextSelect,
+  Undo2,
+  X,
+} from "lucide-react";
 import { copyText, readClipboard } from "@/lib/clipboard";
 
 interface MobileEditorAssistProps {
@@ -15,6 +25,10 @@ interface MobileEditorAssistProps {
   onOpenSearch: () => void;
   /** Called with the new buffer after an edit, so autosave still runs. */
   onDocumentChange?: (value: string) => void;
+  /** Wired by EditorLayout to its Yjs-aware undo/redo and mention handlers. */
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onMention?: () => void;
 }
 
 interface VisiblePoint {
@@ -58,6 +72,9 @@ export function MobileEditorAssist({
   active = true,
   onOpenSearch,
   onDocumentChange,
+  onUndo,
+  onRedo,
+  onMention,
 }: MobileEditorAssistProps) {
   const [focused, setFocused] = useState(false);
   const [caret, setCaret] = useState<VisiblePoint | null>(null);
@@ -67,12 +84,15 @@ export function MobileEditorAssist({
   const [calloutOpen, setCalloutOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const [pasteFallbackOpen, setPasteFallbackOpen] = useState(false);
+  /** Text the user must copy by hand when every programmatic copy failed. */
+  const [copyFallbackText, setCopyFallbackText] = useState<string | null>(null);
 
   const dragRef = useRef<DragState | null>(null);
   const autoScrollRef = useRef<{ dir: number; timer: NodeJS.Timeout } | null>(null);
   const blurTimerRef = useRef<NodeJS.Timeout | null>(null);
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pasteTargetRef = useRef<HTMLTextAreaElement>(null);
+  const copyTargetRef = useRef<HTMLTextAreaElement>(null);
 
   const lineHeight = useCallback((): number => {
     try {
@@ -391,11 +411,26 @@ export function MobileEditorAssist({
     return model.getValueInRange(sel);
   };
 
+  const openCopyFallback = (text: string) => {
+    setCopyFallbackText(text);
+    setTimeout(() => {
+      const el = copyTargetRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+      el.setSelectionRange(0, el.value.length);
+    }, 40);
+  };
+
   const handleCopy = async () => {
     const text = selectedText();
     if (!text) return;
-    await copyText(text);
+    const ok = await copyText(text);
     setCalloutOpen(false);
+    if (!ok) {
+      openCopyFallback(text);
+      return;
+    }
     editor?.focus?.();
   };
 
@@ -403,10 +438,15 @@ export function MobileEditorAssist({
     if (readOnly) return;
     const text = selectedText();
     if (!text) return;
-    await copyText(text);
+    const ok = await copyText(text);
+    setCalloutOpen(false);
+    if (!ok) {
+      // Never destroy text that did not reach the clipboard.
+      openCopyFallback(text);
+      return;
+    }
     const sel = editor.getSelection();
     applyEdits([{ range: sel, text: "", forceMoveMarkers: true }], "mobile-cut");
-    setCalloutOpen(false);
     editor?.focus?.();
   };
 
@@ -520,6 +560,32 @@ export function MobileEditorAssist({
           }}
           onPointerDown={(e) => e.preventDefault()}
         >
+          <button
+            type="button"
+            className={`${calloutBtn} ${onUndo ? "" : "opacity-40"}`}
+            aria-label="Undo"
+            aria-disabled={onUndo ? undefined : "true"}
+            disabled={!onUndo}
+            onClick={() => {
+              onUndo?.();
+              editor?.focus?.();
+            }}
+          >
+            <Undo2 className="w-3 h-3" />
+          </button>
+          <button
+            type="button"
+            className={`${calloutBtn} ${onRedo ? "" : "opacity-40"}`}
+            aria-label="Redo"
+            aria-disabled={onRedo ? undefined : "true"}
+            disabled={!onRedo}
+            onClick={() => {
+              onRedo?.();
+              editor?.focus?.();
+            }}
+          >
+            <Redo2 className="w-3 h-3" />
+          </button>
           {!hasSelection && (
             <button type="button" className={calloutBtn} onClick={selectWord}>
               <TextSelect className="w-3 h-3" />
@@ -529,6 +595,20 @@ export function MobileEditorAssist({
           <button type="button" className={calloutBtn} onClick={selectAll}>
             <span>Select All</span>
           </button>
+          {hasSelection && onMention && (
+            <button
+              type="button"
+              className={calloutBtn}
+              aria-label="Mention selection to the AI"
+              onClick={() => {
+                onMention();
+                setCalloutOpen(false);
+                editor?.focus?.();
+              }}
+            >
+              <AtSign className="w-3 h-3" />
+            </button>
+          )}
           {hasSelection && (
             <button type="button" className={calloutBtn} onClick={handleCopy}>
               <Copy className="w-3 h-3" />
@@ -597,6 +677,38 @@ export function MobileEditorAssist({
               const value = (e.currentTarget as HTMLTextAreaElement).value;
               if (value) consumePastedText(value);
             }}
+            className="w-full rounded-lg border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] p-2 text-[11px] font-mono text-slate-900 dark:text-[#E2E4E9] outline-none focus:ring-1 focus:ring-emerald-500"
+          />
+        </div>
+      )}
+
+      {/* Manual copy sheet: shown when every programmatic copy failed, so the
+          user can still finish the copy with the OS's own selection UI. */}
+      {copyFallbackText !== null && (
+        <div className="pointer-events-auto absolute inset-x-3 top-3 rounded-xl border border-slate-300 dark:border-[#383B46] bg-white dark:bg-[#141519] shadow-2xl p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-mono font-semibold text-slate-900 dark:text-[#E2E4E9]">
+              Copy didn&apos;t work here. Long-press the text, then tap Copy.
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setCopyFallbackText(null);
+                editor?.focus?.();
+              }}
+              className="p-1 rounded-md text-slate-500 dark:text-[#9E9E9E] active:bg-slate-200 dark:active:bg-[#22242C]"
+              aria-label="Close copy sheet"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <textarea
+            ref={copyTargetRef}
+            rows={4}
+            readOnly
+            value={copyFallbackText}
+            spellCheck={false}
+            onFocus={(e) => e.currentTarget.select()}
             className="w-full rounded-lg border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] p-2 text-[11px] font-mono text-slate-900 dark:text-[#E2E4E9] outline-none focus:ring-1 focus:ring-emerald-500"
           />
         </div>

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import compiler
 from latex_error_fixer import ensure_required_packages, repair_from_compile_errors
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.shadow_workspace import ShadowWorkspace
 
 B = "\\"
 

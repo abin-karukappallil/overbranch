@@ -1,5 +1,5 @@
 """
-LaTeX inside the agent's JSON replies (opencode.agent_loop._parse_agent_response).
+LaTeX inside the agent's JSON replies (agent.agent_loop._parse_agent_response).
 
 Models escape LaTeX for JSON inconsistently. The parser used to guess one style
 for the whole reply, and a single `\\u0026` or a newline before "e.g." made it
@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from opencode.agent_loop import OPENCODE_SYSTEM_PROMPT, _parse_agent_response, sanitize_latex_json
+from agent.agent_loop import OPENCODE_SYSTEM_PROMPT, _parse_agent_response, sanitize_latex_json
 
 B = "\\"
 NL = "\n"

@@ -2,7 +2,7 @@
  * latex-edit-apply.ts — the client half of the apply contract.
  *
  * The contract itself is defined and enforced in
- * `backend/opencode/diff_generator.py` (see its module docstring,
+ * `backend/agent/diff_generator.py` (see its module docstring,
  * `apply_contract_version: 2`). In short, for every edit item the backend
  * guarantees a non-empty, unique, structurally-closed, non-overlapping,
  * line-addressed anchor. `backend/tests/test_diff_generator_anchors.py` holds a

@@ -14,8 +14,8 @@ import pytest
 
 import compiler
 from latex_error_fixer import parse_compilation_errors
-from opencode.shadow_compiler import compile_shadow_buffer
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.shadow_compiler import compile_shadow_buffer
+from agent.shadow_workspace import ShadowWorkspace
 
 B = "\\"
 ORIG = "\n".join([B + "documentclass{article}", B + "begin{document}", "A " + B + "bottom", "B",
@@ -252,7 +252,7 @@ def test_the_budget_comes_from_the_whole_project_not_just_main(monkeypatch):
     project, got the short budget, and timed out — then the gate called the
     timeout a compile failure and the whole run was rolled back.
     """
-    from opencode.shadow_compiler import project_compile_timeout, SHADOW_COMPILE_TIMEOUT
+    from agent.shadow_compiler import project_compile_timeout, SHADOW_COMPILE_TIMEOUT
 
     ws = ShadowWorkspace(ORIG)
     assert project_compile_timeout(ws) == SHADOW_COMPILE_TIMEOUT
@@ -269,7 +269,7 @@ def test_the_budget_comes_from_the_whole_project_not_just_main(monkeypatch):
 
 
 def test_the_retry_does_not_double_past_the_ceiling(monkeypatch):
-    from opencode import shadow_compiler
+    from agent import shadow_compiler
 
     monkeypatch.setattr(shadow_compiler, "SHADOW_COMPILE_TIMEOUT_MAX", 100)
     res, calls = _gate(monkeypatch, WITH_NEW_MACRO, [

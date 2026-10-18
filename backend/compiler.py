@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from reportlab.lib.pagesizes import letter, landscape
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -1218,7 +1218,7 @@ def compile_latex(
     images: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, str]]] = None,
     project_id: Optional[str] = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: int = 60,  # absorbs a cold TeX format/font cache on the first compile after boot
     persist_synctex: bool = True,
     allow_recovery: bool = True,
     pre_heal: Optional[bool] = None,

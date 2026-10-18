@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 import urllib.parse
 from typing import Any, Dict, Optional, Tuple
 
@@ -32,8 +31,6 @@ from collab.presence import presence_registry, should_open_socket
 from collab.room import (
     CLOSE_CREDENTIALS_REQUIRED,
     CLOSE_FORBIDDEN,
-    CLOSE_NOT_FOUND,
-    CLOSE_PROTOCOL,
     CLOSE_ROOM_FULL,
     CLOSE_UNAUTHORIZED,
     Connection,

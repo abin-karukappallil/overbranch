@@ -16,6 +16,8 @@ services:
       - WORKERS=${WORKERS:-2}
       - UPLOADS_BASE_DIR=/app/uploads/projects
     volumes:
+      # Also holds in-flight PDF import jobs (uploads/pdf2latex_jobs): do not drop this mount or a
+      # restart loses running conversions.
       - ./uploads:/app/uploads
       - ./backend/templates:/app/backend/templates:ro
     healthcheck:

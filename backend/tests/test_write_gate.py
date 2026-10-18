@@ -6,7 +6,7 @@ ones, and the deterministic repairs never corrupt what they touch.
 from document_index import ensure_document_environment
 from edit_validator import validate_edit
 from latex_error_fixer import auto_heal_latex_code, balance_latex_environments, fix_tikz_semicolons
-from opencode.shadow_workspace import ShadowWorkspace
+from agent.shadow_workspace import ShadowWorkspace
 
 B = "\\"
 
@@ -146,7 +146,7 @@ def test_trailing_newline_of_the_replaced_text_is_kept():
 
 
 def test_server_never_places_a_whole_document_item_over_a_changed_document():
-    from opencode.apply_edits import resolve_and_apply
+    from agent.apply_edits import resolve_and_apply
     original = _doc("Hello.")
     item = {"original_chunk": original, "proposed_chunk": original.replace("Hello.", "Hi."),
             "is_full_document": True}

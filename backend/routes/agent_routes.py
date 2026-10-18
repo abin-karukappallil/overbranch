@@ -1,10 +1,8 @@
 """
-routes/agent_routes.py — OpenCode Agentic Pipeline SSE Endpoint
+routes/agent_routes.py — OverBranch Agentic Pipeline SSE Endpoint
 ================================================================
-New FastAPI router for the OpenCode pipeline. Provides:
-  POST /api/agent/opencode — SSE streaming endpoint
-
-Coexists alongside the legacy /api/agent/chat endpoint.
+FastAPI router for the agentic pipeline. Provides:
+  POST /api/agent/run — SSE streaming endpoint
 """
 
 from __future__ import annotations
@@ -12,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional
@@ -21,14 +18,13 @@ from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from cancellation import cancellation_manager, CancellationToken, LLMOperationCancelled
-from auth import get_current_user, get_current_user_or_guest, verify_project_ownership_or_member
-from models import User
+from cancellation import cancellation_manager, LLMOperationCancelled
+from auth import get_current_user_or_guest, verify_project_ownership_or_member
 from rate_limiter import RateLimiter
 from project_storage import get_supabase_client
 from providers.router import DEFAULT_MODEL
 
-logger = logging.getLogger("routes.agent_opencode")
+logger = logging.getLogger("routes.agent_routes")
 
 router = APIRouter()
 
@@ -37,7 +33,7 @@ router = APIRouter()
 # Request / Response Models
 # ============================================================================
 
-class OpenCodeRequest(BaseModel):
+class AgentRequest(BaseModel):
     project_id: str = Field(..., description="Project ID or UUID")
     file_path: str = Field("main.tex", description="Path of the TeX file")
     user_prompt: str = Field(..., description="User's editing request or question")
@@ -49,6 +45,9 @@ class OpenCodeRequest(BaseModel):
     # alone cannot say which block that was.
     selection: Optional[Dict[str, Any]] = Field(
         None, description="Active editor selection: {text, start_line, end_line, file}")
+    # Ranges the user @-mentioned in the editor: [{id, file, start_line, end_line, text, label}].
+    mentions: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Mentioned editor ranges (max 8, text capped at 4000 chars)")
     model: Optional[str] = Field(None, description="LLM model name")
     mode: Optional[str] = Field("edit", description="Chat mode: 'edit' (default) or 'ask'")
     attached_file: Optional[Dict[str, Any]] = Field(None, description="Attached PDF/text document reference")
@@ -59,7 +58,40 @@ class OpenCodeRequest(BaseModel):
     max_steps: Optional[int] = Field(None, description="Max agent reasoning steps (default: 12)")
 
 
-OpenCodeRequest.model_rebuild()
+MAX_MENTIONS = 8
+MAX_MENTION_CHARS = 4000
+
+
+def sanitize_mentions(raw: Any) -> Optional[List[Dict[str, Any]]]:
+    """
+    Defensive cleanup of the client's `mentions`: never raises. Drops entries that are
+    not dicts or have no `text`, coerces the line numbers to int (0 when unusable), caps
+    the list at 8 and each text at 4000 characters. None when nothing usable is left.
+    """
+    if not isinstance(raw, list):
+        return None
+    out: List[Dict[str, Any]] = []
+    for m in raw:
+        if len(out) >= MAX_MENTIONS:
+            break
+        if not isinstance(m, dict) or not isinstance(m.get("text"), str):
+            continue
+        item = dict(m)
+        item["text"] = m["text"][:MAX_MENTION_CHARS]
+        for key in ("start_line", "end_line"):
+            try:
+                item[key] = int(m.get(key))
+            except (TypeError, ValueError, OverflowError):
+                item[key] = 0
+        for key in ("file", "id", "label"):
+            if key in item and not isinstance(item[key], str):
+                item[key] = str(item[key])
+        out.append(item)
+    return out or None
+
+
+AgentRequest.model_rebuild()
+OpenCodeRequest = AgentRequest
 
 
 class AgentStopRequest(BaseModel):
@@ -77,7 +109,7 @@ async def agent_stop(
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """
-    Immediately halts active OpenCode reasoning, LLM API calls,
+    Immediately halts active agent reasoning, LLM API calls,
     and background operations for the specified request_id and/or project_id.
     Requires authenticated Better Auth session or verified guest identity.
     """
@@ -225,7 +257,7 @@ async def resolve_edits_endpoint(
     if size > 2 * MAX_VALIDATE_BYTES or len(req.items) > 200:
         return JSONResponse(status_code=413, content={"detail": "Document or edit list too large."})
 
-    from opencode.apply_edits import resolve_and_apply
+    from agent.apply_edits import resolve_and_apply
 
     result = await asyncio.to_thread(
         resolve_and_apply,
@@ -379,15 +411,15 @@ async def clear_attachments(
 # ============================================================================
 
 @router.post(
-    "/api/agent/opencode",
-    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_agent_opencode"))],
+    "/api/agent/run",
+    dependencies=[Depends(RateLimiter(times=20, seconds=60, key_prefix="rl_agent_run"))],
 )
-async def agent_opencode(
+async def agent_run(
     request: Request,
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """
-    OpenCode Agentic Pipeline with SSE streaming.
+    OverBranch Agentic Pipeline with SSE streaming.
     Requires an authenticated Better Auth user session or verified guest identity.
 
     Sends real-time reasoning events (thought, tool_call, tool_result,
@@ -402,7 +434,9 @@ async def agent_opencode(
                 content={"detail": "Request body too large. Maximum size is 10MB."},
             )
         raw_data = json.loads(body)
-        req = OpenCodeRequest(**raw_data)
+        if isinstance(raw_data, dict) and "mentions" in raw_data:
+            raw_data["mentions"] = sanitize_mentions(raw_data["mentions"])
+        req = AgentRequest(**raw_data)
     except json.JSONDecodeError as e:
         return JSONResponse(status_code=400, content={"detail": f"Invalid JSON: {e}"})
     except Exception as e:
@@ -430,7 +464,7 @@ async def agent_opencode(
 
     async def pipeline_generator():
         try:
-            from opencode.agent_loop import stream_opencode_agent
+            from agent.agent_loop import stream_agent
 
             # Resolve assets directory
             assets_dir = _resolve_assets_dir(req.project_id)
@@ -451,7 +485,7 @@ async def agent_opencode(
 
             def producer():
                 try:
-                    for event in stream_opencode_agent(
+                    for event in stream_agent(
                         user_instruction=req.user_prompt,
                         project_id=req.project_id,
                         current_code=req.current_code or "",
@@ -471,6 +505,7 @@ async def agent_opencode(
                         base_version=req.base_version,
                         base_sha256=req.base_sha256,
                         selection=req.selection,
+                        mentions=req.mentions,
                     ):
                         if token.is_cancelled():
                             break
@@ -658,7 +693,7 @@ def _summarize_tool_result(tool_name: str, result: Dict[str, Any]) -> str:
     Internal failure detail (locator attempts, anchors) stays in the agent's own
     context and the trace; the feed says what happened in plain words.
     """
-    from opencode.tools import canonical_tool_name
+    from agent.tools import canonical_tool_name
 
     tool_name = canonical_tool_name(tool_name)
     edit_tools = {"replace_text", "replace_block", "insert_block", "delete_block", "rewrite_chunk",

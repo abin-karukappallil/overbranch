@@ -84,7 +84,7 @@ def stub_compiler(monkeypatch):
     Replaces the shadow compile. ``state["fail_if"]`` is a predicate on the
     buffer: when it returns True the compile reports a new error.
     """
-    from opencode import shadow_compiler
+    from agent import shadow_compiler
 
     state: Dict[str, Any] = {"fail_if": None, "calls": 0, "infra": False}
 
@@ -101,8 +101,8 @@ def stub_compiler(monkeypatch):
 
 
 def run_agent(instruction: str, code: str, **kw) -> List[Dict[str, Any]]:
-    from opencode.agent_loop import stream_opencode_agent
-    return list(stream_opencode_agent(user_instruction=instruction, project_id="test-project",
+    from agent.agent_loop import stream_agent
+    return list(stream_agent(user_instruction=instruction, project_id="test-project",
                                       current_code=code, **kw))
 
 

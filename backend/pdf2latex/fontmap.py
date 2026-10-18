@@ -239,12 +239,3 @@ def outline_stroke_bold(page: Any, paths: Optional[list] = None) -> Tuple[Set[Tu
     bold = {(round(spans[k][1][0]), round(spans[k][1][1]))
             for k, n in hits.items() if n >= max(1, 0.5 * spans[k][2])}
     return bold, strokes
-
-
-def span_weight(font: str, flags: int, descriptor_bold: Optional[Set[str]] = None,
-                synthetic: bool = False) -> Tuple[bool, bool]:
-    """(bold, italic) for one span from every available signal."""
-    bold = bool(flags & 16) or name_is_bold(font) or synthetic or (
-        descriptor_bold is not None and _clean(font) in descriptor_bold)
-    italic = bool(flags & 2) or name_is_italic(font)
-    return bold, italic

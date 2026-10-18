@@ -310,5 +310,5 @@ def hfit_line(content: str, width_pt: float) -> str:
 
 # The fragment fitter used to be the whole of justify_content. The agent tool
 # of that name is now the document-level layout repair in
-# opencode/layout_tools.py; this remains its one-fragment primitive.
+# agent/layout_tools.py; this remains its one-fragment primitive.
 justify_content = fit_fragment

@@ -23,7 +23,6 @@ from pydantic import BaseModel
 
 from compiler import compile_latex
 from compile_queue import compile_queue, CompileQueueFullError
-from trace import trace_manager
 import project_storage
 import file_analyzer
 import template_service
@@ -91,14 +90,14 @@ app.add_middleware(
 )
 
 from routes.pdf_convert import router as pdf_convert_router
-from routes.agent_routes import router as agent_opencode_router
+from routes.agent_routes import router as agent_router
 from routes.collab_routes import router as collab_router
 
 app.include_router(project_storage.router)
 app.include_router(template_service.router)
 app.include_router(file_analyzer.router, prefix="/api")
 app.include_router(pdf_convert_router)
-app.include_router(agent_opencode_router)
+app.include_router(agent_router)
 app.include_router(collab_router)
 
 
@@ -149,6 +148,48 @@ from rate_limiter import RateLimiter
 from project_storage import get_supabase_client
 
 
+# How long a compile waits for the project's collab room to persist. The flush
+# is normally milliseconds (a few disk writes); the cap only stops a wedged room
+# from hanging the request.
+COLLAB_FLUSH_TIMEOUT_SECONDS = 2.0
+
+
+async def _flush_collab_room_before_compile(project_id: str) -> None:
+    """
+    Best-effort: persist the project's live collab room before compiling.
+
+    Only ``main.tex`` travels in the compile request; every sibling (``\\input``
+    chapters, ``.bib``) is copied from ``uploads/projects/<id>/``, which the room
+    writes on a 2s-idle / 15s-max debounce. Without this, a chapter edited just
+    before clicking Compile is built from its previous version.
+
+    Never raises: a missing room, collab being disabled, a failing or slow flush
+    are logged and the compile goes ahead with whatever is on disk.
+    """
+    pid = (project_id or "").strip()
+    if not pid:
+        return
+    try:
+        from collab import config as collab_config, room_manager
+
+        if not collab_config.enabled:
+            logger.warning(f"[COMPILE] collab disabled; no room flush before compiling project {pid}")
+            return
+        room = room_manager.get(pid)
+        if room is None:
+            logger.warning(f"[COMPILE] no live collab room for project {pid}; compiling from stored files")
+            return
+        # shield: on timeout stop *waiting*, but let the flush finish. Cancelling it
+        # mid-write would drop the paths it had already taken off the dirty set.
+        await asyncio.wait_for(asyncio.shield(room.flush()), timeout=COLLAB_FLUSH_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"[COMPILE] collab flush for project {pid} exceeded {COLLAB_FLUSH_TIMEOUT_SECONDS}s; compiling anyway"
+        )
+    except Exception as e:
+        logger.warning(f"[COMPILE] collab flush for project {pid} failed ({e!r}); compiling anyway")
+
+
 @app.post(
     "/api/compile",
     dependencies=[Depends(RateLimiter(times=60, seconds=60, key_prefix="rl_compile"))],
@@ -175,6 +216,8 @@ async def compile_endpoint(
     code = req.latex_code if req.latex_code.strip() else req.latex
     images_dict = [{"filename": img.filename, "data": img.data} for img in (req.images or [])]
     files_dict = [{"filename": f.filename, "data": f.data} for f in (req.files or [])]
+
+    await _flush_collab_room_before_compile(req.project_id)
 
     try:
         result = await compile_queue.submit(
