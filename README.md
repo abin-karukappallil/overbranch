@@ -90,8 +90,6 @@ docker compose up --build -d
 - **Web Workspace**: `http://localhost:3000`
 - **FastAPI Engine**: `http://localhost:8000`
 
-> 📄 For step-by-step Ubuntu VM setup and port rules, see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md).
-
 ---
 
 ## 💻 Local Development Setup

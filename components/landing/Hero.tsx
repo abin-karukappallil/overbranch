@@ -5,9 +5,15 @@ import Link from "next/link";
 import { Star, ArrowUpRight, ArrowRight, LayoutDashboard } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 
-export function LandingHero() {
-  const { data: session } = authClient.useSession();
-  const isAuthenticated = Boolean(session?.user);
+interface LandingHeroProps {
+  initialIsAuthenticated?: boolean;
+}
+
+export function LandingHero({ initialIsAuthenticated }: LandingHeroProps = {}) {
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = session?.user
+    ? true
+    : (isPending && initialIsAuthenticated !== undefined ? initialIsAuthenticated : Boolean(session?.user));
 
   return (
     <section id="product" className="relative min-h-screen bg-[#00CC68] text-black flex flex-col justify-between pt-28 pb-10 px-4 sm:px-8 lg:px-12 select-none border-b-2 border-black overflow-hidden">

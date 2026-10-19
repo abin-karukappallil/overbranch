@@ -5,9 +5,15 @@ import Link from "next/link";
 import { ArrowRight, LayoutDashboard } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 
-export function LandingCTA() {
-  const { data: session } = authClient.useSession();
-  const isAuthenticated = Boolean(session?.user);
+interface LandingCTAProps {
+  initialIsAuthenticated?: boolean;
+}
+
+export function LandingCTA({ initialIsAuthenticated }: LandingCTAProps = {}) {
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = session?.user
+    ? true
+    : (isPending && initialIsAuthenticated !== undefined ? initialIsAuthenticated : Boolean(session?.user));
 
   return (
     <section className="bg-[#00CC68] text-black py-28 px-4 sm:px-8 lg:px-16 text-center border-b-2 border-black relative overflow-hidden select-none">

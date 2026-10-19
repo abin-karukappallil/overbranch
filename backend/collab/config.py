@@ -3,7 +3,7 @@ backend/collab/config.py — Real-time collaboration settings (non-LLM, env driv
 =================================================================================
 Every knob is an environment variable so the collaboration layer can be tuned
 per deployment without a code change. Defaults are chosen for the single-node
-Docker deployment described in DOCKER_DEPLOYMENT.md.
+Docker deployment described in COLLABORATION.md.
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@
  * awareness tick would be the most expensive thing in the app.
  *
  * Every surface is a `light dark:` pair — a hardcoded hex with no `dark:`
- * prefix stays dark in light mode (see OVERVIEW.md, Feature 29).
+ * prefix stays dark in light mode.
  */
 
 import React, { memo, useMemo, useState } from "react";

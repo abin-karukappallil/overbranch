@@ -1,5 +1,3 @@
-"use client";
-
 import React from "react";
 import { LandingHeader } from "@/components/landing/Header";
 import { LandingHero } from "@/components/landing/Hero";
@@ -14,27 +12,28 @@ import { LandingFreeSection } from "@/components/landing/FreeSection";
 import { TechnicalMarquee } from "@/components/landing/TechnicalMarquee";
 import { LandingCTA } from "@/components/landing/CTASection";
 import { LandingFooter } from "@/components/landing/Footer";
+import { getServerSession } from "@/lib/get-server-session";
 
-export default function HomePage() {
-  React.useEffect(() => {
-    document.title = "OverBranch — 100% Free & Open-Source Agentic LaTeX Code Editor";
-  }, []);
+export default async function HomePage() {
+  const session = await getServerSession();
+  const isAuthenticated = Boolean(session?.user);
+
   return (
     <div className="min-h-screen bg-[#00CC68] text-black selection:bg-black selection:text-[#00CC68] overflow-x-clip max-w-full font-sans antialiased">
-      <LandingHeader />
+      <LandingHeader initialIsAuthenticated={isAuthenticated} />
 
       <main>
-        <LandingHero />
+        <LandingHero initialIsAuthenticated={isAuthenticated} />
         <BrandMarquee />
         <LandingIntroduction />
         <LandingFeatures />
-        <LandingPdfToLatex />
+        <LandingPdfToLatex initialIsAuthenticated={isAuthenticated} />
         <LandingTemplates />
         <LandingSelfHosting />
         <LandingOpenSource />
         <LandingFreeSection />
         <TechnicalMarquee />
-        <LandingCTA />
+        <LandingCTA initialIsAuthenticated={isAuthenticated} />
       </main>
 
       <LandingFooter />

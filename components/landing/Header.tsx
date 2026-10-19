@@ -6,10 +6,16 @@ import { Menu, X, ArrowUpRight, LayoutDashboard, Star } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { OverBranchLogo } from "@/components/ui/OverBranchLogo";
 
-export function LandingHeader() {
+interface LandingHeaderProps {
+  initialIsAuthenticated?: boolean;
+}
+
+export function LandingHeader({ initialIsAuthenticated }: LandingHeaderProps = {}) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { data: session } = authClient.useSession();
-  const isAuthenticated = Boolean(session?.user);
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = session?.user
+    ? true
+    : (isPending && initialIsAuthenticated !== undefined ? initialIsAuthenticated : Boolean(session?.user));
 
   return (
     <header className="fixed top-4 left-0 right-0 z-50 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto flex items-center justify-between gap-3 pointer-events-none">

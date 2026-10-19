@@ -14,10 +14,16 @@ import {
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 
-export function LandingPdfToLatex() {
+interface LandingPdfToLatexProps {
+  initialIsAuthenticated?: boolean;
+}
+
+export function LandingPdfToLatex({ initialIsAuthenticated }: LandingPdfToLatexProps = {}) {
   const [activeTab, setActiveTab] = useState<"code" | "assets" | "bib">("code");
-  const { data: session } = authClient.useSession();
-  const isAuthenticated = Boolean(session?.user);
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = session?.user
+    ? true
+    : (isPending && initialIsAuthenticated !== undefined ? initialIsAuthenticated : Boolean(session?.user));
   const targetHref = isAuthenticated ? "/dashboard?openPdfModal=true" : "/convert";
 
   return (
