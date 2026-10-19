@@ -17,7 +17,11 @@ export const projectsRouter = router({
     .query(async ({ ctx, input }) => {
       const userId = ctx.user.id;
 
-      const owned = await db.select().from(projects).where(eq(projects.ownerId, userId));
+      const owned = await db
+        .select()
+        .from(projects)
+        .where(eq(projects.ownerId, userId))
+        .orderBy(desc(projects.createdAt));
 
       const sharedRecords = await db
         .select({
@@ -26,7 +30,8 @@ export const projectsRouter = router({
         })
         .from(projectMembers)
         .innerJoin(projects, eq(projectMembers.projectId, projects.id))
-        .where(eq(projectMembers.userId, userId));
+        .where(eq(projectMembers.userId, userId))
+        .orderBy(desc(projects.createdAt));
 
       const ownedList = owned.map((p) => ({
         id: p.id,
@@ -40,6 +45,7 @@ export const projectsRouter = router({
         role: "Owner" as "Owner" | "Editor" | "Viewer",
         collaboratorsCount: 1,
         stars: p.starsCount || 0,
+        createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : "Recently",
         color: "from-indigo-500/20 to-purple-500/20",
         badgeVariant: "glow" as const,
@@ -58,6 +64,7 @@ export const projectsRouter = router({
         role: role as "Owner" | "Editor" | "Viewer",
         collaboratorsCount: 2,
         stars: p.starsCount || 0,
+        createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString() : "Recently",
         color: "from-purple-500/20 to-cyan-500/20",
         badgeVariant: "glow" as const,
@@ -73,6 +80,13 @@ export const projectsRouter = router({
       });
 
       let allProjects = Array.from(combinedMap.values());
+
+      // Sort all projects by recently created first (newest createdAt in first place)
+      allProjects.sort((a, b) => {
+        const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+        return timeB - timeA;
+      });
 
       if (input?.search) {
         const q = input.search.toLowerCase();
@@ -362,42 +376,102 @@ export const projectsRouter = router({
     }),
 
   transferOwnership: ownerProcedure
-    .input(z.object({ newOwnerUserId: z.string() }))
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        newOwnerUserId: z.string().optional(),
+        newOwnerEmail: z.string().email().optional(),
+      }).refine((data) => Boolean(data.newOwnerUserId || data.newOwnerEmail), {
+        message: 'Either newOwnerUserId or newOwnerEmail must be provided',
+      })
+    )
     .mutation(async ({ input, ctx }) => {
       const projectId = ctx.project.id;
       const currentOwnerId = ctx.user.id;
-      const newOwnerId = input.newOwnerUserId;
+
+      // 1. Strict Owner Verification: only project owner can transfer
+      if (ctx.project.ownerId !== currentOwnerId) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Only the project owner can transfer ownership of this project.',
+        });
+      }
+
+      // 2. Resolve target user by ID or Email
+      let targetUser = null;
+      if (input.newOwnerUserId) {
+        const [u] = await db.select().from(user).where(eq(user.id, input.newOwnerUserId));
+        targetUser = u;
+      } else if (input.newOwnerEmail) {
+        const [u] = await db.select().from(user).where(ilike(user.email, input.newOwnerEmail.trim()));
+        targetUser = u;
+      }
+
+      if (!targetUser) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Target user does not exist. Please ensure they have registered an OverBranch account.',
+        });
+      }
+
+      const newOwnerId = targetUser.id;
 
       if (currentOwnerId === newOwnerId) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: 'You are already the owner of this project' });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'You are already the owner of this project.',
+        });
       }
 
-      const [newOwnerUser] = await db.select().from(user).where(eq(user.id, newOwnerId));
-      if (!newOwnerUser) {
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Target user does not exist' });
-      }
-
+      // 3. Atomically transfer ownership in transaction
       await db.transaction(async (tx) => {
-        await tx.update(projects).set({ ownerId: newOwnerId, updatedAt: new Date() }).where(eq(projects.id, projectId));
-
+        // A. Update projects table ownerId
         await tx
-          .insert(projectMembers)
-          .values({
+          .update(projects)
+          .set({ ownerId: newOwnerId, updatedAt: new Date() })
+          .where(eq(projects.id, projectId));
+
+        // B. Ensure new owner has 'Owner' role in projectMembers
+        const [existingNewOwnerMember] = await tx
+          .select()
+          .from(projectMembers)
+          .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, newOwnerId)));
+
+        if (existingNewOwnerMember) {
+          await tx
+            .update(projectMembers)
+            .set({ role: "Owner" })
+            .where(eq(projectMembers.id, existingNewOwnerMember.id));
+        } else {
+          await tx.insert(projectMembers).values({
             id: crypto.randomUUID(),
             projectId,
             userId: newOwnerId,
             role: "Owner",
-          })
-          .onConflictDoUpdate({
-            target: [projectMembers.projectId, projectMembers.userId],
-            set: { role: "Owner" },
           });
+        }
 
-        await tx
-          .update(projectMembers)
-          .set({ role: "Editor" })
+        // C. Former owner retains access as an 'Editor'
+        const [existingCurrentOwnerMember] = await tx
+          .select()
+          .from(projectMembers)
           .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, currentOwnerId)));
 
+        if (existingCurrentOwnerMember) {
+          await tx
+            .update(projectMembers)
+            .set({ role: "Editor" })
+            .where(eq(projectMembers.id, existingCurrentOwnerMember.id));
+        } else {
+          await tx.insert(projectMembers).values({
+            id: crypto.randomUUID(),
+            projectId,
+            userId: currentOwnerId,
+            role: "Editor",
+          });
+        }
+
+        // D. Create notification for the new owner
         await tx.insert(notifications).values({
           id: crypto.randomUUID(),
           receiverId: newOwnerId,
@@ -405,10 +479,15 @@ export const projectsRouter = router({
           projectId,
           type: 'OwnershipTransferred',
           title: 'Project Ownership Transferred',
-          message: `You are now the owner of project ${ctx.project.name}.`,
+          message: `You are now the owner of project "${ctx.project.name}".`,
         });
       });
 
-      return { success: true, newOwnerUserId: newOwnerId };
+      return {
+        success: true,
+        newOwnerUserId: newOwnerId,
+        newOwnerName: targetUser.name,
+        newOwnerEmail: targetUser.email,
+      };
     }),
 });

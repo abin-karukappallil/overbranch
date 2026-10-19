@@ -52,6 +52,7 @@ export const metadata: Metadata = {
 
 import { GuestMigrationListener } from "@/components/GuestMigrationListener";
 import { GoogleAnalytics } from "@/components/GoogleAnalytics";
+import { CookieConsentBanner } from "@/components/CookieConsentBanner";
 
 export default function RootLayout({
   children,
@@ -75,6 +76,7 @@ export default function RootLayout({
           <TRPCProvider>
             <GuestMigrationListener />
             {children}
+            <CookieConsentBanner />
             <Toaster position="top-right" richColors />
           </TRPCProvider>
         </ThemeProvider>

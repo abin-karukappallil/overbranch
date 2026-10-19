@@ -68,7 +68,7 @@ export function UserProfileDropdown() {
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] hover:bg-slate-100 dark:hover:bg-[#141517] transition-colors"
             >
               <User className="w-3.5 h-3.5 text-emerald-600 dark:text-[#5E6AD2]" />
-              <span>Customize Profile</span>
+              <span>User Profile</span>
             </Link>
 
             <Link

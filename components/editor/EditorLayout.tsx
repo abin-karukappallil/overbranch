@@ -4078,8 +4078,8 @@ export function EditorLayout({
               id="ai-chat-input-2"
               rows={1}
               placeholder={chatMode === "ask"
-                ? (softKeyboardOnly ? "Ask a question\u2026 (Enter = new line)" : "Ask a question...")
-                : (softKeyboardOnly ? "Ask agent to edit LaTeX\u2026 (Enter = new line)" : "Ask agent to edit LaTeX...")}
+                ? (softKeyboardOnly ? "Ask a question" : "Ask a question...")
+                : (softKeyboardOnly ? "Ask agent to edit LaTeX" : "Ask agent to edit LaTeX...")}
               value={chatInput}
               disabled={isAgentThinking}
               onChange={(e) => {

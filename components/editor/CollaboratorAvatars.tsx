@@ -18,10 +18,11 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
+  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer" | "Transfer">("Editor");
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [transferConfirmMember, setTransferConfirmMember] = useState<any | null>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -61,9 +62,19 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   });
 
   const transferOwnershipMutation = trpc.projects.transferOwnership.useMutation({
-    onSuccess: () => {
-      toast.success("Project ownership transferred.");
+    onSuccess: (data) => {
+      toast.success(
+        data?.newOwnerName
+          ? `Project ownership successfully transferred to ${data.newOwnerName}.`
+          : "Project ownership transferred successfully."
+      );
+      utils.projects.getMembers.invalidate({ projectId: projectId! });
+      utils.projects.getById.invalidate({ projectId: projectId! });
+      utils.projects.listProjects.invalidate();
       utils.projects.invalidate();
+      setTransferConfirmMember(null);
+      setInviteEmail("");
+      setInviteRole("Editor");
     },
     onError: (err) => {
       toast.error(err.message || "Failed to transfer ownership");
@@ -96,6 +107,15 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const handleSendInvite = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail.trim() || !projectId) return;
+
+    if (inviteRole === "Transfer") {
+      transferOwnershipMutation.mutate({
+        projectId,
+        newOwnerEmail: inviteEmail.trim(),
+      });
+      return;
+    }
+
     sendInviteMutation.mutate({
       projectId,
       email: inviteEmail.trim(),
@@ -114,7 +134,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-950">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-indigo-400" />
-            <h3 className="font-archivo font-black uppercase text-sm text-white tracking-tight">Invite Co-Authors</h3>
+            <h3 className="font-archivo font-black uppercase text-sm text-white tracking-tight">Invite Co-Authors & Access</h3>
           </div>
           <Button
             variant="ghost"
@@ -142,21 +162,70 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
               />
               <select
                 value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer")}
+                onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer" | "Transfer")}
                 className="h-9 px-2.5 text-xs rounded-xl border border-zinc-800 bg-zinc-950 text-white outline-none font-mono cursor-pointer"
               >
                 <option value="Editor">Editor</option>
                 <option value="Viewer">Viewer</option>
+                {isOwner && <option value="Transfer">Make Owner</option>}
               </select>
             </div>
-            <Button
-              type="submit"
-              disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
-              className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold uppercase tracking-wider rounded-xl h-9 text-xs border border-indigo-700 shadow-sm shadow-indigo-500/20 cursor-pointer"
-            >
-              {sendInviteMutation.isPending ? "Sending Invite..." : "Send In-App Invite"}
-            </Button>
+            {inviteRole === "Transfer" ? (
+              <Button
+                type="submit"
+                disabled={transferOwnershipMutation.isPending || !inviteEmail.trim()}
+                className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-mono font-bold uppercase tracking-wider rounded-xl h-9 text-xs border border-amber-600 shadow-sm shadow-amber-500/20 cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>{transferOwnershipMutation.isPending ? "Transferring Ownership..." : "Transfer Ownership to Email"}</span>
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-mono font-bold uppercase tracking-wider rounded-xl h-9 text-xs border border-indigo-700 shadow-sm shadow-indigo-500/20 cursor-pointer"
+              >
+                {sendInviteMutation.isPending ? "Sending Invite..." : "Send In-App Invite"}
+              </Button>
+            )}
           </form>
+
+          {/* Transfer Ownership Confirmation Dialog */}
+          {transferConfirmMember && (
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 space-y-2 font-sans animate-in fade-in">
+              <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                <Crown className="w-4 h-4 shrink-0" />
+                <span>Confirm Transfer of Ownership</span>
+              </div>
+              <p className="text-[11px] text-zinc-300 leading-relaxed font-mono">
+                Transfer ownership to <strong className="text-white">{transferConfirmMember.name || transferConfirmMember.email}</strong>? You will remain a collaborator with <span className="text-indigo-400 font-semibold">Editor</span> permissions.
+              </p>
+              <div className="flex items-center gap-2 pt-1 font-mono font-bold">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setTransferConfirmMember(null)}
+                  disabled={transferOwnershipMutation.isPending}
+                  className="h-8 text-xs rounded-lg flex-1 text-zinc-300 hover:bg-zinc-800"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    transferOwnershipMutation.mutate({
+                      projectId: projectId!,
+                      newOwnerUserId: transferConfirmMember.id,
+                    })
+                  }
+                  disabled={transferOwnershipMutation.isPending}
+                  className="h-8 text-xs rounded-lg flex-1 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold shadow-md cursor-pointer"
+                >
+                  {transferOwnershipMutation.isPending ? "Transferring..." : "Confirm Transfer"}
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2 pt-2 border-t border-zinc-800">
             <span className="text-xs font-bold text-white uppercase block">
@@ -170,7 +239,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                 >
                   <div className="flex items-center gap-2">
                     <Avatar className="w-6 h-6 rounded-full border border-zinc-700">
-                      <AvatarImage src={m.avatar} />
+                      <AvatarImage src={m.avatar} referrerPolicy="no-referrer" />
                       <AvatarFallback className="bg-indigo-600 text-white text-[9px] font-bold">
                         {(m.name || 'U').slice(0, 2).toUpperCase()}
                       </AvatarFallback>
@@ -188,9 +257,9 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => transferOwnershipMutation.mutate({ projectId: projectId!, newOwnerUserId: m.id })}
+                        onClick={() => setTransferConfirmMember(m)}
                         title="Transfer Ownership"
-                        className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-400 transition-colors"
+                        className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-400 transition-colors cursor-pointer"
                       >
                         <Crown className="w-3.5 h-3.5" />
                       </button>
@@ -198,7 +267,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                         type="button"
                         onClick={() => removeMemberMutation.mutate({ projectId: projectId!, memberUserId: m.id })}
                         title="Remove Member"
-                        className="p-1 rounded-lg hover:bg-rose-500/20 text-rose-400 transition-colors"
+                        className="p-1 rounded-lg hover:bg-rose-500/20 text-rose-400 transition-colors cursor-pointer"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -212,7 +281,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
           <Button
             onClick={handleShare}
             variant="outline"
-            className="w-full rounded-xl h-9 text-xs border-zinc-800 bg-zinc-950 hover:bg-zinc-800 text-white font-mono font-bold"
+            className="w-full rounded-xl h-9 text-xs border-zinc-800 bg-zinc-950 hover:bg-zinc-800 text-white font-mono font-bold cursor-pointer"
           >
             <Share2 className="w-3.5 h-3.5 mr-2 text-indigo-400" />
             {copied ? "Project Link Copied!" : "Copy Direct Project Link"}

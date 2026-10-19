@@ -19,13 +19,17 @@ backend/.pytest_cache/
 user_prompt_*.txt
 COLLABORATION.md
 OVERVIEW.md
-
+docs/
+/docs
+/docs/
 /backend/.venv
 /backend/__pycache__
 /uploads/*
 # testing
 /coverage
-
+scripts/
+/scripts
+/scripts/
 # database & orm
 /drizzle
 /drizzle/

@@ -11,6 +11,17 @@ function GoogleAnalyticsTracker({ id }: { id: string }) {
   useEffect(() => {
     if (!pathname || typeof window === "undefined") return;
 
+    // Check consent preference before sending analytics events
+    try {
+      const consentRaw = localStorage.getItem("overbranch_cookie_consent");
+      if (consentRaw) {
+        const consent = JSON.parse(consentRaw);
+        if (consent.analytics === false || consent.status === "essential") {
+          return; // User opted out of analytics
+        }
+      }
+    } catch {}
+
     const url = pathname + (searchParams?.toString() ? `?${searchParams.toString()}` : "");
 
     // Allow Next.js route metadata or page effect to update document.title
@@ -49,6 +60,19 @@ export function GoogleAnalytics({ gaId }: { gaId?: string }) {
           __html: `
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
+            try {
+              var consentRaw = localStorage.getItem("overbranch_cookie_consent");
+              var isGranted = false;
+              if (consentRaw) {
+                var c = JSON.parse(consentRaw);
+                isGranted = (c.analytics === true || c.status === "accepted");
+              }
+              gtag("consent", "default", {
+                analytics_storage: isGranted ? "granted" : "denied"
+              });
+            } catch(e) {
+              gtag("consent", "default", { analytics_storage: "denied" });
+            }
             gtag("js", new Date());
             gtag("config", "${id}", {
               page_path: window.location.pathname,

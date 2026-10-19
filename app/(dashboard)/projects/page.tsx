@@ -12,6 +12,7 @@ import {
   FileCode2,
   X,
   Trash2,
+  Crown,
   AlertTriangle,
   ArrowRight,
 } from "lucide-react";
@@ -30,7 +31,7 @@ export default function ProjectsPage() {
   const [newProjName, setNewProjName] = useState("");
   const [inviteModalProj, setInviteModalProj] = useState<any | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer">("Editor");
+  const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer" | "Transfer">("Editor");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
 
   React.useEffect(() => {
@@ -90,6 +91,23 @@ export default function ProjectsPage() {
     },
   });
 
+  const transferOwnershipMutation = trpc.projects.transferOwnership.useMutation({
+    onSuccess: (data) => {
+      toast.success(
+        data?.newOwnerName
+          ? `Project ownership transferred to ${data.newOwnerName}.`
+          : "Project ownership transferred successfully."
+      );
+      setInviteModalProj(null);
+      setInviteEmail("");
+      setInviteRole("Editor");
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to transfer ownership");
+    },
+  });
+
   const filtered = dbProjects || [];
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
@@ -120,6 +138,15 @@ export default function ProjectsPage() {
   const handleSendProjectInvite = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteEmail.trim() || !inviteModalProj) return;
+
+    if (inviteRole === "Transfer") {
+      transferOwnershipMutation.mutate({
+        projectId: inviteModalProj.id,
+        newOwnerEmail: inviteEmail.trim(),
+      });
+      return;
+    }
+
     sendInviteMutation.mutate({
       projectId: inviteModalProj.id,
       email: inviteEmail.trim(),
@@ -216,17 +243,31 @@ export default function ProjectsPage() {
                       <Star className={`w-3.5 h-3.5 ${proj.isFavorite ? "text-amber-400 fill-amber-400" : ""}`} />
                     </button>
                     {proj.isOwner && (
-                      <button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setDeleteConfirmProj(proj);
-                        }}
-                        className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#EB5757] transition-colors cursor-pointer"
-                        title="Delete Project"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      <>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setInviteModalProj(proj);
+                            setInviteRole("Transfer");
+                          }}
+                          className="p-1 text-slate-400 dark:text-[#62666D] hover:text-amber-400 transition-colors cursor-pointer"
+                          title="Transfer Project Ownership"
+                        >
+                          <Crown className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeleteConfirmProj(proj);
+                          }}
+                          className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#EB5757] transition-colors cursor-pointer"
+                          title="Delete Project"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -378,22 +419,40 @@ export default function ProjectsPage() {
                 <label className="text-slate-600 dark:text-[#8A8F98] font-medium uppercase text-[11px]">Permission Role</label>
                 <select
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer")}
+                  onChange={(e) => setInviteRole(e.target.value as "Editor" | "Viewer" | "Transfer")}
                   className="w-full h-10 px-3 text-xs rounded-xl border border-slate-200 dark:border-[#23252A] bg-slate-50 dark:bg-[#141517] text-slate-900 dark:text-[#F7F8F8] outline-none font-mono cursor-pointer hover:border-slate-300 dark:hover:border-[#343842] transition-colors"
                 >
                   <option value="Editor">Editor (Full edit & compile)</option>
                   <option value="Viewer">Viewer (Read-only)</option>
+                  {inviteModalProj.isOwner && <option value="Transfer">Transfer Ownership (Make Owner)</option>}
                 </select>
               </div>
 
-              <Button
-                type="submit"
-                size="sm"
-                disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-[#5E6AD2] dark:hover:bg-[#4F5BBE] text-white font-mono font-semibold rounded-xl h-10 text-xs border border-emerald-600 dark:border-[#6875E5]/30 shadow-sm cursor-pointer"
-              >
-                {sendInviteMutation.isPending ? "Validating & Inviting..." : "Send Workspace Invite"}
-              </Button>
+              {inviteRole === "Transfer" ? (
+                <div className="space-y-3 pt-1">
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-500 dark:text-amber-400 text-[11px] leading-relaxed">
+                    <strong>Note:</strong> You are transferring complete ownership of this project to <strong>{inviteEmail || "the user"}</strong>. You will remain an <strong>Editor</strong>.
+                  </div>
+                  <Button
+                    type="submit"
+                    size="sm"
+                    disabled={transferOwnershipMutation.isPending || !inviteEmail.trim()}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-mono font-bold uppercase tracking-wider rounded-xl h-10 text-xs border border-amber-600 shadow-sm shadow-amber-500/20 cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Crown className="w-3.5 h-3.5" />
+                    <span>{transferOwnershipMutation.isPending ? "Transferring Ownership..." : "Confirm & Transfer Ownership"}</span>
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={sendInviteMutation.isPending || !inviteEmail.trim()}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 dark:bg-[#5E6AD2] dark:hover:bg-[#4F5BBE] text-white font-mono font-semibold rounded-xl h-10 text-xs border border-emerald-600 dark:border-[#6875E5]/30 shadow-sm cursor-pointer"
+                >
+                  {sendInviteMutation.isPending ? "Validating & Inviting..." : "Send Workspace Invite"}
+                </Button>
+              )}
             </form>
           </div>
         </div>
