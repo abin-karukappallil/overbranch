@@ -10,6 +10,10 @@
 !.yarn/releases
 !.yarn/versions
 /backend/tests/
+backend/tests/
+/backend/.pytest_cache/
+backend/.pytest_cache/
+.pytest_cache/
 /scripts/run-collab-tests.sh
 /scripts/test_*.mjs
 user_prompt_*.txt
@@ -22,10 +26,17 @@ OVERVIEW.md
 # testing
 /coverage
 
+# database & orm
+/drizzle
+/drizzle/
+drizzle/
+/supabase
+/supabase/
+supabase/
+
 # next.js
 /.next/
 /out/
-
 # production
 /build
 

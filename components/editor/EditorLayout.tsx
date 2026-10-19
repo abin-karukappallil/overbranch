@@ -2198,11 +2198,29 @@ export function EditorLayout({
                     ...parsed,
                   }]);
                 } else if (currentEventType === "progress") {
-                  setAgentProgressSteps((prev) => [...prev, parsed]);
+                  const msg = (parsed.message || "").toLowerCase().trim();
+                  if (
+                    msg.startsWith("edit scope") ||
+                    msg.includes("edit scope detected") ||
+                    msg.startsWith("analyzed document") ||
+                    msg.startsWith("analyze document") ||
+                    msg.startsWith("context strategy")
+                  ) {
+                    continue;
+                  }
+                  const stepItem =
+                    parsed.step === "tool_call" || msg.startsWith("tool calling")
+                      ? { ...parsed, message: "Tool calling..." }
+                      : parsed;
+                  setAgentProgressSteps((prev) => [...prev, stepItem]);
                 } else if (["thought", "tool_call", "tool_result", "compile_error", "coverage_check"].includes(currentEventType)) {
+                  let msg = parsed.content || parsed.message || (typeof parsed === "string" ? parsed : JSON.stringify(parsed));
+                  if (currentEventType === "tool_call" || (typeof msg === "string" && msg.toLowerCase().trim().startsWith("tool calling"))) {
+                    msg = "Tool calling...";
+                  }
                   setAgentProgressSteps((prev) => [...prev, {
                     step: currentEventType,
-                    message: parsed.content || parsed.message || (typeof parsed === "string" ? parsed : JSON.stringify(parsed)),
+                    message: msg,
                     icon: currentEventType === "compile_error" ? "alert" : currentEventType === "thought" ? "brain" : currentEventType === "tool_call" ? "wrench" : "check",
                     ...parsed,
                   }]);

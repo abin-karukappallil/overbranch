@@ -551,7 +551,7 @@ async def agent_run(
                     tool_name = event.get("tool", "")
                     yield sse_event("progress", {
                         "step": "tool_call",
-                        "message": f"Tool Calling `{tool_name}`...",
+                        "message": "Tool calling...",
                         "icon": "wrench",
                         "tool": tool_name,
                         "args": event.get("args", {}),
@@ -616,9 +616,19 @@ async def agent_run(
                     })
 
                 elif event_type == "status":
+                    msg = event.get("message", "")
+                    msg_lower = msg.lower()
+                    if (
+                        msg_lower.startswith("edit scope")
+                        or "edit scope detected" in msg_lower
+                        or msg_lower.startswith("analyzed document")
+                        or msg_lower.startswith("analyze document")
+                        or msg_lower.startswith("context strategy")
+                    ):
+                        continue
                     yield sse_event("progress", {
                         "step": event.get("step", ""),
-                        "message": event.get("message", ""),
+                        "message": msg,
                         "icon": "zap",
                     })
 

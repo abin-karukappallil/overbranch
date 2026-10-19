@@ -68,6 +68,33 @@ export function AgentReasoningWindow({
     setUserHasScrolledUp(!isAtBottom);
   }, []);
 
+  const isHiddenStep = (msg: string) => {
+    const lower = msg.toLowerCase().trim();
+    return (
+      lower.startsWith("edit scope") ||
+      lower.includes("edit scope detected") ||
+      lower.startsWith("analyzed document") ||
+      lower.startsWith("analyze document") ||
+      lower.startsWith("context strategy")
+    );
+  };
+
+  const visibleSteps = steps
+    .filter((s) => !isHiddenStep(s.message || ""))
+    .map((s) => {
+      const msg = s.message || "";
+      if (
+        s.step === "tool_call" ||
+        msg.toLowerCase().trim().startsWith("tool calling")
+      ) {
+        return {
+          ...s,
+          message: "Tool calling...",
+        };
+      }
+      return s;
+    });
+
   // Auto-scroll when steps change or updates arrive
   useEffect(() => {
     if (isAutoScrollPinned) {
@@ -76,7 +103,7 @@ export function AgentReasoningWindow({
       });
       return () => cancelAnimationFrame(frameId);
     }
-  }, [steps, isAutoScrollPinned, scrollToBottom]);
+  }, [visibleSteps, isAutoScrollPinned, scrollToBottom]);
 
   // Initial mount scroll
   useEffect(() => {
@@ -90,8 +117,8 @@ export function AgentReasoningWindow({
     scrollToBottom("smooth");
   };
 
-  const activeStepNumber = steps.length > 0 ? steps.length : 1;
-  const currentPhase = [...steps].reverse().find((s) => s.step === "phase" && s.phase);
+  const activeStepNumber = visibleSteps.length > 0 ? visibleSteps.length : 1;
+  const currentPhase = [...visibleSteps].reverse().find((s) => s.step === "phase" && s.phase);
   const phaseFailed = currentPhase?.phase === "failed";
 
   return (
@@ -157,14 +184,14 @@ export function AgentReasoningWindow({
           compact ? "max-h-28" : "max-h-36"
         }`}
       >
-        {steps.length === 0 ? (
+        {visibleSteps.length === 0 ? (
           <div className="flex items-center gap-2 text-slate-500 dark:text-[#9E9E9E] animate-pulse py-1 font-mono text-[11px]">
             <Loader2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981] animate-spin shrink-0" />
             <span>Initializing LaTeX pipeline...</span>
           </div>
         ) : (
-          steps.map((s, idx) => {
-            const isLatest = idx === steps.length - 1;
+          visibleSteps.map((s, idx) => {
+            const isLatest = idx === visibleSteps.length - 1;
             return (
               <div
                 key={idx}

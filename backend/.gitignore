@@ -1,0 +1,17 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Testing cache & tests folder
+.pytest_cache/
+tests/
+
+# Local configuration & scratch
+.env
+*.log

@@ -1490,15 +1490,6 @@ def stream_agent(
             logger.warning(f"Could not build the expansion worklist: {unit_err}")
             expansion_units = []
 
-    yield {
-        "type": "status",
-        "step": 0,
-        "message": f"Edit scope detected: {scope.replace('_', ' ').title()}",
-        "scope": scope,
-        "is_full_rewrite": is_full_rewrite,
-        "is_expansion": is_expansion,
-    }
-
     # 3. Build system prompt with tool definitions
     tools_block = get_tools_prompt_block(mode="ask" if mode == "ask" else "edit")
     system_prompt = AGENT_SYSTEM_PROMPT.format(
@@ -1513,12 +1504,6 @@ def stream_agent(
     doc_analysis = analyze_document(current_code)
     preservation_map = generate_preservation_map(doc_analysis, user_instruction)
     doc_summary = generate_compact_summary(doc_analysis)
-
-    yield {
-        "type": "status",
-        "step": 0,
-        "message": f"Analyzed document: {doc_analysis.total_lines} lines, {doc_analysis.structural_unit_count} {doc_analysis.primary_structure_type}s, ~{doc_analysis.estimated_tokens} tokens",
-    }
 
     # ================================================================
     # 3b. Context Strategy Resolution
@@ -1622,12 +1607,6 @@ def stream_agent(
         user_instruction=user_instruction,
         is_creation=is_creation_request,
     )
-
-    yield {
-        "type": "status",
-        "step": 0,
-        "message": f"Context strategy: {context_decision.strategy.value} ({context_decision.reason})",
-    }
 
     # 7. Detect visibility / contrast bug reports
     visibility_keywords = [
