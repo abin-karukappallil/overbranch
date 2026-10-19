@@ -1,7 +1,7 @@
 import { router, publicProcedure, protectedProcedure, projectProcedure, ownerProcedure } from '../init';
 import { z } from 'zod';
 import { db } from '@/db';
-import { projects, projectMembers, user, notifications, guestProjects } from '@/db/schema';
+import { projects, projectMembers, user, notifications, guestProjects, projectInvitations } from '@/db/schema';
 import { eq, and, or, ilike, desc, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
 import fs from 'fs';
@@ -373,6 +373,63 @@ export const projectsRouter = router({
       });
 
       return { success: true, removedUserId: input.memberUserId };
+    }),
+
+  leaveProject: projectProcedure
+    .input(z.object({ projectId: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const projectId = input.projectId;
+      const userId = ctx.user.id;
+
+      // Project owner cannot leave the project without transferring ownership first
+      if (ctx.project.ownerId === userId) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'Project owner cannot leave the project. Please transfer ownership first or delete the project.',
+        });
+      }
+
+      const [member] = await db
+        .select()
+        .from(projectMembers)
+        .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
+
+      if (!member) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'You are not an active collaborator on this project.',
+        });
+      }
+
+      await db
+        .delete(projectMembers)
+        .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.userId, userId)));
+
+      // Clean up past invitations for this user and project so re-inviting is possible in the future
+      try {
+        await db
+          .delete(projectInvitations)
+          .where(and(eq(projectInvitations.projectId, projectId), eq(projectInvitations.receiverId, userId)));
+      } catch (invErr) {
+        console.warn('[leaveProject] Invitations cleanup error:', invErr);
+      }
+
+      // Notify the project owner that the co-author has left
+      try {
+        await db.insert(notifications).values({
+          id: crypto.randomUUID(),
+          receiverId: ctx.project.ownerId,
+          senderId: userId,
+          projectId: projectId,
+          type: 'MemberLeft',
+          title: 'Co-Author Left Project',
+          message: `${ctx.user.name || ctx.user.email} has left project "${ctx.project.name}".`,
+        });
+      } catch (notifErr) {
+        console.warn('[leaveProject] Notification error:', notifErr);
+      }
+
+      return { success: true, projectId };
     }),
 
   transferOwnership: ownerProcedure

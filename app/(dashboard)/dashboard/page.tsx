@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Sparkles,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -39,6 +40,7 @@ function DashboardContent() {
   const importedProjectId = useRef<string | null>(null);
   const [newProjName, setNewProjName] = useState("");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
+  const [leaveConfirmProj, setLeaveConfirmProj] = useState<any | null>(null);
 
   useEffect(() => {
     document.title = "OverBranch | Dashboard";
@@ -126,6 +128,23 @@ function DashboardContent() {
     e.preventDefault();
     if (!deleteConfirmProj) return;
     deleteMutation.mutate({ projectId: deleteConfirmProj.id });
+  };
+
+  const leaveMutation = trpc.projects.leaveProject.useMutation({
+    onSuccess: () => {
+      toast.success("You have left the project.");
+      setLeaveConfirmProj(null);
+      utils.projects.invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to leave project");
+    },
+  });
+
+  const handleLeaveSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveConfirmProj) return;
+    leaveMutation.mutate({ projectId: leaveConfirmProj.id });
   };
 
   return (
@@ -443,9 +462,22 @@ function DashboardContent() {
                               <span className="truncate min-w-0" title={project.name}>{project.name}</span>
                             </h3>
                           </Link>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-medium font-mono bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase shrink-0">
-                            {project.role}
-                          </span>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-medium font-mono bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase">
+                              {project.role}
+                            </span>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setLeaveConfirmProj(project);
+                              }}
+                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors cursor-pointer"
+                              title="Leave Project"
+                            >
+                              <LogOut className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         <p className="text-xs text-slate-500 dark:text-[#9E9E9E] line-clamp-2 leading-relaxed font-sans">
@@ -510,6 +542,44 @@ function DashboardContent() {
                 className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-lg border border-red-600 dark:border-[#EB5757]/50"
               >
                 {deleteMutation.isPending ? "Deleting..." : "Delete Permanently"}
+              </Button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Confirmation Modal */}
+      {leaveConfirmProj && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/80 animate-fade-in backdrop-blur-xs">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-5 rounded-xl border border-red-200 dark:border-[#FF8585]/30 bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-red-600 dark:text-[#FF8585]">
+              <div className="p-2 rounded-lg bg-red-50 dark:bg-[#FF8585]/10 border border-red-200 dark:border-[#FF8585]/20">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <h3 className="text-sm font-archivo font-bold uppercase text-slate-900 dark:text-[#E2E4E9]">Leave Project</h3>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-[#9E9E9E] leading-relaxed">
+              Are you sure you want to leave <strong className="text-slate-900 dark:text-[#E2E4E9]">{leaveConfirmProj.name}</strong>? You will lose access to its files, real-time collaboration, and documents.
+            </p>
+
+            <form onSubmit={handleLeaveSubmit} className="flex justify-end gap-2 pt-2 text-xs font-mono font-medium">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLeaveConfirmProj(null)}
+                className="h-8 text-xs rounded-lg border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={leaveMutation.isPending}
+                className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-lg border border-red-600 dark:border-[#EB5757]/50"
+              >
+                {leaveMutation.isPending ? "Leaving..." : "Leave Project"}
               </Button>
             </form>
           </div>

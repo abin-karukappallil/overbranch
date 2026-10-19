@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import superjson from 'superjson';
 import { headers, cookies } from 'next/headers';
 import { db } from '@/db';
-import { projects, projectMembers, session as sessionTable, user as userTable, guestProjects } from '@/db/schema';
+import { projects, projectMembers, session as sessionTable, user as userTable, guestProjects, guestSessions } from '@/db/schema';
 import { eq, and, gt } from 'drizzle-orm';
 import { z } from 'zod';
 import { verifyGuestToken } from '@/lib/guest-token';
@@ -68,6 +68,28 @@ export const createContext = async () => {
   const rawGuestToken = cookieStore.get('ob_guest_token')?.value;
   // Always verify guest token if present so guest projects can be linked/accessed/migrated
   const verifiedGuest = rawGuestToken ? verifyGuestToken(rawGuestToken) : null;
+
+  // Proactively purge expired guest user from user table if the guest token is expired
+  if (rawGuestToken && !verifiedGuest) {
+    const rawSid = rawGuestToken.split('.')[0];
+    if (rawSid) {
+      (async () => {
+        try {
+          const [activeSession] = await db
+            .select({ id: guestSessions.id })
+            .from(guestSessions)
+            .where(and(eq(guestSessions.id, rawSid), gt(guestSessions.expiresAt, new Date())));
+
+          if (!activeSession) {
+            await db.delete(userTable).where(eq(userTable.id, `guest_${rawSid}`));
+            await db.delete(guestSessions).where(eq(guestSessions.id, rawSid));
+          }
+        } catch {
+          // ignore non-blocking cleanup errors
+        }
+      })();
+    }
+  }
 
   const rawCookieHeader = reqHeaders.get('cookie') || cookieStore.toString();
   const sessionToken =

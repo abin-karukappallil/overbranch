@@ -170,6 +170,29 @@ def get_or_create_guest_session(request: Request) -> Tuple[Dict[str, Any], str, 
                     guest_user_id = f"guest_{session_id}"
                     ensure_guest_user_row(supabase, guest_user_id)
                     return session, raw_cookie, False
+                else:
+                    # Cookie session is EXPIRED! Clean up user table & session table immediately
+                    try:
+                        supabase.table("user").delete().eq("id", f"guest_{session_id}").execute()
+                        supabase.table("guest_sessions").delete().eq("id", session_id).execute()
+                        logger.info(f"Purged expired guest user and session: guest_{session_id}")
+                    except Exception as err:
+                        logger.warning(f"Error purging expired guest user: {err}")
+        else:
+            # Token signature failed or timestamp expired
+            parts = raw_cookie.split(".")
+            if len(parts) == 3:
+                expired_session_id = parts[0]
+                try:
+                    res_old = supabase.table("guest_sessions").select("id, expires_at").eq("id", expired_session_id).limit(1).execute()
+                    if res_old.data:
+                        exp_dt = parse_utc_datetime(res_old.data[0]["expires_at"])
+                        if exp_dt <= now_utc:
+                            supabase.table("user").delete().eq("id", f"guest_{expired_session_id}").execute()
+                            supabase.table("guest_sessions").delete().eq("id", expired_session_id).execute()
+                            logger.info(f"Purged expired guest user from invalid cookie: guest_{expired_session_id}")
+                except Exception:
+                    pass
 
     # Step 1b: Check existing session by fingerprint
     fp_res = supabase.table("guest_sessions").select("*").eq("fingerprint_hash", fingerprint).limit(1).execute()
@@ -182,6 +205,14 @@ def get_or_create_guest_session(request: Request) -> Tuple[Dict[str, Any], str, 
             ensure_guest_user_row(supabase, guest_user_id)
             return session, signed_token, False
         else:
+            # Old session expired! Delete old expired guest user row before rotating to new ID
+            old_guest_user_id = f"guest_{session['id']}"
+            try:
+                supabase.table("user").delete().eq("id", old_guest_user_id).execute()
+                logger.info(f"Purged expired guest user on session rotation: {old_guest_user_id}")
+            except Exception as del_old_err:
+                logger.warning(f"Failed to delete expired guest user {old_guest_user_id}: {del_old_err}")
+
             new_session_id = str(uuid.uuid4())
             signed_token = sign_guest_token(new_session_id)
             token_hash = hashlib.sha256(signed_token.encode("utf-8")).hexdigest()

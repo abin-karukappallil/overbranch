@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Users, UserPlus, Share2, X, Trash2, Crown, AlertTriangle } from "lucide-react";
+import { Users, UserPlus, Share2, X, Trash2, Crown, AlertTriangle, LogOut } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 
@@ -22,6 +22,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const [copied, setCopied] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [transferConfirmMember, setTransferConfirmMember] = useState<any | null>(null);
 
   useEffect(() => {
@@ -90,6 +91,19 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
     },
     onError: (err) => {
       toast.error(err.message || "Failed to delete project");
+    },
+  });
+
+  const leaveProjectMutation = trpc.projects.leaveProject.useMutation({
+    onSuccess: () => {
+      toast.success("You have left the project.");
+      setModalOpen(false);
+      setLeaveConfirmOpen(false);
+      utils.projects.listProjects.invalidate();
+      router.push("/dashboard");
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to leave project");
     },
   });
 
@@ -326,6 +340,53 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
                       className="h-8 text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg flex-1 shadow-md"
                     >
                       {deleteProjectMutation.isPending ? "Deleting..." : "Confirm Delete"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!isOwner && (
+            <div className="pt-3 border-t border-rose-500/20 space-y-2">
+              <span className="text-[11px] font-bold text-rose-500 uppercase tracking-wider block font-mono">
+                Collaborator Options
+              </span>
+              {!leaveConfirmOpen ? (
+                <Button
+                  onClick={() => setLeaveConfirmOpen(true)}
+                  variant="outline"
+                  className="w-full rounded-xl h-9 text-xs border-rose-500/40 text-rose-400 hover:bg-rose-500/10 hover:text-rose-300 transition-colors flex items-center justify-center gap-1.5 font-mono font-bold cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Leave Project</span>
+                </Button>
+              ) : (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 space-y-2 font-sans animate-in fade-in">
+                  <div className="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>Confirm Leaving Project</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed font-mono">
+                    Are you sure you want to leave this project? You will lose access to all its files and documents.
+                  </p>
+                  <div className="flex items-center gap-2 pt-1 font-mono font-bold">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setLeaveConfirmOpen(false)}
+                      disabled={leaveProjectMutation.isPending}
+                      className="h-8 text-xs rounded-lg flex-1 text-zinc-300 hover:bg-zinc-800 cursor-pointer"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => leaveProjectMutation.mutate({ projectId: projectId! })}
+                      disabled={leaveProjectMutation.isPending}
+                      className="h-8 text-xs bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg flex-1 shadow-md cursor-pointer"
+                    >
+                      {leaveProjectMutation.isPending ? "Leaving..." : "Leave Project"}
                     </Button>
                   </div>
                 </div>

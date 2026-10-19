@@ -112,11 +112,16 @@ def migrate_guest_projects_to_user(
             logger.error(f"Error migrating project {project_id}: {p_err}", exc_info=True)
             raise RuntimeError(f"Failed migrating project {project_id}: {str(p_err)}")
 
-    # 6. Clean up temporary synthetic guest user row
+    # 6. Clean up temporary synthetic guest user row and migrated session
     try:
         supabase.table("user").delete().eq("id", synthetic_guest_user_id).execute()
     except Exception as del_err:
         logger.warning(f"Could not purge temporary guest user row {synthetic_guest_user_id}: {del_err}")
+
+    try:
+        supabase.table("guest_sessions").delete().eq("id", session_id).execute()
+    except Exception as del_sess_err:
+        logger.warning(f"Could not purge migrated guest session {session_id}: {del_sess_err}")
 
     return {
         "success": True,

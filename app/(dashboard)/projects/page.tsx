@@ -15,6 +15,7 @@ import {
   Crown,
   AlertTriangle,
   ArrowRight,
+  LogOut,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,6 +34,7 @@ export default function ProjectsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"Editor" | "Viewer" | "Transfer">("Editor");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
+  const [leaveConfirmProj, setLeaveConfirmProj] = useState<any | null>(null);
 
   React.useEffect(() => {
     document.title = "OverBranch | Projects";
@@ -133,6 +135,23 @@ export default function ProjectsPage() {
     e.preventDefault();
     if (!deleteConfirmProj) return;
     deleteMutation.mutate({ projectId: deleteConfirmProj.id });
+  };
+
+  const leaveMutation = trpc.projects.leaveProject.useMutation({
+    onSuccess: () => {
+      toast.success("You have left the project.");
+      setLeaveConfirmProj(null);
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to leave project");
+    },
+  });
+
+  const handleLeaveProject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leaveConfirmProj) return;
+    leaveMutation.mutate({ projectId: leaveConfirmProj.id });
   };
 
   const handleSendProjectInvite = (e: React.FormEvent) => {
@@ -269,6 +288,19 @@ export default function ProjectsPage() {
                         </button>
                       </>
                     )}
+                    {!proj.isOwner && (
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setLeaveConfirmProj(proj);
+                        }}
+                        className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#EB5757] transition-colors cursor-pointer"
+                        title="Leave Project"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -286,14 +318,19 @@ export default function ProjectsPage() {
                 </span>
 
                 <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                  <button
-                    onClick={() => setInviteModalProj(proj)}
-                    className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#18191B] dark:hover:bg-[#23252A] text-slate-700 hover:text-slate-900 dark:text-[#F7F8F8] border border-slate-200 dark:border-[#23252A] font-mono font-medium text-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-                    title="Invite Co-Author"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline text-[11px]">Invite</span>
-                  </button>
+                  {proj.role !== "Viewer" && (
+                    <button
+                      onClick={() => {
+                        setInviteModalProj(proj);
+                        setInviteRole("Editor");
+                      }}
+                      className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#18191B] dark:hover:bg-[#23252A] text-slate-700 hover:text-slate-900 dark:text-[#F7F8F8] border border-slate-200 dark:border-[#23252A] font-mono font-medium text-xs transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                      title="Invite Co-Author"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline text-[11px]">Invite</span>
+                    </button>
+                  )}
                   <Link
                     href={`/editor/${proj.id}`}
                     className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1 shrink-0 whitespace-nowrap shadow-xs group/btn"
@@ -340,6 +377,44 @@ export default function ProjectsPage() {
                 className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-xl shadow-md border border-red-600 dark:border-[#EB5757]/50"
               >
                 {deleteMutation.isPending ? "Deleting..." : "Delete Permanently"}
+              </Button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Leave Confirmation Modal */}
+      {leaveConfirmProj && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/80 backdrop-blur-xs animate-fade-in">
+          <div className="max-w-sm w-[calc(100vw-2rem)] p-5 rounded-2xl border border-red-200 dark:border-[#EB5757]/30 bg-white dark:bg-[#0F1011] text-slate-900 dark:text-[#F7F8F8] shadow-2xl space-y-4">
+            <div className="flex items-center gap-2.5 text-red-600 dark:text-[#EB5757]">
+              <div className="p-2 rounded-xl bg-red-50 dark:bg-[#EB5757]/10 border border-red-200 dark:border-[#EB5757]/20">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <h3 className="text-sm font-semibold uppercase text-slate-900 dark:text-[#F7F8F8]">Leave Project</h3>
+            </div>
+
+            <p className="text-xs text-slate-600 dark:text-[#8A8F98] leading-relaxed">
+              Are you sure you want to leave <strong className="text-slate-900 dark:text-[#F7F8F8]">{leaveConfirmProj.name}</strong>? You will lose access to its files, documents, and co-author access.
+            </p>
+
+            <form onSubmit={handleLeaveProject} className="flex justify-end gap-2 pt-2 text-xs font-mono font-medium">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLeaveConfirmProj(null)}
+                className="h-8 text-xs rounded-xl border-slate-200 dark:border-[#23252A] bg-slate-50 dark:bg-[#141517] hover:bg-slate-100 dark:hover:bg-[#1C1E22] text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8]"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={leaveMutation.isPending}
+                className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-xl shadow-md border border-red-600 dark:border-[#EB5757]/50"
+              >
+                {leaveMutation.isPending ? "Leaving..." : "Leave Project"}
               </Button>
             </form>
           </div>
