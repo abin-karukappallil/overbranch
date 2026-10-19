@@ -75,6 +75,7 @@ allowed_origins_env = os.getenv("ALLOWED_ORIGINS")
 origins = [o.strip() for o in allowed_origins_env.split(",")] if allowed_origins_env else [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://overbranch.app",
     "https://overbranch.abinthomas.dev"
 ]
 if os.getenv("NEXT_PUBLIC_APP_URL"):

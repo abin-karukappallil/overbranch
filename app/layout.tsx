@@ -31,13 +31,57 @@ export const viewport = {
 };
 
 export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL && !process.env.NEXT_PUBLIC_APP_URL.includes("localhost")
+      ? process.env.NEXT_PUBLIC_APP_URL
+      : "https://overbranch.app"
+  ),
   title: {
     default: "OverBranch — 100% Free & Open-Source Agentic LaTeX Code Editor",
     template: "OverBranch | %s",
   },
   description: "Agentic Ai Latex code editor. Futuristic Ai Agent for Latex.",
-  keywords: ["OverBranch", "AI Platform", "Open Source", "Self-Hostable", "AI Workflows", "Developer Tools", "AI Infrastructure", "pdf to latex", "Ai latex code editor","pdf to latex code generator","overleaf alternative","best pdf to latex","ai pdf to latex","free pdf to latex","Latex","Prism Ai","Prism Latex","Latex Ai","Latex agent","Overleaf better","latex editor agent","Better prism"],
+  keywords: [
+    "OverBranch",
+    "AI Platform",
+    "Open Source",
+    "Self-Hostable",
+    "AI Workflows",
+    "Developer Tools",
+    "AI Infrastructure",
+    "pdf to latex",
+    "Ai latex code editor",
+    "pdf to latex code generator",
+    "overleaf alternative",
+    "best pdf to latex",
+    "ai pdf to latex",
+    "free pdf to latex",
+    "Latex",
+    "Prism Ai",
+    "Prism Latex",
+    "Latex Ai",
+    "Latex agent",
+    "Overleaf better",
+    "latex editor agent",
+    "Better prism",
+  ],
   authors: [{ name: "OverBranch Team" }],
+  alternates: {
+    canonical: "/",
+  },
+  openGraph: {
+    title: "OverBranch — 100% Free & Open-Source Agentic LaTeX Code Editor",
+    description: "Agentic AI LaTeX code editor. Futuristic AI Agent for LaTeX.",
+    url: "/",
+    siteName: "OverBranch",
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "OverBranch — Agentic LaTeX Code Editor",
+    description: "Agentic AI LaTeX code editor. Futuristic AI Agent for LaTeX.",
+  },
   icons: {
     icon: [
       { url: "/icon.svg", type: "image/svg+xml" },
@@ -47,6 +91,9 @@ export const metadata: Metadata = {
     apple: [
       { url: "/apple-icon.png", sizes: "180x180", type: "image/png" },
     ],
+  },
+  verification: {
+    google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION || undefined,
   },
 };
 

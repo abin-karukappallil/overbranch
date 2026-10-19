@@ -117,6 +117,7 @@ class CollabConfig:
             origins = [
                 "http://localhost:3000",
                 "http://127.0.0.1:3000",
+                "https://overbranch.app",
                 "https://overbranch.abinthomas.dev",
             ]
         return tuple(dict.fromkeys(origins))

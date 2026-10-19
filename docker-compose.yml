@@ -18,8 +18,8 @@ services:
       - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://overapi.abinthomas.dev}
       - BACKEND_URL=${BACKEND_URL:-https://overapi.abinthomas.dev}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://overbranch.abinthomas.dev}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://overbranch.abinthomas.dev}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://overbranch.app}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://overbranch.app}
     volumes:
       # Also holds in-flight PDF import jobs (uploads/pdf2latex_jobs): do not drop this mount or a
       # restart loses running conversions.

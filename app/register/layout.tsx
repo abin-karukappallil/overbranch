@@ -4,6 +4,9 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Create Account",
   description: "Create a free OverBranch account to write, compile, and collaborate on LaTeX documents.",
+  alternates: {
+    canonical: "/register",
+  },
 };
 
 export default function RegisterLayout({

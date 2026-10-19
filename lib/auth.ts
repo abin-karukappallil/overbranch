@@ -28,7 +28,7 @@ function createAuth() {
     baseURL:
       process.env.BETTER_AUTH_URL ||
       process.env.NEXT_PUBLIC_APP_URL ||
-      "https://overbranch.abinthomas.dev",
+      "https://overbranch.app",
     secret:
       process.env.BETTER_AUTH_SECRET ||
       "overbranch-secret-key-replace-in-production-min-32-chars",
