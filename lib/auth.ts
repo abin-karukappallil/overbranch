@@ -36,6 +36,11 @@ function createAuth() {
       enabled: true,
     },
     socialProviders,
+    advanced: {
+      ipAddress: {
+        ipAddressHeaders: ["cf-connecting-ip", "x-real-ip", "x-forwarded-for"],
+      },
+    },
   });
 }
 
