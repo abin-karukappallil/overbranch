@@ -19,17 +19,21 @@ logger = logging.getLogger("rate_limiter")
 
 def get_client_ip(request: Request) -> str:
     """
-    Extracts the client IP address from proxy headers (X-Forwarded-For, X-Real-IP)
-    or the direct client connection.
+    Extracts the client IP address from proxy headers (CF-Connecting-IP,
+    X-Forwarded-For, X-Real-IP) or the direct client connection.
     """
-    forwarded = request.headers.get("X-Forwarded-For")
+    cf_ip = request.headers.get("CF-Connecting-IP") or request.headers.get("cf-connecting-ip")
+    if cf_ip:
+        return cf_ip.strip()
+
+    forwarded = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
     if forwarded:
         # First IP in comma-separated chain is the client IP
         client_ip = forwarded.split(",")[0].strip()
         if client_ip:
             return client_ip
 
-    real_ip = request.headers.get("X-Real-IP")
+    real_ip = request.headers.get("X-Real-IP") or request.headers.get("x-real-ip")
     if real_ip:
         return real_ip.strip()
 

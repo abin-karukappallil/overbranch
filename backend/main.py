@@ -18,6 +18,7 @@ from typing import List, Optional, Dict, Any
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -89,6 +90,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trust reverse proxy headers (Cloudflare -> Nginx -> Docker) so request.client.host
+# and logs resolve the real visitor IP instead of 127.0.0.1
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 
 from routes.pdf_convert import router as pdf_convert_router
 from routes.agent_routes import router as agent_router
@@ -325,5 +330,5 @@ async def synctex_forward_endpoint(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, proxy_headers=True, forwarded_allow_ips="*")
 

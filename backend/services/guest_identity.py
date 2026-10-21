@@ -42,15 +42,15 @@ def parse_utc_datetime(val: Any) -> datetime:
 
 def get_client_ip(request: Request) -> str:
     """Extracts client IP address respecting reverse proxies."""
-    forwarded = request.headers.get("x-forwarded-for")
+    cf_ip = request.headers.get("cf-connecting-ip") or request.headers.get("CF-Connecting-IP")
+    if cf_ip:
+        return cf_ip.strip()
+
+    forwarded = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
     if forwarded:
         return forwarded.split(",")[0].strip()
     
-    cf_ip = request.headers.get("cf-connecting-ip")
-    if cf_ip:
-        return cf_ip.strip()
-    
-    real_ip = request.headers.get("x-real-ip")
+    real_ip = request.headers.get("x-real-ip") or request.headers.get("X-Real-IP")
     if real_ip:
         return real_ip.strip()
     

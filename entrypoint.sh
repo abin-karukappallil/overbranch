@@ -33,6 +33,8 @@ python3 -m uvicorn main:app \
     --host 0.0.0.0 \
     --port "${BACKEND_PORT:-8000}" \
     --workers "$BACKEND_WORKERS" \
+    --proxy-headers \
+    --forwarded-allow-ips="*" \
     --timeout-keep-alive 65 \
     --timeout-graceful-shutdown 30 \
     --limit-concurrency 200 \
