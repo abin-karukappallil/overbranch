@@ -46,14 +46,20 @@ def _write_atomic(path: Path, data: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-DEFAULT_MODE = "exact"
-MODES = ("exact",)
+# "exact" is the original coordinate-faithful pipeline; "editable" reflows the PDF into ordinary
+# semantic LaTeX (sections, lists, tabular, \textcolor). New jobs default to "editable".
+DEFAULT_MODE = "editable"
+MODES = ("exact", "editable")
+# What a status.json with no "mode" key means. Job directories written before the editable mode
+# existed have no key and must keep running as the coordinate pipeline, so this stays "exact"
+# even though new jobs default to "editable".
+LEGACY_MODE = "exact"
 
 
 def job_mode(state: Optional[Dict[str, Any]]) -> str:
-    """The conversion mode stored in a job state; directories written before M13 have none."""
+    """The conversion mode stored in a job state; a missing or unknown key reads as LEGACY_MODE."""
     mode = (state or {}).get("mode")
-    return mode if mode in MODES else DEFAULT_MODE
+    return mode if mode in MODES else LEGACY_MODE
 
 
 def create_job(owner: str, project_id: str, filename: str, page_count: int,
@@ -83,9 +89,10 @@ def create_job(owner: str, project_id: str, filename: str, page_count: int,
         "created_at": now,
         "updated_at": now,
     }
-    # Only a non-default mode is written, so an exact-mode job's status.json is exactly what it
-    # was before M13; job_mode() and public_view() read the missing key as "exact".
-    if mode != DEFAULT_MODE:
+    # The key is written whenever the mode differs from what a missing key means (LEGACY_MODE =
+    # "exact"). So an exact-mode job's status.json has no "mode" key and is byte-identical to what
+    # it was before this mode existed, while an editable job always carries the key.
+    if mode != LEGACY_MODE:
         state["mode"] = mode
     _write_atomic(d / "status.json", state)
     return state

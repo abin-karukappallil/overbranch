@@ -135,7 +135,7 @@ export default function ConvertPage() {
           </h1>
 
           <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto font-sans leading-relaxed">
-            Text, font sizes, colors, positions, images and vector shapes are extracted from the PDF itself, and every page is rewritten as LaTeX by the same model as the AI copilot. Each page is compiled and compared with the original, and you see the measured similarity.
+            Your PDF becomes an ordinary, editable LaTeX document — headings, paragraphs, lists, tables and images in reading order — keeping the fonts, colours, sizes and assets. It is compiled and checked for text coverage and style fidelity. (An exact, pixel-faithful layout mode is also available.)
           </p>
 
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-400">
@@ -234,10 +234,10 @@ export default function ConvertPage() {
           <div className="p-4 rounded-2xl border border-zinc-800/80 bg-zinc-900/50 space-y-1.5">
             <div className="flex items-center gap-2 text-xs font-mono font-bold text-white">
               <Zap className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Text Stays Text</span>
+              <span>Actually Editable</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-              Text is never rasterized: it is set with the embedded font or the closest installed match, and every substitution is listed in the report.
+              Real LaTeX structure — \section, itemize, tabular, \textcolor — not text pinned to coordinates. Edit and recompile like any document you wrote yourself.
             </p>
           </div>
 
@@ -247,7 +247,7 @@ export default function ConvertPage() {
               <span>Measured Fidelity</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-              Each page is rendered and compared (SSIM + pixel difference) and repaired up to four times. Scores are shown per page; results are best-effort, not guaranteed identical.
+              The output is checked against the source for text coverage and for font, size and colour fidelity — not prompt promises. The report shows what matched; results are best-effort, not guaranteed identical.
             </p>
           </div>
 

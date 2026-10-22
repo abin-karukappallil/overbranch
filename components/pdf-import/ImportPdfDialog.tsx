@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { isResumeMessage } from "@/lib/pdf-import-poll";
 import {
   ConversionJob,
+  ConversionMode,
   TemplateRules,
   useConversionConfig,
   usePagePreview,
@@ -103,6 +104,7 @@ function ImportPdfPanel({
   const [projectName, setProjectName] = useState("");
   const [dragging, setDragging] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ConversionMode>("editable");
   const fileInput = useRef<HTMLInputElement>(null);
 
   const busy = starting || (!!job && !["done", "error", "needs_confirmation", "cancelled"].includes(job.status));
@@ -166,7 +168,7 @@ function ImportPdfPanel({
             className="space-y-4"
             onSubmit={(e) => {
               e.preventDefault();
-              if (file) start(file, { projectId, projectName: projectId ? undefined : projectName.trim() || undefined });
+              if (file) start(file, { projectId, projectName: projectId ? undefined : projectName.trim() || undefined, mode });
             }}
           >
             {/* Dropzone */}
@@ -234,12 +236,45 @@ function ImportPdfPanel({
               )}
             </div>
 
+            {/* Conversion mode */}
+            <div className="space-y-1.5">
+              <span className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider">Output</span>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  { id: "editable", title: "Editable", desc: "Normal LaTeX you can edit — sections, lists, tables. Same fonts, colours and sizes." },
+                  { id: "exact", title: "Exact layout", desc: "Pixel-faithful placement. Hard to edit (coordinate-positioned)." },
+                ] as { id: ConversionMode; title: string; desc: string }[]).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setMode(opt.id)}
+                    className={`text-left p-3 rounded-lg border transition-all ${
+                      mode === opt.id
+                        ? "border-[#5E6AD2] bg-[#5E6AD2]/10"
+                        : "border-[#23252A] bg-[#191A1B]/40 hover:border-[#3B3D45]"
+                    }`}
+                  >
+                    <div className="text-xs font-semibold flex items-center gap-1.5">
+                      {opt.title}
+                      {opt.id === "editable" && (
+                        <span className="text-[9px] uppercase tracking-wide text-[#5E6AD2] bg-[#5E6AD2]/15 px-1 py-0.5 rounded">
+                          Recommended
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-[#8A8F98] mt-1 leading-snug">{opt.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {config && !config.llm_available && (
               <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300 flex items-start gap-2">
                 <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>
-                  The AI copilot&apos;s LLM is not configured on this server, so pages are reproduced with the
-                  positioned-layout fallback (accurate placement, less editable LaTeX).
+                  {mode === "editable"
+                    ? "The AI copilot's LLM is not configured on this server, so the optional polish step is skipped. The editable LaTeX is still built from the PDF's structure, fonts and colours."
+                    : "The AI copilot's LLM is not configured on this server, so pages are reproduced with the positioned-layout fallback (accurate placement, less editable LaTeX)."}
                 </span>
               </div>
             )}
@@ -260,9 +295,9 @@ function ImportPdfPanel({
             )}
 
             <p className="text-[11px] text-[#62666D] leading-relaxed">
-              Every page is rewritten as LaTeX by the same model as the AI copilot
-              {config?.model ? ` (${config.model})` : ""}, compiled and compared with the original; you get a
-              text-coverage and similarity figures per page. This is a best-effort conversion, not a guaranteed identical copy.
+              {mode === "editable"
+                ? "The PDF is rebuilt as an ordinary, editable LaTeX document — headings, paragraphs, lists, tables and images in reading order — keeping the fonts, colours, sizes and assets. It is compiled and checked for text coverage and style fidelity. Best-effort, not a guaranteed identical copy."
+                : `Every page is reproduced as coordinate-placed LaTeX by the same model as the AI copilot${config?.model ? ` (${config.model})` : ""}, compiled and compared with the original. Pixel-faithful but hard to edit. Best-effort, not a guaranteed identical copy.`}
             </p>
 
             {shownError && (
@@ -278,7 +313,7 @@ function ImportPdfPanel({
                       className="h-7 text-xs border-rose-500/30 text-rose-400 hover:bg-rose-500/10"
                       onClick={() => {
                         if (file) {
-                          start(file, { projectId, projectName: projectName || undefined, cancelPrevious: true });
+                          start(file, { projectId, projectName: projectName || undefined, cancelPrevious: true, mode });
                         }
                       }}
                     >
@@ -392,35 +427,36 @@ function JobView({
         </div>
       </div>
 
-      {/* Per-page status */}
-      {job.pages.length > 0 && (
-        <div>
-          <div className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5" /> Pages
+      {/* Progress view: pipeline steps for editable mode, per-page grid for exact mode */}
+      {job.mode === "editable" ? (
+        <EditablePipelineProgress currentStage={job.stage} isRunning={running} />
+      ) : (
+        job.pages.length > 0 && (
+          <div>
+            <div className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <Layers className="w-3.5 h-3.5" /> Pages
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto pr-1">
+              {job.pages.map((p) => {
+                const ok = p.status === "done";
+                const active = ["generating", "compiling", "repairing", "verifying", "rerunning"].includes(p.status);
+                return (
+                  <div key={p.number}
+                    className={`px-2.5 py-1.5 rounded-md border text-[11px] flex items-center justify-between gap-2 ${
+                      active ? "border-[#5E6AD2]/40 bg-[#5E6AD2]/8" : "border-[#23252A] bg-[#191A1B]/60"
+                    }`}
+                    title={(p.warnings || []).join("\n")}
+                  >
+                    <span className="text-[#8A8F98]">p.{p.number}{p.fallback ? " ·" : ""}</span>
+                    <span className={`font-mono tabular-nums ${p.similarity == null ? "text-[#62666D]" : ok ? "text-emerald-400" : "text-amber-400"}`}>
+                      {p.similarity != null ? pct(p.text_coverage ?? p.similarity) : STATUS_LABEL[p.status] || p.status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto pr-1">
-            {job.pages.map((p) => {
-              // The backend's own verdict, not a similarity cut-off: a faithful page that re-sets
-              // the type scores well under the visual target, so comparing against it painted
-              // every page of a normal document amber.
-              const ok = p.status === "done";
-              const active = ["generating", "compiling", "repairing", "verifying", "rerunning"].includes(p.status);
-              return (
-                <div key={p.number}
-                  className={`px-2.5 py-1.5 rounded-md border text-[11px] flex items-center justify-between gap-2 ${
-                    active ? "border-[#5E6AD2]/40 bg-[#5E6AD2]/8" : "border-[#23252A] bg-[#191A1B]/60"
-                  }`}
-                  title={(p.warnings || []).join("\n")}
-                >
-                  <span className="text-[#8A8F98]">p.{p.number}{p.fallback ? " ·" : ""}</span>
-                  <span className={`font-mono tabular-nums ${p.similarity == null ? "text-[#62666D]" : ok ? "text-emerald-400" : "text-amber-400"}`}>
-                    {p.similarity != null ? pct(p.text_coverage ?? p.similarity) : STATUS_LABEL[p.status] || p.status}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        )
       )}
 
       {job.status === "needs_confirmation" && (
@@ -481,11 +517,114 @@ function JobView({
   );
 }
 
+const EDITABLE_STAGES = [
+  { id: "extracting", title: "Extracting Assets", desc: "Text, vector graphics & images" },
+  { id: "analysing", title: "Document Structure", desc: "Headings, paragraphs, lists & tables" },
+  { id: "compiling", title: "Compiling LaTeX", desc: "pdfLaTeX compilation & auto-repair" },
+  { id: "verifying", title: "Quality Gates", desc: "Checking coverage & style fidelity" },
+  { id: "polishing", title: "Math & Table Polish", desc: "Equations & semantic formatting" },
+  { id: "writing", title: "Saving Project", desc: "Writing output files to workspace" },
+];
+
+const STAGE_ORDER = ["queued", "extracting", "analysing", "compiling", "verifying", "polishing", "writing", "done"];
+
+function EditablePipelineProgress({ currentStage, isRunning }: { currentStage: string; isRunning: boolean }) {
+  const currentIdx = STAGE_ORDER.indexOf(currentStage);
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider flex items-center gap-1.5">
+        <Layers className="w-3.5 h-3.5" /> Pipeline Progress
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {EDITABLE_STAGES.map((st) => {
+          const stIdx = STAGE_ORDER.indexOf(st.id);
+          const isDone = currentIdx > stIdx || currentStage === "done";
+          const isActive = isRunning && currentStage === st.id;
+
+          return (
+            <div
+              key={st.id}
+              className={`px-3 py-2 rounded-lg border text-xs flex items-center gap-2.5 transition-all ${
+                isActive
+                  ? "border-[#5E6AD2]/50 bg-[#5E6AD2]/10"
+                  : isDone
+                  ? "border-emerald-500/20 bg-emerald-500/5 text-[#F7F8F8]"
+                  : "border-[#23252A] bg-[#191A1B]/40 text-[#62666D]"
+              }`}
+            >
+              <div className="shrink-0">
+                {isDone ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : isActive ? (
+                  <Loader2 className="w-4 h-4 text-[#5E6AD2] animate-spin" />
+                ) : (
+                  <div className="w-4 h-4 rounded-full border border-[#3B3D45] flex items-center justify-center text-[10px] text-[#62666D]" />
+                )}
+              </div>
+              <div className="min-w-0">
+                <div className={`font-semibold truncate ${isActive ? "text-[#F7F8F8]" : isDone ? "text-[#E6E8EC]" : "text-[#62666D]"}`}>
+                  {st.title}
+                </div>
+                <div className="text-[10px] text-[#8A8F98] truncate">{st.desc}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EditableReportView({ job }: { job: ConversionJob }) {
+  const report = job.report!;
+  const ed = report.editable || {};
+  const g = ed.gates || {};
+  const failed = new Set(ed.failed || []);
+  const tone = (ok: boolean) => (ok ? "good" : "warn");
+  const assetsOk = ed.assets?.ok !== false && (ed.assets?.extra?.length ?? 0) === 0;
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-4 gap-2 text-center">
+        <Stat label="Text kept" value={pct(g.coverage ?? null)} tone={tone(!failed.has("coverage"))} />
+        <Stat label="Style match" value={pct(g.style ?? null)} tone={tone(!failed.has("style"))} />
+        <Stat label="Pages"
+          value={`${g.pages_out ?? report.compiled_page_count ?? "—"} / ${g.pages_source ?? report.page_count}`}
+          tone={tone(!failed.has("pages"))} />
+        <Stat label="Images"
+          value={`${(ed.assets?.referenced?.length ?? 0)}`}
+          tone={tone(assetsOk)} />
+      </div>
+      <p className="text-[11px] text-[#62666D] leading-relaxed">
+        Editable LaTeX · {report.compiled ? "compiled" : "not compiled"} · pdfLaTeX ·{" "}
+        {report.llm_used ? `polished with ${report.model}` : "deterministic (no LLM polish)"}
+        {report.disclaimer ? ` · ${report.disclaimer}` : ""}
+      </p>
+      {failed.size > 0 && (
+        <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300">
+          Some quality checks did not fully pass: {[...failed].join(", ")}. The document is still editable
+          and carries all of its text; review the flagged areas.
+        </div>
+      )}
+      {ed.lint && (
+        <div className="text-[11px] text-[#62666D]">
+          Editability: {ed.lint.sections ?? 0} headings · {ed.lint.fontsize ?? 0} inline font-size ·{" "}
+          {ed.lint.nodes ?? 0} positioned nodes
+          {typeof ed.polish?.accepted === "number" ? ` · ${ed.polish.accepted}/${ed.polish.tried ?? 0} polish edits kept` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ReportView({ job, threshold }: { job: ConversionJob; threshold: number }) {
   const report = job.report!;
   const [page, setPage] = useState(1);
   const [showDiff, setShowDiff] = useState(false);
   const canPreview = report.compiled;
+  if (job.mode === "editable" || report.mode === "editable") {
+    return <EditableReportView job={job} />;
+  }
   const below = useMemo(() => report.pages.filter((p) => p.status === "below_threshold").length, [report]);
   const fallbacks = report.pages.filter((p) => p.fallback).length;
   const coverageTarget = report.coverage_target ?? 0.995;

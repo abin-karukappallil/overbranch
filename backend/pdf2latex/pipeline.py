@@ -76,7 +76,7 @@ FALLBACK_MARGIN = 0.03  # the positioned layout rescues an unacceptable page onl
 EXTRA_TOLERANCE = 0.05  # invented words tolerated, as a share of the page's source words
 QUEUE_RETRIES = 6       # compile_queue already waits COMPILE_QUEUE_TIMEOUT for a slot on each try
 QUEUE_BACKOFF_MAX_S = 8.0
-MODES = ("exact",)  # "exact" is the original coordinate-faithful pipeline
+MODES = ("exact", "editable")  # "exact" = coordinate-faithful; "editable" = reflowed semantic LaTeX
 
 
 class ConversionError(RuntimeError):
@@ -686,6 +686,14 @@ async def run_conversion(job_id: str, pdf_bytes: bytes, project_id: str,
     saved_state = (jobs.load_job(job_id) or {}) if resume else {}
     saved_pages = {p["number"]: p for p in saved_state.get("pages", [])} if resume else {}
     mode = _resolve_mode(mode, saved_state)
+
+    if mode == "editable":
+        # The editable pipeline is document-level (reflow), not per-page, so it has its own entry
+        # point. Exact mode below is untouched.
+        from .editable.run import run_editable
+        await run_editable(job_id, pdf_bytes, project_id, overwrite=overwrite,
+                           target_path=target_path, resume=resume, saved_state=saved_state)
+        return
 
     report = ConversionReport(page_count=0, threshold=settings.sim_threshold, model=model_name(),
                               coverage_target=settings.coverage_target,

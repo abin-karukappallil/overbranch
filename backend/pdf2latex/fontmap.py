@@ -112,6 +112,28 @@ def family_of(cls: str) -> str:
     return FAMILY_OF.get(cls, "serif")
 
 
+# Font-name fragments that are sans even though their TeX class (lmodern) defaults to serif.
+_SANS_LM = ("lmsans", "cmss", "sfrm", "sfbx", "sfti")
+_MONO_LM = ("lmmono", "cmtt")
+
+
+def editable_font(font_name: str, flags: int = 0) -> Tuple[str, str]:
+    """
+    (class, family) for editable mode. Same class as ``font_class`` but the generic family is
+    read from the *font name* first, so Latin Modern Sans / Computer Modern Sans come out sans
+    rather than serif (``font_class`` folds them into the serif ``lmodern`` class, and
+    ``family_of("lmodern")`` is serif). The class still carries the right package; only the
+    \\rmfamily / \\sffamily / \\ttfamily switch in the body changes.
+    """
+    cls = font_class(font_name, flags)
+    n = _norm(font_name)
+    if flags & 8 or any(k in n for k in _MONO_LM) or any(k in n for k in _MONO):
+        return cls, "mono"
+    if any(k in n for k in _SANS_LM):
+        return cls, "sans"
+    return cls, family_of(cls)
+
+
 def name_is_bold(font_name: str) -> bool:
     base = _clean(font_name)
     return bool(BOLD_NAME_RE.search(base))

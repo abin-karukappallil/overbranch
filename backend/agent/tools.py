@@ -446,10 +446,11 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "Convert a PDF the user attached to this chat into LaTeX for the current project (PDF import). "
             "Use ONLY when the user asks to convert / import / recreate / reproduce an attached PDF as LaTeX. "
-            "Each page is reproduced as compilable LaTeX (same text, images, colors, font sizes, spacing and "
-            "alignment as closely as possible), compiled and compared with the original. Starts a background job "
-            "and returns its job_id; the user sees per-page progress and similarity scores and confirms before "
-            "main.tex is replaced. Do not edit the document yourself after starting a conversion — finish with done=true."
+            "The PDF is rebuilt as an ordinary, editable LaTeX document (headings, paragraphs, lists, tables and "
+            "images in reading order) that keeps the source's fonts, colours, sizes and assets, then compiled and "
+            "checked for text coverage and style fidelity. Starts a background job and returns its job_id; the user "
+            "sees progress and a quality report and confirms before main.tex is replaced. Do not edit the document "
+            "yourself after starting a conversion — finish with done=true."
         ),
         "parameters": {
             "filename": {
@@ -925,14 +926,17 @@ def _convert_attached_pdf(args: Dict[str, Any], workspace: "ShadowWorkspace") ->
         consume_guest_conversion(sid)
 
     state = start_job(owner, bool(user_ctx.get("is_guest")), project_id,
-                      att.get("filename") or "document.pdf", data, page_count, overwrite=False)
+                      att.get("filename") or "document.pdf", data, page_count, overwrite=False,
+                      mode="editable")
     return {
         "success": True,
         "job_id": state["job_id"],
         "filename": att.get("filename"),
         "page_count": page_count,
+        "mode": "editable",
         "message": (
-            "Conversion started. The user sees live progress and a similarity report, and is asked before "
-            "an existing main.tex is replaced. Results are best-effort with measured similarity."
+            "Conversion started (editable mode). The user sees live progress and a quality report "
+            "(text coverage and style fidelity), and is asked before an existing main.tex is replaced. "
+            "Results are best-effort editable LaTeX, not a guaranteed identical copy."
         ),
     }

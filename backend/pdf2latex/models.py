@@ -181,6 +181,11 @@ class ConversionReport:
     # Template mode only (M13/M14); dropped from to_dict() when unset so exact mode is unchanged.
     template_rules: Optional[Dict[str, Any]] = None
     style_profile: Optional[Dict[str, Any]] = None
+    # Editable mode only; dropped from to_dict() when unset so exact mode's report dict is unchanged.
+    # `mode` is "editable"; `editable` carries the gate results, per-attribute style scores, lint
+    # counts, structure counts, polish stats and the asset list.
+    mode: Optional[str] = None
+    editable: Optional[Dict[str, Any]] = None
     disclaimer: str = (
         "Best-effort conversion. A page is accepted when it compiles to a single page carrying "
         "every word of the source; the similarity figure is a visual comparison (SSIM + pixel "
@@ -195,7 +200,7 @@ class ConversionReport:
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
-        for key in ("template_rules", "style_profile"):
+        for key in ("template_rules", "style_profile", "mode", "editable"):
             if d.get(key) is None:
                 d.pop(key, None)
         d["mean_similarity"] = self.mean_similarity

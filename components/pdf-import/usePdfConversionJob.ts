@@ -72,6 +72,9 @@ export interface ConversionReport {
   /** Template mode only; present when the document states formatting rules. Every field is optional (LLM output). */
   template_rules?: TemplateRules | null;
   style_profile?: Record<string, unknown> | null;
+  /** Editable mode only. */
+  mode?: ConversionMode;
+  editable?: EditableReport | null;
 }
 
 export interface TemplateRules {
@@ -80,7 +83,7 @@ export interface TemplateRules {
   evidence?: unknown[] | null;
 }
 
-export type ConversionMode = "exact";
+export type ConversionMode = "exact" | "editable";
 
 export interface ConversionJob {
   job_id: string;
@@ -96,6 +99,25 @@ export interface ConversionJob {
   result: { tex_path: string; files: string[]; assets: string[] } | null;
   error: string | null;
   conflict_path?: string | null;
+  mode?: ConversionMode;
+}
+
+/** Editable-mode report: gate results, per-attribute style scores, lint counts, structure. */
+export interface EditableReport {
+  structure?: Record<string, unknown>;
+  gates?: {
+    coverage?: number;
+    extra_ratio?: number;
+    order?: number;
+    style?: number;
+    pages_out?: number;
+    pages_source?: number;
+  };
+  style?: Record<string, number>;
+  lint?: Record<string, number>;
+  assets?: { ok?: boolean; referenced?: string[]; extra?: string[] };
+  failed?: string[];
+  polish?: { tried?: number; accepted?: number; targets?: string[] };
 }
 
 export class ConversionRequestError extends Error {
@@ -117,6 +139,7 @@ async function readError(res: Response): Promise<{ message: string; jobId?: stri
     const detail = body?.detail;
     if (typeof detail === "string") message = detail;
     else if (Array.isArray(detail)) message = detail.map((d: any) => d?.msg || String(d)).join("; ");
+    else if (detail && typeof detail === "object") message = detail.message || detail.code || "";
   } catch {
     /* fall through */
   }
@@ -258,8 +281,12 @@ export function usePdfConversionJob() {
         if (opts.projectName) form.append("project_name", opts.projectName);
         if (opts.overwrite) form.append("overwrite", "true");
         if (opts.cancelPrevious) form.append("cancel_previous", "true");
-        form.append("mode", "exact");
-        const res = await authFetch(`${BACKEND_URL}/api/convert/pdf`, { method: "POST", body: form });
+        form.append("mode", opts.mode ?? "editable");
+        const res = await authFetch(`${BACKEND_URL}/api/convert/pdf`, {
+          method: "POST",
+          body: form,
+          signal: AbortSignal.timeout(90_000),
+        });
         if (!res.ok) {
           const err = await readError(res);
           throw new ConversionRequestError(err.message, res.status, err.jobId);
@@ -279,13 +306,16 @@ export function usePdfConversionJob() {
           report: null,
           result: null,
           error: null,
+          mode: (opts.mode ?? "editable") as ConversionMode,
         });
         attach(body.job_id);
         return body as { job_id: string; project_id: string };
-      } catch (e) {
+      } catch (e: any) {
         if (e instanceof ConversionRequestError) {
           setError(e.message);
           if (e.jobId) setErrorJobId(e.jobId);
+        } else if (e?.name === "TimeoutError" || e?.message?.toLowerCase().includes("timeout")) {
+          setError("Upload timed out. The server took too long to respond — please verify the backend service is running and retry.");
         } else {
           setError(e instanceof Error ? e.message : "Upload failed.");
         }

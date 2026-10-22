@@ -55,6 +55,8 @@ class Pdf2LatexSettings:
     quality_rerun: bool
     render_dpi: int
     job_dir: Path
+    editable_polish: bool
+    style_target: float
 
     @property
     def max_file_bytes(self) -> int:
@@ -87,4 +89,10 @@ def get_settings() -> Pdf2LatexSettings:
         quality_rerun=_env_bool("PDF2LATEX_QUALITY_RERUN", True),
         render_dpi=max(36, _env_int("PDF2LATEX_RENDER_DPI", 100)),
         job_dir=Path(job_dir).resolve(),
+        # Editable mode: whether the per-block text-only LLM polish pass runs at all. With it off
+        # (or no LLM configured) the deterministic build is still the full product.
+        editable_polish=_env_bool("PDF2LATEX_EDITABLE_POLISH", True),
+        # Editable mode gate: the share of matched words whose font size/weight/slant/colour/family
+        # must equal the source (measured on the compiled output PDF).
+        style_target=min(1.0, max(0.0, _env_float("PDF2LATEX_STYLE_TARGET", 0.97))),
     )

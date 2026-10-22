@@ -45,8 +45,10 @@ def cancel_job(job_id: str) -> bool:
 
 def _spawn(job_id: str, data: bytes, project_id: str, overwrite: bool, resume: bool = False,
            mode: str = jobs.DEFAULT_MODE) -> None:
-    # "exact" is run_conversion's own default, so it is only passed when it differs.
-    extra = {} if mode == jobs.DEFAULT_MODE else {"mode": mode}
+    # run_conversion's own default is "exact" (not jobs.DEFAULT_MODE), so mode is passed whenever
+    # it differs from "exact". Without this, an editable job started with the default mode would
+    # reach run_conversion with no mode argument and silently run as exact.
+    extra = {} if mode == "exact" else {"mode": mode}
     task = asyncio.get_running_loop().create_task(
         run_conversion(job_id, data, project_id, overwrite, resume=resume, **extra))
     _tasks.add(task)
@@ -69,7 +71,7 @@ def start_job(owner: str, is_guest: bool, project_id: str, filename: str, data: 
     With resume=True the existing job `job_id` is relaunched instead: nothing is created, the
     upload is read back from the job directory and pages already finished are not redone.
 
-    `mode` is "exact".
+    `mode` is one of jobs.MODES ("exact" or "editable"); a resumed job keeps its stored mode.
     """
     if mode not in jobs.MODES:
         raise ValueError(f"mode must be one of {', '.join(jobs.MODES)}, not {mode!r}.")

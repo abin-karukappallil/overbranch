@@ -117,7 +117,8 @@ def _resume_if_interrupted(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]
     state = jobs.update_job(job_id, status="running", error=None,
                             message="Resuming after an interruption…",
                             resumed_at=now, resume_count=attempts + 1)
-    # The stored mode goes back in (M11); exact is start_job's default, so only template is passed.
+    # start_job re-reads the stored mode from disk on resume (runner.start_job), so passing it here
+    # is only belt-and-braces; it is sent whenever it isn't start_job's own default.
     extra = {} if jobs.job_mode(state) == jobs.DEFAULT_MODE else {"mode": jobs.job_mode(state)}
     try:
         start_job(state.get("owner", ""), bool(state.get("is_guest")), state.get("project_id", ""),
@@ -181,7 +182,8 @@ async def start_conversion(
 ):
     if mode not in jobs.MODES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                            detail={"code": "bad_mode", "message": "mode must be 'exact'."})
+                            detail={"code": "bad_mode",
+                                    "message": f"mode must be one of: {', '.join(jobs.MODES)}."})
     settings = get_settings()
     data = await _read_limited(file, settings.max_file_bytes)
     try:

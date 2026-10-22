@@ -67,6 +67,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Error closing database pool: {e}")
 
+    try:
+        from compile_queue import compile_queue
+        if getattr(compile_queue, "_executor", None) is not None:
+            compile_queue._executor.shutdown(wait=False, cancel_futures=True)
+    except Exception as e:
+        logger.warning(f"Error shutting down compile executor: {e}")
+
+    try:
+        import pdf2latex.llm as pdf_llm
+        if getattr(pdf_llm, "_pool", None) is not None:
+            pdf_llm._pool.shutdown(wait=False, cancel_futures=True)
+            pdf_llm._pool = None
+    except Exception as e:
+        logger.warning(f"Error shutting down pdf2latex llm pool: {e}")
+
     logger.info("OverBranch shutdown complete.")
 
 

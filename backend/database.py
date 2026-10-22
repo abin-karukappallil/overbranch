@@ -186,7 +186,10 @@ async def close_db() -> None:
     global _async_engine, _async_session_factory
     if _async_engine is not None:
         logger.info("Disposing async database engine pool...")
-        await _async_engine.dispose()
+        try:
+            await asyncio.wait_for(_async_engine.dispose(), timeout=5.0)
+        except Exception as e:
+            logger.warning(f"Error disposing database pool: {e}")
         _async_engine = None
         _async_session_factory = None
         logger.info("Database engine pool disposed.")
