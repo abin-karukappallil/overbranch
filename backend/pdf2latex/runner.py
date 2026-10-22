@@ -54,9 +54,26 @@ def _spawn(job_id: str, data: bytes, project_id: str, overwrite: bool, resume: b
     _tasks.add(task)
     _running_tasks[job_id] = task
 
-    def _cleanup(_):
+    def _cleanup(done: asyncio.Task):
         _tasks.discard(task)
         _running_tasks.pop(job_id, None)
+        # A pipeline that raised before it could record anything (a module that fails to import,
+        # a bug outside its own error handling) must end the job. Left "running" with no task,
+        # every poll would relaunch it into the same failure ("Resuming after an interruption…"
+        # forever). A cancelled task is a shutdown or a user cancel: it stays resumable.
+        if done.cancelled():
+            return
+        exc = done.exception()
+        if exc is None:
+            return
+        logger.error(f"Conversion job {job_id} crashed: {exc!r}", exc_info=exc)
+        try:
+            state = jobs.load_job(job_id) or {}
+            if state.get("status") not in jobs.TERMINAL:
+                jobs.update_job(job_id, status="error", stage="error", error=str(exc) or type(exc).__name__,
+                                message=f"Conversion failed: {exc or type(exc).__name__}")
+        except Exception:  # noqa: BLE001 — never let the callback itself raise into the loop
+            logger.exception(f"Could not record the failure of conversion job {job_id}")
 
     task.add_done_callback(_cleanup)
 

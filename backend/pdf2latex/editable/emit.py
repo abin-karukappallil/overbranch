@@ -193,7 +193,10 @@ class Emitter:
                 flag = "\\ifobnumbered" if it.get("page_number") else "\\ifobchrome"
                 lines.append(f"{flag} {txt}\\fi")      # the space ends the control word
             where = "head" if band == "top" else "foot"
-            cmds.append(f"\\fancy{where}[{align}]{{{'\\\\'.join(lines)}}}")
+            # (joined outside the f-string: a backslash inside its braces is a SyntaxError before
+            # Python 3.12, and the production image runs 3.11)
+            body = "\\\\".join(lines)
+            cmds.append(f"\\fancy{where}[{align}]{{{body}}}")
         head_rule = f"\\ifobchrome{fmt(rules['top'])}pt\\else0pt\\fi" if rules["top"] else "0pt"
         foot_rule = f"\\ifobchrome{fmt(rules['bottom'])}pt\\else0pt\\fi" if rules["bottom"] else "0pt"
         L.append("\\fancypagestyle{obmain}{\\fancyhf{}%")
