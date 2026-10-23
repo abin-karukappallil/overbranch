@@ -72,6 +72,7 @@ class TLine:
     page: int
     size: float               # dominant size by character count
     src: List[int] = field(default_factory=list)   # indices into the source PageExtract.lines
+    has_leader: bool = False  # the row held a dot-leader run (a table-of-contents / list-of entry)
 
     @property
     def runs(self) -> List[Run]:
@@ -120,6 +121,7 @@ class Para(Block):
     joins_prev: bool = False      # continues the paragraph that ended the previous page
     left: float = 0.0             # left edge of the column it sits in
     right: float = 0.0            # right edge of the column it sits in (for right-aligned fields)
+    keep_with_next: bool = False  # forbid a page break after this block (a signature/author group)
 
     def __post_init__(self):
         self.kind = "para"
@@ -200,6 +202,8 @@ class Table(Block):
     width_pt: float = 0.0         # borderless: width of the column the table sits in, pt
     centered: bool = False        # set the table centred on the line (a group of signatures)
     spread: bool = False          # a signature group spanning the line edge to edge
+    leaders: bool = False         # a contents / list-of page: rows joined by dot leaders (\dotfill)
+    small: bool = False           # typeset the table a size down (a dense many-column booktabs table)
     # Vision-layout: wrap the table in a float environment (\begin{table}[spec]…\end{table}) when
     # Gemini verdicts the in-flow placement overflows the page. None keeps the deterministic
     # in-flow emission.

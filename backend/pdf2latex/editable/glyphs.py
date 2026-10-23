@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import string
 from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
@@ -151,11 +152,43 @@ def _references() -> List[Tuple[str, np.ndarray, float]]:
     return refs
 
 
-def _score(vec: np.ndarray, ar: float, in_word: bool = False) -> Tuple[Optional[str], float, float]:
+# Fonts whose private-use glyphs are italic Latin variables (a math italic in a document whose text
+# is set in another face): newtx/tx math italic, Computer Modern math italic, generic "mathitalic".
+# Their letters (K, M, P, n, …) are dropped like the Symbol glyphs, so a math-italic PUA glyph is also
+# matched against the Latin alphabet, set in Times-Italic (the closest built-in to a math italic).
+_MATH_ITALIC_RE = re.compile(r"(cmmi|newtxmi|txmi|mtmi|mathit|rsfs|eufm)", re.IGNORECASE)
+_LATIN = string.ascii_uppercase + string.ascii_lowercase
+
+
+@lru_cache(maxsize=1)
+def _latin_references() -> List[Tuple[str, np.ndarray, float]]:
+    import pymupdf
+    refs: List[Tuple[str, np.ndarray, float]] = []
+    doc = pymupdf.open()
+    font = pymupdf.Font("tiit")   # Times-Italic
+    for ch in _LATIN:
+        for shear in SHEARS:
+            pg = doc.new_page(width=100, height=90)
+            tw = pymupdf.TextWriter(pg.rect)
+            tw.append((20, 65), ch, font=font, fontsize=48)
+            tw.write_text(pg, morph=(pymupdf.Point(20, 65), pymupdf.Matrix(1, 0, shear, 1, 0, 0)))
+            norm = _normalise(_pix_gray(pg.get_pixmap(dpi=72, colorspace=pymupdf.csGRAY)))
+            if norm is not None:
+                refs.append((ch, norm[0], norm[1]))
+    doc.close()
+    return refs
+
+
+def _score(vec: np.ndarray, ar: float, in_word: bool = False,
+           math_letters: bool = False) -> Tuple[Optional[str], float, float]:
     """(best character, its score, runner-up score). A glyph between letters is compared with the
-    Latin ligatures only; a standalone one with the Symbol characters only."""
+    Latin ligatures only; a standalone one with the Symbol characters (plus the Latin alphabet when
+    it comes from a math-italic font)."""
+    refs = _ligature_references() if in_word else _references()
+    if math_letters and not in_word:
+        refs = refs + _latin_references()
     best_of: Dict[str, float] = {}
-    for ch, ref, rar in (_ligature_references() if in_word else _references()):
+    for ch, ref, rar in refs:
         score = float(np.dot(vec, ref)) - 0.3 * abs(math.log(max(ar, 1e-3) / max(rar, 1e-3)))
         if score > best_of.get(ch, -9.0):
             best_of[ch] = score
@@ -224,7 +257,7 @@ def recover(doc, extract: DocExtract) -> Dict[Tuple[str, int], str]:
             if key in in_word:
                 res = _ligature_match(norm[0], norm[1], (x1 - x0) / size)
             else:
-                res = _score(norm[0], norm[1])
+                res = _score(norm[0], norm[1], math_letters=bool(_MATH_ITALIC_RE.search(key[0])))
             if res[0] and res[1] > best[1]:
                 best = res
         ch, sc, second = best

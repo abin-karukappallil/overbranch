@@ -40,7 +40,148 @@ def detect_tables(pg, page: PageExtract) -> List[Block]:
         if len(text_lines) < 2:
             continue
         out.append(_build_ruled(tb, rows, page))
+    # Booktabs tables (horizontal rules only) are invisible to the lines strategy; recover them from
+    # their rules. Only for regions the lines strategy did not already claim.
+    covered = [b.bbox for b in out]
+    try:
+        out.extend(_booktabs_tables(pg, page, covered))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"booktabs detect failed p{page.number}: {e}")
     return out
+
+
+def _overlaps(a, b) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def _normalize_fracs(fracs: List[float], budget: float) -> List[float]:
+    fracs = [max(0.04, f) for f in fracs]
+    s = sum(fracs)
+    if s > budget and s > 0:
+        fracs = [f * budget / s for f in fracs]
+    return [round(f, 3) for f in fracs]
+
+
+def _booktabs_tables(pg, page: PageExtract, covered: List[tuple]) -> List[Block]:
+    """Tables ruled only with horizontal (booktabs) rules — invisible to find_tables('lines'). The
+    rules bound the table (minus the running header/footer rules); a text-strategy scan clipped to
+    that band recovers the columns without swallowing the surrounding prose, and wrapped lines are
+    merged back into their rows. Ragged results are rejected (the header must fill every column), so
+    an ambiguous or over-split table keeps whatever emission it had."""
+    try:
+        import pymupdf
+    except ImportError:  # pragma: no cover
+        import fitz as pymupdf
+    hr = sorted((d.rect for d in page.drawings if d.kind == "hrule"), key=lambda r: r[1])
+    body = [r for r in hr if 0.12 * page.height < (r[1] + r[3]) / 2 < 0.88 * page.height]
+    if len(body) < 2:
+        return []
+    clusters: List[List[tuple]] = [[body[0]]]
+    for r in body[1:]:
+        if r[1] - clusters[-1][-1][3] > 0.6 * page.height:
+            clusters.append([r])
+        else:
+            clusters[-1].append(r)
+    out: List[Block] = []
+    for cl in clusters:
+        if len(cl) < 2:
+            continue
+        x0 = min(r[0] for r in cl) - 3
+        y0 = min(r[1] for r in cl) - 3
+        x1 = max(r[2] for r in cl) + 3
+        y1 = max(r[3] for r in cl) + 3
+        if any(_overlaps((x0, y0, x1, y1), c) for c in covered):
+            continue
+        try:
+            tbs = list(getattr(pg.find_tables(strategy="text", clip=pymupdf.Rect(x0, y0, x1, y1)),
+                               "tables", []))
+        except Exception:
+            continue
+        if not tbs:
+            continue
+        tb = max(tbs, key=lambda t: t.col_count * t.row_count)
+        try:
+            grid = tb.extract()
+        except Exception:
+            continue
+        tbl = _build_booktabs(tb, grid, page, (x0, y0, x1, y1))
+        if tbl is not None:
+            out.append(tbl)
+    return out
+
+
+def _cell_text_from_lines(page: PageExtract, cb: tuple) -> str:
+    """Text of one cell, read from the page's own spans by the cell's box (so a word the text
+    strategy split across a column edge stays whole), de-hyphenating line-wrapped words."""
+    x0, y0, x1, y1 = cb
+    spans = [sp for ln in page.lines for sp in ln.spans if sp.text.strip()
+             and x0 - 1 <= (sp.bbox[0] + sp.bbox[2]) / 2 <= x1 + 1
+             and y0 - 1 <= (sp.bbox[1] + sp.bbox[3]) / 2 <= y1 + 1]
+    spans.sort(key=lambda s: (round(s.bbox[1] / 3), s.bbox[0]))
+    out = ""
+    for sp in spans:
+        t = sp.text.strip()
+        if not t:
+            continue
+        if out.endswith("-") and t[:1].islower():
+            out = out[:-1] + t
+        elif out:
+            out += " " + t
+        else:
+            out = t
+    return " ".join(out.split())
+
+
+def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
+    ncol = tb.col_count
+    if ncol < 3 or ncol > 10:
+        return None
+    # read each physical cell from the page spans by cell box (keeps split words whole); fall back to
+    # the text strategy's own extraction if the table has no usable cell boxes
+    prows: List[List[str]] = []
+    try:
+        for r in tb.rows:
+            cbs = r.cells
+            if not cbs or len(cbs) != ncol:
+                raise ValueError
+            prows.append([_cell_text_from_lines(page, cb) if cb else "" for cb in cbs])
+    except Exception:
+        prows = [[" ".join((c or "").split()) for c in row] for row in grid]
+    if len(prows) < 3:
+        return None
+    # merge wrapped physical rows: a row whose first cell is empty continues the row above
+    logical: List[List[str]] = []
+    for cells in prows:
+        if not any(cells):
+            continue
+        if logical and not cells[0]:
+            for k in range(ncol):
+                if cells[k]:
+                    prev = logical[-1][k]
+                    logical[-1][k] = (prev[:-1] + cells[k]) if prev.endswith("-") \
+                        else (prev + " " + cells[k]).strip()
+        else:
+            logical.append(list(cells))
+    if len(logical) < 2:
+        return None
+    header = logical[0]
+    # gate: the header must label every column (an over-split wide text column leaves an empty
+    # header cell) — otherwise the reconstruction is unreliable, so decline it
+    if any(not header[k] for k in range(1, ncol)):
+        return None
+    cells_grid: List[List[Cell]] = []
+    for ri, row in enumerate(logical):
+        cells_grid.append([Cell(paras=[_text_para(t, page)] if t else [], bold=(ri == 0)) for t in row])
+    widths = _col_widths(tb, ncol)
+    tb_w = bbox[2] - bbox[0]
+    body_w = page.width * 0.8
+    table_frac = min(0.98, tb_w / body_w) if body_w else 0.9
+    total = sum(widths) or 1.0
+    budget = max(0.5, table_frac - 0.02 * ncol)   # leave room for \tabcolsep between columns
+    col_frac = _normalize_fracs([table_frac * w / total for w in widths], budget)
+    small = ncol >= 5 or len(logical) >= 10
+    return Table(page=page.number, bbox=bbox, rows=cells_grid, col_align=["p"] * ncol,
+                 col_frac=col_frac, header_rows=1, ruled=True, booktabs=True, vrules=set(), small=small)
 
 
 def _build_ruled(tb, rows, page: PageExtract) -> Table:
