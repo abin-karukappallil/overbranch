@@ -156,13 +156,13 @@ RUN echo "============================================================" && \
 
 RUN mkdir -p /tmp/tex-test && \
     printf '%s\n' \
-    '\\documentclass{article}' \
-    '\\usepackage[T1]{fontenc}' \
-    '\\usepackage{textcomp}' \
-    '\\usepackage{newtxtext}' \
-    '\\begin{document}' \
+    '\documentclass{article}' \
+    '\usepackage[T1]{fontenc}' \
+    '\usepackage{textcomp}' \
+    '\usepackage{newtxtext}' \
+    '\begin{document}' \
     'Times font test: ABCDEFG abcdefg 1234567890' \
-    '\\end{document}' \
+    '\end{document}' \
     > /tmp/tex-test/test.tex && \
     cd /tmp/tex-test && \
     pdflatex -interaction=nonstopmode -halt-on-error test.tex && \
@@ -171,7 +171,7 @@ RUN mkdir -p /tmp/tex-test && \
     echo "PDFTeX font test PASSED" && \
     echo "============================================================" && \
     rm -rf /tmp/tex-test
-
+    
 # ============================================================
 # 5. Install Bun
 # ============================================================

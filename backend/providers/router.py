@@ -59,8 +59,8 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
 
 
 # Primary is the Gemini Web2API endpoint. When it times out the next stop is its
-# twin deployment (same provider class, GEMINI2_* env), then OpenRouter MiniMax M3.
-DEFAULT_FALLBACK_CHAIN = "gemini2,openrouter:minimax/minimax-m3"
+# twin deployment (same provider class, GEMINI2_* env), then Nvidia vision, then OpenRouter.
+DEFAULT_FALLBACK_CHAIN = "gemini2,nvidia:meta/llama-3.2-11b-vision-instruct,openrouter:minimax/minimax-m3"
 
 
 # Total wall-clock budget for ONE provider's attempt, when a fallback is still
@@ -338,21 +338,23 @@ class ProviderRouter:
         cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         attempts: List[Dict[str, Any]] = []
 
-        # With fallbacks, cycle through the chain (gemini → gemini2 → openrouter
-        # → gemini → …) up to max_attempts instead of a single pass.
-        max_attempts = _max_fallback_attempts() if allow_fallback and len(chain) > 1 else len(chain)
+        # With fallbacks, cycle through the chain up to max_attempts, capped at 2 full cycles.
+        max_attempts = min(_max_fallback_attempts(), len(chain) * 2) if allow_fallback and len(chain) > 1 else len(chain)
+        dead_providers: set = set()
 
         for idx in range(max_attempts):
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise LLMOperationCancelled("LLM call cancelled.")
 
             name, provider, target_model = chain[idx % len(chain)]
+            if name in dead_providers and len(dead_providers) < len(chain):
+                continue
             t0 = time.time()
             # A provider that cannot take image input gets the same step as text.
             provider_messages = messages
             if not getattr(provider, "supports_images", False) and has_image_parts(messages):
                 provider_messages = strip_image_parts(messages)
-            is_last = idx == max_attempts - 1
+            is_last = idx == max_attempts - 1 or (len(dead_providers) + 1 >= len(chain))
             try:
                 resp = _call_with_deadline(
                     lambda p=provider, pm=provider_messages, tm=target_model: p.chat(
@@ -370,15 +372,18 @@ class ProviderRouter:
                 raise
             except Exception as err:
                 kind, _retry_after = classify_exception(err)
+                status = getattr(err, "status_code", None)
+                if status in (401, 402, 403, 404) or "SSL" in str(err) or "certificate" in str(err).lower():
+                    dead_providers.add(name)
                 attempt = {
                     "provider": name, "model": target_model, "ok": False, "failure": kind.value,
-                    "status_code": getattr(err, "status_code", None),
+                    "status_code": status,
                     "latency_ms": round((time.time() - t0) * 1000, 1),
                 }
                 attempts.append(attempt)
                 _notify(observer, attempt)
                 if kind not in FALLBACK_KINDS or is_last:
-                    tail = "no fallback for this failure" if not is_last else f"fallback chain exhausted after {max_attempts} attempts"
+                    tail = "no fallback for this failure" if not is_last else f"fallback chain exhausted after {len(attempts)} attempts"
                     logger.error(f"LLM call failed on {name} ({kind.value}); {tail}")
                     setattr(err, "attempts", attempts)
                     raise

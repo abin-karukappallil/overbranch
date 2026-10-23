@@ -72,7 +72,7 @@ def format_async_database_url(url: str) -> tuple[str, dict]:
     connect_args: dict = {
         # Supabase connection pooler (pgbouncer) requires statement_cache_size=0
         "statement_cache_size": 0,
-        "timeout": 10.0,
+        "timeout": 25.0,
         "command_timeout": 30.0,
         "server_settings": {
             "statement_timeout": "30000",
