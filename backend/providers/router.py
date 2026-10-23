@@ -69,7 +69,12 @@ DEFAULT_FALLBACK_CHAIN = "gemini2,openrouter:minimax/minimax-m3"
 # failure. The default clears one full GEMINI_TIMEOUT attempt and part of a second,
 # so a slow-but-working endpoint still answers while a dead one is handed on rather
 # than burning every key slot. 0 disables the bound.
-DEFAULT_PROVIDER_ATTEMPT_TIMEOUT = 120.0
+DEFAULT_PROVIDER_ATTEMPT_TIMEOUT = 30.0
+
+
+# Maximum number of fallback attempts when cycling through providers.
+# The chain (e.g. gemini → gemini2 → openrouter) repeats until this cap.
+DEFAULT_MAX_FALLBACK_ATTEMPTS = 12
 
 
 def _attempt_timeout() -> float:
@@ -77,6 +82,13 @@ def _attempt_timeout() -> float:
         return float(os.getenv("LLM_PROVIDER_ATTEMPT_TIMEOUT", DEFAULT_PROVIDER_ATTEMPT_TIMEOUT))
     except ValueError:
         return DEFAULT_PROVIDER_ATTEMPT_TIMEOUT
+
+
+def _max_fallback_attempts() -> int:
+    try:
+        return int(os.getenv("LLM_MAX_FALLBACK_ATTEMPTS", DEFAULT_MAX_FALLBACK_ATTEMPTS))
+    except ValueError:
+        return DEFAULT_MAX_FALLBACK_ATTEMPTS
 
 
 def _call_with_deadline(fn: Callable[[], Dict[str, Any]], timeout: float, label: str) -> Dict[str, Any]:
@@ -326,27 +338,32 @@ class ProviderRouter:
         cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         attempts: List[Dict[str, Any]] = []
 
-        for idx, (name, provider, target_model) in enumerate(chain):
+        # With fallbacks, cycle through the chain (gemini → gemini2 → openrouter
+        # → gemini → …) up to max_attempts instead of a single pass.
+        max_attempts = _max_fallback_attempts() if allow_fallback and len(chain) > 1 else len(chain)
+
+        for idx in range(max_attempts):
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise LLMOperationCancelled("LLM call cancelled.")
+
+            name, provider, target_model = chain[idx % len(chain)]
             t0 = time.time()
             # A provider that cannot take image input gets the same step as text.
             provider_messages = messages
             if not getattr(provider, "supports_images", False) and has_image_parts(messages):
                 provider_messages = strip_image_parts(messages)
-            is_last_in_chain = idx == len(chain) - 1
+            is_last = idx == max_attempts - 1
             try:
                 resp = _call_with_deadline(
-                    lambda: provider.chat(
-                        messages=provider_messages,
-                        model=target_model,
+                    lambda p=provider, pm=provider_messages, tm=target_model: p.chat(
+                        messages=pm,
+                        model=tm,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         api_keys=api_keys,
                         **cancel_kwargs,
                     ),
-                    # Nothing to fall back to after the last provider: let it run to its own timeouts.
-                    0 if is_last_in_chain else _attempt_timeout(),
+                    0 if is_last else _attempt_timeout(),
                     name,
                 )
             except LLMOperationCancelled:
@@ -360,14 +377,14 @@ class ProviderRouter:
                 }
                 attempts.append(attempt)
                 _notify(observer, attempt)
-                is_last = idx == len(chain) - 1
                 if kind not in FALLBACK_KINDS or is_last:
-                    logger.error(f"LLM call failed on {name} ({kind.value}); "
-                                 f"{'no fallback for this failure' if not is_last else 'fallback chain exhausted'}")
+                    tail = "no fallback for this failure" if not is_last else f"fallback chain exhausted after {max_attempts} attempts"
+                    logger.error(f"LLM call failed on {name} ({kind.value}); {tail}")
                     setattr(err, "attempts", attempts)
                     raise
+                next_entry = chain[(idx + 1) % len(chain)]
                 logger.warning(f"Provider '{name}' failed or delayed ({kind.value}); falling back to "
-                               f"{chain[idx + 1][0]}:{chain[idx + 1][2]}")
+                               f"{next_entry[0]}:{next_entry[2]} (attempt {idx + 2}/{max_attempts})")
                 continue
 
             resp = dict(resp)
