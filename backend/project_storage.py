@@ -66,6 +66,16 @@ def get_supabase_client() -> Client:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Supabase credentials are not configured in environment."
         )
+    # Catches the "keys swapped" misconfiguration that silently degrades the
+    # backend to anon access and makes every write look like it worked while
+    # Supabase quietly rejects it under RLS. sb_publishable_* is the browser
+    # key; the server-side client must be sb_secret_* (or a legacy JWT).
+    if supabase_key.startswith("sb_publishable_"):
+        logger.error(
+            "SUPABASE_SERVICE_ROLE_KEY is set to a publishable (anon) key. "
+            "Writes to latex_documents will be blocked by RLS. Expected an "
+            "sb_secret_* key."
+        )
     _supabase_client = create_client(supabase_url, supabase_key)
     return _supabase_client
 
