@@ -23,17 +23,61 @@ logger = logging.getLogger("pdf2latex.editable.mathcrop")
 FIGURE_DPI = 200
 
 
-def detect_math(pg, page: PageExtract, asset_prefix: str, out_dir: Path) -> List[Block]:
+def detect_math(pg, page: PageExtract, asset_prefix: str, out_dir: Path, furniture_ids=None) -> List[Block]:
     """Group adjacent math-heavy lines into regions and crop each to a PNG under out_dir."""
     out: List[Block] = []
+    try:
+        import pymupdf
+    except ImportError:  # pragma: no cover
+        import fitz as pymupdf
+    # running header/footer lines must never be swept into an equation crop (a cases brace whose
+    # bottom edge nearly touches the footer)
+    furn = {id(page.lines[i]) for (pno, i) in (furniture_ids or ()) if pno == page.number and i < len(page.lines)}
+    # A tall assembled delimiter means a displayed structure whose rows the per-line test misses — a
+    # cases/piecewise brace (its rows carry condition prose "if P = 0"), a big matrix bracket. Crop
+    # the whole band (lead, rows, delimiter, equation number) as one image rather than letting the
+    # glyphs shatter into text.
+    excluded: set = set()
+    for k, (rx0, ry0, rx1, ry1) in enumerate(_delimiter_regions(page), 1):
+        band = [ln for ln in page.lines if ln.text.strip() and id(ln) not in furn
+                and ry0 - 2 <= (ln.bbox[1] + ln.bbox[3]) / 2 <= ry1 + 2]
+        if len(band) < 2:
+            continue
+        x0 = min(min(l.bbox[0] for l in band), rx0) - 2
+        y0 = min(min(l.bbox[1] for l in band), ry0) - 2
+        x1 = max(max(l.bbox[2] for l in band), rx1) + 2
+        y1 = max(max(l.bbox[3] for l in band), ry1) + 2
+        # a tall delimiter's bbox can reach into the page footer below it; the crop rectangle renders
+        # whatever pixels it covers, so cap it just short of any header/footer line in the band.
+        mid = (ry0 + ry1) / 2
+        furn_lines = [page.lines[i] for (pno, i) in (furniture_ids or ())
+                      if pno == page.number and i < len(page.lines)]
+        below = [l.bbox[1] for l in furn_lines if (l.bbox[1] + l.bbox[3]) / 2 > mid and l.bbox[1] < y1]
+        if below:
+            y1 = min(y1, min(below) - 1)
+        above = [l.bbox[3] for l in furn_lines if (l.bbox[1] + l.bbox[3]) / 2 < mid and l.bbox[3] > y0]
+        if above:
+            y0 = max(y0, max(above) + 1)
+        rel = f"{asset_prefix}/page{page.number}_eqbrace{k}.png"
+        try:
+            out_path = out_dir / rel
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            pg.get_pixmap(clip=pymupdf.Rect(x0, y0, x1, y1), dpi=FIGURE_DPI).save(str(out_path))
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"delimiter crop failed p{page.number}: {e}")
+            continue
+        out.append(Math(page=page.number, bbox=(x0, y0, x1, y1), image=rel,
+                        width_frac=min(0.9, round((x1 - x0) / (page.width * 0.8), 2)),
+                        polish=None, glyphs=[], number=None))
+        excluded.update(id(ln) for ln in band)
     # Computer Modern roman in a document set in another face only ever sets maths (the digits,
     # brackets and "=" of a TeX equation), so there it counts as a maths font
     cm_math = not _body_is_cm(page)
-    prose = [ln for ln in page.lines if ln.text.strip() and not _is_math_line(ln, cm_math)
+    prose = [ln for ln in page.lines if id(ln) not in excluded and ln.text.strip() and not _is_math_line(ln, cm_math)
              and len(re.findall(r"[A-Za-z]{3,}", ln.text)) >= 1 and not _OPERATOR.match(ln.text.strip())]
     # A symbol standing level with ordinary text on the same row is a table label or an inline
     # symbol ("δ  Variational Symbol"), not a displayed equation, so it stays text.
-    math_lines = [ln for ln in page.lines if ln.text.strip() and _is_math_line(ln, cm_math)
+    math_lines = [ln for ln in page.lines if id(ln) not in excluded and ln.text.strip() and _is_math_line(ln, cm_math)
                   and not any(abs(ln.baseline - o.baseline) <= 3 for o in prose)]
     if not math_lines:
         return out
@@ -90,6 +134,36 @@ def detect_math(pg, page: PageExtract, asset_prefix: str, out_dir: Path) -> List
 
 
 _CM_TEXT = re.compile(r"(?:^|[+\W])(?:CMR|CMBX|CMTI|CMSL|CMSS|LMRoman|LMMono)", re.IGNORECASE)
+
+
+# Fonts that hold the tall assembled delimiters of a displayed structure — a cases/piecewise brace,
+# a big matrix bracket, a tall fraction's rule — rather than letters: the TeX/newtx extension sizes.
+_EXT_DELIM_RE = re.compile(r"(txexs|cmex|stmary|yhlarge|mnsymbol|fourier.*ex|size\d)", re.IGNORECASE)
+
+
+def _body_size(page: PageExtract) -> float:
+    sizes = sorted(sp.size for ln in page.lines for sp in ln.spans if sp.size)
+    return sizes[len(sizes) // 2] if sizes else 10.0
+
+
+def _delimiter_regions(page: PageExtract) -> List[tuple]:
+    """Vertical bands spanned by a tall assembled delimiter (≥2.2× body height) — a cases brace or a
+    big matrix bracket. Overlapping/adjacent tall spans merge into one band; the caller crops the
+    whole band (lead, rows and delimiter) as a single equation image."""
+    body = _body_size(page)
+    tall = [sp.bbox for ln in page.lines for sp in ln.spans
+            if _EXT_DELIM_RE.search(sp.font or "") and (sp.bbox[3] - sp.bbox[1]) > 2.2 * body]
+    if not tall:
+        return []
+    tall.sort(key=lambda b: b[1])
+    regions: List[List[float]] = []
+    for b in tall:
+        if regions and b[1] <= regions[-1][3] + body:
+            r = regions[-1]
+            regions[-1] = [min(r[0], b[0]), min(r[1], b[1]), max(r[2], b[2]), max(r[3], b[3])]
+        else:
+            regions.append([b[0], b[1], b[2], b[3]])
+    return [tuple(r) for r in regions]
 
 
 def _body_is_cm(page: PageExtract) -> bool:

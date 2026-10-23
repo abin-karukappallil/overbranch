@@ -9,7 +9,7 @@ import shutil
 import sys
 import logging
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from reportlab.lib.pagesizes import letter, landscape
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, PageBreak
@@ -131,12 +131,159 @@ def _overfull_boxes(output: str) -> List[Dict[str, Any]]:
         return []
 
 
+def _pdf_extractable_chars(pdf_path: Path, max_pages: int = 40) -> int:
+    """
+    Number of non-whitespace characters the PDF's text layer yields (first ``max_pages``).
+    Returns -1 when no extractor is available, so callers fail OPEN — an unknown count must
+    never turn a real compile into a failure.
+    """
+    try:
+        try:
+            import pymupdf  # type: ignore
+        except ImportError:
+            import fitz as pymupdf  # type: ignore
+        doc = pymupdf.open(str(pdf_path))
+        try:
+            total = 0
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    break
+                total += len("".join(page.get_text().split()))
+            return total
+        finally:
+            doc.close()
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["pdftotext", "-q", "-l", str(max_pages), str(pdf_path), "-"],
+                             capture_output=True, timeout=30)
+        if out.returncode == 0:
+            return len("".join((out.stdout or b"").decode("utf-8", "replace").split()))
+    except Exception:
+        pass
+    return -1
+
+
+def _looks_blank(pdf_path: Path, source_text: str) -> bool:
+    """
+    A PDF that compiled but carries essentially no text, although its source clearly has a lot
+    of it — the signature of a missing font under XeLaTeX (``\\setmainfont`` to a font the server
+    does not have): the engine emits a valid, correctly-paginated PDF with no glyphs. Thresholds
+    are deliberately wide (a real text page yields thousands of chars, a blank one a handful) and
+    the check fails open, so image-only or genuinely sparse documents are never flagged.
+    """
+    src_alpha = sum(c.isalpha() for c in _strip_tex_comments(source_text or ""))
+    if src_alpha <= 800:
+        return False
+    got = _pdf_extractable_chars(pdf_path)
+    if got < 0:
+        return False
+    return got < 0.08 * src_alpha and got < 150 * max(1, _pdf_page_count(pdf_path))
+
+
+_BLANK_FAILURE_MSG = (
+    "The document compiled but produced no visible text — a font it selects "
+    "(e.g. via \\setmainfont) is not installed on the server. Compile with pdfLaTeX, "
+    "or guard the system-font setup behind \\ifPDFTeX so pdfLaTeX uses an installed font."
+)
+
+
+def _mark_blank_failure(failed: dict, blank_seen: bool) -> None:
+    """Make a blank-output failure actionable instead of a wall of font-not-found noise."""
+    if not blank_seen or not isinstance(failed, dict):
+        return
+    existing = failed.get("error_log") or ""
+    if _BLANK_FAILURE_MSG not in existing:
+        failed["error_log"] = f"{_BLANK_FAILURE_MSG}\n\n{existing}".strip()
+
+
+def _pdf_page_count(pdf_path: Path) -> int:
+    try:
+        try:
+            import pymupdf  # type: ignore
+        except ImportError:
+            import fitz as pymupdf  # type: ignore
+        doc = pymupdf.open(str(pdf_path))
+        try:
+            return doc.page_count
+        finally:
+            doc.close()
+    except Exception:
+        return 1
+
+
 _UNICODE_ENGINE_MARKERS = (
     "{fontspec}", "{unicode-math}", "{polyglossia}",
     r"\setmainfont", r"\setsansfont", r"\setmonofont",
     r"\setmathfont", r"\newfontface", r"\newfontfamily",
     r"\setmainlanguage", r"\directlua", r"\luadirect",
 )
+
+
+# Engine-detection conditionals (iftex / ifpdf / ifxetex / ifluatex) and the branch
+# pdfLaTeX actually executes. A dual-engine template guards its fontspec setup behind
+# `\ifPDFTeX ... \else ... \fi` (newtx under pdfLaTeX, system fonts under Xe/Lua); only
+# the branch pdfLaTeX runs should decide whether it really needs a Unicode engine.
+_ENGINE_IF = {
+    "ifpdftex": "then", "ifpdf": "then",
+    "ifxetex": "else", "ifluatex": "else", "ifvtex": "else",
+}
+_CTRLWORD_RE = re.compile(r"\\([A-Za-z@]+)")
+
+
+def _pdflatex_active_source(latex_code: str) -> str:
+    """
+    The part of the source pdfLaTeX would actually compile, with the inactive branch of each
+    engine conditional removed. Comments are stripped first (a commented-out `\\setmainfont`
+    must not force a switch). Non-engine conditionals (`\\ifnum`, `\\ifx`, custom `\\if...`) are
+    tracked only for `\\fi` balancing so nested `\\else`/`\\fi` pair with the right conditional,
+    but their branches are left untouched.
+    """
+    code = _strip_tex_comments(latex_code or "")
+    stack: List[Dict[str, Any]] = []
+    drops: List[Tuple[int, int]] = []
+    for m in _CTRLWORD_RE.finditer(code):
+        name = m.group(1)
+        low = name.lower()
+        if name == "fi":
+            if not stack:
+                continue
+            top = stack.pop()
+            if not top["engine"]:
+                continue
+            els = top["else"]
+            if top["keep"] == "then":
+                if els is not None:          # drop the else-branch (… \else → … \fi)
+                    drops.append((els[0], m.end()))
+            else:                             # keep the else-branch
+                if els is not None:          # drop the then-branch (\if… → \else)
+                    drops.append((top["start"], els[1]))
+                else:                         # no else-branch: the whole then-branch goes
+                    drops.append((top["start"], m.end()))
+        elif name == "else":
+            if stack and stack[-1]["engine"] and stack[-1]["else"] is None:
+                stack[-1]["else"] = (m.start(), m.end())
+        elif name == "or":
+            continue
+        elif low.startswith("if"):
+            if low in _ENGINE_IF:
+                stack.append({"engine": True, "keep": _ENGINE_IF[low],
+                              "start": m.start(), "else": None})
+            else:
+                stack.append({"engine": False})
+    if not drops:
+        return code
+    drops.sort()
+    out: List[str] = []
+    pos = 0
+    for a, b in drops:
+        if a < pos:            # nested inside an already-removed branch
+            pos = max(pos, b)
+            continue
+        out.append(code[pos:a])
+        pos = b
+    out.append(code[pos:])
+    return "".join(out)
 
 
 def needs_unicode_engine(latex_code: str) -> bool:
@@ -148,8 +295,13 @@ def needs_unicode_engine(latex_code: str) -> bool:
     `polyglossia`, or select a system font. Under pdfLaTeX those fail with a
     fatal "requires XeTeX or LuaTeX" error, so when the caller left the engine
     at its default we switch to XeLaTeX automatically.
+
+    Markers that sit inside the non-pdfTeX branch of an `\\ifPDFTeX`/`\\ifxetex` guard do
+    NOT count: a dual-engine document that falls back to newtx/`\\usepackage[T1]{fontenc}`
+    under pdfLaTeX must stay on pdfLaTeX (switching it to XeLaTeX picks the system-font
+    branch, whose fonts may not be installed, and renders a text-less PDF).
     """
-    code = latex_code or ""
+    code = _pdflatex_active_source(latex_code or "")
     return any(m in code for m in _UNICODE_ENGINE_MARKERS)
 
 
@@ -1474,6 +1626,13 @@ def _compile_latex_impl(
                 else:
                     cmd_list = [_direct("pdflatex"), _direct("xelatex"), _latexmk()]
 
+            # Blank-output fallback: if the chosen (Xe/Lua) engine renders a text-less PDF
+            # because a selected system font is not installed, a dual-engine-safe document
+            # (fontspec only behind an \ifPDFTeX guard) can still be rendered by pdfLaTeX.
+            # Append it so the blank-output guard below has somewhere to fall through to.
+            if not needs_unicode_engine(latex_code) and not any(c and c[0] == "pdflatex" for c in cmd_list):
+                cmd_list.append(_direct("pdflatex"))
+
             bib_backend = _bibliography_backend(_strip_tex_comments(project_text))
             if bib_backend == "biber" and shutil.which("biber") is None:
                 bib_backend = "bibtex"
@@ -1481,6 +1640,7 @@ def _compile_latex_impl(
             extra_pass_timeout = max(15, COMPILE_TIMEOUT // 2)
 
             last_output = ""
+            blank_seen = False
             for cmd in cmd_list:
                 try:
                     # Pass 1
@@ -1538,6 +1698,17 @@ def _compile_latex_impl(
 
                     # If PDF was created, persist artifacts and return it.
                     if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in last_output:
+                        # A PDF that compiled but has no text layer (a system font selected by
+                        # the document is not installed, so the engine drew no glyphs) is a blank
+                        # result, not a success. Treat it as a failed attempt and try the next
+                        # engine candidate (a dual-engine-safe document falls back to pdfLaTeX).
+                        if _looks_blank(pdf_path, project_text):
+                            blank_seen = True
+                            msg = (f"'{cmd[0]}' produced a PDF with no visible text — a selected font may "
+                                   f"not be installed on the server.")
+                            last_output += f"\n[BLANK OUTPUT] {msg} Trying the next engine."
+                            logger.warning(f"⚠️ [COMPILER] {msg}")
+                            continue
                         if persist_synctex:
                             _save_synctex_artifacts(tmpdir, project_id)
                         pdf_bytes = pdf_path.read_bytes()
@@ -1578,6 +1749,7 @@ def _compile_latex_impl(
                 # every patch is another engine run, up to seven of them, and a PDF obtained by
                 # silently disabling a package is a result such a caller rejects anyway.
                 failed = _compile_failure(last_output)
+                _mark_blank_failure(failed, blank_seen)
                 _attach_diagnostics(failed, final_pass or last_output, tmpdir)
                 return failed
 
@@ -1779,6 +1951,7 @@ def _compile_latex_impl(
 
         # No fallback PDFs — return clean compilation error directly so user can see it and ask AI to fix it
         failed = _compile_failure(last_output)
+        _mark_blank_failure(failed, blank_seen)
         _attach_diagnostics(failed, final_pass or last_output, tmpdir)
         return failed
 

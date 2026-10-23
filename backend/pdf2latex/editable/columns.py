@@ -29,6 +29,14 @@ def _is_pua(text: str) -> bool:
 
 TAB_GAP = 1.5   # in ems: a wider horizontal gap between spans starts a new segment (field)
 
+# A dot leader: four or more dot-like glyphs (., ·, ․, ‥, …) in a row, optionally spaced. It fills
+# the gap between a contents entry and its page number, so the two never fall more than a word apart
+# and never split into separate fields on their own — the row would then be joined into a paragraph.
+# Treating the leader as a field boundary (and dropping it) restores "TITLE  <gap>  PAGE" as two
+# fields, which the borderless-table / contents path lines up again.
+_LEADER_CHARS = ".·․‥…"
+_LEADER_RE = re.compile(r"[" + _LEADER_CHARS + r"](?:[  ]*[" + _LEADER_CHARS + r"]){3,}")
+
 
 def is_math_span(sp: Span) -> bool:
     if _MATH_FONT_RE.search(sp.font or ""):
@@ -385,13 +393,13 @@ def _build_row(row: List[Tuple[int, Line]]) -> TLine:
                 for piece in _explode(sp):
                     pieces.append((piece, ln.baseline))
     pieces.sort(key=lambda t: t[0].origin[0])
-    segments = _segments(pieces, base_sz, base)
+    segments, had_leader = _segments(pieces, base_sz, base)
     xs0 = min(ln.bbox[0] for _, ln in row)
     xs1 = max(ln.bbox[2] for _, ln in row)
     top = min(ln.bbox[1] for _, ln in row)
     bot = max(ln.bbox[3] for _, ln in row)
     return TLine(segments=segments, x0=xs0, x1=xs1, top=top, bottom=bot, baseline=base,
-                 page=0, size=base_sz, src=[idx for idx, _ in row])
+                 page=0, size=base_sz, src=[idx for idx, _ in row], has_leader=had_leader)
 
 
 _SPACE_RUN = re.compile(r"\t+| {3,}")
@@ -440,24 +448,102 @@ def _explode(sp: Span) -> List[Span]:
     return out or [sp]
 
 
-def _segments(pieces: List[Tuple[Span, float]], base_sz: float, base: float) -> List[Segment]:
+def _split_leader(sp: Span) -> List[Tuple[Span, bool]]:
+    """A span as (sub-span, is_leader) parts, cutting at each dot-leader run. The leader parts carry
+    no useful text (they are dropped) but keep their x range so the gap to the next field reads
+    right. A span with no leader comes back unchanged as a single non-leader part."""
+    text = sp.text
+    if len(text.strip()) < 4 or not _LEADER_RE.search(text):
+        return [(sp, False)]
+    w = sp.bbox[2] - sp.bbox[0]
+    cw = w / max(1, len(text))
+
+    def sub(a: int, b: int, lead: bool) -> Tuple[Span, bool]:
+        x0 = sp.bbox[0] + a * cw
+        x1 = sp.bbox[0] + b * cw
+        return Span(text=text[a:b], font=sp.font, size=sp.size, color=sp.color, flags=sp.flags,
+                    bbox=(x0, sp.bbox[1], x1, sp.bbox[3]), origin=(x0, sp.origin[1]),
+                    force_bold=sp.force_bold), lead
+
+    parts: List[Tuple[Span, bool]] = []
+    pos = 0
+    for m in _LEADER_RE.finditer(text):
+        if m.start() > pos and text[pos:m.start()].strip():
+            parts.append(sub(pos, m.start(), False))
+        parts.append(sub(m.start(), m.end(), True))
+        pos = m.end()
+    if pos < len(text) and text[pos:].strip():
+        parts.append(sub(pos, len(text), False))
+    return parts or [(sp, False)]
+
+
+def _is_dotish(text: str) -> bool:
+    s = re.sub(r"\s", "", text or "")
+    return bool(s) and all(c in _LEADER_CHARS for c in s)
+
+
+def _coalesce_dots(flat: List[Tuple[Span, float, bool]]) -> List[Tuple[Span, float, bool]]:
+    """Merge runs of consecutive dot pieces (a dot leader is often one '.' span per dot) into a
+    single piece, marked a leader when it holds ≥4 dots so it is dropped and splits the row; a short
+    run (an ellipsis in prose) is kept as ordinary text."""
+    out: List[Tuple[Span, float, bool]] = []
+    buf: List[Tuple[Span, float]] = []
+
+    def flush() -> None:
+        if not buf:
+            return
+        first, last = buf[0][0], buf[-1][0]
+        text = "".join(s.text for s, _ in buf)
+        ndots = sum(1 for c in text if c in _LEADER_CHARS)
+        merged = Span(text=text, font=first.font, size=first.size, color=first.color,
+                      flags=first.flags, bbox=(first.bbox[0], first.bbox[1], last.bbox[2], last.bbox[3]),
+                      origin=first.origin, force_bold=first.force_bold)
+        out.append((merged, buf[0][1], ndots >= 4))
+        buf.clear()
+
+    for sp, sp_base, is_leader in flat:
+        if is_leader or _is_dotish(sp.text):
+            buf.append((sp, sp_base))
+        elif not sp.text.strip() and buf:
+            buf.append((sp, sp_base))   # whitespace between leader dots stays inside the run
+        else:
+            flush()
+            out.append((sp, sp_base, False))
+    flush()
+    return out
+
+
+def _segments(pieces: List[Tuple[Span, float]], base_sz: float, base: float) -> Tuple[List[Segment], bool]:
     """
     Split a row's spans into segments at tab-size gaps (≥TAB_GAP·size), inserting a space where the
     PDF left a word gap (≥0.15·size) that neither side already carries. PyMuPDF splits spans only at
     style changes, so gaps between spans inside justified text stay well under one em; a gap of
     1.5 em is a column boundary (a symbols list, a label/value table, a date pushed right). A super/subscript is tagged by
-    its baseline offset from the row baseline.
+    its baseline offset from the row baseline. A dot leader is also a field boundary: it is dropped
+    and the row flagged, so a contents entry "TITLE … PAGE" becomes two fields again.
+
+    Returns ``(segments, had_leader)``.
     """
     segs: List[Segment] = []
     cur: List[Run] = []
     cur_x0 = cur_x1 = 0.0
     prev_end: Optional[float] = None
-    for sp, sp_base in pieces:
+    had_leader = False
+    flat = [(part, sp_base, lead) for sp, sp_base in pieces for part, lead in _split_leader(sp)]
+    flat = _coalesce_dots(flat)
+    for sp, sp_base, is_leader in flat:
         script = 0
         if sp_base < base - 0.2 * base_sz:
             script = 1
         elif sp_base > base + 0.1 * base_sz:
             script = -1
+        if is_leader:
+            had_leader = True
+            if cur:
+                segs.append(Segment(runs=_merge_runs(cur), x0=cur_x0, x1=cur_x1))
+                cur = []
+            prev_end = sp.bbox[2]
+            continue
         x0, x1 = sp.bbox[0], sp.bbox[2]
         gap = (x0 - prev_end) if prev_end is not None else 0.0
         if prev_end is not None and gap > TAB_GAP * base_sz and cur:
@@ -476,7 +562,7 @@ def _segments(pieces: List[Tuple[Span, float]], base_sz: float, base: float) -> 
         prev_end = x1
     if cur:
         segs.append(Segment(runs=_merge_runs(cur), x0=cur_x0, x1=cur_x1))
-    return segs
+    return segs, had_leader
 
 
 def _same_style(a: Run, b: Run) -> bool:

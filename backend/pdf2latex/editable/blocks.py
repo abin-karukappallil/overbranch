@@ -194,6 +194,13 @@ class _Builder:
                     i += 1
                 out.append(h)
                 continue
+            # table of contents / list of figures / list of tables (rows joined by dot leaders)?
+            if getattr(row, "has_leader", False):
+                toc, consumed = self._contents(page, items, i, col_left, col_right)
+                if toc is not None:
+                    out.append(toc)
+                    i = consumed
+                    continue
             # list?
             if _row_marker(row):
                 lst, consumed = self._list(page, items, i, col_left, col_right)
@@ -397,7 +404,10 @@ class _Builder:
             last_base = r.baseline
             i += 1
         multi = [r for r in cand if len(r.segments) >= 2]
-        if len(multi) < 3:
+        leadered = sum(1 for r in cand if getattr(r, "has_leader", False))
+        # Dot leaders are an unambiguous contents/list-of signal, so even a two-entry list
+        # (LIST OF TABLES) is accepted; otherwise an aligned list needs ≥3 multi-field rows.
+        if len(multi) < 3 and leadered < 2:
             return None, start
         # cluster all field starts into anchors
         xs = sorted(seg.x0 for r in cand for seg in r.segments)
@@ -482,7 +492,95 @@ class _Builder:
         consumed = start + len(cand)
         return Table(page=page, bbox=bbox, id=self.nid(), rows=grid, col_align=aligns,
                      col_frac=fracs, ruled=False, indent=round(anchors[0] - col_left, 1),
-                     stretch=stretch if stretch > 1.15 else 1.0, width_pt=W), consumed
+                     stretch=stretch if stretch > 1.15 else 1.0, width_pt=W,
+                     leaders=(leadered >= max(2, 0.5 * len(multi)))), consumed
+
+    # -- table of contents / list-of pages --------------------------------
+    def _contents(self, page: int, items: List, start: int, col_left: float, col_right: float
+                  ) -> Tuple[Optional[Table], int]:
+        """
+        A contents / list-of page: entries joined to their page numbers by dot leaders. Each entry is
+        a title (possibly wrapping over several lines, its first lines carrying no page number) closed
+        by a leadered line that ends in the page number. Grouping title lines with the leadered line
+        that follows is what the generic borderless-table path gets wrong (it would attach a wrapped
+        title to the previous entry); here each entry is gathered explicitly, indentation is kept as
+        levels, and the page column is right-aligned. Emitted with \\dotfill by `_render_contents`.
+        """
+        leading = self._leading_for(items[start].row.size)
+        raw: List[TLine] = []
+        i = start
+        while i < len(items):
+            it = items[i]
+            if it.kind != "row" or not it.row.text.strip():
+                break
+            r = it.row
+            if i > start:
+                if match_level(self.p, r, col_left, col_right) is not None or _marker(r.text) is not None:
+                    break
+                gap = r.baseline - raw[-1].baseline
+                if gap <= 0 or gap > 3.0 * leading:
+                    break
+            raw.append(r)
+            i += 1
+        # group rows into entries: title lines accumulate until a line that ends in a right-flushed
+        # page number closes the entry. The number is split off the last segment (`_peel_page`), which
+        # also catches entries whose title nearly fills the line — a one- or two-dot leader that never
+        # became its own field, so the page number is still glued to the title.
+        margin = col_right - 0.15 * (col_right - col_left)
+        entries: List[Dict] = []
+        title_rows: List[List[Segment]] = []
+        first: Optional[TLine] = None
+        for r in raw:
+            if first is None:
+                first = r
+            last = r.segments[-1] if r.segments else None
+            title_seg, page_seg = _peel_page(last) if last is not None else (None, None)
+            if page_seg is not None and last is not None and last.x1 >= margin:
+                tsegs = list(r.segments[:-1]) + ([title_seg] if title_seg is not None else [])
+                entries.append({"x0": first.x0, "title_rows": title_rows + [tsegs], "page": page_seg})
+                title_rows = []
+                first = None
+            else:
+                title_rows.append(r.segments)
+        if title_rows and first is not None:   # a title with no page (contents broken across a page)
+            entries.append({"x0": first.x0, "title_rows": title_rows, "page": None})
+        leadered = sum(1 for r in raw if getattr(r, "has_leader", False))
+        if leadered < 2 or len(entries) < 2:
+            return None, start
+        # indentation levels from the entries' left edges
+        xs = sorted(e["x0"] for e in entries)
+        levels: List[float] = []
+        for x in xs:
+            if levels and x - levels[-1] <= 8:
+                continue
+            levels.append(x)
+        def lvl(x: float) -> int:
+            return min(range(len(levels)), key=lambda k: abs(levels[k] - x))
+        ncol = len(levels) + 1
+        W = max(1.0, col_right - col_left)
+        fracs: List[float] = []
+        for k in range(len(levels)):
+            nxt = levels[k + 1] if k + 1 < len(levels) else col_right
+            fracs.append(round(max(0.02, (nxt - levels[k]) / W), 3))
+        fracs.append(round(max(0.04, 24.0 / W), 3))   # page-number column
+        grid: List[List[Cell]] = []
+        for e in entries:
+            cells = [Cell() for _ in range(ncol)]
+            li = lvl(e["x0"])
+            lines = [TLine(segments=segs, x0=(segs[0].x0 if segs else 0.0), x1=0, top=0, bottom=0,
+                           baseline=0, page=page, size=0) for segs in e["title_rows"] if segs]
+            if lines:
+                cells[li] = Cell(paras=[Para(page=page, lines=lines)])
+            if e["page"] is not None:
+                pl = TLine(segments=[e["page"]], x0=e["page"].x0, x1=e["page"].x1, top=0, bottom=0,
+                           baseline=0, page=page, size=0)
+                cells[-1] = Cell(paras=[Para(page=page, lines=[pl])])
+            grid.append(cells)
+        aligns = ["p"] * (ncol - 1) + ["r"]
+        bbox = (levels[0], raw[0].top, col_right, raw[-1].bottom)
+        return Table(page=page, bbox=bbox, id=self.nid(), rows=grid, col_align=aligns,
+                     col_frac=fracs, ruled=False, indent=round(levels[0] - col_left, 1),
+                     width_pt=W, leaders=True), start + len(raw)
 
     def _page_w(self) -> float:
         return self.p.paper_pt[0] if self.p.paper_pt else 0.0
@@ -788,7 +886,36 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
                                     col_left, col_right)
         out.extend(page_blocks)
     _measured_spacing(out, b)
+    _pin_keep_together(out)
     return _join_across_pages(out)
+
+
+def _pin_keep_together(blocks: List[Block]) -> None:
+    """Keep a run of short right-/centre-aligned paragraphs together across a page break — an author
+    or signature block (names stacked at the end of a certificate/acknowledgement), a stacked
+    address. Reflow can otherwise push the group over a page boundary and split it, which the source
+    never did. Sets ``keep_with_next`` on every block of the run but the last."""
+    i, n = 0, len(blocks)
+    while i < n:
+        b = blocks[i]
+        if isinstance(b, Para) and b.align in ("right", "center") and len(b.lines) <= 2:
+            run = [b]
+            j = i
+            while j + 1 < n:
+                nb = blocks[j + 1]
+                lh = (run[-1].bbox[3] - run[-1].bbox[1]) or 12.0
+                if (isinstance(nb, Para) and nb.align == b.align and len(nb.lines) <= 2
+                        and nb.page == run[-1].page and 0 <= nb.bbox[1] - run[-1].bbox[3] <= 3.0 * lh):
+                    run.append(nb)
+                    j += 1
+                else:
+                    break
+            if 2 <= len(run) <= 8:
+                for blk in run[:-1]:
+                    blk.keep_with_next = True
+            i = j + 1
+        else:
+            i += 1
 
 
 class _PreItem:
@@ -826,6 +953,43 @@ def _runs_spaced(row: TLine, col_left: float = 0.0, col_right: float = 0.0) -> L
 
 
 _SECNUM = re.compile(r"(?:\d+\.)*\d+\.?|[A-Z]\.?|[IVX]+\.?")
+
+_PAGENO_RE = re.compile(r"\d{1,4}|[ivxlcdmIVXLCDM]{1,7}")
+_PAGE_TAIL_RE = re.compile(r"[\s.·․‥…]+(\d{1,4}|[ivxlcdmIVXLCDM]{1,7})\s*$")
+
+
+def _clone_run(run: Run, text: str) -> Run:
+    return Run(**{**run.__dict__, "text": text})
+
+
+def _peel_page(seg: Segment) -> Tuple[Optional[Segment], Optional[Segment]]:
+    """Split a contents entry's last segment into (title, page-number). When the segment *is* just a
+    page number it is all page; when a number is glued to the end of the title after a short leader
+    (a one- or two-dot leader that never split off on its own) the number is peeled at the run level
+    so the title keeps its styling. Otherwise returns (seg, None): no page number here."""
+    if seg is None:
+        return None, None
+    full = seg.text.strip()
+    if _PAGENO_RE.fullmatch(full):
+        return None, seg
+    m = _PAGE_TAIL_RE.search(seg.text)
+    if not m:
+        return seg, None
+    page_str = m.group(1)
+    title_len = m.start()
+    title_runs: List[Run] = []
+    consumed = 0
+    for run in seg.runs:
+        rt = run.text
+        if consumed + len(rt) <= title_len:
+            title_runs.append(run)
+            consumed += len(rt)
+        elif consumed < title_len:
+            title_runs.append(_clone_run(run, rt[:title_len - consumed]))
+            consumed = title_len
+    title_seg = Segment(runs=title_runs, x0=seg.x0, x1=seg.x0) if title_runs else None
+    page_seg = Segment(runs=[_clone_run(seg.runs[-1], page_str)], x0=seg.x1, x1=seg.x1)
+    return title_seg, page_seg
 
 
 def _split_number(seg: Segment) -> Optional[Tuple[Segment, Segment]]:

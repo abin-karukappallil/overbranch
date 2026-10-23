@@ -58,8 +58,13 @@ def assemble_with_enrichment(extract: DocExtract, doc, out_dir, source_name: str
 def _detect(extract: DocExtract, doc, out_dir) -> Tuple[Dict[int, List[Block]], Dict[int, List[Block]]]:
     from . import tables as T
     from . import mathcrop as M
+    from . import furniture as F
     table_blocks: Dict[int, List[Block]] = {}
     math_blocks: Dict[int, List[Block]] = {}
+    try:
+        furn_ids = F.detect(extract.pages).furniture_line_ids
+    except Exception:  # noqa: BLE001
+        furn_ids = set()
     for page in extract.pages:
         pno = page.number
         try:
@@ -69,7 +74,7 @@ def _detect(extract: DocExtract, doc, out_dir) -> Tuple[Dict[int, List[Block]], 
         tbs = T.detect_tables(pg, page)
         if tbs:
             table_blocks[pno] = tbs
-        mbs = M.detect_math(pg, page, extract.asset_prefix, out_dir)
+        mbs = M.detect_math(pg, page, extract.asset_prefix, out_dir, furn_ids)
         if mbs:
             math_blocks[pno] = mbs
     return table_blocks, math_blocks

@@ -73,6 +73,7 @@ class Emitter:
             L.append("\\usepackage{tabularx}")
             L.append("\\usepackage{multirow}")
             L.append("\\usepackage{booktabs}")
+            L.append("\\usepackage{longtable}")
         if has_floats:
             # The vision-layout pass promotes some figures/tables to floats; "H" placement needs the
             # float package. "htbp" and "!htbp" work without it but we always load it when any float
@@ -377,7 +378,7 @@ class Emitter:
             out.append(("", b.id))
         elif isinstance(b, Para):
             out.append((self._para(b), b.id))
-            out.append(("", b.id))
+            out.append(("\\nopagebreak[4]" if getattr(b, "keep_with_next", False) else "", b.id))
         elif isinstance(b, ListBlock):
             out.append((self._list(b), b.id))
             out.append(("", b.id))
@@ -1086,14 +1087,34 @@ def render_table(em: "Emitter", t: Table) -> str:
     if not t.ruled and not t.booktabs:
         return _render_borderless(em, t, ncol)
     colspec = _colspec(t, ncol)
+    # A dense booktabs table (many columns / rows) is set a size down with tighter column spacing,
+    # as the source does, so the columns fit the text width; a tall one uses longtable so it breaks
+    # across pages (a plain tabular would overrun the bottom margin into the footer) and repeats its
+    # header on each page.
+    small = getattr(t, "small", False)
+    tall = small and len(t.rows) >= 12
+    top = "\\toprule" if t.booktabs else ("\\hline" if t.ruled else "")
+    bot = "\\bottomrule" if t.booktabs else ("\\hline" if t.ruled else "")
+    mid = "\\midrule" if t.booktabs else ("\\hline" if t.ruled else "")
+    header = [top] + ([" & ".join(_cell_text(em, t, c) for c in t.rows[0]) + " \\\\", mid]
+                      if t.header_rows and t.rows else [])
+    if tall:
+        lines = [f"{{\\footnotesize\\setlength{{\\tabcolsep}}{{4pt}}"]
+        lines.append(f"\\begin{{longtable}}{{{colspec}}}")
+        lines += header + ["\\endfirsthead"] + header + ["\\endhead"]
+        lines.append(f"{bot}\\endfoot")
+        for row in t.rows[t.header_rows:]:
+            lines.append(" & ".join(_cell_text(em, t, cell) for cell in row) + " \\\\")
+        lines.append("\\end{longtable}}")
+        return "\n".join(lines)
     lines = ["\\begin{center}"]
+    if small:
+        lines.append("\\footnotesize\\setlength{\\tabcolsep}{4pt}")
     if t.caption:
         lines.append(em._para_lines_text(t.caption).strip() + "\\par\\smallskip")
     lines.append(f"\\begin{{tabular}}{{{colspec}}}")
-    if t.ruled and not t.booktabs:
-        lines.append("\\hline")
-    elif t.booktabs:
-        lines.append("\\toprule")
+    if top:
+        lines.append(top)
     for ri, row in enumerate(t.rows):
         lines.append(" & ".join(_cell_text(em, t, cell) for cell in row) + " \\\\")
         if t.booktabs and ri + 1 == t.header_rows:
@@ -1124,6 +1145,8 @@ def _render_borderless(em: "Emitter", t: Table, ncol: int) -> str:
     if getattr(t, "centered", False) and len(t.rows) == 1 and t.rows[0] \
             and all(getattr(c, "stack", False) for c in t.rows[0]):
         return _render_signatures(em, t)
+    if getattr(t, "leaders", False):
+        return _render_contents(em, t, ncol)
     fracs = list(t.col_frac) + [0.2] * (ncol - len(t.col_frac))
     aligns = list(t.col_align) + ["p"] * (ncol - len(t.col_align))
 
@@ -1161,6 +1184,52 @@ def _render_borderless(em: "Emitter", t: Table, ncol: int) -> str:
     if t.indent and t.indent > 6:
         return f"\\begin{{adjustwidth}}{{{fmt(t.indent)}pt}}{{0pt}}\n\\noindent{inner}\n\\end{{adjustwidth}}"
     return "\\noindent" + inner
+
+
+def _render_contents(em: "Emitter", t: Table, ncol: int) -> str:
+    """A table of contents / list of figures / list of tables: one entry per line, the title (with
+    its section number and indentation) flush left, dot leaders (\\dotfill) filling to a right-flush
+    page number, continuation lines of a long title hanging under the title. Reconstructs the source
+    layout as editable text rather than a live \\tableofcontents (whose numbers would need the whole
+    document's counters to be reproduced)."""
+    fracs = list(t.col_frac) + [0.0] * (ncol - len(t.col_frac))
+    aligns = list(t.col_align) + ["p"] * (ncol - len(t.col_align))
+    page_col = ncol - 1 if aligns and aligns[-1] == "r" else None
+    out: List[str] = []
+    for row in t.rows:
+        texts = []
+        for cell in row:
+            txt = " ".join(em._para_lines_text(p).strip() for p in cell.paras) if cell.paras else ""
+            texts.append(txt)
+        if page_col is not None and page_col < len(texts):
+            page_txt = texts[page_col]
+            label_upto = page_col
+        else:
+            nz = [i for i, tt in enumerate(texts) if tt]
+            page_txt = texts[nz[-1]] if nz else ""
+            label_upto = nz[-1] if nz else len(texts)
+        label_idxs = [k for k in range(label_upto) if texts[k]]
+        if not label_idxs and not page_txt:
+            continue
+        indent_frac = sum(fracs[:label_idxs[0]]) if label_idxs else 0.0
+        if len(label_idxs) >= 2:
+            hang_frac = sum(fracs[:label_idxs[1]])
+            label = texts[label_idxs[0]] + "\\quad " + " ".join(texts[k] for k in label_idxs[1:])
+        else:
+            hang_frac = indent_frac
+            label = " ".join(texts[k] for k in label_idxs)
+        # a short leader the splitter left on the title ("… (Stoica et al.) .") is dropped so \dotfill
+        # can draw the whole run; a period inside a word ("etc.") has no preceding space and stays.
+        label = re.sub(r"\s+[.·․‥…](?:\s*[.·․‥…])*$", "", label)
+        indent = f"\\hspace*{{{fmt(indent_frac)}\\linewidth}}" if indent_frac > 0.004 else ""
+        hang = f"\\hangindent={fmt(max(hang_frac, indent_frac))}\\linewidth\\hangafter=1 " \
+            if hang_frac > 0.004 else ""
+        page = f"\\hbox{{{page_txt}}}" if page_txt else ""
+        out.append("{" + hang + "\\noindent" + indent + label + "\\nobreak\\dotfill\\nobreak " + page + "\\par}")
+    body = "\n".join(out)
+    if t.stretch and t.stretch > 1.0:
+        body = f"{{\\setlength{{\\parskip}}{{{fmt(min(t.stretch - 1.0, 0.8))}\\baselineskip}}\n{body}\\par}}"
+    return body
 
 
 def _render_signatures(em: "Emitter", t: Table) -> str:
