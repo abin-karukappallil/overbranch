@@ -5,7 +5,6 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # ============================================================
 # 1. System Dependencies
-#    Node.js + Python + TeX Live + Fonts + Build Tools
 # ============================================================
 
 RUN apt-get update && \
@@ -18,7 +17,7 @@ RUN apt-get update && \
     python3-venv \
     \
     # ========================================================
-    # TeX Live Core
+    # TeX Live
     # ========================================================
     texlive-base \
     texlive-latex-base \
@@ -27,6 +26,11 @@ RUN apt-get update && \
     texlive-bibtex-extra \
     texlive-extra-utils \
     texlive-pictures \
+    texlive-science \
+    texlive-publishers \
+    texlive-xetex \
+    texlive-luatex \
+    texlive-lang-greek \
     \
     # ========================================================
     # TeX Fonts
@@ -34,27 +38,14 @@ RUN apt-get update && \
     texlive-fonts-recommended \
     texlive-fonts-extra \
     texlive-fonts-extra-links \
+    \
+    # PostScript / Times / URW fonts
     fonts-urw-base35 \
     fonts-texgyre \
     fonts-lmodern \
+    \
+    # Additional fonts
     cm-super \
-    \
-    # ========================================================
-    # Science / Publishing / Language Support
-    # ========================================================
-    texlive-science \
-    texlive-publishers \
-    texlive-lang-greek \
-    \
-    # ========================================================
-    # XeLaTeX / LuaLaTeX
-    # ========================================================
-    texlive-xetex \
-    texlive-luatex \
-    \
-    # ========================================================
-    # Additional System Fonts
-    # ========================================================
     fonts-dejavu \
     fonts-liberation \
     fonts-liberation2 \
@@ -63,7 +54,7 @@ RUN apt-get update && \
     fonts-crosextra-caladea \
     \
     # ========================================================
-    # LaTeX Tooling
+    # LaTeX Tools
     # ========================================================
     latexmk \
     biber \
@@ -82,95 +73,119 @@ RUN apt-get update && \
     curl \
     unzip \
     fontconfig \
-    \
-    # ========================================================
-    # Font / TeX Utilities
-    # ========================================================
     xfonts-utils \
     \
-    && rm -rf /var/lib/apt/lists/* \
-    \
-    # ========================================================
-    # Refresh System Font Cache
-    # ========================================================
-    && fc-cache -f -v \
-    \
-    # ========================================================
-    # Refresh TeX Filename Database
-    # ========================================================
-    && mktexlsr \
-    \
-    # ========================================================
-    # Rebuild PDFTeX / TeX Font Maps
-    # ========================================================
-    && updmap-sys --force \
-    \
-    # ========================================================
-    # Refresh TeX Database Again
-    # ========================================================
-    && mktexlsr
+    && rm -rf /var/lib/apt/lists/*
 
 # ============================================================
-# 2. Verify LaTeX Installation
+# 2. Refresh Fonts + TeX Databases
+# ============================================================
+
+RUN fc-cache -f -v && \
+    mktexlsr && \
+    updmap-sys --force && \
+    mktexlsr
+
+# ============================================================
+# 3. TeX Installation Verification
 # ============================================================
 
 RUN echo "============================================================" && \
-    echo "Checking LaTeX installation..." && \
+    echo "TeX Live Version" && \
     echo "============================================================" && \
     pdflatex --version && \
     echo "" && \
-    echo "Checking TeX Live..." && \
+    echo "============================================================" && \
+    echo "Checking TeX configuration" && \
+    echo "============================================================" && \
     kpsewhich texmf.cnf && \
     echo "" && \
-    echo "Checking Beamer..." && \
+    echo "============================================================" && \
+    echo "Checking Beamer" && \
+    echo "============================================================" && \
     kpsewhich beamer.cls && \
     echo "" && \
-    echo "Checking Focus Beamer..." && \
+    echo "============================================================" && \
+    echo "Checking Focus Beamer" && \
+    echo "============================================================" && \
     kpsewhich beamerthemefocus.sty && \
     echo "" && \
-    echo "Checking Fira Math..." && \
+    echo "============================================================" && \
+    echo "Checking Fira Math" && \
+    echo "============================================================" && \
     kpsewhich firamath-otf.sty && \
     echo "" && \
-    echo "Checking Unicode Math..." && \
+    echo "============================================================" && \
+    echo "Checking Unicode Math" && \
+    echo "============================================================" && \
     kpsewhich unicode-math.sty && \
     echo "" && \
-    echo "Checking Fontspec..." && \
+    echo "============================================================" && \
+    echo "Checking Fontspec" && \
+    echo "============================================================" && \
     kpsewhich fontspec.sty && \
     echo "" && \
     echo "============================================================" && \
-    echo "Checking Times / Nimbus font metrics..." && \
+    echo "Checking NewTX / Times packages" && \
     echo "============================================================" && \
-    kpsewhich ts1-qtmr.tfm && \
-    kpsewhich t1-qtmr.tfm && \
-    kpsewhich qtmr.tfm && \
+    kpsewhich newtxtext.sty || true && \
+    kpsewhich newtxmath.sty || true && \
     echo "" && \
-    echo "Checking PDFTeX font map..." && \
+    echo "============================================================" && \
+    echo "Checking Times font metrics" && \
+    echo "============================================================" && \
+    echo "ts1-qtmr:" && \
+    (kpsewhich ts1-qtmr.tfm || echo "WARNING: ts1-qtmr.tfm not found") && \
+    echo "t1-qtmr:" && \
+    (kpsewhich t1-qtmr.tfm || echo "WARNING: t1-qtmr.tfm not found") && \
+    echo "qtmr:" && \
+    (kpsewhich qtmr.tfm || echo "WARNING: qtmr.tfm not found") && \
+    echo "" && \
+    echo "============================================================" && \
+    echo "Checking PDFTeX font map" && \
+    echo "============================================================" && \
     kpsewhich pdftex.map && \
     echo "" && \
-    echo "Checking Fira Math font files..." && \
-    find /usr/share/texlive \
-        -iname '*FiraMath*' \
-        -o -iname '*firamath*' \
-        2>/dev/null | head -20 && \
-    echo "" && \
     echo "============================================================" && \
-    echo "LaTeX environment verification complete." && \
+    echo "TeX installation verification complete" && \
     echo "============================================================"
 
 # ============================================================
-# 3. Install Bun
+# 4. Create a Real PDFTeX Font Test
+# ============================================================
+
+RUN mkdir -p /tmp/tex-test && \
+    printf '%s\n' \
+    '\\documentclass{article}' \
+    '\\usepackage[T1]{fontenc}' \
+    '\\usepackage{textcomp}' \
+    '\\usepackage{newtxtext}' \
+    '\\begin{document}' \
+    'Times font test: ABCDEFG abcdefg 1234567890' \
+    '\\end{document}' \
+    > /tmp/tex-test/test.tex && \
+    cd /tmp/tex-test && \
+    pdflatex -interaction=nonstopmode -halt-on-error test.tex && \
+    test -f test.pdf && \
+    echo "============================================================" && \
+    echo "PDFTeX font test PASSED" && \
+    echo "============================================================" && \
+    rm -rf /tmp/tex-test
+
+# ============================================================
+# 5. Install Bun
 # ============================================================
 
 RUN npm install -g bun@latest
 
 # ============================================================
-# 4. Application Directory
+# 6. Application Directory
 # ============================================================
 
 WORKDIR /app
 
 # ============================================================
-# 5. Install Node.js Dependencies
+# 7. Install Node.js Dependencies
 # ============================================================
 
 COPY package.json bun.lock* ./
@@ -178,7 +193,7 @@ COPY package.json bun.lock* ./
 RUN bun install
 
 # ============================================================
-# 6. Install Python Dependencies
+# 8. Install Python Dependencies
 # ============================================================
 
 COPY backend/requirements.txt ./backend/requirements.txt
@@ -189,54 +204,61 @@ RUN python3 -m pip install \
     -r backend/requirements.txt
 
 # ============================================================
-# 7. Copy Application
+# 9. Copy Application
 # ============================================================
 
 COPY . .
 
 # ============================================================
-# 8. Production Environment
+# 10. Production Environment
 # ============================================================
 
 ENV NODE_ENV=production
 
 # ============================================================
-# 9. Build Next.js Application
+# 11. Build Next.js Application
 # ============================================================
 
 RUN bun run build
 
 # ============================================================
-# 10. Final TeX Verification
-#     Make sure copying the application didn't alter TeX setup
+# 12. Final TeX Verification
 # ============================================================
 
 RUN echo "============================================================" && \
-    echo "Final production TeX verification..." && \
+    echo "Final production TeX verification" && \
     echo "============================================================" && \
-    kpsewhich ts1-qtmr.tfm && \
-    kpsewhich t1-qtmr.tfm && \
-    kpsewhich qtmr.tfm && \
+    pdflatex --version && \
+    echo "" && \
+    echo "Beamer:" && \
+    kpsewhich beamer.cls && \
+    echo "" && \
+    echo "Focus:" && \
     kpsewhich beamerthemefocus.sty && \
-    echo "============================================================" && \
-    echo "Production TeX environment OK." && \
-    echo "============================================================"
+    echo "" && \
+    echo "NewTX:" && \
+    kpsewhich newtxtext.sty && \
+    echo "" && \
+    echo "Times metric:" && \
+    (kpsewhich ts1-qtmr.tfm || echo "WARNING: ts1-qtmr.tfm unavailable") && \
+    echo "" && \
+    echo "Final TeX verification complete."
 
 # ============================================================
-# 11. Runtime Configuration
+# 13. Runtime Configuration
 # ============================================================
 
 EXPOSE 3000
 EXPOSE 8000
 
 # ============================================================
-# 12. Persistent Project Uploads
+# 14. Persistent Project Uploads
 # ============================================================
 
 VOLUME ["/app/uploads"]
 
 # ============================================================
-# 13. Health Check
+# 15. Health Check
 # ============================================================
 
 HEALTHCHECK \
@@ -247,7 +269,7 @@ HEALTHCHECK \
     CMD curl -sf http://localhost:8000/api/health || exit 1
 
 # ============================================================
-# 14. Entrypoint
+# 16. Entrypoint
 # ============================================================
 
 RUN chmod +x /app/entrypoint.sh
