@@ -48,7 +48,7 @@ class Emitter:
         self._list_x: Optional[float] = None    # text edge of the list being written (nesting)
 
     # ------------------------------------------------------------------ preamble
-    def preamble(self, has_notes: bool, has_tables: bool) -> str:
+    def preamble(self, has_notes: bool, has_tables: bool, has_floats: bool = False) -> str:
         p = self.p
         L: List[str] = []
         if self.source:
@@ -73,6 +73,11 @@ class Emitter:
             L.append("\\usepackage{tabularx}")
             L.append("\\usepackage{multirow}")
             L.append("\\usepackage{booktabs}")
+        if has_floats:
+            # The vision-layout pass promotes some figures/tables to floats; "H" placement needs the
+            # float package. "htbp" and "!htbp" work without it but we always load it when any float
+            # specifier was set so the specifier string need not be inspected here.
+            L.append("\\usepackage{float}")
         L.append("\\usepackage{enumitem}")
         L.append("\\usepackage{setspace}")
         L.append("\\usepackage{titlesec}")
@@ -309,7 +314,8 @@ class Emitter:
         has_notes = has_notes or contains_kind(blocks, "note")
         has_tables = any(isinstance(b, Table) for b in blocks) or \
             any(isinstance(b, Box) and any(isinstance(c, Table) for c in b.content) for b in blocks)
-        pre = self.preamble(has_notes, has_tables)
+        has_floats = any(isinstance(b, (Figure, Table)) and getattr(b, "float_spec", None) for b in blocks)
+        pre = self.preamble(has_notes, has_tables, has_floats)
         body_lines: List[Tuple[str, int]] = []
         in_cols = False
         in_slide = False
@@ -759,12 +765,19 @@ class Emitter:
     # -- figure ------------------------------------------------------------
     def _figure(self, f: Figure) -> str:
         """An image in the flow ({\\centering …\\par} rather than the center environment, whose
-        \\topsep above and below would add space the PDF doesn't have)."""
+        \\topsep above and below would add space the PDF doesn't have). When ``float_spec`` is set
+        by the vision-layout pass, the image is wrapped in a figure float with that placement
+        specifier so a tall image near a page break no longer pushes body text onto an extra page."""
         align = {"center": "\\centering", "right": "\\raggedleft"}.get(f.align, "\\noindent")
-        lines = [self._space(f).rstrip("\n")] if self._space(f) else []
         imgs = " ".join(f"\\includegraphics[width={fmt(min(1.0, frac))}\\linewidth]{{{img}}}"
                         for img, frac in zip(f.images, f.width_frac))
         cap = ("\\\\\n" + self._para_lines_text(f.caption).strip()) if f.caption else ""
+        if f.float_spec:
+            spec = f.float_spec
+            body = f"\\begin{{figure}}[{spec}]\n{align} " + imgs + cap + "\n\\end{figure}"
+            pre = self._space(f).rstrip("\n")
+            return (pre + "\n" + body) if pre else body
+        lines = [self._space(f).rstrip("\n")] if self._space(f) else []
         lines.append("{" + align + " " + imgs + cap + "\\par}")
         return "\n".join(x for x in lines if x)
 
@@ -795,7 +808,13 @@ class Emitter:
 
     # -- table -------------------------------------------------------------
     def _table(self, t: Table) -> str:
-        return self._space(t) + render_table(self, t)
+        body = render_table(self, t)
+        if t.float_spec:
+            spec = t.float_spec
+            wrapped = f"\\begin{{table}}[{spec}]\n{body}\n\\end{{table}}"
+            pre = self._space(t).rstrip("\n")
+            return (pre + "\n" + wrapped) if pre else wrapped
+        return self._space(t) + body
 
     # -- note --------------------------------------------------------------
     def _note(self, n: Note) -> str:

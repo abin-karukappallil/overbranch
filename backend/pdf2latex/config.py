@@ -56,6 +56,7 @@ class Pdf2LatexSettings:
     render_dpi: int
     job_dir: Path
     editable_polish: bool
+    editable_vision: bool
     style_target: float
 
     @property
@@ -92,6 +93,11 @@ def get_settings() -> Pdf2LatexSettings:
         # Editable mode: whether the per-block text-only LLM polish pass runs at all. With it off
         # (or no LLM configured) the deterministic build is still the full product.
         editable_polish=_env_bool("PDF2LATEX_EDITABLE_POLISH", True),
+        # Editable mode: the vision layout pass that asks Gemini (web2api) to correct the size,
+        # alignment, float choice and reading-order anchor of each figure and table from the
+        # rendered PDF page image. Off disables the pass entirely; the deterministic build is
+        # still the full product.
+        editable_vision=_env_bool("PDF2LATEX_EDITABLE_VISION", True),
         # Editable mode gate: the share of matched words whose font size/weight/slant/colour/family
         # must equal the source (measured on the compiled output PDF).
         style_target=min(1.0, max(0.0, _env_float("PDF2LATEX_STYLE_TARGET", 0.97))),

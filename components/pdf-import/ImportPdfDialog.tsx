@@ -522,11 +522,12 @@ const EDITABLE_STAGES = [
   { id: "analysing", title: "Document Structure", desc: "Headings, paragraphs, lists & tables" },
   { id: "compiling", title: "Compiling LaTeX", desc: "pdfLaTeX compilation & auto-repair" },
   { id: "verifying", title: "Quality Gates", desc: "Checking coverage & style fidelity" },
+  { id: "laying_out", title: "Figure & Table Layout", desc: "Vision-corrected size, alignment & floats" },
   { id: "polishing", title: "Math & Table Polish", desc: "Equations & semantic formatting" },
   { id: "writing", title: "Saving Project", desc: "Writing output files to workspace" },
 ];
 
-const STAGE_ORDER = ["queued", "extracting", "analysing", "compiling", "verifying", "polishing", "writing", "done"];
+const STAGE_ORDER = ["queued", "extracting", "analysing", "compiling", "verifying", "laying_out", "polishing", "writing", "done"];
 
 function EditablePipelineProgress({ currentStage, isRunning }: { currentStage: string; isRunning: boolean }) {
   const currentIdx = STAGE_ORDER.indexOf(currentStage);

@@ -204,6 +204,7 @@ async def run_editable(job_id: str, pdf_bytes: bytes, project_id: str, overwrite
     from ..pipeline import _page_count, _tex_available, compile_tex, _emit_trace
     from . import gates as G
     from . import polish as POL
+    from . import vision_layout as VL
 
     settings = get_settings()
     jd = jobs.job_dir(job_id)
@@ -253,6 +254,20 @@ async def run_editable(job_id: str, pdf_bytes: bytes, project_id: str, overwrite
             report.compiled = True
             report.compiled_page_count = await asyncio.to_thread(_page_count, pdf)
             gate_result = await asyncio.to_thread(G.run_gates, extract, doc_model, tex, pdf, settings)
+            gate_result["compiled_page_count"] = report.compiled_page_count
+
+        # Vision layout pass: correct figure/table size, alignment, float choice and anchor from
+        # the rendered page image. Measurement-gated: a verdict that would grow the output or
+        # regress coverage/style is reverted. Separate from the polish pass's own gate so a disabled
+        # polish still gets the layout fix.
+        if pdf is not None and llm_available() and settings.editable_vision:
+            _set(stage="laying_out", message="Fitting tables and figures to the page…", progress=0.55)
+            tex, pdf, gate_result = await VL.vision_layout(ctx, extract, doc_model, tex, pdf, lm,
+                                                           gate_result, settings, job_id, doc,
+                                                           compile_tex)
+            if pdf is not None:
+                (jd / "output.pdf").write_bytes(pdf)
+                report.compiled_page_count = await asyncio.to_thread(_page_count, pdf)
 
         # Polish pass (text-only LLM per flagged block), gated
         if pdf is not None and report.llm_used:
@@ -311,7 +326,8 @@ def _build_editable_report(doc_model: EditDoc, gate_result: Dict) -> Dict:
     return {"structure": structure_summary(doc_model), "gates": gate_result.get("gates", {}),
             "style": gate_result.get("style", {}), "lint": gate_result.get("lint", {}),
             "assets": gate_result.get("assets", {}), "failed": gate_result.get("failed", []),
-            "polish": gate_result.get("polish", {})}
+            "polish": gate_result.get("polish", {}),
+            "vision": gate_result.get("vision", {})}
 
 
 def _apply_page_reports(report: ConversionReport, doc_model: EditDoc, gate_result: Dict):

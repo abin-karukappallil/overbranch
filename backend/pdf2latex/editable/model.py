@@ -200,6 +200,10 @@ class Table(Block):
     width_pt: float = 0.0         # borderless: width of the column the table sits in, pt
     centered: bool = False        # set the table centred on the line (a group of signatures)
     spread: bool = False          # a signature group spanning the line edge to edge
+    # Vision-layout: wrap the table in a float environment (\begin{table}[spec]…\end{table}) when
+    # Gemini verdicts the in-flow placement overflows the page. None keeps the deterministic
+    # in-flow emission.
+    float_spec: Optional[str] = None
 
     def __post_init__(self):
         self.kind = "table"
@@ -211,6 +215,10 @@ class Figure(Block):
     width_frac: List[float] = field(default_factory=list)  # one per image, fraction of \linewidth
     align: str = "center"
     caption: Optional["Para"] = None
+    # Vision-layout: wrap the figure in a float environment (\begin{figure}[spec]…\end{figure})
+    # when Gemini verdicts the in-flow placement overflows the page. None keeps the deterministic
+    # in-flow {\centering \includegraphics…\par} emission.
+    float_spec: Optional[str] = None
 
     def __post_init__(self):
         self.kind = "figure"
