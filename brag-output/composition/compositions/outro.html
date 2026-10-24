@@ -1,0 +1,149 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-ink, #000000);
+      color: var(--color-paper, #ffffff);
+    }
+    #ot-glow {
+      position: absolute;
+      left: 510px;
+      top: 330px;
+      width: 900px;
+      height: 900px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0, 204, 104, 0.5) 0%, rgba(0, 204, 104, 0.18) 38%, rgba(0, 204, 104, 0) 68%);
+      opacity: 0;
+    }
+    #ot-head {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 150px;
+      text-align: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 196px;
+      line-height: 0.9;
+      letter-spacing: -0.04em;
+    }
+    #ot-head span.line {
+      display: block;
+    }
+    #ot-head .g {
+      color: var(--color-poster, #00cc68);
+    }
+    #ot-brand {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 632px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 22px;
+    }
+    #ot-brand img {
+      width: 96px;
+      height: 96px;
+    }
+    #ot-name {
+      font-family: "Archivo Black", sans-serif;
+      font-size: 72px;
+      letter-spacing: -0.03em;
+    }
+    #ot-beta {
+      padding: 6px 12px;
+      border-radius: 8px;
+      background: #00cc68;
+      color: #000000;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: 0.14em;
+    }
+    #ot-cta {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 812px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 40px;
+    }
+    #ot-url {
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 40px;
+      color: #e2e4e9;
+    }
+    #ot-star {
+      padding: 14px 30px;
+      border-radius: 999px;
+      background: #ffffff;
+      color: #000000;
+      border: 3px solid #000000;
+      box-shadow: 6px 6px 0 0 #00cc68;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: 0.06em;
+    }
+    #ot-star .s {
+      color: #00a854;
+    }
+  </style>
+  <div data-hf-id="hf-x7nm" id="root" data-composition-id="outro" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-0hy5" id="ot-glow" data-layout-ignore></div>
+    <h1 data-hf-id="hf-7sbl" id="ot-head"><span data-hf-id="hf-bo0w" class="line">FORK THE</span><span data-hf-id="hf-mgxf" class="line g">FUTURE.</span></h1>
+    <div data-hf-id="hf-8shg" id="ot-brand">
+      <img data-hf-id="hf-sbe5" src="assets/img/overbranch-logo.svg" alt="OverBranch logo" />
+      <span data-hf-id="hf-mmwf" id="ot-name">OVERBRANCH</span>
+      <span data-hf-id="hf-g2ls" id="ot-beta">BETA</span>
+    </div>
+    <div data-hf-id="hf-yihh" id="ot-cta">
+      <span data-hf-id="hf-6iog" id="ot-url">overbranch.app</span>
+      <span data-hf-id="hf-fq64" id="ot-star"><span data-hf-id="hf-ntp7" class="s">★</span> STAR ON GITHUB</span>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+
+      // beat-locked: 18.55s (strong cue) — the manifesto slams on the hard cut
+      tl.fromTo(
+        "#ot-head",
+        { opacity: 0, scale: 1.24, filter: "blur(14px)" },
+        { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.22, ease: "power4.out" },
+        0,
+      );
+      // beat-grid: brand row at 19.10s
+      tl.fromTo(
+        "#ot-brand",
+        { opacity: 0, filter: "blur(8px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power3.out" },
+        0.55,
+      );
+      tl.fromTo("#ot-brand img", { rotation: -90, scale: 0.4 }, { rotation: 0, scale: 1, duration: 0.42, ease: "back.out(1.6)" }, 0.55);
+      // beat-grid: CTA row at 19.64s
+      tl.fromTo("#ot-url", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.3, ease: "expo.out" }, 1.09);
+      tl.fromTo("#ot-star", { opacity: 0, x: 24 }, { opacity: 1, x: 0, duration: 0.3, ease: "expo.out" }, 1.15);
+
+      // Audio-reactive glow: per-beat bass peaks from the music (extract-audio-data.py, baked at build time)
+      [
+        [0.0, 0.67],
+        [0.55, 0.68],
+        [1.09, 0.54],
+        [1.64, 0.79],
+        [2.19, 0.81],
+        [2.73, 0.63],
+      ].forEach(([t, b]) =>
+        tl.to("#ot-glow", { opacity: (0.25 + b * 0.6).toFixed(2), scale: 0.94 + b * 0.1, duration: 0.3, ease: "power2.out" }, t),
+      );
+
+      window.__timelines["outro"] = tl;
+    })();
+  </script>
+</template>

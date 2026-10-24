@@ -32,6 +32,22 @@ export function makeMention(file: string, startLine: number, endLine: number, te
   };
 }
 
+/**
+ * A whole file pinned to the message (typed as "@main.tex"). Line numbers are 0
+ * and the text empty: the backend sees only the path, so the agent opens the
+ * file itself. The chip shows the bare file name rather than "main.tex L0".
+ */
+export function makeFileMention(file: string): MentionRef {
+  return {
+    id: `${file}:file`,
+    file,
+    start_line: 0,
+    end_line: 0,
+    text: "",
+    label: file.slice(file.lastIndexOf("/") + 1),
+  };
+}
+
 export function addMention(
   list: MentionRef[],
   next: MentionRef,

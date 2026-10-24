@@ -1,6 +1,8 @@
 import os
 import re
+import uuid
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File, Form, Depends
@@ -109,6 +111,79 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
             }).execute()
     except Exception as e:
         logger.warning(f"Failed to upsert latex_document ({file_path}): {e}")
+
+
+# Suffixes whose content is mirrored into latex_documents as text; everything else
+# gets a "[Binary Asset: ...]" placeholder row (the bytes live on disk only).
+TEXT_SUFFIXES = {".tex", ".sty", ".cls", ".bib", ".txt", ".md", ".bst", ".bbl", ".def", ".cfg", ".ltx", ".csv"}
+
+
+def create_empty_project(owner_id: str, name_hint: str, guest_session_id: Optional[str],
+                         template_tag: str) -> Dict[str, Any]:
+    """
+    Creates a project (and, for guests, the 24h guest_projects record) with an empty main.tex
+    seeded on disk. Shared by the PDF importer ("PDF Import") and the ZIP importer ("ZIP Import").
+    Degrades to disk-only when Supabase is not configured (local/tests).
+    """
+    kind = template_tag[: -len(" Import")] if template_tag.endswith(" Import") else template_tag
+    fallback_name = f"Imported {kind}"
+    project_id = str(uuid.uuid4())
+    clean_name = re.sub(r"[^\w\s\-().]", "", name_hint or fallback_name).strip()[:80] or fallback_name
+    slug = re.sub(r"[^a-z0-9]+", "-", clean_name.lower()).strip("-") or fallback_name.lower().replace(" ", "-")
+
+    # Seed an empty main.tex on disk, mirroring trpc projects.createProject
+    main = get_project_disk_path(project_id, "main.tex")
+    main.parent.mkdir(parents=True, exist_ok=True)
+    main.write_text("", encoding="utf-8")
+
+    try:
+        sb = get_supabase_client()
+    except Exception as e:  # HTTPException when Supabase is not configured (local/tests)
+        logger.warning(f"Supabase unavailable; writing project files to disk only: {e}")
+        return {"project_id": project_id, "name": clean_name}
+
+    if owner_id.startswith("guest_"):
+        try:
+            from services.guest_identity import ensure_guest_user_row
+            ensure_guest_user_row(sb, owner_id)
+        except Exception as e:
+            logger.warning(f"Could not ensure guest user row for {owner_id}: {e}")
+    try:
+        sb.table("projects").insert({
+            "id": project_id,
+            "owner_id": owner_id,
+            "name": clean_name,
+            "description": f"Imported from {kind}",
+            "repository": f"prostack/{slug}",
+            "default_branch": "main.tex",
+            "language": "latex",
+            "status": "active",
+            "is_public": False,
+            "is_favorite": False,
+            "template": template_tag,
+            "stars_count": 0,
+        }).execute()
+        sb.table("project_members").insert({
+            "id": str(uuid.uuid4()), "project_id": project_id, "user_id": owner_id, "role": "Owner",
+        }).execute()
+    except Exception as e:
+        logger.warning(f"Project row creation failed: {e}")
+
+    if guest_session_id:
+        now = datetime.now(timezone.utc)
+        try:
+            sb.table("guest_projects").insert({
+                "id": str(uuid.uuid4()),
+                "guest_session_id": guest_session_id,
+                "project_id": project_id,
+                "migrated_to_user_id": None,
+                "migrated_at": None,
+                "expires_at": (now + timedelta(hours=24)).isoformat(),
+                "created_at": now.isoformat(),
+            }).execute()
+        except Exception as e:
+            logger.warning(f"guest_projects record failed: {e}")
+    return {"project_id": project_id, "name": clean_name}
 
 
 # ============================================================================

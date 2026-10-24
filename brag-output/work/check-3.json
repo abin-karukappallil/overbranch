@@ -1,0 +1,2549 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "filesScanned": 7
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 27,
+    "findings": [
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-logo-box > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 393.16,
+          "top": 62.5,
+          "right": 622.55,
+          "bottom": 94.5,
+          "width": 229.39,
+          "height": 32
+        },
+        "containerSelector": "#rv-beta",
+        "text": "OVERBRANCH",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 393.16,
+          "y": 62.5,
+          "width": 229.39,
+          "height": 32
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "span.rv-mini-beta",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 641.55,
+          "top": 67.5,
+          "right": 685.47,
+          "bottom": 89.5,
+          "width": 43.92,
+          "height": 22
+        },
+        "containerSelector": "#rv-beta",
+        "text": "BETA",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 641.55,
+          "y": 67.5,
+          "width": 43.92,
+          "height": 22
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-pill > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 777.47,
+          "top": 64,
+          "right": 943.56,
+          "bottom": 93,
+          "width": 166.09,
+          "height": 29
+        },
+        "containerSelector": "#rv-beta",
+        "text": "PDF TO LATEX",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 777.47,
+          "y": 64,
+          "width": 166.09,
+          "height": 29
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-pill > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 977.56,
+          "top": 64,
+          "right": 1102.13,
+          "bottom": 93,
+          "width": 124.56,
+          "height": 29
+        },
+        "containerSelector": "#rv-beta",
+        "text": "TEMPLATES",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 977.56,
+          "y": 64,
+          "width": 124.56,
+          "height": 29
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-pill > span:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1136.13,
+          "top": 64,
+          "right": 1246.86,
+          "bottom": 93,
+          "width": 110.73,
+          "height": 29
+        },
+        "containerSelector": "#rv-beta",
+        "text": "FEATURES",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1136.13,
+          "y": 64,
+          "width": 110.73,
+          "height": 29
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-pill > span:nth-of-type(4)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1280.86,
+          "top": 64,
+          "right": 1405.42,
+          "bottom": 93,
+          "width": 124.56,
+          "height": 29
+        },
+        "containerSelector": "#rv-beta",
+        "text": "SELF-HOST",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1280.86,
+          "y": 64,
+          "width": 124.56,
+          "height": 29
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "span.gh",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1439.42,
+          "top": 64,
+          "right": 1555.84,
+          "bottom": 93,
+          "width": 116.42,
+          "height": 29
+        },
+        "containerSelector": "#rv-beta",
+        "text": "★ GITHUB",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1439.42,
+          "y": 64,
+          "width": 116.42,
+          "height": 29
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 134.86,
+          "top": 291,
+          "right": 290.3,
+          "bottom": 504,
+          "width": 155.44,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "O",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 134.86,
+          "y": 291,
+          "width": 155.44,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 290.3,
+          "top": 291,
+          "right": 434.95,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "V",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 290.3,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 434.95,
+          "top": 291,
+          "right": 568.64,
+          "bottom": 504,
+          "width": 133.69,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "E",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 434.95,
+          "y": 291,
+          "width": 133.69,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(4)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 568.64,
+          "top": 291,
+          "right": 713.3,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "R",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 568.64,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(5)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 713.3,
+          "top": 291,
+          "right": 857.95,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "B",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 713.3,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(6)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 857.95,
+          "top": 291,
+          "right": 1002.61,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "R",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 857.95,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(7)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1002.61,
+          "top": 291,
+          "right": 1147.27,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "A",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1002.61,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(8)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1147.27,
+          "top": 291,
+          "right": 1302.7,
+          "bottom": 504,
+          "width": 155.44,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "N",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1147.27,
+          "y": 291,
+          "width": 155.44,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(9)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1302.7,
+          "top": 291,
+          "right": 1447.36,
+          "bottom": 504,
+          "width": 144.66,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "C",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1302.7,
+          "y": 291,
+          "width": 144.66,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-name > span:nth-of-type(10)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1447.36,
+          "top": 291,
+          "right": 1602.8,
+          "bottom": 504,
+          "width": 155.44,
+          "height": 213
+        },
+        "containerSelector": "#rv-beta",
+        "text": "H",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1447.36,
+          "y": 291,
+          "width": 155.44,
+          "height": 213
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-sub",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 312.67,
+          "top": 544,
+          "right": 1607.31,
+          "bottom": 631,
+          "width": 1294.64,
+          "height": 87
+        },
+        "containerSelector": "#rv-beta",
+        "text": "Agentic LaTeX code editor",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 312.67,
+          "y": 544,
+          "width": 1294.64,
+          "height": 87
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-kick > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 626.83,
+          "top": 676,
+          "right": 699.45,
+          "bottom": 726,
+          "width": 72.63,
+          "height": 50
+        },
+        "containerSelector": "#rv-beta",
+        "text": "For",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 626.83,
+          "y": 676,
+          "width": 72.63,
+          "height": 50
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-kick > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 719.83,
+          "top": 676,
+          "right": 913.5,
+          "bottom": 726,
+          "width": 193.67,
+          "height": 50
+        },
+        "containerSelector": "#rv-beta",
+        "text": "students",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 719.83,
+          "y": 676,
+          "width": 193.67,
+          "height": 50
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-kick > span:nth-of-type(3)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 933.88,
+          "top": 676,
+          "right": 1006.5,
+          "bottom": 726,
+          "width": 72.63,
+          "height": 50
+        },
+        "containerSelector": "#rv-beta",
+        "text": "and",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 933.88,
+          "y": 676,
+          "width": 72.63,
+          "height": 50
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 6.056,
+        "selector": "#rv-kick > span:nth-of-type(4)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1026.88,
+          "top": 676,
+          "right": 1293.17,
+          "bottom": 726,
+          "width": 266.3,
+          "height": 50
+        },
+        "containerSelector": "#rv-beta",
+        "text": "researchers",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 1,
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1026.88,
+          "y": 676,
+          "width": 266.3,
+          "height": 50
+        },
+        "firstSeen": 6.056,
+        "lastSeen": 6.056,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "content_overlap",
+        "severity": "info",
+        "time": 11.461,
+        "selector": "#dc-lines > div:nth-of-type(17)",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 0,
+          "top": 842,
+          "right": 58.44,
+          "bottom": 870,
+          "width": 58.44,
+          "height": 28
+        },
+        "containerSelector": "#dc-stamp",
+        "text": "\\includegraphics[width=0.9\\linewidth]{assets/figure_1.png}",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply.",
+        "dataAttributes": {},
+        "sourceFile": "compositions/decompile.html",
+        "bbox": {
+          "x": 0,
+          "y": 842,
+          "width": 58.44,
+          "height": 28
+        },
+        "firstSeen": 11.461,
+        "lastSeen": 11.461,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          11.461
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 13.322,
+        "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 1414.94,
+          "top": 259.5,
+          "right": 1434.59,
+          "bottom": 276.5,
+          "width": 19.66,
+          "height": 17
+        },
+        "containerSelector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2)",
+        "text": "AR",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 0.04,
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 1414.94,
+          "y": 259.5,
+          "width": 19.66,
+          "height": 17
+        },
+        "firstSeen": 13.322,
+        "lastSeen": 13.322,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.322
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 13.322,
+        "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 156.59,
+          "top": 288.63,
+          "right": 168,
+          "bottom": 312.63,
+          "width": 11.41,
+          "height": 24
+        },
+        "containerSelector": "#ag-top",
+        "text": "1",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 0.33,
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 156.59,
+          "y": 288.63,
+          "width": 11.41,
+          "height": 24
+        },
+        "firstSeen": 13.322,
+        "lastSeen": 13.322,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.322
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 13.322,
+        "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 345.61,
+          "top": 288.63,
+          "right": 585.02,
+          "bottom": 312.63,
+          "width": 239.41,
+          "height": 24
+        },
+        "containerSelector": "#ag-top",
+        "text": "[12pt,report]{report}",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 0.33,
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 345.61,
+          "y": 288.63,
+          "width": 239.41,
+          "height": 24
+        },
+        "firstSeen": 13.322,
+        "lastSeen": 13.322,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.322
+        ]
+      },
+      {
+        "code": "text_occluded",
+        "severity": "info",
+        "time": 13.322,
+        "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2) > span:nth-of-type(1)",
+        "message": "Text is hidden beneath an opaque element.",
+        "rect": {
+          "left": 186,
+          "top": 288.63,
+          "right": 345.61,
+          "bottom": 312.63,
+          "width": 159.61,
+          "height": 24
+        },
+        "containerSelector": "#ag-top",
+        "text": "\\documentclass",
+        "fixHint": "Give the text its own zone, raise its stacking order above the covering element, or mark intentional layering with data-layout-allow-occlusion.",
+        "coveredFraction": 0.33,
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 186,
+          "y": 288.63,
+          "width": 159.61,
+          "height": 24
+        },
+        "firstSeen": 13.322,
+        "lastSeen": 13.322,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          13.322
+        ]
+      }
+    ],
+    "duration": 21.8,
+    "samples": [
+      1.211,
+      3.633,
+      6.056,
+      8.478,
+      10.9,
+      13.322,
+      15.744,
+      18.167,
+      20.589
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 27,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 16,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "OVERBRANCH",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(1) > div:nth-of-type(1) > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 393.15625,
+          "y": 62.5,
+          "width": 229.390625,
+          "height": 32
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "O",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 134.859375,
+          "y": 300,
+          "width": 155.4375,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "V",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(2)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 290.296875,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "E",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(3)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 434.953125,
+          "y": 300,
+          "width": 133.6875,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "R",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(4)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 568.640625,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "B",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(5)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 713.296875,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "R",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(6)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 857.953125,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "A",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(7)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1002.609375,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "N",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(8)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1147.265625,
+          "y": 300,
+          "width": 155.4375,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "C",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(9)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1302.703125,
+          "y": 300,
+          "width": 144.65625,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "H",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(2) > div:nth-of-type(1) > span:nth-of-type(10)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1447.359375,
+          "y": 300,
+          "width": 155.4375,
+          "height": 196
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "Agentic LaTeX code editor",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "#rv-sub",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 0,
+          "y": 548,
+          "width": 1920,
+          "height": 80
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "For",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(4) > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 626.828125,
+          "y": 676,
+          "width": 72.625,
+          "height": 50
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "students",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(4) > span:nth-of-type(2)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 719.828125,
+          "y": 676,
+          "width": 193.671875,
+          "height": 50
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "and",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(4) > span:nth-of-type(3)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 933.875,
+          "y": 676,
+          "width": 72.625,
+          "height": 50
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      },
+      {
+        "code": "contrast_aa_failure",
+        "severity": "warning",
+        "message": "Contrast is 1.06:1; WCAG AA requires 3:1.",
+        "text": "researchers",
+        "fg": "rgb(0,0,0)",
+        "bg": "rgb(9,9,11)",
+        "ratio": 1.06,
+        "requiredRatio": 3,
+        "suggestedColor": "rgb(93,93,93)",
+        "large": true,
+        "selector": "div > div:nth-of-type(2) > div > div:nth-of-type(4) > span:nth-of-type(4)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 1026.875,
+          "y": 676,
+          "width": 266.296875,
+          "height": 50
+        },
+        "time": 6.056,
+        "times": [
+          6.056
+        ]
+      }
+    ],
+    "enabled": true,
+    "samples": [
+      1.211,
+      6.056,
+      10.9,
+      15.744,
+      20.589
+    ],
+    "checked": 86,
+    "passed": 70
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 4,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 6 text elements stay under it for 0.5 s or more, the smallest \"BETA\" at 15 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "BETA",
+        "selector": "span.rv-mini-beta",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 641.55,
+          "y": 44.97,
+          "width": 43.92,
+          "height": 22
+        },
+        "time": 3.239,
+        "times": [
+          3.239,
+          3.239,
+          3.239,
+          3.239,
+          3.239,
+          3.239
+        ],
+        "fontPx": 15,
+        "floorPx": 28,
+        "seconds": 2.865,
+        "elements": [
+          {
+            "selector": "span.rv-mini-beta",
+            "text": "BETA",
+            "fontPx": 15,
+            "time": 3.239,
+            "seconds": 2.865
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(1)",
+            "text": "PDF TO LATEX",
+            "fontPx": 20,
+            "time": 3.239,
+            "seconds": 2.865
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(2)",
+            "text": "TEMPLATES",
+            "fontPx": 20,
+            "time": 3.239,
+            "seconds": 2.865
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(3)",
+            "text": "FEATURES",
+            "fontPx": 20,
+            "time": 3.239,
+            "seconds": 2.865
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(4)",
+            "text": "SELF-HOST",
+            "fontPx": 20,
+            "time": 3.239,
+            "seconds": 2.865
+          },
+          {
+            "selector": "span.gh",
+            "text": "★ GITHUB",
+            "fontPx": 20,
+            "time": 3.239,
+            "seconds": 2.865
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 28 text elements stay under it for 0.5 s or more, the smallest \"14 pages\" at 16 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "14 pages",
+        "selector": "#dc-chips > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/decompile.html",
+        "bbox": {
+          "x": 305.61,
+          "y": 468,
+          "width": 78.35,
+          "height": 24
+        },
+        "time": 6.976,
+        "times": [
+          6.478,
+          6.478,
+          6.478,
+          6.478,
+          6.478,
+          6.976,
+          6.976,
+          6.976,
+          7.474,
+          7.599,
+          7.599,
+          7.723,
+          7.848,
+          7.973,
+          7.973,
+          8.097,
+          8.222,
+          8.346,
+          8.346,
+          8.471,
+          8.595,
+          8.72,
+          8.845,
+          8.845,
+          8.969,
+          9.094,
+          9.343,
+          9.343
+        ],
+        "fontPx": 16,
+        "floorPx": 28,
+        "seconds": 4.36,
+        "elements": [
+          {
+            "selector": "#dc-chips > span:nth-of-type(1)",
+            "text": "14 pages",
+            "fontPx": 16,
+            "time": 6.976,
+            "seconds": 4.36
+          },
+          {
+            "selector": "#dc-chips > span:nth-of-type(2)",
+            "text": "38 equations",
+            "fontPx": 16,
+            "time": 6.976,
+            "seconds": 4.36
+          },
+          {
+            "selector": "#dc-chips > span:nth-of-type(3)",
+            "text": "6 raster figures",
+            "fontPx": 16,
+            "time": 6.976,
+            "seconds": 4.36
+          },
+          {
+            "selector": "span.dc-tab.on",
+            "text": "main.tex",
+            "fontPx": 19,
+            "time": 6.478,
+            "seconds": 4.858
+          },
+          {
+            "selector": "#dc-tabs > span:nth-of-type(2)",
+            "text": "refs.bib",
+            "fontPx": 19,
+            "time": 6.478,
+            "seconds": 4.858
+          },
+          {
+            "selector": "#dc-tabs > span:nth-of-type(3)",
+            "text": "assets/ (6)",
+            "fontPx": 19,
+            "time": 6.478,
+            "seconds": 4.858
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(1)",
+            "text": "% Decompiled from ReportTemplate.pdf",
+            "fontPx": 19,
+            "time": 7.474,
+            "seconds": 3.862
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(2)",
+            "text": "\\documentclass[10pt,journal,compsoc]{IEEEtran}",
+            "fontPx": 19,
+            "time": 7.599,
+            "seconds": 3.862
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(3)",
+            "text": "\\usepackage[utf8]{inputenc}",
+            "fontPx": 19,
+            "time": 7.599,
+            "seconds": 3.737
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(4)",
+            "text": "\\usepackage{amsmath,amssymb,amsfonts}",
+            "fontPx": 19,
+            "time": 7.723,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(5)",
+            "text": "\\usepackage{graphicx}",
+            "fontPx": 19,
+            "time": 7.848,
+            "seconds": 3.488
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(6)",
+            "text": "\\usepackage{booktabs}",
+            "fontPx": 19,
+            "time": 7.973,
+            "seconds": 3.363
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(7)",
+            "text": "\\usepackage{cite}",
+            "fontPx": 19,
+            "time": 7.973,
+            "seconds": 3.363
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(8)",
+            "text": "\\begin{document}",
+            "fontPx": 19,
+            "time": 8.097,
+            "seconds": 3.239
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(9)",
+            "text": "\\title{Byzantine Fault-Tolerant Consensus on Async Networks}",
+            "fontPx": 19,
+            "time": 8.222,
+            "seconds": 3.364
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(10)",
+            "text": "\\author{Devon Vance, Marcus Sterling, and H. K. Rao}",
+            "fontPx": 19,
+            "time": 8.346,
+            "seconds": 3.115
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(11)",
+            "text": "\\maketitle",
+            "fontPx": 19,
+            "time": 8.346,
+            "seconds": 2.99
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(12)",
+            "text": "\\section{System Formalization}",
+            "fontPx": 19,
+            "time": 8.471,
+            "seconds": 2.865
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(13)",
+            "text": "Let $\\mathcal{N} = \\{1, \\dots, n\\}$ denote the set of nodes...",
+            "fontPx": 19,
+            "time": 8.595,
+            "seconds": 2.991
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(14)",
+            "text": "\\begin{align}",
+            "fontPx": 19,
+            "time": 8.72,
+            "seconds": 2.616
+          },
+          {
+            "selector": "div.dc-ln.i2",
+            "text": "Q_{valid} &\\ge \\left\\lfloor \\frac{2n+1}{3} \\right\\rfloor + f_{byz}",
+            "fontPx": 19,
+            "time": 8.845,
+            "seconds": 2.741
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(16)",
+            "text": "\\end{align}",
+            "fontPx": 19,
+            "time": 8.845,
+            "seconds": 2.491
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(17)",
+            "text": "\\includegraphics[width=0.9\\linewidth]{assets/figure_1.png}",
+            "fontPx": 19,
+            "time": 8.969,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(18)",
+            "text": "\\end{document}",
+            "fontPx": 19,
+            "time": 9.094,
+            "seconds": 2.242
+          },
+          {
+            "selector": "#dc-dsub",
+            "text": "Convert a PDF into LaTeX inside this project.",
+            "fontPx": 22,
+            "time": 6.478,
+            "seconds": 4.858
+          },
+          {
+            "selector": "#dc-verified-sub",
+            "text": "with pdflatex",
+            "fontPx": 22,
+            "time": 9.343,
+            "seconds": 1.993
+          },
+          {
+            "selector": "#dc-kick",
+            "text": "02 // PDF TO LATEX CODE",
+            "fontPx": 24,
+            "time": 6.478,
+            "seconds": 4.858
+          },
+          {
+            "selector": "#dc-verified",
+            "text": "[✓] VERIFIED ZERO-ERROR COMPILATION",
+            "fontPx": 26,
+            "time": 9.343,
+            "seconds": 1.993
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 96 text elements stay under it for 0.5 s or more, the smallest \"AR\" at 14 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "AR",
+        "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 1672.6,
+          "y": 259.5,
+          "width": 19.66,
+          "height": 17
+        },
+        "time": 11.585,
+        "times": [
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.585,
+          11.71,
+          11.959,
+          11.959,
+          11.959,
+          12.582,
+          12.706,
+          12.706,
+          12.706,
+          12.706,
+          12.706,
+          12.706,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.329,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.454,
+          13.578,
+          13.578,
+          13.578,
+          13.578,
+          13.578,
+          13.578
+        ],
+        "fontPx": 14,
+        "floorPx": 28,
+        "seconds": 3.738,
+        "elements": [
+          {
+            "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+            "text": "AR",
+            "fontPx": 14,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2)",
+            "text": "SV",
+            "fontPx": 14,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-latest",
+            "text": "Latest",
+            "fontPx": 14,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-accept",
+            "text": "Accept",
+            "fontPx": 16.74,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "#ag-engine",
+            "text": "pdfLaTeX",
+            "fontPx": 17,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-file",
+            "text": "/ main.tex",
+            "fontPx": 18,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "1",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2)",
+            "text": "[12pt,report]{report}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\documentclass",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "2",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{graphicx}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(1)",
+            "text": "3",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(2)",
+            "text": "{amsmath,amssymb,amsfonts}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(1)",
+            "text": "4",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(2)",
+            "text": "{hyperref}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(6) > span:nth-of-type(1)",
+            "text": "5",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(1)",
+            "text": "6",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(2)",
+            "text": "{Seminar & Project Report: Modern Machine Learning Systems}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\title",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(1)",
+            "text": "7",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(2)",
+            "text": "{Alex Rivers, Sam Vance}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\author",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(9) > span:nth-of-type(1)",
+            "text": "8",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(1)",
+            "text": "9",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(2)",
+            "text": "{document}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(11) > span:nth-of-type(1)",
+            "text": "10",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(11) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\maketitle",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(12) > span:nth-of-type(1)",
+            "text": "11",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(1)",
+            "text": "12",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(2)",
+            "text": "{Introduction}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\section",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(14) > span:nth-of-type(1)",
+            "text": "13",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(14) > span:nth-of-type(2)",
+            "text": "Academic collaboration on reports and presentations requires",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(15) > span:nth-of-type(1)",
+            "text": "14",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(15) > span:nth-of-type(2)",
+            "text": "fast TeX symbol insertion and instant PDF rendering.",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(16) > span:nth-of-type(1)",
+            "text": "15",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(1)",
+            "text": "16",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(2)",
+            "text": "{Project Methodology & Results}",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\section",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "17",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.62
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "18",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.62
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "19",
+            "fontPx": 19,
+            "time": 11.585,
+            "seconds": 1.62
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "17",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "{table}[h]",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "18",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(2) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\centering",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "19",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{Experimental results}",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\caption",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(1)",
+            "text": "20",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(2)",
+            "text": "{tabular}{lcc}",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(5) > span:nth-of-type(1)",
+            "text": "21",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(5) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\hline",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(6) > span:nth-of-type(1)",
+            "text": "22",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(6) > span:nth-of-type(2)",
+            "text": "Method & Dataset & Result \\\\",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(7) > span:nth-of-type(1)",
+            "text": "23",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(7) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\hline",
+            "fontPx": 19,
+            "time": 13.329,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "Students and team members can co-author reports, lab",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(2)",
+            "text": "assignments, and Beamer slides anywhere.",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{document}",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "26",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(1)",
+            "text": "24",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(2)",
+            "text": "{tabular}",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(1)",
+            "text": "25",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(2)",
+            "text": "{table}",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.744
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "27",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "28",
+            "fontPx": 19,
+            "time": 13.454,
+            "seconds": 1.869
+          },
+          {
+            "selector": "#ag-live",
+            "text": "Live",
+            "fontPx": 20,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-cmp-a",
+            "text": "Compile TeX",
+            "fontPx": 20,
+            "time": 11.585,
+            "seconds": 2.118
+          },
+          {
+            "selector": "#ag-toggle > span:nth-of-type(1)",
+            "text": "Ask",
+            "fontPx": 22,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-toggle > span:nth-of-type(2)",
+            "text": "Edit",
+            "fontPx": 22,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-review > span:nth-of-type(1)",
+            "text": "1 / 1",
+            "fontPx": 22,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "span.add",
+            "text": "+9",
+            "fontPx": 22,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "span.del",
+            "text": "−0",
+            "fontPx": 22,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "#ag-review > span:nth-of-type(3)",
+            "text": "main.tex",
+            "fontPx": 22,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "#ag-reject",
+            "text": "Reject",
+            "fontPx": 22,
+            "time": 13.578,
+            "seconds": 1.745
+          },
+          {
+            "selector": "#ag-l1",
+            "text": "Finding target…",
+            "fontPx": 23,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-l2",
+            "text": "Applying patch…",
+            "fontPx": 23,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-l3",
+            "text": "Compiling…",
+            "fontPx": 23,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-l4",
+            "text": "Done",
+            "fontPx": 23,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-proj",
+            "text": "Seminar Report",
+            "fontPx": 24,
+            "time": 11.585,
+            "seconds": 3.738
+          },
+          {
+            "selector": "#ag-kick",
+            "text": "01 // AGENTIC AI FOR LATEX",
+            "fontPx": 24,
+            "time": 11.71,
+            "seconds": 3.613
+          },
+          {
+            "selector": "#ag-reason-head",
+            "text": "Agent Reasoning",
+            "fontPx": 24,
+            "time": 12.706,
+            "seconds": 2.617
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(1)",
+            "text": "a",
+            "fontPx": 26,
+            "time": 11.959,
+            "seconds": 0.623
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(2)",
+            "text": "d",
+            "fontPx": 26,
+            "time": 11.959,
+            "seconds": 0.623
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(3)",
+            "text": "d",
+            "fontPx": 26,
+            "time": 11.959,
+            "seconds": 0.623
+          },
+          {
+            "selector": "#ag-ph",
+            "text": "Ask agent to edit LaTeX...",
+            "fontPx": 26,
+            "time": 12.582,
+            "seconds": 2.741
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"a d d a r e s u l t s t a b l\" (15 words) is on screen 0.70 s (±0.01 s), under its 3.75 s floor: hold it about 0.5 s + 0.3 s a word (5.00 s here) before it leaves or changes; see references/motion.md.",
+        "text": "a d d a r e s u l t s t a b l",
+        "selector": "#ag-typed",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 1227,
+          "y": 874,
+          "width": 46.450000000000045,
+          "height": 31
+        },
+        "time": 11.873,
+        "words": 15,
+        "seconds": 0.701,
+        "floorSeconds": 3.75
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 175
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  },
+  "saved": {
+    "id": "745f48ba-6bc9-444a-a12c-56e1ec05a763",
+    "revision": "68f9309d-9ecf-4097-8313-ada570f38f6d",
+    "report": "/home/abin/overbranch/brag-output/composition/.hyperframes/artifacts/checks/745f48ba-6bc9-444a-a12c-56e1ec05a763.json",
+    "attribution": "recorded-revision"
+  },
+  "_meta": {
+    "version": "0.8.191",
+    "latestVersion": "0.8.191",
+    "updateAvailable": false
+  }
+}

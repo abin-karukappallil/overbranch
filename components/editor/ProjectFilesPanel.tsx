@@ -30,14 +30,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
+import { useProjectFiles, type ProjectFile } from "@/components/editor/useProjectFiles";
 
-export interface ProjectFile {
-  path: string;
-  name: string;
-  size: number;
-  type: "document" | "image";
-  ext: string;
-}
+export type { ProjectFile };
 
 interface ProjectFilesPanelProps {
   projectId: string;
@@ -53,9 +48,6 @@ interface ProjectFilesPanelProps {
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
-// In-memory SWR cache for instant file tree display across views and re-renders
-const fileListCache = new Map<string, { files: ProjectFile[]; timestamp: number }>();
-
 export function ProjectFilesPanel({
   projectId,
   activeFilePath,
@@ -66,8 +58,8 @@ export function ProjectFilesPanel({
   refreshTrigger,
   onImportPdf,
 }: ProjectFilesPanelProps) {
-  const [files, setFiles] = useState<ProjectFile[]>(() => fileListCache.get(projectId)?.files || []);
-  const [isLoading, setIsLoading] = useState(() => !fileListCache.has(projectId));
+  // Shared module-level cache + fetch (also feeds the chat's @file mention popover).
+  const { files, loading: isLoading, refetch } = useProjectFiles(projectId, refreshTrigger);
   const [isUploading, setIsUploading] = useState(false);
   const [search, setSearch] = useState("");
   const [newFileModal, setNewFileModal] = useState(false);
@@ -136,33 +128,6 @@ export function ProjectFilesPanel({
     };
   }, [previewImage, projectId]);
 
-  const fetchFiles = async (forceSpinner = false) => {
-    if (!projectId) return;
-    const cached = fileListCache.get(projectId);
-    const hasCache = !!cached && cached.files.length > 0;
-    if (!hasCache || forceSpinner) {
-      setIsLoading(true);
-    }
-    try {
-      const res = await authFetch(`${BACKEND_URL}/api/projects/list-files?project_id=${projectId}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.files && Array.isArray(data.files)) {
-          setFiles(data.files);
-          fileListCache.set(projectId, { files: data.files, timestamp: Date.now() });
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to fetch project files list:", err);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchFiles();
-  }, [projectId, refreshTrigger]);
-
   const handleFileUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0 || !projectId) return;
 
@@ -199,8 +164,7 @@ export function ProjectFilesPanel({
     setIsUploading(false);
     if (successCount > 0) {
       toast.success(`Successfully uploaded ${successCount} asset(s)!`);
-      fileListCache.delete(projectId);
-      fetchFiles(true);
+      refetch();
     }
   };
 
@@ -226,8 +190,7 @@ export function ProjectFilesPanel({
         toast.success(`Created file ${cleanName}`);
         setNewFileName("");
         setNewFileModal(false);
-        fileListCache.delete(projectId);
-        fetchFiles(true);
+        refetch();
         onSelectFile(cleanName, "document");
       } else {
         toast.error("Failed to create new file.");
@@ -268,8 +231,7 @@ export function ProjectFilesPanel({
         toast.success(`Renamed ${oldPath} to ${newPath}`);
         setRenameModalFile(null);
         setNewRenamePath("");
-        fileListCache.delete(projectId);
-        fetchFiles(true);
+        refetch();
         if (activeFilePath === oldPath) {
           onSelectFile(newPath, renameModalFile.type);
         }
@@ -301,8 +263,7 @@ export function ProjectFilesPanel({
 
       if (res.ok) {
         toast.success(`Deleted ${filePath}`);
-        fileListCache.delete(projectId);
-        fetchFiles(true);
+        refetch();
         if (activeFilePath === filePath) {
           onSelectFile("main.tex", "document");
         }

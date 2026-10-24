@@ -1,0 +1,606 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-workbench, #0e0f12);
+      font-family: "Inter", sans-serif;
+    }
+    #ag-stage {
+      position: absolute;
+      inset: 0;
+    }
+    #ag-kick {
+      position: absolute;
+      left: 120px;
+      top: 80px;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: 0.14em;
+      color: #00cc68;
+    }
+    #ag-head {
+      position: absolute;
+      left: 120px;
+      top: 124px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 64px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: #ffffff;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .ag-w {
+      display: inline-block;
+      margin-right: 0.24em;
+    }
+    /* Editor workspace (components/editor/EditorLayout.tsx, dark theme) */
+    #ag-win {
+      position: absolute;
+      left: 120px;
+      top: 236px;
+      width: 1680px;
+      height: 770px;
+      background: #0e0f12;
+      border: 2px solid #282a30;
+      border-radius: 20px;
+      overflow: hidden;
+    }
+    #ag-top {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 22px;
+      background: #141519;
+      border-bottom: 1px solid #282a30;
+    }
+    .ag-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    #ag-top img {
+      width: 30px;
+      height: 30px;
+    }
+    #ag-proj {
+      font-weight: 600;
+      font-size: 24px;
+      color: #e2e4e9;
+    }
+    #ag-file {
+      font-family: "Space Mono", monospace;
+      font-size: 18px;
+      color: #9e9e9e;
+    }
+    #ag-live {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 20px;
+      color: #10b981;
+    }
+    #ag-live i {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #10b981;
+    }
+    .ag-av {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 2px solid #141519;
+      font-weight: 700;
+      font-size: 14px;
+      line-height: 32px;
+      text-align: center;
+    }
+    #ag-engine {
+      font-family: "Space Mono", monospace;
+      font-size: 17px;
+      color: #c9ccd3;
+      border: 1px solid #282a30;
+      border-radius: 8px;
+      padding: 6px 12px;
+    }
+    #ag-compile {
+      position: relative;
+      width: 168px;
+      height: 42px;
+      border-radius: 10px;
+      background: #10b981;
+      color: #04130d;
+      font-weight: 700;
+      font-size: 20px;
+    }
+    #ag-compile span {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 9px;
+      text-align: center;
+    }
+    #ag-ed {
+      position: absolute;
+      left: 0;
+      top: 62px;
+      width: 1060px;
+      height: 706px;
+      background: #121b17;
+      overflow: hidden;
+    }
+    #ag-code {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 16px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 19px;
+      line-height: 30px;
+      color: #f4f4f5;
+    }
+    .ln {
+      position: relative;
+      height: 30px;
+      display: flex;
+      white-space: pre;
+    }
+    .ln .n {
+      width: 64px;
+      padding-right: 18px;
+      text-align: right;
+      color: #71717a;
+    }
+    .ln .k {
+      color: #6ee7b7;
+    }
+    #ag-hl {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 450px;
+      height: 30px;
+      background: #1c2b25;
+    }
+    #ag-diff {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 480px;
+      background: rgba(16, 185, 129, 0.16);
+      border-left: 4px solid #10b981;
+    }
+    #ag-diff .n {
+      color: #10b981;
+    }
+    #ag-tail {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 480px;
+    }
+    .nn {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 64px;
+      height: 30px;
+      color: #71717a;
+    }
+    .nn span {
+      position: absolute;
+      right: 18px;
+      top: 0;
+    }
+    /* Inline diff review bar */
+    #ag-review {
+      position: absolute;
+      left: 230px;
+      top: 682px;
+      width: 600px;
+      height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 10px 0 20px;
+      background: #141519;
+      border: 1px solid #282a30;
+      border-radius: 14px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      font-family: "Space Mono", monospace;
+      font-size: 22px;
+      color: #c9ccd3;
+    }
+    #ag-review .add {
+      color: #10b981;
+      font-weight: 700;
+    }
+    #ag-review .del {
+      color: #eb5757;
+      font-weight: 700;
+    }
+    #ag-reject {
+      margin-left: auto;
+      height: 40px;
+      padding: 0 16px;
+      border-radius: 10px;
+      background: rgba(235, 87, 87, 0.12);
+      border: 1px solid rgba(235, 87, 87, 0.35);
+      color: #eb5757;
+      font-weight: 700;
+      line-height: 38px;
+    }
+    #ag-accept {
+      width: 120px;
+      height: 40px;
+      border-radius: 10px;
+      background: #059669;
+      color: #ffffff;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 18px;
+      line-height: 40px;
+      text-align: center;
+    }
+    /* Copilot panel */
+    #ag-chat {
+      position: absolute;
+      left: 1060px;
+      top: 62px;
+      width: 616px;
+      height: 706px;
+      background: #141519;
+      border-left: 1px solid #282a30;
+    }
+    #ag-chat-head {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      padding: 0 22px;
+      border-bottom: 1px solid #282a30;
+    }
+    #ag-toggle {
+      display: flex;
+      padding: 4px;
+      gap: 4px;
+      border: 1px solid #282a30;
+      border-radius: 999px;
+      background: #0e0f12;
+      font-weight: 600;
+      font-size: 22px;
+    }
+    #ag-toggle span {
+      padding: 5px 18px;
+      border-radius: 999px;
+      color: #9e9e9e;
+    }
+    #ag-toggle span.on {
+      background: #10b981;
+      color: #04130d;
+    }
+    #ag-ubub {
+      position: absolute;
+      right: 22px;
+      top: 90px;
+      padding: 12px 18px;
+      background: #1a1c22;
+      border: 1px solid #282a30;
+      border-radius: 16px;
+      font-size: 28px;
+      font-weight: 500;
+      color: #e2e4e9;
+    }
+    #ag-reason {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      top: 166px;
+      padding: 18px 22px 10px;
+      background: #0e0f12;
+      border: 1px solid #282a30;
+      border-radius: 16px;
+    }
+    #ag-reason-head {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+      font-weight: 600;
+      font-size: 24px;
+      color: #e2e4e9;
+    }
+    #ag-latest {
+      font-family: "Space Mono", monospace;
+      font-size: 14px;
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      border-radius: 6px;
+      padding: 1px 8px;
+    }
+    .st {
+      height: 50px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .st-icon {
+      position: relative;
+      width: 26px;
+      height: 26px;
+    }
+    .st-ring,
+    .st-spin,
+    .st-done {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+    }
+    .st-ring {
+      border: 3px solid #3a3d45;
+    }
+    .st-spin {
+      border: 3px solid transparent;
+      border-top-color: #10b981;
+      border-right-color: #10b981;
+      opacity: 0;
+    }
+    .st-done {
+      background: #10b981;
+      color: #04130d;
+      font-weight: 800;
+      font-size: 15px;
+      line-height: 26px;
+      text-align: center;
+      opacity: 0;
+    }
+    .st-label {
+      font-family: "Space Mono", monospace;
+      font-size: 23px;
+      color: #9e9e9e;
+    }
+    #ag-input {
+      position: absolute;
+      left: 22px;
+      right: 22px;
+      bottom: 22px;
+      height: 130px;
+      background: #0e0f12;
+      border: 2px solid #282a30;
+      border-radius: 16px;
+    }
+    #ag-ph,
+    #ag-typed {
+      position: absolute;
+      left: 20px;
+      top: 18px;
+      font-size: 26px;
+      white-space: pre;
+    }
+    #ag-ph {
+      color: #9e9e9e;
+    }
+    #ag-typed {
+      color: #e2e4e9;
+    }
+    .tc {
+      opacity: 0;
+    }
+    #ag-send {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #10b981;
+      color: #04130d;
+      font-weight: 800;
+      font-size: 24px;
+      line-height: 44px;
+      text-align: center;
+    }
+    #ag-cursor {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 30px;
+      height: 42px;
+    }
+    #ag-iris {
+      position: absolute;
+      inset: 0;
+      background: var(--color-poster, #00cc68);
+    }
+  </style>
+  <div data-hf-id="hf-ye2g" id="root" data-composition-id="agent" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-swp9" id="ag-stage" data-layout-allow-overflow>
+      <div data-hf-id="hf-dorj" id="ag-kick">01 // AGENTIC AI FOR LATEX</div>
+      <div data-hf-id="hf-6uk8" id="ag-head"><span data-hf-id="hf-oosu" class="ag-w">Ask</span><span data-hf-id="hf-62co" class="ag-w">the</span><span data-hf-id="hf-6kea" class="ag-w">agent</span><span data-hf-id="hf-q55k" class="ag-w">to</span><span data-hf-id="hf-vp0t" class="ag-w">edit</span><span data-hf-id="hf-r10j" class="ag-w">LaTeX.</span></div>
+
+      <div data-hf-id="hf-hlts" id="ag-win">
+        <div data-hf-id="hf-47g3" id="ag-top">
+          <div data-hf-id="hf-6wnf" class="ag-row">
+            <img data-hf-id="hf-ublm" src="assets/img/overbranch-logo.svg" alt="" />
+            <span data-hf-id="hf-bis9" id="ag-proj">Seminar Report</span>
+            <span data-hf-id="hf-qbiw" id="ag-file">/ main.tex</span>
+          </div>
+          <div data-hf-id="hf-zq5n" class="ag-row">
+            <span data-hf-id="hf-mzlb" id="ag-live"><i data-hf-id="hf-wt6k"></i>Live</span>
+            <div data-hf-id="hf-95kr" class="ag-row" style="gap: 0">
+              <div data-hf-id="hf-nhkr" class="ag-av" style="background: #6366f1; color: #ffffff">AR</div>
+              <div data-hf-id="hf-h894" class="ag-av" style="background: #f59e0b; color: #000000; margin-left: -8px">SV</div>
+            </div>
+            <span data-hf-id="hf-is2n" id="ag-engine">pdfLaTeX</span>
+            <div data-hf-id="hf-ntel" id="ag-compile"><span data-hf-id="hf-gt2l" id="ag-cmp-a">Compile TeX</span><span data-hf-id="hf-rdeo" id="ag-cmp-b">Compiling...</span></div>
+          </div>
+        </div>
+
+        <div data-hf-id="hf-94q6" id="ag-ed" data-layout-allow-overflow>
+          <div data-hf-id="hf-0hht" id="ag-code">
+            <div data-hf-id="hf-wl2u" id="ag-hl"></div>
+            <div data-hf-id="hf-qg4r" class="ln early"><span data-hf-id="hf-e3y0" class="n">1</span><span data-hf-id="hf-rzl6"><span data-hf-id="hf-r4m3" class="k">\documentclass</span>[12pt,report]{report}</span></div>
+            <div data-hf-id="hf-wd8r" class="ln early"><span data-hf-id="hf-cx0x" class="n">2</span><span data-hf-id="hf-ga0h"><span data-hf-id="hf-z3k9" class="k">\usepackage</span>{graphicx}</span></div>
+            <div data-hf-id="hf-vyxq" class="ln early"><span data-hf-id="hf-dbby" class="n">3</span><span data-hf-id="hf-e3yh"><span data-hf-id="hf-69q5" class="k">\usepackage</span>{amsmath,amssymb,amsfonts}</span></div>
+            <div data-hf-id="hf-vkmp" class="ln early"><span data-hf-id="hf-c4ev" class="n">4</span><span data-hf-id="hf-id3k"><span data-hf-id="hf-7gn8" class="k">\usepackage</span>{hyperref}</span></div>
+            <div data-hf-id="hf-v6bo" class="ln early"><span data-hf-id="hf-cipw" class="n">5</span><span data-hf-id="hf-uckh"> </span></div>
+            <div data-hf-id="hf-us0n" class="ln early"><span data-hf-id="hf-bbst" class="n">6</span><span data-hf-id="hf-oyhj"><span data-hf-id="hf-1mn2" class="k">\title</span>{Seminar &amp; Project Report: Modern Machine Learning Systems}</span></div>
+            <div data-hf-id="hf-udpm" class="ln early"><span data-hf-id="hf-bq3u" class="n">7</span><span data-hf-id="hf-l5gg"><span data-hf-id="hf-x6jv" class="k">\author</span>{Alex Rivers, Sam Vance}</span></div>
+            <div data-hf-id="hf-tzel" class="ln early"><span data-hf-id="hf-gw37" class="n">8</span><span data-hf-id="hf-l73p"> </span></div>
+            <div data-hf-id="hf-gmyq" class="ln"><span data-hf-id="hf-hae8" class="n">9</span><span data-hf-id="hf-mlca"><span data-hf-id="hf-lvnx" class="k">\begin</span>{document}</span></div>
+            <div data-hf-id="hf-ru7a" class="ln"><span data-hf-id="hf-yee0" class="n">10</span><span data-hf-id="hf-me0s"><span data-hf-id="hf-i1ms" class="k">\maketitle</span></span></div>
+            <div data-hf-id="hf-s8ib" class="ln"><span data-hf-id="hf-y02z" class="n">11</span><span data-hf-id="hf-lzpr"> </span></div>
+            <div data-hf-id="hf-smtc" class="ln"><span data-hf-id="hf-xlry" class="n">12</span><span data-hf-id="hf-8gad"><span data-hf-id="hf-8vn3" class="k">\section</span>{Introduction}</span></div>
+            <div data-hf-id="hf-puo5" class="ln"><span data-hf-id="hf-x7gx" class="n">13</span><span data-hf-id="hf-vokx">Academic collaboration on reports and presentations requires</span></div>
+            <div data-hf-id="hf-q8z6" class="ln"><span data-hf-id="hf-wt5w" class="n">14</span><span data-hf-id="hf-kqhx">fast TeX symbol insertion and instant PDF rendering.</span></div>
+            <div data-hf-id="hf-qna7" class="ln"><span data-hf-id="hf-weuv" class="n">15</span><span data-hf-id="hf-n6mu"> </span></div>
+            <div data-hf-id="hf-r1l8" class="ln"><span data-hf-id="hf-w0ju" class="n">16</span><span data-hf-id="hf-g1g3"><span data-hf-id="hf-qjbj" class="k">\section</span>{Project Methodology &amp; Results}</span></div>
+            <div data-hf-id="hf-30kn" id="ag-diff">
+              <div data-hf-id="hf-o9g1" class="ln"><span data-hf-id="hf-vm8t" class="n">17</span><span data-hf-id="hf-w0c9"><span data-hf-id="hf-8vcx" class="k">\begin</span>{table}[h]</span></div>
+              <div data-hf-id="hf-onr2" class="ln"><span data-hf-id="hf-1ku8" class="n">18</span><span data-hf-id="hf-msbt">  <span data-hf-id="hf-9ttr" class="k">\centering</span></span></div>
+              <div data-hf-id="hf-9fs2" class="ln"><span data-hf-id="hf-16j7" class="n">19</span><span data-hf-id="hf-l40d">  <span data-hf-id="hf-gzcq" class="k">\caption</span>{Experimental results}</span></div>
+              <div data-hf-id="hf-91h1" class="ln"><span data-hf-id="hf-yjyr" class="n">20</span><span data-hf-id="hf-gfpy">  <span data-hf-id="hf-a2a0" class="k">\begin</span>{tabular}{lcc}</span></div>
+              <div data-hf-id="hf-a8e4" class="ln"><span data-hf-id="hf-yy9s" class="n">21</span><span data-hf-id="hf-nz8w">    <span data-hf-id="hf-c1ey" class="k">\hline</span></span></div>
+              <div data-hf-id="hf-9u33" class="ln"><span data-hf-id="hf-xrcp" class="n">22</span><span data-hf-id="hf-fvdf">    Method &amp; Dataset &amp; Result \\</span></div>
+              <div data-hf-id="hf-b106" class="ln"><span data-hf-id="hf-y5nq" class="n">23</span><span data-hf-id="hf-nkxv">    <span data-hf-id="hf-ohda" class="k">\hline</span></span></div>
+              <div data-hf-id="hf-amp5" class="ln"><span data-hf-id="hf-wyqn" class="n">24</span><span data-hf-id="hf-kqkm">  <span data-hf-id="hf-8esd" class="k">\end</span>{tabular}</span></div>
+              <div data-hf-id="hf-btm8" class="ln"><span data-hf-id="hf-xd1o" class="n">25</span><span data-hf-id="hf-r5kd"><span data-hf-id="hf-pwq9" class="k">\end</span>{table}</span></div>
+            </div>
+            <div data-hf-id="hf-7kkw" id="ag-tail">
+              <div data-hf-id="hf-bfb7" class="ln"><span data-hf-id="hf-40bd" class="n"></span><span data-hf-id="hf-q3vo">Students and team members can co-author reports, lab</span><span data-hf-id="hf-ws99" class="nn"><span data-hf-id="hf-90q2" class="na">17</span><span data-hf-id="hf-l34d" class="nb">26</span></span></div>
+              <div data-hf-id="hf-69bu" class="ln"><span data-hf-id="hf-km7h" class="n"></span><span data-hf-id="hf-awlh">assignments, and Beamer slides anywhere.</span><span data-hf-id="hf-goch" class="nn"><span data-hf-id="hf-e6pf" class="na">18</span><span data-hf-id="hf-lhfe" class="nb">27</span></span></div>
+              <div data-hf-id="hf-5v0t" class="ln"><span data-hf-id="hf-lt4k" class="n"></span><span data-hf-id="hf-bexa"><span data-hf-id="hf-r3nc" class="k">\end</span>{document}</span><span data-hf-id="hf-hv9k" class="nn"><span data-hf-id="hf-el0g" class="na">19</span><span data-hf-id="hf-qner" class="nb">28</span></span></div>
+            </div>
+          </div>
+        </div>
+
+        <div data-hf-id="hf-cs40" id="ag-review" data-layout-allow-occlusion>
+          <span data-hf-id="hf-x0ia">1 / 1</span>
+          <span data-hf-id="hf-ieyi"><span data-hf-id="hf-4zwq" class="add">+9</span> <span data-hf-id="hf-h5wi" class="del">−0</span></span>
+          <span data-hf-id="hf-w4nv">main.tex</span>
+          <span data-hf-id="hf-j6qp" id="ag-reject">Reject</span>
+          <span data-hf-id="hf-t8jr" id="ag-accept">Accept</span>
+        </div>
+
+        <div data-hf-id="hf-na2w" id="ag-chat">
+          <div data-hf-id="hf-yezb" id="ag-chat-head">
+            <div data-hf-id="hf-0c8a" id="ag-toggle"><span data-hf-id="hf-x7qe">Ask</span><span data-hf-id="hf-e6cy" class="on">Edit</span></div>
+          </div>
+          <div data-hf-id="hf-mwgo" id="ag-ubub">add a results table</div>
+          <div data-hf-id="hf-t6ra" id="ag-reason">
+            <div data-hf-id="hf-soo6" id="ag-reason-head">Agent Reasoning <span data-hf-id="hf-7jcp" id="ag-latest">Latest</span></div>
+            <div data-hf-id="hf-fs85" class="st"><div data-hf-id="hf-f83t" class="st-icon"><div data-hf-id="hf-krbg" class="st-ring"></div><div data-hf-id="hf-6kvl" class="st-spin" id="ag-s1"></div><div data-hf-id="hf-hxhp" class="st-done" id="ag-d1">✓</div></div><span data-hf-id="hf-ekgz" class="st-label" id="ag-l1">Finding target…</span></div>
+            <div data-hf-id="hf-v6k9" class="st"><div data-hf-id="hf-hg3h" class="st-icon"><div data-hf-id="hf-guas" class="st-ring"></div><div data-hf-id="hf-aizm" class="st-spin" id="ag-s2"></div><div data-hf-id="hf-1m98" class="st-done" id="ag-d2">✓</div></div><span data-hf-id="hf-z2nu" class="st-label" id="ag-l2">Applying patch…</span></div>
+            <div data-hf-id="hf-wdhc" class="st"><div data-hf-id="hf-in0k" class="st-icon"><div data-hf-id="hf-fndp" class="st-ring"></div><div data-hf-id="hf-eh3n" class="st-spin" id="ag-s3"></div><div data-hf-id="hf-s87j" class="st-done" id="ag-d3">✓</div></div><span data-hf-id="hf-644n" class="st-label" id="ag-l3">Compiling…</span></div>
+            <div data-hf-id="hf-vz6b" class="st"><div data-hf-id="hf-i8pj" class="st-icon"><div data-hf-id="hf-g1oq" class="st-ring"></div><div data-hf-id="hf-qzm4" class="st-spin" id="ag-s4"></div><div data-hf-id="hf-i6h2" class="st-done" id="ag-d4">✓</div></div><span data-hf-id="hf-pi58" class="st-label" id="ag-l4">Done</span></div>
+          </div>
+          <div data-hf-id="hf-k3va" id="ag-input">
+            <span data-hf-id="hf-ijhc" id="ag-ph">Ask agent to edit LaTeX...</span>
+            <span data-hf-id="hf-pf15" id="ag-typed"><span data-hf-id="hf-00ah" class="tc">a</span><span data-hf-id="hf-ytde" class="tc">d</span><span data-hf-id="hf-86ba" class="tc">d</span><span data-hf-id="hf-ha8y" class="tc"> </span><span data-hf-id="hf-c9ql" class="tc">a</span><span data-hf-id="hf-rfuu" class="tc"> </span><span data-hf-id="hf-uub4" class="tc">r</span><span data-hf-id="hf-yf2d" class="tc">e</span><span data-hf-id="hf-ug03" class="tc">s</span><span data-hf-id="hf-s25x" class="tc">u</span><span data-hf-id="hf-vmx6" class="tc">l</span><span data-hf-id="hf-sggy" class="tc">t</span><span data-hf-id="hf-b283" class="tc">s</span><span data-hf-id="hf-ru5v" class="tc"> </span><span data-hf-id="hf-ysee" class="tc">t</span><span data-hf-id="hf-dgno" class="tc">a</span><span data-hf-id="hf-177k" class="tc">b</span><span data-hf-id="hf-1vny" class="tc">l</span><span data-hf-id="hf-tu6x" class="tc">e</span></span>
+            <div data-hf-id="hf-cgzr" id="ag-send">↑</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <svg data-hf-id="hf-a3uy" id="ag-cursor" viewBox="0 0 30 42" data-layout-ignore>
+      <path data-hf-id="hf-1ppg" d="M2 2 L2 34 L10 26 L16 40 L22 37 L16 24 L27 24 Z" fill="#ffffff" stroke="#000000" stroke-width="2.5" stroke-linejoin="round" />
+    </svg>
+    <div data-hf-id="hf-o8ek" id="ag-iris" data-layout-ignore></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // Accept button centre in frame coordinates (window 120,236 + bar 230,682 + button 470..590)
+      const AX = 120 + 2 + 230 + 1 + 470 + 60;
+      const AY = 236 + 2 + 682 + 29;
+      // Send button centre (chat 1060,62 inside window; input right/bottom 22; button right/bottom 14)
+      const SX = 120 + 2 + 1060 + 616 - 22 - 2 - 14 - 22;
+      const SY = 236 + 2 + 62 + 706 - 22 - 2 - 14 - 22;
+
+      // Pushed in from the editor's agent input: lands slightly large around the input and settles
+      tl.set("#ag-stage", { transformOrigin: "1490px 918px" }, 0);
+      tl.fromTo("#ag-stage", { scale: 1.12, filter: "blur(12px)" }, { scale: 1, filter: "blur(0px)", duration: 0.36, ease: "expo.out" }, 0);
+      tl.fromTo("#ag-kick", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 0.1);
+      // Headline: per word from grey to ink
+      tl.fromTo("#ag-head .ag-w", { color: "#3a3d45" }, { color: "#ffffff", duration: 0.1, ease: "power2.out", stagger: 0.08 }, 0.14);
+
+      // Initial states
+      tl.set(["#ag-ubub", "#ag-reason", "#ag-review", "#ag-cmp-b"], { opacity: 0 }, 0);
+      tl.set("#ag-diff", { opacity: 0, clipPath: "inset(0% 0% 100% 0%)" }, 0);
+      tl.set("#ag-cursor", { x: 1560, y: 1100 }, 0);
+
+      // Typing the prompt (key SFX 11.86–12.37s)
+      tl.set("#ag-ph", { opacity: 0 }, 0.38);
+      tl.set("#ag-typed .tc", { opacity: 1, stagger: 0.032 }, 0.39);
+
+      // Cursor to Send, click on the beat (12.56s)
+      tl.to("#ag-cursor", { x: SX - 4, y: SY - 6, duration: 0.5, ease: "power2.inOut" }, 0.5);
+      tl.to("#ag-cursor", { scale: 0.82, duration: 0.06, ease: "power2.in" }, 1.04);
+      tl.to("#ag-cursor", { scale: 1, duration: 0.12, ease: "power2.out" }, 1.11);
+      tl.to("#ag-send", { scale: 0.86, duration: 0.06 }, 1.04);
+      tl.to("#ag-send", { scale: 1, duration: 0.14, ease: "back.out(2)" }, 1.11);
+      tl.set("#ag-typed", { opacity: 0 }, 1.09);
+      tl.set("#ag-ph", { opacity: 1 }, 1.09);
+      tl.fromTo("#ag-ubub", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.22, ease: "expo.out" }, 1.09);
+      tl.fromTo("#ag-reason", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.26, ease: "expo.out" }, 1.14);
+
+      // beat-grid: agent steps at 12.56, 13.11, 13.64, 14.20s
+      const starts = [1.12, 1.64, 2.17, 2.73];
+      const ends = [1.64, 2.17, 2.73, 2.73];
+      starts.forEach((t, i) => {
+        const n = i + 1;
+        if (ends[i] > t) {
+          tl.set("#ag-s" + n, { opacity: 1 }, t);
+          tl.fromTo("#ag-s" + n, { rotation: 0 }, { rotation: 400, duration: ends[i] - t, ease: "none" }, t);
+          tl.set("#ag-s" + n, { opacity: 0 }, ends[i]);
+        }
+        tl.to("#ag-l" + n, { color: "#e2e4e9", duration: 0.1 }, t);
+        tl.fromTo("#ag-d" + n, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.2, ease: "back.out(2)" }, ends[i]);
+      });
+      tl.to("#ag-l4", { color: "#10b981", duration: 0.1 }, 2.73);
+
+      // The patch lands (13.11s): tail moves down, the diff wipes open, the editor scrolls to it
+      tl.to("#ag-hl", { opacity: 0, duration: 0.1 }, 1.64);
+      tl.to("#ag-tail", { y: 270, duration: 0.3, ease: "power3.out" }, 1.64);
+      tl.to("#ag-diff", { opacity: 1, clipPath: "inset(0% 0% 0% 0%)", duration: 0.36, ease: "power2.out" }, 1.68);
+      tl.to("#ag-code", { y: -256, duration: 0.42, ease: "power2.inOut" }, 1.7);
+      tl.to("#ag-code .early", { opacity: 0, duration: 0.3, ease: "power2.in" }, 1.7);
+      // Tail line numbers renumber 17-19 -> 26-28
+      tl.set("#ag-tail .nb", { opacity: 0 }, 0);
+      tl.set("#ag-tail .na", { opacity: 0 }, 1.66);
+      tl.set("#ag-tail .nb", { opacity: 1 }, 1.66);
+      tl.fromTo("#ag-review", { opacity: 0, y: 24 }, { opacity: 1, y: 0, duration: 0.26, ease: "expo.out" }, 1.95);
+
+      // Compile toolbar reflects the agent's compile step
+      tl.set("#ag-cmp-a", { opacity: 0 }, 2.17);
+      tl.set("#ag-cmp-b", { opacity: 1 }, 2.17);
+      tl.set("#ag-cmp-b", { opacity: 0 }, 2.73);
+      tl.set("#ag-cmp-a", { opacity: 1 }, 2.73);
+
+      // Cursor to Accept, click on the beat (14.73s)
+      tl.to("#ag-cursor", { x: AX - 6, y: AY - 8, duration: 0.42, ease: "power2.inOut" }, 2.78);
+      tl.to("#ag-cursor", { scale: 0.82, duration: 0.06, ease: "power2.in" }, 3.2);
+      tl.to("#ag-accept", { scale: 0.93, duration: 0.06 }, 3.2);
+      tl.to("#ag-cursor", { scale: 1, duration: 0.1 }, 3.27);
+
+      // Iris from the click onto the poster green
+      tl.fromTo(
+        "#ag-iris",
+        { clipPath: "circle(0px at " + AX + "px " + AY + "px)" },
+        { clipPath: "circle(2300px at " + AX + "px " + AY + "px)", duration: 0.48, ease: "power2.in" },
+        3.33,
+      );
+
+      window.__timelines["agent"] = tl;
+    })();
+  </script>
+</template>

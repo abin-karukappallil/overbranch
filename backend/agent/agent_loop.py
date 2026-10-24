@@ -518,6 +518,13 @@ def format_mentioned_context(mentions: Optional[List[Dict[str, Any]]]) -> str:
             continue
         text = str(m.get("text") or "")
         file = m.get("file") or "main.tex"
+        if (not (m.get("start_line") or 0) and not (m.get("end_line") or 0)
+                and not text.strip()):
+            # A whole-file mention (typed "@main.tex"): no range, no text, so just
+            # name the file and let the agent open it.
+            safe = str(file).replace('"', "&quot;")
+            entries.append(f'[{i}] <file path="{safe}" />')
+            continue
         entries.append(
             f"[{i}] {file} lines {m.get('start_line') or 0}-{m.get('end_line') or 0}\n"
             f"```tex\n{text}\n```")

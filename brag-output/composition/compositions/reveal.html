@@ -1,0 +1,181 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-poster, #00cc68);
+      color: var(--color-ink, #000000);
+    }
+    /* The real landing nav: bordered logo box + black pill */
+    #rv-nav {
+      position: absolute;
+      top: 46px;
+      left: 0;
+      right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 26px;
+    }
+    #rv-logo-box {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 18px;
+      border: 3px solid #000000;
+      box-shadow: 6px 6px 0 0 #000000;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 30px;
+      letter-spacing: -0.02em;
+    }
+    #rv-logo-box img {
+      width: 34px;
+      height: 34px;
+    }
+    .rv-mini-beta {
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.12em;
+      background: #000000;
+      color: #00cc68;
+      padding: 3px 7px;
+      border-radius: 5px;
+    }
+    #rv-pill {
+      display: flex;
+      align-items: center;
+      gap: 34px;
+      padding: 18px 38px;
+      border-radius: 999px;
+      background: #000000;
+      color: #ffffff;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 20px;
+      letter-spacing: 0.08em;
+    }
+    #rv-pill .gh {
+      color: #00cc68;
+    }
+    #rv-word {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 300px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 26px;
+    }
+    #rv-name {
+      font-family: "Archivo Black", sans-serif;
+      font-size: 196px;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      white-space: nowrap;
+    }
+    .rv-l {
+      display: inline-block;
+    }
+    #rv-beta {
+      position: relative;
+      z-index: 10;
+      padding: 10px 18px;
+      border-radius: 12px;
+      background: #000000;
+      color: #00cc68;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 40px;
+      letter-spacing: 0.14em;
+    }
+    #rv-sub {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 548px;
+      text-align: center;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 80px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      text-transform: uppercase;
+    }
+    #rv-kick {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 676px;
+      text-align: center;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 34px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .rv-w {
+      display: inline-block;
+      margin: 0 0.3em;
+    }
+  </style>
+  <div data-hf-id="hf-yqoq" id="root" data-composition-id="reveal" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-hhtd" id="rv-nav">
+      <div data-hf-id="hf-f1pn" id="rv-logo-box">
+        <img data-hf-id="hf-ublm" src="assets/img/overbranch-logo.svg" alt="" />
+        <span data-hf-id="hf-cunv">OVERBRANCH</span>
+        <span data-hf-id="hf-qag4" class="rv-mini-beta">BETA</span>
+      </div>
+      <div data-hf-id="hf-wzbr" id="rv-pill">
+        <span data-hf-id="hf-p3qa">PDF TO LATEX</span><span data-hf-id="hf-qkho">TEMPLATES</span><span data-hf-id="hf-z8am">FEATURES</span><span data-hf-id="hf-my6k">SELF-HOST</span><span data-hf-id="hf-ygo2" class="gh">★ GITHUB</span>
+      </div>
+    </div>
+    <div data-hf-id="hf-jftd" id="rv-word" data-layout-allow-overflow>
+      <div data-hf-id="hf-viaj" id="rv-name"><span data-hf-id="hf-c93n" class="rv-l">O</span><span data-hf-id="hf-3420" class="rv-l">V</span><span data-hf-id="hf-8a1d" class="rv-l">E</span><span data-hf-id="hf-1itw" class="rv-l">R</span><span data-hf-id="hf-7vqc" class="rv-l">B</span><span data-hf-id="hf-k23w" class="rv-l">R</span><span data-hf-id="hf-6ot9" class="rv-l">A</span><span data-hf-id="hf-cneo" class="rv-l">N</span><span data-hf-id="hf-7hfb" class="rv-l">C</span><span data-hf-id="hf-a9ki" class="rv-l">H</span></div>
+      <div data-hf-id="hf-gh9k" id="rv-beta"><span data-hf-id="hf-iqcs" id="rv-beta-txt">BETA</span></div>
+    </div>
+    <div data-hf-id="hf-9o0j" id="rv-sub">Agentic LaTeX code editor</div>
+    <div data-hf-id="hf-3ntw" id="rv-kick"><span data-hf-id="hf-xtdc" class="rv-w">For</span><span data-hf-id="hf-b90p" class="rv-w">students</span><span data-hf-id="hf-nc6e" class="rv-w">and</span><span data-hf-id="hf-qvyw" class="rv-w">researchers</span></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+
+      // beat-locked: 3.01s — wordmark drops letter by letter as the flood lands
+      tl.fromTo(
+        "#rv-name .rv-l",
+        { y: -140, opacity: 0, filter: "blur(8px)" },
+        { y: 0, opacity: 1, filter: "blur(0px)", duration: 0.28, ease: "expo.out", stagger: 0.028 },
+        0.0,
+      );
+      tl.fromTo("#rv-nav", { y: -110, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: "expo.out" }, 0.12);
+      // beat-grid: BETA chip at 3.55s
+      tl.fromTo("#rv-beta", { scale: 0, rotation: -12 }, { scale: 1, rotation: 0, duration: 0.32, ease: "back.out(1.8)" }, 0.53);
+      // Subtitle: the whole line blurs in
+      tl.fromTo("#rv-sub", { opacity: 0, filter: "blur(10px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.18, ease: "power4.out" }, 0.62);
+      // beat-grid: kicker at 4.10s — word by word from light to ink, no movement
+      tl.fromTo(
+        "#rv-kick .rv-w",
+        { color: "rgba(0,0,0,0.18)" },
+        { color: "rgba(0,0,0,1)", duration: 0.12, ease: "power2.out", stagger: 0.08 },
+        1.09,
+      );
+
+      // Object becomes the world: the black BETA chip grows past the frame into the workbench
+      tl.to("#rv-beta-txt", { opacity: 0, duration: 0.08, ease: "power1.in" }, 2.73);
+      tl.to(
+        "#rv-beta",
+        { scaleX: 34, scaleY: 44, borderRadius: 2, backgroundColor: "#0e0f12", duration: 0.54, ease: "power2.inOut" },
+        2.73,
+      );
+      tl.to(
+        ["#rv-name", "#rv-sub", "#rv-kick", "#rv-nav"],
+        { opacity: 0, filter: "blur(15px)", duration: 0.3, ease: "power2.in" },
+        2.8,
+      );
+
+      window.__timelines["reveal"] = tl;
+    })();
+  </script>
+</template>

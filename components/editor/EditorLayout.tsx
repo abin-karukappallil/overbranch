@@ -109,7 +109,8 @@ import {
 import { resolveEditsOnServer } from "@/lib/latex-validate";
 import { ChatAttachments } from "@/components/editor/ChatAttachments";
 import { MentionChips } from "@/components/editor/MentionChips";
-import { addMention, makeMention, removeMention, type MentionRef } from "@/lib/mentions";
+import { addMention, makeFileMention, makeMention, removeMention, type MentionRef } from "@/lib/mentions";
+import { FileMentionPopover } from "@/components/editor/FileMentionPopover";
 import { blockStats, buildReviewBlocks, placeBlocks, type ReviewHunk } from "@/lib/inline-diff";
 import { InlineDiffController, type InlineDiffState } from "@/lib/inline-diff-monaco";
 import { ATTACHMENT_ACCEPT, useChatAttachments } from "@/components/editor/useChatAttachments";
@@ -1176,8 +1177,52 @@ export function EditorLayout({
     }
   };
 
+  // @file mentions: the two chat textareas (as state, so the popovers re-render
+  // once the node exists) and whether either popover is showing.
+  const [desktopChatTextarea, setDesktopChatTextarea] = useState<HTMLTextAreaElement | null>(null);
+  const [mobileChatTextarea, setMobileChatTextarea] = useState<HTMLTextAreaElement | null>(null);
+  const mentionOpenRef = useRef({ desktop: false, mobile: false });
+  const setDesktopMentionOpen = useCallback((open: boolean) => { mentionOpenRef.current.desktop = open; }, []);
+  const setMobileMentionOpen = useCallback((open: boolean) => { mentionOpenRef.current.mobile = open; }, []);
+
+  /** Swap the `@query` the user typed for `@basename ` and pin the whole file to the message. */
+  const handleInsertMention = useCallback((file: string, triggerIndex: number, queryLength: number) => {
+    const basename = file.slice(file.lastIndexOf("/") + 1);
+    const inserted = `@${basename} `;
+    const caretAfter = triggerIndex + inserted.length;
+    setChatInput((prev) => prev.slice(0, triggerIndex) + inserted + prev.slice(triggerIndex + 1 + queryLength));
+
+    const result = addMention(mentionsRef.current, makeFileMention(file));
+    if (result.error) {
+      toast.error(result.error);
+    } else {
+      mentionsRef.current = result.list;
+      setMentions(result.list);
+    }
+
+    // Wait for React to write the new value, then put the caret after the token.
+    const active = document.activeElement;
+    const target = active === desktopChatTextarea || active === mobileChatTextarea
+      ? (active as HTMLTextAreaElement)
+      : desktopChatTextarea ?? mobileChatTextarea;
+    requestAnimationFrame(() => {
+      if (!target) return;
+      target.focus();
+      target.setSelectionRange(caretAfter, caretAfter);
+    });
+  }, [desktopChatTextarea, mobileChatTextarea]);
+
   /** One Enter-key policy for both chat boxes (see lib/chat-input.ts). */
   const handleChatKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The @file list owns these keys while it is open (the popover also swallows
+    // them in the capture phase; this keeps Enter from sending if it ever doesn't).
+    if (
+      (mentionOpenRef.current.desktop || mentionOpenRef.current.mobile) &&
+      ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(e.key)
+    ) {
+      e.preventDefault();
+      return;
+    }
     if (!shouldSendOnEnter({
       key: e.key,
       shiftKey: e.shiftKey,
@@ -3800,6 +3845,7 @@ export function EditorLayout({
 
                   <div className="relative flex-1 font-mono">
                     <textarea
+                      ref={setDesktopChatTextarea}
                       id="ai-chat-input"
                       rows={1}
                       placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
@@ -3812,6 +3858,13 @@ export function EditorLayout({
                       }}
                       onKeyDown={handleChatKeyDown}
                       className="w-full min-h-[38px] max-h-44 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono scrollbar-thin"
+                    />
+                    <FileMentionPopover
+                      textarea={desktopChatTextarea}
+                      projectId={projectId || "proj-1"}
+                      chatInput={chatInput}
+                      onInsertMention={handleInsertMention}
+                      onOpenChange={setDesktopMentionOpen}
                     />
                   </div>
 
@@ -4074,7 +4127,9 @@ export function EditorLayout({
               <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
             </button>
 
+            <div className="relative flex-1 min-w-0">
             <textarea
+              ref={setMobileChatTextarea}
               id="ai-chat-input-2"
               rows={1}
               placeholder={chatMode === "ask"
@@ -4088,8 +4143,16 @@ export function EditorLayout({
                 e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
               }}
               onKeyDown={handleChatKeyDown}
-              className="flex-1 min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
+              className="w-full min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
             />
+            <FileMentionPopover
+              textarea={mobileChatTextarea}
+              projectId={projectId || "proj-1"}
+              chatInput={chatInput}
+              onInsertMention={handleInsertMention}
+              onOpenChange={setMobileMentionOpen}
+            />
+            </div>
 
             {isAgentThinking ? (
               <Button

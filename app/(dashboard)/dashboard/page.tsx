@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Plus,
+  FileArchive,
   FileCode2,
   Search,
   FileText,
@@ -29,6 +30,7 @@ import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
+import { ImportZipDialog } from "@/components/project-import/ImportZipDialog";
 
 function DashboardContent() {
   const router = useRouter();
@@ -37,6 +39,7 @@ function DashboardContent() {
   const [filterTemplate, setFilterTemplate] = useState("all");
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [pdfModalOpen, setPdfModalOpen] = useState(false);
+  const [zipModalOpen, setZipModalOpen] = useState(false);
   const importedProjectId = useRef<string | null>(null);
   const [newProjName, setNewProjName] = useState("");
   const [deleteConfirmProj, setDeleteConfirmProj] = useState<any | null>(null);
@@ -176,6 +179,15 @@ function DashboardContent() {
             </Button>
 
             <Button
+              onClick={() => setZipModalOpen(true)}
+              size="lg"
+              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium border border-slate-200 dark:border-[#282A30] rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all flex items-center gap-2"
+            >
+              <FileArchive className="w-3.5 h-3.5 text-emerald-600 dark:text-[#E2E4E9]" />
+              <span>Import ZIP</span>
+            </Button>
+
+            <Button
               onClick={() => setNewModalOpen(true)}
               size="lg"
               className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all border border-emerald-600 dark:border-[#282A30] shadow-sm"
@@ -219,6 +231,30 @@ function DashboardContent() {
           </div>
           <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-800 dark:text-[#E2E4E9]">
             <span>Import PDF & Convert</span>
+            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </div>
+
+        {/* Import from ZIP Card */}
+        <div
+          onClick={() => setZipModalOpen(true)}
+          className="group relative p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:bg-slate-50 dark:hover:bg-[#1A1C22] hover:border-slate-300 dark:hover:border-[#383B46] transition-all cursor-pointer flex flex-col justify-between overflow-hidden shadow-sm dark:shadow-none"
+        >
+          <div className="space-y-3">
+            <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] transition-all w-fit">
+              <FileArchive className="w-4 h-4 stroke-[2]" />
+            </div>
+            <div>
+              <h3 className="text-sm font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] transition-colors">
+                Import from ZIP
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
+                Upload a .zip of your LaTeX sources and images to continue working on it as a new project.
+              </p>
+            </div>
+          </div>
+          <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-800 dark:text-[#E2E4E9]">
+            <span>Upload ZIP Archive</span>
             <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
           </div>
         </div>
@@ -627,6 +663,16 @@ function DashboardContent() {
           </div>
         </div>
       )}
+
+      {/* ZIP import (creates a new project) */}
+      <ImportZipDialog
+        open={zipModalOpen}
+        onOpenChange={setZipModalOpen}
+        onSuccess={(id) => {
+          utils.projects.invalidate();
+          router.push(`/editor/${id}`);
+        }}
+      />
 
       {/* PDF → LaTeX import (creates a new project) */}
       <ImportPdfDialog

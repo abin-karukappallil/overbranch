@@ -113,6 +113,7 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
 from routes.pdf_convert import router as pdf_convert_router
 from routes.agent_routes import router as agent_router
 from routes.collab_routes import router as collab_router
+from routes import project_import
 
 app.include_router(project_storage.router)
 app.include_router(template_service.router)
@@ -120,6 +121,7 @@ app.include_router(file_analyzer.router, prefix="/api")
 app.include_router(pdf_convert_router)
 app.include_router(agent_router)
 app.include_router(collab_router)
+app.include_router(project_import.router, prefix='/api/projects')
 
 
 class FileAsset(BaseModel):

@@ -1,0 +1,129 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #0e0f12;
+      font-family: "Inter", sans-serif;
+    }
+    #ed-stage {
+      position: absolute;
+      inset: 0;
+    }
+    .ed-kick {
+      position: absolute;
+      left: 120px;
+      top: 80px;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: 0.14em;
+      color: #00cc68;
+      white-space: nowrap;
+    }
+    .ed-head {
+      position: absolute;
+      left: 120px;
+      top: 124px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 64px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: #ffffff;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .ed-w {
+      display: inline-block;
+      margin-right: 0.24em;
+    }
+    /* The real /editor/[id], recorded frame by frame: compile, then two co-authors live */
+    #ed-win {
+      position: absolute;
+      left: 120px;
+      top: 236px;
+      width: 1680px;
+      height: 770px;
+      background: #0e0f12;
+      border: 2px solid #282a30;
+      border-radius: 20px;
+      overflow: hidden;
+    }
+    #ed-cam {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1676px;
+      height: 766px;
+      transform-origin: 0 0;
+    }
+    #ed-video {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  </style>
+  <div id="root" data-composition-id="editor" data-width="1920" data-height="1080">
+    <div id="ed-stage" data-layout-allow-overflow>
+      <div id="ed-kick-a" class="ed-kick">/EDITOR // MAIN.TEX</div>
+      <div id="ed-kick-b" class="ed-kick">/EDITOR // REAL-TIME PRESENCE</div>
+      <div id="ed-head-a" class="ed-head" data-layout-allow-overlap><span class="ed-w">Lightning-fast</span><span class="ed-w">compilation.</span></div>
+      <div id="ed-head-b" class="ed-head" data-layout-allow-overlap><span class="ed-w">Co-author</span><span class="ed-w">with</span><span class="ed-w">live</span><span class="ed-w">cursors.</span></div>
+      <div id="ed-win">
+        <div id="ed-cam">
+          <video id="ed-video" class="clip" data-start="0" data-duration="10.91" data-track-index="1" muted playsinline src="assets/video/editor-live.mp4"></video>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+      // Camera framing inside the window: centre content point (cx, cy) at scale s, clamped to the frame
+      const W = 1676, H = 766;
+      const frame = (cx, cy, s) => ({
+        scale: s,
+        x: Math.min(0, Math.max(W - s * W, W / 2 - s * cx)),
+        y: Math.min(0, Math.max(H - s * H, H / 2 - s * cy)),
+      });
+      const WIDE = frame(W / 2, H / 2, 1);
+      const CODE = frame(620, 440, 1.36);   // title line to Sam's new section
+      const PDF = frame(1061, 465, 1.5);    // the recompiled page
+      const AGENT = frame(1380, 560, 1.35); // agent input, bottom right
+
+      // Arrives from the decompile whip: lands blurred from the right and sharpens
+      tl.fromTo("#ed-stage", { x: 900, filter: "blur(16px)" }, { x: 0, filter: "blur(0px)", duration: 0.36, ease: "power3.out" }, 0);
+      tl.set(["#ed-kick-b", "#ed-head-b"], { opacity: 0 }, 0);
+      tl.fromTo("#ed-kick-a", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 0.1);
+      tl.fromTo("#ed-head-a .ed-w", { color: "#3a3d45" }, { color: "#ffffff", duration: 0.1, ease: "power2.out", stagger: 0.08 }, 0.14);
+
+      // Recording: Compile clicked at 1.08 (18.00s), the PDF renders at 1.6
+      tl.set("#ed-cam", WIDE, 0);
+
+      // 2.17 the room goes Live; the headline swaps on one stage (blur out, blur in)
+      tl.to(["#ed-kick-a", "#ed-head-a .ed-w"], { opacity: 0, filter: "blur(8px)", duration: 0.16, ease: "power2.in", stagger: 0.03 }, 2.24);
+      tl.set(["#ed-kick-b", "#ed-head-b"], { opacity: 1 }, 2.44);
+      tl.fromTo("#ed-kick-b", { opacity: 0 }, { opacity: 1, duration: 0.15 }, 2.44);
+      tl.fromTo("#ed-head-b .ed-w", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.13, ease: "power2.out", stagger: 0.067 }, 2.46);
+
+      // Punch into the code while Mia Chen selects and Sam Vance types (2.72-6.25)
+      tl.to("#ed-cam", { ...CODE, duration: 0.75, ease: "power2.inOut" }, 2.55);
+      // Back out for the recompile click (7.08 = 24.00s)
+      tl.to("#ed-cam", { ...WIDE, duration: 0.55, ease: "power2.inOut" }, 6.4);
+      // The page now carries "Mia Chen" and "3 Conclusion"
+      tl.to("#ed-cam", { ...PDF, duration: 0.8, ease: "power2.inOut" }, 7.72);
+      // Follow the cursor to the agent input, then push in: the next scene is that panel up close
+      tl.to("#ed-cam", { ...AGENT, duration: 0.6, ease: "power2.inOut" }, 9.4);
+      const PX = 122 + AGENT.x + AGENT.scale * 1495;
+      const PY = 238 + AGENT.y + AGENT.scale * 734;
+      tl.set("#ed-stage", { transformOrigin: PX + "px " + PY + "px" }, 10.3);
+      tl.to("#ed-stage", { scale: 1.7, filter: "blur(12px)", duration: 0.56, ease: "power3.in" }, 10.35);
+
+      window.__timelines["editor"] = tl;
+    })();
+  </script>
+</template>
