@@ -44,6 +44,15 @@ RUN apt-get update && \
     fonts-texgyre \
     fonts-lmodern \
     \
+    # TeX-side metrics for the above. These are only *Recommends* of
+    # texlive-fonts-recommended / texlive-base, so --no-install-recommends
+    # drops them: fonts-texgyre ships the OTFs, tex-gyre ships the .tfm/.pfb
+    # (ts1-qtmr.tfm etc.) that newtx needs under pdfLaTeX, and fonts-lmodern
+    # ships the OTFs while lmodern ships lmodern.sty.
+    tex-gyre \
+    lmodern \
+    tipa \
+    \
     # Additional fonts
     cm-super \
     fonts-dejavu \
@@ -134,12 +143,14 @@ RUN echo "============================================================" && \
     echo "============================================================" && \
     echo "Checking Times font metrics" && \
     echo "============================================================" && \
-    echo "ts1-qtmr:" && \
-    (kpsewhich ts1-qtmr.tfm || echo "WARNING: ts1-qtmr.tfm not found") && \
-    echo "t1-qtmr:" && \
-    (kpsewhich t1-qtmr.tfm || echo "WARNING: t1-qtmr.tfm not found") && \
-    echo "qtmr:" && \
-    (kpsewhich qtmr.tfm || echo "WARNING: qtmr.tfm not found") && \
+    echo "ts1-qtmr (TS1 metric newtx needs for bullets, degree, euro):" && \
+    kpsewhich ts1-qtmr.tfm && \
+    echo "ec-qtmr (T1 metric):" && \
+    kpsewhich ec-qtmr.tfm && \
+    echo "qtmr.pfb:" && \
+    kpsewhich qtmr.pfb && \
+    echo "lmodern.sty:" && \
+    kpsewhich lmodern.sty && \
     echo "" && \
     echo "============================================================" && \
     echo "Checking PDFTeX font map" && \
@@ -154,19 +165,32 @@ RUN echo "============================================================" && \
 # 4. Create a Real PDFTeX Font Test
 # ============================================================
 
+# Mirrors the shape of a dual-engine document compiled by pdfLaTeX: the
+# \ifPDFTeX branch loads newtx, and the first itemize bullet is a TS1 glyph,
+# which is what pulls in ts1-qtmr.tfm from tex-gyre. A test without an itemize
+# passes even when that metric is missing, so keep the list and the log assert.
 RUN mkdir -p /tmp/tex-test && \
     printf '%s\n' \
-    '\documentclass{article}' \
+    '\documentclass[12pt]{report}' \
+    '\usepackage{iftex}' \
     '\usepackage[T1]{fontenc}' \
+    '\usepackage[utf8]{inputenc}' \
     '\usepackage{textcomp}' \
     '\usepackage{newtxtext}' \
+    '\usepackage{newtxmath}' \
+    '\usepackage{enumitem}' \
     '\begin{document}' \
-    'Times font test: ABCDEFG abcdefg 1234567890' \
+    'Times font test: ABCDEFG abcdefg 1234567890 $x^2+\alpha$' \
+    '\begin{itemize}[leftmargin=*]' \
+    '  \item TS1 glyphs: \textbullet\ \textdegree\ \texteuro' \
+    '\end{itemize}' \
     '\end{document}' \
     > /tmp/tex-test/test.tex && \
     cd /tmp/tex-test && \
-    pdflatex -interaction=nonstopmode -halt-on-error test.tex && \
+    max_print_line=10000 pdflatex -interaction=nonstopmode -halt-on-error test.tex && \
     test -f test.pdf && \
+    grep -q "TS1/ntxtlf" test.log && \
+    ! grep -q "Metric (TFM) file not found" test.log && \
     echo "============================================================" && \
     echo "PDFTeX font test PASSED" && \
     echo "============================================================" && \
@@ -240,7 +264,7 @@ RUN echo "============================================================" && \
     kpsewhich newtxtext.sty && \
     echo "" && \
     echo "Times metric:" && \
-    (kpsewhich ts1-qtmr.tfm || echo "WARNING: ts1-qtmr.tfm unavailable") && \
+    kpsewhich ts1-qtmr.tfm && \
     echo "" && \
     echo "Final TeX verification complete."
 
