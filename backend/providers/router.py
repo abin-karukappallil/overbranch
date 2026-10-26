@@ -7,7 +7,7 @@ Routes tasks and model names to the appropriate LLM provider:
   - Node-scoped editing → Mid-size strong instruction following (Gemini 3.7 Flash)
   - Document-wide restructuring → Strongest available reasoning (Gemini 3.7 Flash / MiniMax-M3)
   - PDF section synthesis → Strong long-context tier
-  - Fidelity-diff vision check → Vision-capable tier (Gemini / MiniMax-M3)
+  - Fidelity-diff vision check → Vision-capable tier (Gemini → Gemini secondary, looped)
 
 Includes JSON schema validation and reject-retry-fail-loud error handling.
 """
@@ -54,12 +54,14 @@ TASK_ROUTING_TABLE: Dict[TaskType, str] = {
     TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
     TaskType.NODE_EDITING: "gemini-3.7-flash",
     TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
-    TaskType.VISION_DIFF: "minimax/minimax-01",
+    TaskType.VISION_DIFF: "gemini-3.7-flash",
 }
 
 
 # Primary is the Gemini Web2API endpoint. When it times out the next stop is its
 # twin deployment (same provider class, GEMINI2_* env), then OpenRouter MiniMax M3.
+# A request carrying images keeps only the image-capable hops, so it cycles
+# gemini → gemini2 → gemini → … (see fallback_chain's needs_images).
 DEFAULT_FALLBACK_CHAIN = "gemini2,openrouter:minimax/minimax-m3"
 
 
@@ -277,6 +279,7 @@ class ProviderRouter:
         model: str,
         api_keys: Optional[Dict[str, str]] = None,
         allow_fallback: bool = True,
+        needs_images: bool = False,
     ) -> List[Tuple[str, LLMProvider, str]]:
         """
         [(provider_name, provider, model)] to try in order: the provider that
@@ -284,8 +287,19 @@ class ProviderRouter:
         same provider+model. Fallbacks come from LLM_FALLBACK_CHAIN
         ("provider:model,provider:model"), plus DEFAULT_FALLBACK_CHAIN entries it
         does not already name — the second Web2API endpoint, then MiniMax M3.
+
+        With ``needs_images`` (the request carries image parts) only providers that
+        accept image input stay in the chain, so a vision request cycles
+        Gemini → Gemini (secondary) instead of reaching a text-only hop that would
+        have to drop the pictures the question is about.
         """
         primary = self.route(model)
+        if needs_images and not getattr(primary, "supports_images", False):
+            logger.info(
+                f"Model '{model}' routes to a text-only provider but the request carries images; "
+                f"using the Gemini Web2API endpoints instead."
+            )
+            primary, model = self.gemini, DEFAULT_MODEL
         primary_name = next((n for n, p in self._providers.items() if p is primary), primary.get_provider_name())
         chain: List[Tuple[str, LLMProvider, str]] = [(primary_name, primary, model)]
         if not allow_fallback:
@@ -303,6 +317,9 @@ class ProviderRouter:
                 continue
             if not _is_configured(provider, name, api_keys):
                 logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: provider '{name}' has no API key configured")
+                continue
+            if needs_images and not getattr(provider, "supports_images", False):
+                logger.info(f"Fallback '{entry}' skipped for this call: it does not accept image input")
                 continue
             chain.append((name, provider, fb_model))
         return chain
@@ -334,7 +351,10 @@ class ProviderRouter:
         if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
             model = DEFAULT_MODEL
 
-        chain = self.fallback_chain(model, api_keys, allow_fallback=allow_fallback)
+        needs_images = has_image_parts(messages)
+        chain = self.fallback_chain(
+            model, api_keys, allow_fallback=allow_fallback, needs_images=needs_images
+        )
         cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
         attempts: List[Dict[str, Any]] = []
 
@@ -348,9 +368,11 @@ class ProviderRouter:
 
             name, provider, target_model = chain[idx % len(chain)]
             t0 = time.time()
-            # A provider that cannot take image input gets the same step as text.
+            # Image-capable providers are the only ones left in the chain when images are
+            # present; a text-only provider can still be the single candidate (no fallback,
+            # or none configured), and then it gets the same step as text.
             provider_messages = messages
-            if not getattr(provider, "supports_images", False) and has_image_parts(messages):
+            if needs_images and not getattr(provider, "supports_images", False):
                 provider_messages = strip_image_parts(messages)
             is_last = idx == max_attempts - 1
             try:

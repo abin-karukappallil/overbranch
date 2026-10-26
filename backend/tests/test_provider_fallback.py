@@ -409,3 +409,75 @@ def test_second_web2api_endpoint_sits_between_gemini_and_openrouter(router, monk
 def test_nvidia_is_not_in_the_default_chain(router):
     """nvidia stays registered for anyone who configures it, but is no longer a default hop."""
     assert "nvidia" not in [n for n, _, _ in router.fallback_chain("gemini-3.7-flash")]
+
+
+# --- image requests stay on the Gemini endpoints -----------------------------
+
+class StubSeeing(StubNamed):
+    """A fallback that accepts image parts, and records what it was handed."""
+
+    supports_images = True
+
+    def __init__(self, error: Optional[Exception] = None):
+        super().__init__(error)
+        self.seen: List[Any] = []
+
+    def chat(self, messages, model, temperature=0.1, max_tokens=4096, api_keys=None, cancel_token=None):
+        self.seen.append(messages)
+        return super().chat(messages, model, temperature=temperature, max_tokens=max_tokens,
+                            api_keys=api_keys, cancel_token=cancel_token)
+
+
+def _image_messages():
+    return [{"role": "user", "content": [
+        {"type": "text", "text": "what is wrong with this page?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0="}},
+    ]}]
+
+
+def test_image_request_skips_text_only_fallbacks(router, monkeypatch):
+    """A vision call cycles the Gemini endpoints; a text-only hop would lose the image."""
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "gemini2,openrouter:minimax/minimax-m3")
+    second = StubSeeing()
+    router.register_provider("gemini2", second)
+    chain = router.fallback_chain("gemini-3.7-flash", needs_images=True)
+    assert [n for n, _, _ in chain] == ["gemini", "gemini2"]
+    # Without images the same chain still ends at OpenRouter.
+    assert "openrouter" in [n for n, _, _ in router.fallback_chain("gemini-3.7-flash")]
+
+
+def test_image_request_falls_over_to_the_second_endpoint_with_images_intact(router, monkeypatch):
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "gemini2,openrouter:minimax/minimax-m3")
+    primary = StubPrimary(LLMProviderError("timed out", status_code=504, provider="Gemini",
+                                           kind=FailureKind.TIMEOUT))
+    primary.supports_images = True
+    router.gemini = primary
+    router._providers["gemini"] = primary
+    second = StubSeeing()
+    router.register_provider("gemini2", second)
+
+    resp = router.chat(_image_messages(), model="gemini-3.7-flash")
+
+    assert resp["provider"] == "gemini2" and resp["is_fallback"] is True
+    assert [a["provider"] for a in resp["attempts"]] == ["gemini", "gemini2"]
+    # The picture the question is about survived the hop.
+    assert isinstance(second.seen[0][0]["content"], list)
+
+
+def test_image_request_on_a_text_only_model_is_routed_to_gemini(router, monkeypatch):
+    """Asked for a text-only model with an image attached, the router uses Gemini instead."""
+    monkeypatch.setenv("LLM_FALLBACK_CHAIN", "gemini2")
+    seeing = StubSeeing()
+    router.register_provider("gemini2", seeing)
+    chain = router.fallback_chain("minimax/minimax-m3", needs_images=True)
+    assert [n for n, _, _ in chain] == ["gemini", "gemini2"]
+    assert chain[0][2] == "gemini-3.7-flash"
+
+
+def test_llama_vision_is_gone_from_nvidia(router):
+    """The 11B vision model is no longer offered or aliased; vision is Gemini's job."""
+    from providers.nvidia_provider import NVIDIA_MODEL_ALIASES, NvidiaProvider
+
+    ids = [m["id"] for m in NvidiaProvider().get_available_models()]
+    assert not any("llama" in i for i in ids)
+    assert not any("llama" in a for a in NVIDIA_MODEL_ALIASES)
