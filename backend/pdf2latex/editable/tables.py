@@ -132,6 +132,17 @@ def _cell_text_from_lines(page: PageExtract, cb: tuple) -> str:
     return " ".join(out.split())
 
 
+def _page_body_w(page: PageExtract) -> float:
+    if getattr(page, "lines", None):
+        vis = [ln for ln in page.lines if ln.text.strip()]
+        if vis:
+            min_x0 = min((ln.bbox[0] for ln in vis if ln.bbox[0] > 20), default=72.0)
+            max_x1 = max((ln.bbox[2] for ln in vis if ln.bbox[2] < page.width - 20), default=page.width - 72.0)
+            if max_x1 > min_x0 + 100:
+                return max_x1 - min_x0
+    return max(100.0, page.width - 144.0)
+
+
 def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
     ncol = tb.col_count
     if ncol < 3 or ncol > 10:
@@ -172,13 +183,16 @@ def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
     cells_grid: List[List[Cell]] = []
     for ri, row in enumerate(logical):
         cells_grid.append([Cell(paras=[_text_para(t, page)] if t else [], bold=(ri == 0)) for t in row])
-    widths = _col_widths(tb, ncol)
+    widths = _col_widths(tb, ncol, max_x1=bbox[2])
     tb_w = bbox[2] - bbox[0]
-    body_w = page.width * 0.8
-    table_frac = min(0.98, tb_w / body_w) if body_w else 0.9
+    body_w = _page_body_w(page)
+    table_frac = 1.0 if tb_w >= body_w * 0.90 else min(1.0, max(0.5, tb_w / body_w))
     total = sum(widths) or 1.0
-    budget = max(0.5, table_frac - 0.02 * ncol)   # leave room for \tabcolsep between columns
-    col_frac = _normalize_fracs([table_frac * w / total for w in widths], budget)
+    pad_frac = min(0.35, (2 * max(1, ncol - 1) * 4.0) / max(1.0, body_w))
+    budget = max(0.60, table_frac - pad_frac)
+    raw_fracs = [budget * w / total for w in widths]
+    min_col = max(0.06, min(0.12, 40.0 / body_w))
+    col_frac = _normalize_fracs([max(min_col, f) for f in raw_fracs], budget)
     small = ncol >= 5 or len(logical) >= 10
     return Table(page=page.number, bbox=bbox, rows=cells_grid, col_align=["p"] * ncol,
                  col_frac=col_frac, header_rows=1, ruled=True, booktabs=True, vrules=set(), small=small)
@@ -203,21 +217,24 @@ def _build_ruled(tb, rows, page: PageExtract) -> Table:
             header_rows = 1
     # p-columns sized proportionally to each column's pixel width, summing to the table's share
     tb_w = tb.bbox[2] - tb.bbox[0]
-    body_w = page.width * 0.8
-    table_frac = min(0.98, tb_w / body_w) if body_w else 0.9
-    widths = _col_widths(tb, ncol)
+    body_w = _page_body_w(page)
+    table_frac = 1.0 if tb_w >= body_w * 0.90 else min(1.0, max(0.5, tb_w / body_w))
+    widths = _col_widths(tb, ncol, max_x1=tb.bbox[2])
     total = sum(widths) or 1.0
-    col_frac = [round(max(0.05, table_frac * w / total), 2) for w in widths]
+    pad_frac = min(0.35, (2 * max(1, ncol - 1) * 4.0) / max(1.0, body_w))
+    budget = max(0.60, table_frac - pad_frac)
+    col_frac = _normalize_fracs([budget * w / total for w in widths], budget)
     col_align = ["p"] * ncol
     return Table(page=page.number, bbox=tuple(tb.bbox), rows=cells_grid, col_align=col_align,
                  col_frac=col_frac, header_rows=header_rows, ruled=True, booktabs=False,
                  vrules=set(range(ncol - 1)))
 
 
-def _col_widths(tb, ncol: int) -> List[float]:
+def _col_widths(tb, ncol: int, max_x1: float = 0.0) -> List[float]:
     try:
+        right_edge = max(round(tb.bbox[2], 1), round(max_x1, 1)) if max_x1 > 0 else round(tb.bbox[2], 1)
         edges = sorted({round(c[0], 1) for r in tb.rows for c in (r.cells or []) if c} |
-                       {round(tb.bbox[2], 1)})
+                       {right_edge})
         if len(edges) >= ncol + 1:
             return [edges[i + 1] - edges[i] for i in range(ncol)]
     except Exception:
