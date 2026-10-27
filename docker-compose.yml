@@ -20,8 +20,8 @@ services:
       - PORT=3000
       - HOSTNAME=0.0.0.0
       - WORKERS=${WORKERS:-2}
-      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://overapi.abinthomas.dev}
-      - BACKEND_URL=${BACKEND_URL:-https://overapi.abinthomas.dev}
+      - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-https://overapi.overbranch.app}
+      - BACKEND_URL=${BACKEND_URL:-https://overapi.overbranch.app}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-https://overbranch.app}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://overbranch.app}
