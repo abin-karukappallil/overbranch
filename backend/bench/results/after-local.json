@@ -1,0 +1,567 @@
+{
+  "label": "after (local, aux cache on)",
+  "when": "2026-10-24T21:29:32",
+  "sandbox": {
+    "mode": "local",
+    "image": null,
+    "cpu_limit": 1.0,
+    "memory_limit_mb": 2048,
+    "pids_limit": 256,
+    "network": "host (app container)",
+    "ready": true
+  },
+  "sandbox_startup_ms": 0.0,
+  "host": {
+    "cpus": 4,
+    "python": "3.13.11",
+    "aux_cache": true
+  },
+  "projects": [
+    {
+      "project": "article",
+      "engine": "pdflatex",
+      "what": "basic article, 2pp",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 3595.7,
+        "wall_ms_min": 3229.7,
+        "wall_ms_max": 7472.8,
+        "cpu_s_median": 3.221,
+        "peak_child_rss_mb": 95.7,
+        "pdf_bytes": 220667,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 2641.8,
+        "wall_ms_min": 2321.1,
+        "wall_ms_max": 2970.2,
+        "cpu_s_median": 2.435,
+        "peak_child_rss_mb": 95.7,
+        "pdf_bytes": 220667,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 7472.8,
+            "reported_ms": 7432,
+            "cpu_user_s": 3.264,
+            "cpu_sys_s": 0.655,
+            "peak_child_rss_mb": 73.8,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          },
+          {
+            "wall_ms": 3229.7,
+            "reported_ms": 3228,
+            "cpu_user_s": 2.482,
+            "cpu_sys_s": 0.505,
+            "peak_child_rss_mb": 95.5,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          },
+          {
+            "wall_ms": 3595.7,
+            "reported_ms": 3594,
+            "cpu_user_s": 2.645,
+            "cpu_sys_s": 0.576,
+            "peak_child_rss_mb": 95.7,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 2321.1,
+            "reported_ms": 2319,
+            "cpu_user_s": 1.751,
+            "cpu_sys_s": 0.366,
+            "peak_child_rss_mb": 95.1,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          },
+          {
+            "wall_ms": 2641.8,
+            "reported_ms": 2640,
+            "cpu_user_s": 1.995,
+            "cpu_sys_s": 0.44,
+            "peak_child_rss_mb": 95.6,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          },
+          {
+            "wall_ms": 2970.2,
+            "reported_ms": 2969,
+            "cpu_user_s": 2.2,
+            "cpu_sys_s": 0.473,
+            "peak_child_rss_mb": 95.7,
+            "success": true,
+            "pdf_bytes": 220667,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "project": "beamer",
+      "engine": "pdflatex",
+      "what": "Beamer deck, overlays",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 8223.0,
+        "wall_ms_min": 8108.7,
+        "wall_ms_max": 8984.1,
+        "cpu_s_median": 7.608,
+        "peak_child_rss_mb": 95.8,
+        "pdf_bytes": 191010,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 7450.5,
+        "wall_ms_min": 7128.3,
+        "wall_ms_max": 7791.8,
+        "cpu_s_median": 7.075,
+        "peak_child_rss_mb": 95.9,
+        "pdf_bytes": 191010,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 8108.7,
+            "reported_ms": 8106,
+            "cpu_user_s": 6.858,
+            "cpu_sys_s": 0.75,
+            "peak_child_rss_mb": 95.7,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          },
+          {
+            "wall_ms": 8223.0,
+            "reported_ms": 8221,
+            "cpu_user_s": 6.913,
+            "cpu_sys_s": 0.658,
+            "peak_child_rss_mb": 95.8,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          },
+          {
+            "wall_ms": 8984.1,
+            "reported_ms": 8982,
+            "cpu_user_s": 7.541,
+            "cpu_sys_s": 0.725,
+            "peak_child_rss_mb": 95.8,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 7791.8,
+            "reported_ms": 7789,
+            "cpu_user_s": 6.708,
+            "cpu_sys_s": 0.698,
+            "peak_child_rss_mb": 95.8,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          },
+          {
+            "wall_ms": 7450.5,
+            "reported_ms": 7448,
+            "cpu_user_s": 6.421,
+            "cpu_sys_s": 0.654,
+            "peak_child_rss_mb": 95.8,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          },
+          {
+            "wall_ms": 7128.3,
+            "reported_ms": 7126,
+            "cpu_user_s": 6.083,
+            "cpu_sys_s": 0.654,
+            "peak_child_rss_mb": 95.9,
+            "success": true,
+            "pdf_bytes": 191010,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "project": "tikz",
+      "engine": "pdflatex",
+      "what": "TikZ + pgfplots, 3 axes",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 5601.6,
+        "wall_ms_min": 5375.1,
+        "wall_ms_max": 7289.2,
+        "cpu_s_median": 5.032,
+        "peak_child_rss_mb": 96.0,
+        "pdf_bytes": 154195,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 5805.3,
+        "wall_ms_min": 5144.4,
+        "wall_ms_max": 8669.7,
+        "cpu_s_median": 5.274,
+        "peak_child_rss_mb": 96.0,
+        "pdf_bytes": 154195,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 5375.1,
+            "reported_ms": 5374,
+            "cpu_user_s": 4.789,
+            "cpu_sys_s": 0.243,
+            "peak_child_rss_mb": 95.9,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          },
+          {
+            "wall_ms": 7289.2,
+            "reported_ms": 7288,
+            "cpu_user_s": 6.109,
+            "cpu_sys_s": 0.281,
+            "peak_child_rss_mb": 95.9,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          },
+          {
+            "wall_ms": 5601.6,
+            "reported_ms": 5600,
+            "cpu_user_s": 4.495,
+            "cpu_sys_s": 0.276,
+            "peak_child_rss_mb": 96.0,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 5144.4,
+            "reported_ms": 5142,
+            "cpu_user_s": 4.638,
+            "cpu_sys_s": 0.222,
+            "peak_child_rss_mb": 95.9,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          },
+          {
+            "wall_ms": 8669.7,
+            "reported_ms": 8668,
+            "cpu_user_s": 6.264,
+            "cpu_sys_s": 0.39,
+            "peak_child_rss_mb": 95.9,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          },
+          {
+            "wall_ms": 5805.3,
+            "reported_ms": 5803,
+            "cpu_user_s": 5.002,
+            "cpu_sys_s": 0.272,
+            "peak_child_rss_mb": 96.0,
+            "success": true,
+            "pdf_bytes": 154195,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "project": "bibliography",
+      "engine": "latexmk",
+      "what": "bibtex + makeindex",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 4899.7,
+        "wall_ms_min": 3863.9,
+        "wall_ms_max": 5316.5,
+        "cpu_s_median": 4.554,
+        "peak_child_rss_mb": 96.1,
+        "pdf_bytes": 221404,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 1945.2,
+        "wall_ms_min": 1426.9,
+        "wall_ms_max": 2176.3,
+        "cpu_s_median": 1.695,
+        "peak_child_rss_mb": 96.1,
+        "pdf_bytes": 221404,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 4899.7,
+            "reported_ms": 4898,
+            "cpu_user_s": 3.691,
+            "cpu_sys_s": 0.863,
+            "peak_child_rss_mb": 96.0,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          },
+          {
+            "wall_ms": 5316.5,
+            "reported_ms": 5315,
+            "cpu_user_s": 3.944,
+            "cpu_sys_s": 0.84,
+            "peak_child_rss_mb": 96.1,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          },
+          {
+            "wall_ms": 3863.9,
+            "reported_ms": 3862,
+            "cpu_user_s": 3.058,
+            "cpu_sys_s": 0.654,
+            "peak_child_rss_mb": 96.1,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 2176.3,
+            "reported_ms": 2174,
+            "cpu_user_s": 1.594,
+            "cpu_sys_s": 0.297,
+            "peak_child_rss_mb": 96.1,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          },
+          {
+            "wall_ms": 1945.2,
+            "reported_ms": 1944,
+            "cpu_user_s": 1.418,
+            "cpu_sys_s": 0.277,
+            "peak_child_rss_mb": 96.1,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          },
+          {
+            "wall_ms": 1426.9,
+            "reported_ms": 1425,
+            "cpu_user_s": 1.112,
+            "cpu_sys_s": 0.25,
+            "peak_child_rss_mb": 96.1,
+            "success": true,
+            "pdf_bytes": 221404,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "project": "xelatex",
+      "engine": "xelatex",
+      "what": "fontspec + unicode-math",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 6211.7,
+        "wall_ms_min": 5881.3,
+        "wall_ms_max": 8340.5,
+        "cpu_s_median": 5.806,
+        "peak_child_rss_mb": 344.7,
+        "pdf_bytes": 54647,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 6117.0,
+        "wall_ms_min": 5777.8,
+        "wall_ms_max": 6957.3,
+        "cpu_s_median": 5.718,
+        "peak_child_rss_mb": 346.2,
+        "pdf_bytes": 54647,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 6211.7,
+            "reported_ms": 6211,
+            "cpu_user_s": 4.426,
+            "cpu_sys_s": 1.38,
+            "peak_child_rss_mb": 344.2,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          },
+          {
+            "wall_ms": 5881.3,
+            "reported_ms": 5880,
+            "cpu_user_s": 4.283,
+            "cpu_sys_s": 1.322,
+            "peak_child_rss_mb": 344.7,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          },
+          {
+            "wall_ms": 8340.5,
+            "reported_ms": 8339,
+            "cpu_user_s": 5.651,
+            "cpu_sys_s": 1.639,
+            "peak_child_rss_mb": 344.7,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 6117.0,
+            "reported_ms": 6115,
+            "cpu_user_s": 4.367,
+            "cpu_sys_s": 1.351,
+            "peak_child_rss_mb": 344.7,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          },
+          {
+            "wall_ms": 5777.8,
+            "reported_ms": 5777,
+            "cpu_user_s": 4.116,
+            "cpu_sys_s": 1.397,
+            "peak_child_rss_mb": 344.7,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          },
+          {
+            "wall_ms": 6957.3,
+            "reported_ms": 6956,
+            "cpu_user_s": 4.287,
+            "cpu_sys_s": 1.444,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 54647,
+            "errors": 0
+          }
+        ]
+      }
+    },
+    {
+      "project": "large",
+      "engine": "latexmk",
+      "what": "report, 8 inputs, 35pp",
+      "cold": {
+        "runs": 3,
+        "wall_ms_median": 4885.5,
+        "wall_ms_min": 4684.7,
+        "wall_ms_max": 6050.2,
+        "cpu_s_median": 4.59,
+        "peak_child_rss_mb": 346.2,
+        "pdf_bytes": 338460,
+        "all_succeeded": true
+      },
+      "warm": {
+        "runs": 3,
+        "wall_ms_median": 1894.6,
+        "wall_ms_min": 1534.4,
+        "wall_ms_max": 2328.2,
+        "cpu_s_median": 1.656,
+        "peak_child_rss_mb": 346.2,
+        "pdf_bytes": 338460,
+        "all_succeeded": true
+      },
+      "samples": {
+        "cold": [
+          {
+            "wall_ms": 4885.5,
+            "reported_ms": 4884,
+            "cpu_user_s": 3.962,
+            "cpu_sys_s": 0.628,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          },
+          {
+            "wall_ms": 4684.7,
+            "reported_ms": 4683,
+            "cpu_user_s": 3.842,
+            "cpu_sys_s": 0.611,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          },
+          {
+            "wall_ms": 6050.2,
+            "reported_ms": 6048,
+            "cpu_user_s": 4.686,
+            "cpu_sys_s": 0.723,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          }
+        ],
+        "warm": [
+          {
+            "wall_ms": 1534.4,
+            "reported_ms": 1533,
+            "cpu_user_s": 1.139,
+            "cpu_sys_s": 0.189,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          },
+          {
+            "wall_ms": 1894.6,
+            "reported_ms": 1893,
+            "cpu_user_s": 1.422,
+            "cpu_sys_s": 0.234,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          },
+          {
+            "wall_ms": 2328.2,
+            "reported_ms": 2327,
+            "cpu_user_s": 1.728,
+            "cpu_sys_s": 0.281,
+            "peak_child_rss_mb": 346.2,
+            "success": true,
+            "pdf_bytes": 338460,
+            "errors": 0
+          }
+        ]
+      }
+    }
+  ]
+}

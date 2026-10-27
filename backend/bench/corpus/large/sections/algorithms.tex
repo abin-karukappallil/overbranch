@@ -1,0 +1,65 @@
+\chapter{Algorithms}\label{ch:algorithms}
+
+The estimators of Chapter~\ref{ch:estimation} are computed by iterating the
+E-step and M-step. This chapter describes the resulting algorithm and its
+stopping rule, and it uses the notation of Chapter~\ref{ch:model}.
+
+\section{Expectation maximisation loop}\label{sec:em}
+
+Starting from an initial parameter $\theta^{(0)}$, the algorithm alternates
+between computing the responsibilities of Equation~\eqref{eq:resp} and applying
+the updates of Equations~\eqref{eq:upd-pi}--\eqref{eq:upd-sigma}. Each
+iteration is guaranteed not to decrease the log-likelihood of
+Equation~\eqref{eq:loglik}.
+
+\lipsum[27-28]
+
+\section{Initialisation}\label{sec:init}
+
+Good starting values matter. We use $k$-means on the observations to set the
+means, and assign each covariance to the empirical covariance of its cluster.
+Table~\ref{tab:init} summarises the choices compared in
+Chapter~\ref{ch:experiments}.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lp{6cm}}
+    \toprule
+    Strategy & Description \\
+    \midrule
+    Random & Means drawn uniformly from the data range. \\
+    $k$-means & Means from a $k$-means run, covariances from clusters. \\
+    Hierarchical & Means from a single-linkage dendrogram cut. \\
+    \bottomrule
+  \end{tabular}
+  \caption{Initialisation strategies.}\label{tab:init}
+\end{table}
+
+\lipsum[29-30]
+
+\section{Stopping rule}\label{sec:stopping}
+
+The algorithm stops when the relative change in log-likelihood satisfies
+\begin{equation}\label{eq:stop}
+  \frac{\ell(\theta^{(t+1)})-\ell(\theta^{(t)})}{|\ell(\theta^{(t)})|} < \tau,
+\end{equation}
+for a tolerance $\tau$. The default tolerance is $\tau = 10^{-6}$, and the rule
+is discussed further in Section~\ref{sec:convergence}.
+
+\lipsum[31-32]
+
+\section{Convergence}\label{sec:convergence}
+
+Because the likelihood is non-decreasing, Equation~\eqref{eq:stop} is a
+sensible test. Convergence may nonetheless be slow when components overlap,
+and the report returns to this point in Chapter~\ref{ch:discussion}.
+
+\lipsum[33-34]
+
+\section{Further remarks}\label{sec:further-algorithms}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[99-110]

@@ -22,7 +22,11 @@ from .config import get_settings
 logger = logging.getLogger("pdf2latex.jobs")
 
 TERMINAL = {"done", "error", "needs_confirmation", "cancelled"}
-STALE_AFTER_S = 15 * 60  # a running job not updated for this long is considered lost
+# A running job whose runner has not heartbeated (or written any status) for this long is
+# considered lost. The runner heartbeats every HEARTBEAT_INTERVAL_S while its task is alive, even
+# during a long LLM call that writes no stage update, so this can be short.
+STALE_AFTER_S = 3 * 60
+HEARTBEAT_INTERVAL_S = 30
 JOB_TTL_S = 24 * 3600
 _JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _write_lock = threading.Lock()  # serializes read-modify-write within this process
@@ -107,16 +111,60 @@ def _read_raw(job_id: str) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        state = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    return state if isinstance(state, dict) else None
+
+
+def _exists(job_id: str) -> bool:
+    try:
+        return (job_dir(job_id) / "status.json").exists()
+    except ValueError:
+        return False
+
+
+READ_RETRIES = 5
+READ_RETRY_DELAY_S = 0.05
+
+
+def _read_raw_retrying(job_id: str, tries: int = READ_RETRIES) -> Optional[Dict[str, Any]]:
+    """
+    _read_raw, retried while status.json exists but could not be read (EMFILE, a transient I/O
+    error). A job that does not exist returns None immediately. Never call with _write_lock held:
+    it sleeps between attempts.
+    """
+    for attempt in range(max(1, tries)):
+        state = _read_raw(job_id)
+        if state is not None:
+            return state
+        if not _exists(job_id):
+            return None
+        if attempt + 1 < tries:
+            time.sleep(READ_RETRY_DELAY_S * (attempt + 1))
+    return None
+
+
+def last_alive_at(state: Dict[str, Any]) -> float:
+    """The latest sign of life: the runner's heartbeat or the last status write, whichever is newer."""
+    def _num(v: Any) -> float:
+        return float(v) if isinstance(v, (int, float)) else 0.0
+    return max(_num(state.get("heartbeat_at")), _num(state.get("updated_at")))
+
+
+def is_stale(state: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """An unfinished job whose runner has shown no sign of life for STALE_AFTER_S."""
+    if state.get("status") in TERMINAL:
+        return False
+    return (now if now is not None else time.time()) - last_alive_at(state) > STALE_AFTER_S
 
 
 def load_job(job_id: str) -> Optional[Dict[str, Any]]:
-    state = _read_raw(job_id)
+    # A transient read failure must not look like "no such job": the client treats 404 as final.
+    state = _read_raw_retrying(job_id, 3)
     if state is None:
         return None
-    if state.get("status") not in TERMINAL and time.time() - state.get("updated_at", 0) > STALE_AFTER_S:
+    if is_stale(state):
         # Deliberately applied to the RETURNED dict only and never persisted: a worker that died
         # mid-conversion leaves a job that can still be resumed from its finished pages, so it
         # must not be written off on disk. Every caller recomputes this on each read.
@@ -134,14 +182,74 @@ def is_resumable(state: Dict[str, Any]) -> bool:
 
 
 def update_job(job_id: str, **fields: Any) -> Dict[str, Any]:
+    # Read-modify-write on the raw state: going through load_job would persist the
+    # synthesised stale "error" the moment anything touched the job.
+    #
+    # When the read fails but the job exists (EMFILE, a transient I/O error) the old code started
+    # from {} and wrote back ONLY the new fields, wiping `owner` and everything else, after which
+    # every poll answered 403. So a failed read is retried, and if it still fails nothing is
+    # written: losing one update is recoverable, losing the owner is not.
+    for attempt in range(READ_RETRIES):
+        with _write_lock:
+            state = _read_raw(job_id)
+            if state is not None:
+                state.update(fields)
+                state["updated_at"] = time.time()
+                _write_atomic(job_dir(job_id) / "status.json", state)
+                return state
+            exists = _exists(job_id)
+        if not exists:
+            break
+        time.sleep(READ_RETRY_DELAY_S * (attempt + 1))
+    if exists:
+        logger.error(f"Could not read the state of conversion job {job_id}; update {sorted(fields)} not written")
+    # Nothing was written: report the fields so callers that use the return value keep working.
+    return dict(fields, job_id=job_id)
+
+
+def touch_heartbeat(job_id: str, now: Optional[float] = None) -> bool:
+    """
+    Records that the runner is alive, without touching updated_at, so updated_at keeps meaning
+    "last real progress". Never creates a state and never writes when the read fails.
+    """
     with _write_lock:
-        # Read-modify-write on the raw state: going through load_job would persist the
-        # synthesised stale "error" the moment anything touched the job.
-        state = _read_raw(job_id) or {}
-        state.update(fields)
-        state["updated_at"] = time.time()
+        state = _read_raw(job_id)
+        if state is None:
+            return False
+        state["heartbeat_at"] = now if now is not None else time.time()
         _write_atomic(job_dir(job_id) / "status.json", state)
-        return state
+        return True
+
+
+def reassign_owner(old_owner: str, new_owner: str, is_guest: bool = False) -> List[str]:
+    """
+    Re-owns every job (running or finished) of `old_owner` to `new_owner`, e.g. when a guest signs
+    in and their projects migrate. Each job is rewritten atomically under the write lock and a
+    job whose state cannot be read is skipped, never rewritten. Returns the job ids changed.
+    """
+    changed: List[str] = []
+    if not old_owner or not new_owner or old_owner == new_owner:
+        return changed
+    try:
+        entries = list(job_root().iterdir())
+    except OSError:
+        return changed
+    for d in entries:
+        if not d.is_dir() or not _JOB_ID_RE.match(d.name):
+            continue
+        with _write_lock:
+            state = _read_raw(d.name)
+            if not state or state.get("owner") != old_owner:
+                continue
+            state["owner"] = new_owner
+            state["is_guest"] = is_guest
+            try:
+                _write_atomic(d / "status.json", state)
+            except OSError as e:
+                logger.error(f"Could not re-own conversion job {d.name}: {e}")
+                continue
+        changed.append(d.name)
+    return changed
 
 
 def update_page(job_id: str, number: int, **fields: Any) -> None:

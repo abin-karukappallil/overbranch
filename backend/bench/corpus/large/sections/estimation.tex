@@ -1,0 +1,67 @@
+\chapter{Estimation}\label{ch:estimation}
+
+This chapter describes how the parameters of the model in
+Chapter~\ref{ch:model} are estimated. The main tool is the expectation
+maximisation scheme, whose justification relies on the likelihood of
+Equation~\eqref{eq:loglik}.
+
+\section{Latent variables}\label{sec:latent}
+
+Introduce latent indicators $z_i \in \{1,\dots,k\}$ recording the component
+that generated observation $x_i$. The complete-data log-likelihood is
+\begin{equation}\label{eq:complete}
+  \ell_c(\theta) = \sum_{i=1}^{n}\sum_{j=1}^{k} \mathbf{1}\{z_i=j\}\,
+  \bigl[\log \pi_j + \log \phi(x_i;\mu_j,\Sigma_j)\bigr].
+\end{equation}
+Equation~\eqref{eq:complete} is linear in the indicators, which is what makes
+the E-step simple.
+
+\lipsum[19-20]
+
+\section{E-step}\label{sec:estep}
+
+The E-step computes the posterior responsibilities
+\begin{equation}\label{eq:resp}
+  r_{ij} = \frac{\pi_j\,\phi(x_i;\mu_j,\Sigma_j)}
+  {\sum_{l=1}^{k}\pi_l\,\phi(x_i;\mu_l,\Sigma_l)} .
+\end{equation}
+The responsibilities are the expected values of the indicators under the
+current parameters, and they are used in the M-step of Section~\ref{sec:mstep}.
+
+\lipsum[21-22]
+
+\section{M-step}\label{sec:mstep}
+
+Maximising the expected complete-data log-likelihood gives the closed-form
+updates
+\begin{align}
+  \pi_j &= \frac{1}{n}\sum_{i=1}^{n} r_{ij}, \label{eq:upd-pi}\\
+  \mu_j &= \frac{\sum_i r_{ij}\,x_i}{\sum_i r_{ij}}, \label{eq:upd-mu}\\
+  \Sigma_j &= \frac{\sum_i r_{ij}\,(x_i-\mu_j)(x_i-\mu_j)^\top}{\sum_i r_{ij}}.
+  \label{eq:upd-sigma}
+\end{align}
+Each update in Equations~\eqref{eq:upd-pi}--\eqref{eq:upd-sigma} is available
+in closed form, so no inner optimisation is required.
+
+\lipsum[23-24]
+
+\section{Estimators}\label{sec:estimators}
+
+For numerical stability the covariance estimates are regularised by adding a
+small multiple of the identity, which is the matrix function
+of Equation~\eqref{eq:matfun} applied to the eigenvalues. The regularised
+estimator is
+\begin{equation}\label{eq:reg}
+  \widehat{\Sigma}_j^{\,\varepsilon} = \widehat{\Sigma}_j + \varepsilon I_d ,
+  \qquad \varepsilon > 0 .
+\end{equation}
+
+\lipsum[25-26]
+
+\section{Further remarks}\label{sec:further-estimation}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[87-98]

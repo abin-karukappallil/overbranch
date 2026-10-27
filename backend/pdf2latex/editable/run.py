@@ -1,9 +1,10 @@
 """
 run.py — Editable-mode conversion job orchestration.
 
-Document-level (reflow), not per-page: extract → analyse (furniture, columns, profile, blocks,
-pages) → compose LaTeX → compile (with a per-block degradation repair loop) → measure gates →
-optional per-block LLM polish → write into the project.
+Page-locked: extract → analyse (furniture, columns, profile, blocks, one hard mark per source
+page) → compose LaTeX → pagefit.finish (compile with a per-block degradation repair loop →
+heading calibration → the measured page-fit loop) → measure gates → optional text-only LLM polish
+(refused if it moves a page, a page start or a picture) → write into the project.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from . import furniture as F
 from . import pages as PG
 from . import profile as PRof
 from .emit import Emitter
-from .model import LINEBREAK, Block, EditDoc, Heading, LineMap, TitlePage
+from .model import LINEBREAK, Block, EditDoc, Heading, LineMap, Para, TitlePage
 
 logger = logging.getLogger("pdf2latex.editable")
 
@@ -64,11 +65,15 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
             rows_of_stacks.append(nrows)
         if rows_of_stacks:
             note_stacks[p.number] = rows_of_stacks
-        layout = C.page_zones_and_rows(p, exclude, col_left, col_right)
+        furn_imgs = getattr(furn, "image_keys", set()) or set()
+        wide = [b.bbox for b in extract.metadata.get("_editable_tables", {}).get(p.number, [])] + \
+               [img.bbox for img in p.images if (p.number, img.file) not in furn_imgs]
+        layout = C.page_zones_and_rows(p, exclude, col_left, col_right, wide)
         page_layout[p.number] = layout
         page_rows[p.number] = [r for _z, rows in layout for r in rows]
 
     profile = PRof.build_profile(pages, page_rows, col_left, col_right)
+    PRof.two_column_layout(profile, page_layout)
     from .hyphen import vocabulary
     profile.words, profile.compounds = vocabulary(ln.text for p in pages for ln in p.lines)
 
@@ -99,7 +104,8 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
                             table_blocks=table_blocks, math_blocks=math_blocks,
                             note_stacks=note_stacks,
                             boxes=extract.metadata.get("_editable_boxes", {}),
-                            furniture=furn)
+                            furniture=furn,
+                            trims=extract.metadata.get("_editable_trims", {}))
     # shaded boxes bring fill colours the text never used; give them names too
     box_rgbs = [c for specs in extract.metadata.get("_editable_boxes", {}).values() for spec in specs
                 for c in (spec.get("fill"), spec.get("title_fill")) if c]
@@ -127,9 +133,14 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
             b.starts_page = True
     blocks = _fold_heading_rules(blocks, profile)
     _measure_heading_spacing(blocks, profile)
+    # after the heading measurement: the gap it gives a page's first block must not be read as a
+    # heading's own space above (it drove the chapter before-space to a wild negative)
+    _space_at_page_top(blocks, profile)
     plan = PG.apply_numbering(blocks, pages, furn)
     furn.initial_numbering = plan["initial"]
     furn.plain_empty = plan["plain_empty"]
+    if not deck:
+        _lock_geometry(blocks, profile, furn, page_rows)
 
     for pno in extract.metadata.get("_editable_backgrounds", {}):
         pinned.add(pno)   # a decorated page keeps its own page
@@ -141,12 +152,60 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
                         scanned=scanned, page_count=len(pages), rows_by_page=reading_rows,
                         backgrounds=extract.metadata.get("_editable_backgrounds", {}),
                         deck=deck,
+                        zone_rows={pno: [((z.column, z.of_columns), rows) for z, rows in lay]
+                                   for pno, lay in page_layout.items()},
                         title=(source_name or "").rsplit("/", 1)[-1])
     has_notes = any(b.kind == "note" for b in blocks)
     em = Emitter(profile, source_name=source_name, furniture=furn,
                  backgrounds=extract.metadata.get("_editable_backgrounds", {}), deck=deck)
     tex, lm = em.document(blocks, has_notes)
     return tex, doc_model, lm
+
+
+def _lock_geometry(blocks: List[Block], profile, furn, page_rows: Dict[int, List]) -> None:
+    """
+    Page-locked geometry. A block the PDF sets at the foot of its page (its last baseline on the
+    text area's foot, a wide gap above it) is anchored there (``anchor_bottom``). Then the text area
+    is let down as far as the lowest content of any page (by one more line), never into the footer:
+    a source page whose text sets a little taller than the PDF's then still fits its page, which
+    \\raggedbottom leaves unstretched.
+    """
+    from .blocks import _last_baseline
+    ph = profile.paper_pt[1] if profile.paper_pt else 842.0
+    m = profile.margins
+    src_bottom = ph - m["bottom"]
+    profile.text_bottom_src = src_bottom
+    lead = profile.leading or 1.2 * profile.body_size
+    by_page: Dict[int, List[Block]] = {}
+    for b in blocks:
+        if b.kind in ("note", "pagemark"):
+            continue
+        by_page.setdefault(b.page, []).append(b)
+    lowest = src_bottom
+    for pno, bl in by_page.items():
+        for b in bl:
+            if not isinstance(b, TitlePage):
+                lowest = max(lowest, b.bbox[3])
+        flow = [b for b in bl if not isinstance(b, TitlePage)]
+        if len(flow) < 2 or len(flow) != len(bl):
+            continue
+        last, prev = flow[-1], flow[-2]
+        lb = _last_baseline(last)
+        lb = lb if lb is not None else last.bbox[3]
+        if abs(src_bottom - lb) <= 0.6 * lead and last.bbox[1] - prev.bbox[3] >= 2 * lead \
+                and not getattr(last, "joins_prev", False):
+            last.anchor_bottom = round(lb, 2)
+    for rows in page_rows.values():
+        for r in rows:
+            lowest = max(lowest, r.bottom)
+    if furn is not None and furn.footer_top:
+        cap = furn.footer_top - 2
+        if furn.footer_baseline:
+            cap = min(cap, furn.footer_baseline - 12.0)
+    else:
+        cap = ph - 18.0
+    new_bottom = max(src_bottom, min(cap, lowest + lead))
+    m["bottom"] = round(ph - new_bottom, 2)
 
 
 def _with_note_rows(page_rows: Dict[int, List], blocks: List[Block]) -> Dict[int, List]:
@@ -204,7 +263,6 @@ async def run_editable(job_id: str, pdf_bytes: bytes, project_id: str, overwrite
     from ..pipeline import _page_count, _tex_available, compile_tex, _emit_trace
     from . import gates as G
     from . import polish as POL
-    from . import vision_layout as VL
 
     settings = get_settings()
     jd = jobs.job_dir(job_id)
@@ -237,15 +295,13 @@ async def run_editable(job_id: str, pdf_bytes: bytes, project_id: str, overwrite
 
         ctx = EditCtx(out_dir=out_dir)
         pdf = None
+        fit_info: Dict = {}
         if has_tex:
-            _set(stage="compiling", message="Compiling the document…", progress=0.35)
-            tex, pdf = await G.compile_with_repair(ctx, tex, doc_model, lm, compile_tex)
-            if pdf is not None and await asyncio.to_thread(calibrate_heading_spacing, doc_model, pdf):
-                from .emit import emit_document
-                tex2, lm2 = emit_document(doc_model)
-                pdf2, _log = await compile_tex(ctx, tex2, G.MERGE_TIMEOUT_BASE + 6 * max(1, doc_model.page_count))
-                if pdf2 is not None:
-                    tex, lm, pdf = tex2, lm2, pdf2
+            # compile (repairing) → calibrate the measured spacing → fit every source page to its
+            # page: the same passes the CLI runs (pagefit.finish)
+            from . import pagefit as PF
+            _set(stage="compiling", message="Compiling and fitting the pages…", progress=0.35)
+            tex, lm, pdf, fit_info = await PF.finish(ctx, extract, doc_model, tex, lm, compile_tex)
 
         _set(stage="verifying", message="Checking coverage, style and structure…", progress=0.50)
         gate_result = {}
@@ -253,21 +309,14 @@ async def run_editable(job_id: str, pdf_bytes: bytes, project_id: str, overwrite
             (jd / "output.pdf").write_bytes(pdf)
             report.compiled = True
             report.compiled_page_count = await asyncio.to_thread(_page_count, pdf)
-            gate_result = await asyncio.to_thread(G.run_gates, extract, doc_model, tex, pdf, settings)
+            gate_result = await asyncio.to_thread(G.run_gates, extract, doc_model, tex, pdf, settings,
+                                                  out_dir)
             gate_result["compiled_page_count"] = report.compiled_page_count
+            gate_result["compiles"] = fit_info.get("compiles")
+            gate_result["fit"] = fit_info.get("fit")
 
-        # Vision layout pass: correct figure/table size, alignment, float choice and anchor from
-        # the rendered page image. Measurement-gated: a verdict that would grow the output or
-        # regress coverage/style is reverted. Separate from the polish pass's own gate so a disabled
-        # polish still gets the layout fix.
-        if pdf is not None and llm_available() and settings.editable_vision:
-            _set(stage="laying_out", message="Fitting tables and figures to the page…", progress=0.55)
-            tex, pdf, gate_result = await VL.vision_layout(ctx, extract, doc_model, tex, pdf, lm,
-                                                           gate_result, settings, job_id, doc,
-                                                           compile_tex)
-            if pdf is not None:
-                (jd / "output.pdf").write_bytes(pdf)
-                report.compiled_page_count = await asyncio.to_thread(_page_count, pdf)
+        # No LLM decides where anything goes: placement is the page lock's and the measured fit's
+        # (settings.editable_vision is accepted and ignored).
 
         # Polish pass (text-only LLM per flagged block), gated
         if pdf is not None and report.llm_used:
@@ -410,6 +459,36 @@ def _measure_heading_spacing(blocks: List[Block], profile) -> None:
             nxt.space_exact = True
 
 
+def _space_at_page_top(blocks: List[Block], profile) -> None:
+    """Give the first block of each hard-broken page the gap the PDF leaves above it.
+
+    Spacing is otherwise measured from the previous block, which for a page's first block sits on
+    the page before — so the gap is recorded as zero and the block rides up to the top margin. A
+    centred "CONTENTS" title that the source sets ~52pt down the page landed hard against it.
+    Headings are left alone: their place comes from their level's titlesec spacing, corrected by
+    ``calibrate_heading_spacing``.
+    """
+    top = (profile.margins or {}).get("top")
+    if not top:
+        return
+    lead = profile.leading or 12.0
+    hard = False
+    for b in blocks:
+        if b.kind == "pagemark":
+            hard = bool(getattr(b, "hard", False))
+            continue
+        if hard and not isinstance(b, (Heading, TitlePage)) and not b.space_before \
+                and not getattr(b, "joins_prev", False):
+            gap = b.bbox[1] - top
+            if 0.4 * lead <= gap <= 400.0:
+                b.space_before = round(gap, 1)
+                b.space_exact = True
+        hard = False
+
+
+MAX_HEADING_LIFT = 36.0   # pt a page-opening heading may be pulled up toward the page top
+
+
 def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
     """
     Measured correction of the space around headings. TeX adds \\topskip, \\parskip, interline
@@ -426,6 +505,8 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
         return False          # slides are scaled to fit their page: their positions don't compare
     rows = _output_rows(pdf, doc.profile)
     opening: Dict[int, List[float]] = {}
+    opening_top: Dict[int, List[float]] = {}
+    opening_h: List[Tuple[Heading, float]] = []
     before: Dict[int, List[float]] = {}
     after: Dict[int, List[float]] = {}
     flow = [b for b in doc.blocks if b.kind not in ("note",)]
@@ -452,8 +533,10 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
         src_last = b.baselines[-1] if b.baselines else None
         if b.starts_page:
             # baselines: the two fonts' bounding boxes differ, their baselines are the text's place
-            opening.setdefault(b.level, []).append(
-                (base - src_first) if src_first is not None else (top - b.bbox[1]))
+            off = (base - src_first) if src_first is not None else (top - b.bbox[1])
+            opening.setdefault(b.level, []).append(off)
+            opening_top.setdefault(b.level, []).append(top)
+            opening_h.append((b, off))
         else:
             prev = flow[i - 1] if i > 0 else None
             src_prev = _last_baseline(prev) if prev is not None and prev.page == b.page else None
@@ -480,8 +563,23 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
         offs = opening.get(level) if n_open > n_mid else before.get(level)
         if offs:
             delta = statistics.median(offs)
+            floor = 0.0
+            if n_open > n_mid:
+                # A page-opening heading usually has to come UP: \chapter* carries its own space
+                # above the title that titlesec's before-space has to cancel, so the correction has
+                # to be allowed to go negative (titlesec accepts a negative before-space). Clamped at
+                # zero, every chapter page started ~34pt below the source's.
+                floor = -80.0
+                # …but only by a moderate amount. A large lift means the PDF sets its chapter titles
+                # up in the page's top margin; following them there puts the title outside the text
+                # block, in the running header's band, where it neither reads nor counts as covered.
+                tops = opening_top.get(level) or []
+                margin_top = (doc.profile.margins or {}).get("top") or 0.0
+                room = max(0.0, statistics.median(tops) - margin_top) if tops else 0.0
+                if delta > 0:
+                    delta = min(delta, MAX_HEADING_LIFT, room) if tops else min(delta, MAX_HEADING_LIFT)
             if abs(delta) > 1.0:
-                lv["space_before"] = round(max(0.0, lv["space_before"] - delta), 1)
+                lv["space_before"] = round(max(floor, lv["space_before"] - delta), 1)
                 changed = True
         offs = after.get(level)
         if offs and lv.get("space_after") is not None:
@@ -489,6 +587,36 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
             if abs(delta) > 1.0:
                 lv["space_after"] = round(max(0.0, lv["space_after"] - delta), 1)
                 changed = True
+    # A block that opens a page carries a \vspace* set from the source geometry, but a space at a
+    # page top does not start from zero — TeX lands the first box by \topskip, which shifts once a
+    # rigid space is there — so the first compile overshoots. Correct each by its measured error;
+    # from a non-zero space the response is linear, so one correction lands it.
+    # Only a row that opens an output page can be such a block: matching anywhere would hit the
+    # same words in the contents list ("LIST OF FIGURES … viii") instead of the page itself.
+    page_first: Dict[int, int] = {}
+    for k, row in enumerate(rows):
+        page_first.setdefault(row[0], k)
+    openers = sorted(page_first.values())
+    hard, cursor2 = False, 0
+    for b in doc.blocks:
+        if b.kind == "pagemark":
+            hard = bool(getattr(b, "hard", False))
+            continue
+        opens, hard = hard, False
+        if not opens or not isinstance(b, Para) or not b.space_exact or not b.lines:
+            continue
+        key = _norm_key("".join(r.text if r.text != LINEBREAK else " " for r in b.lines[0].runs))
+        if len(key) < 3:
+            continue
+        j = next((k for k in openers if k >= cursor2 and rows[k][2].startswith(key)), None)
+        if j is None:
+            continue
+        cursor2 = j + 1
+        delta = rows[j][3] - b.bbox[1]
+        if abs(delta) > 2.0:
+            b.space_before = round(max(0.0, b.space_before - delta), 1)
+            changed = True
+
     # A heading right under another: LaTeX adds only the upper one's after-space (a heading's
     # before-space is skipped right after a heading, \\if@nobreak). Where that, with the levels as
     # now corrected, still misses the PDF by 4pt or more, this heading gets a \\kern.
@@ -512,38 +640,8 @@ def _norm_key(text: str) -> str:
 
 
 def _output_rows(pdf: bytes, profile) -> List[Tuple[int, float, str, float]]:
-    """The output's text rows inside the text area, in page then top-down order: (page, baseline,
-    normalised text, top). Spans on one baseline make one row (a number and its title)."""
-    import re as _re
-    import pymupdf
-    out: List[Tuple[int, float, str, float]] = []
-    with pymupdf.open(stream=pdf, filetype="pdf") as d:
-        for pi, pg in enumerate(d):
-            h = pg.rect.height
-            lo = profile.margins.get("top", 72.0) - 4
-            hi = h - profile.margins.get("bottom", 72.0) + 4
-            items = []
-            for blk in pg.get_text("dict").get("blocks", []):
-                for ln in blk.get("lines", []):
-                    spans = [sp for sp in ln.get("spans", []) if sp.get("text", "").strip()]
-                    if not spans:
-                        continue
-                    base = spans[0]["origin"][1]
-                    if not (lo <= ln["bbox"][1] and base <= hi):
-                        continue
-                    items.append((base, ln["bbox"][0], "".join(sp["text"] for sp in spans), ln["bbox"][1]))
-            items.sort()
-            merged: List[List] = []
-            for base, x0, text, top in items:
-                if merged and abs(merged[-1][0] - base) <= 1.5:
-                    merged[-1][3].append((x0, text))
-                    merged[-1][2] = min(merged[-1][2], top)
-                else:
-                    merged.append([base, x0, top, [(x0, text)]])
-            for base, _x0, top, parts in merged:
-                text = " ".join(t for _x, t in sorted(parts))
-                out.append((pi, base, _re.sub(r"[^0-9a-z]", "", text.lower()), top))
-    return out
+    from .measure import output_rows
+    return output_rows(pdf, profile)
 
 
 def _fold_heading_rules(blocks: List[Block], profile) -> List[Block]:

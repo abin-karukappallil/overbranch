@@ -1,0 +1,83 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{fontspec}
+\usepackage{unicode-math}
+\usepackage{amsmath}
+\usepackage[english]{babel}
+\usepackage{xcolor}
+
+\setmainfont{DejaVu Serif}
+\setsansfont{DejaVu Sans}
+\setmonofont{DejaVu Sans Mono}[Scale=0.9]
+\setmathfont{DejaVu Math TeX Gyre}
+
+\title{Unicode Typesetting with XeLaTeX}
+\author{OverBranch Benchmark Corpus}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  This document is a workload for the XeLaTeX path of the OverBranch compiler
+  benchmark. It uses \texttt{fontspec} for system-level font selection,
+  \texttt{unicode-math} for OpenType mathematics, and direct UTF-8 input for
+  Greek letters, accented Latin text and mathematical symbols.
+\end{abstract}
+
+\section{Unicode text}
+
+Plain text may contain accented Latin letters such as café, naïve, Zürich,
+Ångström and Łódź, as well as Greek words like λόγος and
+φύσις. Typographic punctuation such as “curly quotes”, em
+dashes —, and the ellipsis … are all handled directly by the engine.
+
+The Greek alphabet is used heavily in mathematics: $\alpha$, $\beta$, $\gamma$,
+$\Gamma$, $\Delta$, $\Omega$, $\varepsilon$, $\lambda$, $\pi$ and $\sigma$
+all appear as glyphs from the math font.
+
+\section{Mathematical symbols}
+
+Symbols from several blocks can be typed directly into the source:
+$\forall x \in \mathbb{R}\;\exists\, y \ge x$, $\nabla \times \mathbf{B} = \mu_0 \mathbf{J}$,
+$\sum_{n=1}^{\infty} n^{-2} = \tfrac{\pi^2}{6}$ and $\hbar \approx 1.0546 \times 10^{-34}\,\mathrm{J\,s}$.
+
+Set operations and logic: $A \cup B \subseteq C$, $A \cap \varnothing = \varnothing$,
+$p \Rightarrow q \Leftrightarrow \lnot q \Rightarrow \lnot p$.
+
+\section{Display equations}
+
+The Gaussian integral is
+\begin{equation}\label{eq:gauss}
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}.
+\end{equation}
+
+Euler's identity follows from the power series of the exponential:
+\begin{equation}\label{eq:euler}
+  e^{i\theta} = \cos\theta + i\sin\theta,
+  \qquad\text{so}\qquad
+  e^{i\pi} + 1 = 0.
+\end{equation}
+
+A matrix-valued expression with Greek entries:
+\begin{equation}\label{eq:matrix}
+  \Sigma =
+  \begin{pmatrix}
+    \sigma_{11} & \rho\,\sigma_1\sigma_2 \\
+    \rho\,\sigma_1\sigma_2 & \sigma_{22}
+  \end{pmatrix},
+  \qquad -1 \le \rho \le 1.
+\end{equation}
+
+Equation~\eqref{eq:gauss} is the normalisation constant of the Gaussian density,
+and Equation~\eqref{eq:euler} relates it to complex exponentials.
+Equation~\eqref{eq:matrix} is positive semidefinite whenever $|\rho| \le 1$.
+
+\section{Mixed fonts}
+
+Sans-serif text can mark a heading inside a paragraph, \textsf{like this},
+and monospace is available for code: \texttt{x = \textbackslash alpha}.
+Colour is available through \textcolor{teal}{xcolor}.
+
+\end{document}

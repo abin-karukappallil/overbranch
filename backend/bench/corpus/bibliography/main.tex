@@ -1,0 +1,70 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{makeidx}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\makeindex
+
+\title{A Reading List on Information, Computation and Concurrency}
+\author{OverBranch Benchmark Corpus}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  This short note collects a small reading list used as a workload for the
+  bibliography and index paths of the OverBranch compiler benchmark. It
+  exercises \textsc{BibTeX} and \textsc{MakeIndex} together with ordinary
+  cross-references.
+\end{abstract}
+
+\section{Information}
+
+The quantitative study of communication begins with Shannon's
+definition of entropy~\cite{shannon1948}. The \index{entropy} entropy of a
+discrete source is $H = -\sum_i p_i \log_2 p_i$, and it sets the limit on
+lossless compression of that source.
+
+\section{Computation}
+
+Turing framed the question of machine intelligence in terms of an imitation
+game~\cite{turing1950}. Modern algorithm textbooks such as
+\cite{cormen2009} give the standard treatment of \index{complexity}
+complexity classes and asymptotic analysis.
+
+The structure of a multiprogrammed operating system was described by
+Dijkstra~\cite{dijkstra1968}, whose work on \index{semaphore} semaphores
+remains influential. Hoare later introduced communicating sequential
+processes~\cite{hoare1978}, a model of \index{concurrency} concurrency based
+on synchronous message passing.
+
+\section{Concurrency and time}
+
+Lamport analysed the ordering of events in distributed systems and introduced
+logical clocks~\cite{lamport1978}. The \index{happens-before relation} happens-before
+relation he defined is a partial order on events.
+
+\section{Typesetting tools}
+
+Knuth's description of the \TeX{} system~\cite{knuth1984} and Lamport's
+guide to \LaTeX{}~\cite{lamport1994} are the canonical references for the
+typesetting toolchain. Documents built with these tools use an
+\index{index}index generated from \verb|\index| commands, as this one does.
+
+\bibliographystyle{plain}
+\bibliography{refs}
+
+\appendix
+
+\section{Index of terms}
+
+The index below is generated from the \verb|\index| commands in the body.
+
+\printindex
+
+\end{document}

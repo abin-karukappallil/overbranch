@@ -5,6 +5,7 @@ import {
   FolderGit2,
   Upload,
   Download,
+  Archive,
   Plus,
   FileText,
   BookOpen,
@@ -310,6 +311,20 @@ export function ProjectFilesPanel({
     document.body.removeChild(anchor);
   };
 
+  const handleDownloadProject = () => {
+    if (!projectId) return;
+    // Same pattern as the per-file download: a same-origin <a download> at the proxy route
+    // (never the backend URL). The proxy streams the backend's "<project name>.zip".
+    const anchor = document.createElement("a");
+    anchor.href = `/api/projects/export?project_id=${encodeURIComponent(projectId)}`;
+    anchor.download = "project.zip";
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+  };
+
   const getFileIcon = (ext: string, type: "document" | "image") => {
     if (type === "image" || [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"].includes(ext)) {
       return <ImageIcon className="w-4 h-4 text-purple-400 shrink-0" />;
@@ -353,6 +368,16 @@ export function ProjectFilesPanel({
               <FileInput className="w-3.5 h-3.5" />
             </Button>
           )}
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={handleDownloadProject}
+            className="h-6 w-6 text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] rounded-md cursor-pointer"
+            title="Download project (.zip)"
+            aria-label="Download project (.zip)"
+          >
+            <Archive className="w-3.5 h-3.5" />
+          </Button>
           <Button
             size="icon"
             variant="ghost"

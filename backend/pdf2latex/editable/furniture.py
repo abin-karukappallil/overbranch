@@ -73,8 +73,11 @@ def _body_edges(pages: List[PageExtract]) -> None:
 
 
 def _style(ln: Line) -> Dict:
+    from ..fontmap import editable_font
     sp = max(ln.spans, key=lambda s: len(s.text.strip()))
-    return {"size": round(sp.size * 2) / 2, "color": sp.color, "bold": sp.bold, "italic": sp.italic}
+    _cls, family = editable_font(sp.font, sp.flags)
+    return {"size": round(sp.size * 2) / 2, "color": sp.color, "bold": sp.bold, "italic": sp.italic,
+            "family": family}
 
 
 def detect(pages: List[PageExtract]) -> Furniture:

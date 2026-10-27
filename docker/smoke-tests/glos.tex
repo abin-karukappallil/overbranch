@@ -1,0 +1,11 @@
+\documentclass{article}
+\usepackage{makeidx}
+\usepackage{glossaries}
+\makeindex
+\makeglossaries
+\newglossaryentry{tex}{name=TeX,description={a typesetting system}}
+\begin{document}
+\gls{tex} is used here.\index{TeX}
+\printglossaries
+\printindex
+\end{document}

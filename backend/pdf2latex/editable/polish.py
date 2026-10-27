@@ -291,11 +291,21 @@ async def polish_document(ctx, extract, doc: EditDoc, tex: str, pdf: bytes, lm, 
     timeout = G.MERGE_TIMEOUT_BASE + 6 * max(1, doc.page_count)
     new_pdf, _log = await compile_tex(ctx, new_tex, timeout)
     if new_pdf is not None:
-        new_gates = G.run_gates(extract, doc, new_tex, new_pdf, settings)
+        new_gates = G.run_gates(extract, doc, new_tex, new_pdf, settings, getattr(ctx, "out_dir", None))
         old = gate_result.get("gates", {})
-        worse = (new_gates["gates"].get("coverage", 0) < old.get("coverage", 0) - 1e-4
-                 or new_gates["gates"].get("style", 0) < old.get("style", 0) - 0.005
+        ng = new_gates["gates"]
+        # text only: a polish that moves a page, a page start or a picture is refused outright
+        moved = (abs(ng.get("pages_out", 0) - ng.get("pages_source", 0))
+                 > abs(old.get("pages_out", 0) - old.get("pages_source", 0))
+                 or ng.get("page_start", 1.0) < old.get("page_start", 1.0)
+                 or ng.get("figure_position", 1.0) < old.get("figure_position", 1.0))
+        worse = (moved
+                 or ng.get("coverage", 0) < old.get("coverage", 0) - 1e-4
+                 or ng.get("style", 0) < old.get("style", 0) - 0.005
                  or len(new_gates["failed"]) > len(gate_result.get("failed", [])))
+        for k in ("compiles", "fit", "compiled_page_count"):
+            if k in gate_result:
+                new_gates[k] = gate_result[k]
         if not worse:
             new_gates["polish"] = stats
             return new_tex, new_pdf, new_gates

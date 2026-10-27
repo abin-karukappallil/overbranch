@@ -29,16 +29,29 @@ fi
 # Start Python FastAPI Backend on port 8000 in background
 echo "► Starting FastAPI Backend (0.0.0.0:${BACKEND_PORT:-8000})..."
 cd /app/backend
-python3 -m uvicorn main:app \
-    --host 0.0.0.0 \
-    --port "${BACKEND_PORT:-8000}" \
-    --workers "$BACKEND_WORKERS" \
-    --proxy-headers \
-    --forwarded-allow-ips="*" \
-    --timeout-keep-alive 65 \
-    --timeout-graceful-shutdown 30 \
-    --limit-concurrency 200 \
-    --limit-max-requests 10000 &
+# --limit-max-requests is deliberately absent: with one worker, polling every 1.5s reaches the
+# limit within hours, uvicorn exits for good and nothing restarted it. The loop below also
+# restarts the API after any crash. The container-level trap TERMs this subshell, whose own
+# trap stops the current uvicorn and exits instead of restarting it.
+(
+    UVICORN_PID=""
+    trap 'kill -TERM $UVICORN_PID 2>/dev/null; exit 0' TERM INT
+    while true; do
+        python3 -m uvicorn main:app \
+            --host 0.0.0.0 \
+            --port "${BACKEND_PORT:-8000}" \
+            --workers "$BACKEND_WORKERS" \
+            --proxy-headers \
+            --forwarded-allow-ips="*" \
+            --timeout-keep-alive 65 \
+            --timeout-graceful-shutdown 30 \
+            --limit-concurrency 200 &
+        UVICORN_PID=$!
+        wait $UVICORN_PID
+        echo "► uvicorn exited (status $?); restarting in 1s..."
+        sleep 1
+    done
+) &
 BACKEND_PID=$!
 
 # Wait for backend to initialize

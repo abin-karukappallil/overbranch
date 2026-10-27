@@ -34,23 +34,26 @@ def _run_tex(cmd, *, cwd, timeout, env, capture_output=True):
 
     By reading raw bytes and decoding with ``errors='replace'``, invalid bytes
     become U+FFFD (�) instead of crashing, and the PDF is still picked up.
+
+    The process runs in its own session (tex_sandbox.run_tex_process): on a
+    timeout the whole process group — latexmk AND the pdflatex/biber it spawned —
+    is killed, not just the direct child.
     """
-    proc = subprocess.run(
-        cmd,
-        cwd=cwd,
-        capture_output=capture_output,
-        timeout=timeout,
-        env=env,
-    )
-    if isinstance(proc.stdout, bytes):
-        proc.stdout = proc.stdout.decode("utf-8", errors="replace")
-    elif proc.stdout is None:
-        proc.stdout = ""
-    if isinstance(proc.stderr, bytes):
-        proc.stderr = proc.stderr.decode("utf-8", errors="replace")
-    elif proc.stderr is None:
-        proc.stderr = ""
-    return proc
+    from tex_sandbox import run_tex_process
+    return run_tex_process(cmd, cwd=cwd, timeout=timeout, env=env, capture_output=capture_output)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, "") or default))
+    except ValueError:
+        return default
+
+
+#: Wall-clock budget of one engine candidate (latexmk runs all its passes inside it).
+TEX_COMPILE_TIMEOUT = _env_int("TEX_COMPILE_TIMEOUT", 120)
+#: Budget for heavy documents (long, TikZ/pgfplots-heavy) — judged on every source on disk.
+TEX_COMPILE_TIMEOUT_HEAVY = _env_int("TEX_COMPILE_TIMEOUT_HEAVY", 240)
 
 
 _MAGIC_PROGRAM_RE = re.compile(
@@ -85,20 +88,86 @@ _TEX_ENTRY = r"\errorcontextlines=20 \input{main.tex}"
 _TEX_LOG_ENV = {"max_print_line": "10000", "error_line": "254", "half_error_line": "238"}
 
 
-def _engine_command(engine_bin: str, *extra: str) -> List[str]:
-    return [engine_bin, *extra, "-interaction=nonstopmode", "-file-line-error", "-jobname=main", _TEX_ENTRY]
+def _engine_command(engine_bin: str, *extra: str, jobname: str = "main", entry: str = "main.tex") -> List[str]:
+    tex_entry = _TEX_ENTRY if entry == "main.tex" else r"\errorcontextlines=20 \input{" + entry + "}"
+    return [engine_bin, *extra, "-interaction=nonstopmode", "-file-line-error", f"-jobname={jobname}", tex_entry]
 
 
-def _attach_diagnostics(result: dict, output: str, tmpdir: Path) -> None:
+# --- latexmk (the primary engine candidate: what Overleaf runs) ----------------------
+_LATEXMK_ENGINE_FLAG = {"pdflatex": "-pdf", "xelatex": "-pdfxe", "lualatex": "-pdflua"}
+
+# Server-side latexmkrc. Project rc files (.latexmkrc / latexmkrc) are Perl and are
+# NEVER executed: latexmk runs with -norc and only this file via -r. It registers the
+# custom dependencies Overleaf's own rc registers (makeindex is built into latexmk).
+_SERVER_LATEXMKRC = r"""# OverBranch server latexmkrc - project rc files are never read (-norc).
+use File::Basename;
+sub ob_makeglossaries {
+    my ($base_name, $path) = fileparse($_[0]);
+    my @args = ("-q", "-d", $path, $base_name);
+    return system("makeglossaries", @args);
+}
+add_cus_dep('glo', 'gls', 0, 'ob_makeglossaries');
+add_cus_dep('acn', 'acr', 0, 'ob_makeglossaries');
+add_cus_dep('slo', 'sls', 0, 'ob_makeglossaries');
+add_cus_dep('nlo', 'nls', 0, 'ob_makenomenclature');
+sub ob_makenomenclature {
+    return system("makeindex", "$_[0].nlo", "-s", "nomencl.ist", "-o", "$_[0].nls");
+}
+push @generated_exts, 'glo', 'gls', 'glg', 'acn', 'acr', 'alg', 'slo', 'sls', 'slg', 'nlo', 'nls', 'nlg', 'ist';
+$max_repeat = 6;
+"""
+_LATEXMKRC_PATH: Optional[Path] = None
+
+
+def _server_latexmkrc() -> Path:
+    """Writes the server rc once per process (outside every job directory) and returns it."""
+    global _LATEXMKRC_PATH
+    if _LATEXMKRC_PATH is not None and _LATEXMKRC_PATH.is_file():
+        return _LATEXMKRC_PATH
+    import hashlib
+    digest = hashlib.sha1(_SERVER_LATEXMKRC.encode()).hexdigest()[:12]
+    path = Path(tempfile.gettempdir()) / f"overbranch-latexmkrc-{os.getuid() if hasattr(os, 'getuid') else 0}-{digest}"
+    if not path.is_file():
+        tmp = path.with_suffix(".tmp%d" % os.getpid())
+        tmp.write_text(_SERVER_LATEXMKRC, encoding="utf-8")
+        os.replace(tmp, path)
+    _LATEXMKRC_PATH = path
+    return path
+
+
+def _latexmk_command(engine_bin: str, main_rel: str, *, jobname: str, synctex: bool) -> List[str]:
+    r"""
+    ``latexmk -cd -f -interaction=nonstopmode -file-line-error -synctex=1 -pdf|-pdfxe|-pdflua``
+    on the main document, run from the project root: ``-cd`` makes latexmk change to the
+    main file's directory, so relative \input / \include / \graphicspath /
+    \bibliography resolve exactly as on Overleaf. TeX Live's default restricted
+    shell-escape is kept (no -shell-escape). ``-usepretex`` raises \errorcontextlines
+    without adding a line to the document, as the direct engine path does.
+    """
+    cmd = ["latexmk", "-norc", "-r", str(_server_latexmkrc()), "-cd", "-f",
+           "-interaction=nonstopmode", "-file-line-error"]
+    if synctex:
+        cmd.append("-synctex=1")
+    cmd += [_LATEXMK_ENGINE_FLAG.get(engine_bin, "-pdf"), f"-jobname={jobname}",
+            r"-usepretex=\errorcontextlines=20 ", main_rel]
+    return cmd
+
+
+def _attach_diagnostics(result: dict, output: str, tmpdir: Path, main_file: str = "main.tex",
+                        project_root: Optional[Path] = None) -> None:
     """
     Adds ``diagnostics`` — every error of the run, located on the line its token
     is really on (latex_diagnostics) — and rewrites ``errors`` to carry those
     lines. ``output`` is one complete pass; ``result["errors"]`` already holds
     the error lines of all passes, and none of those is dropped.
+
+    ``tmpdir`` is the directory TeX ran in (the main file's directory). When that
+    is a sub-folder of ``project_root``, each diagnostic's ``file`` is rewritten
+    to its project-relative path, so the editor opens the right file.
     """
     try:
         from latex_diagnostics import diagnose, error_lines
-        root = tmpdir.resolve()
+        root = (project_root or tmpdir).resolve()
 
         def read_source(name: str) -> Optional[str]:
             target = (tmpdir / name).resolve()
@@ -106,7 +175,15 @@ def _attach_diagnostics(result: dict, output: str, tmpdir: Path) -> None:
                 return None
             return target.read_text(encoding="utf-8", errors="replace")
 
-        diagnostics = diagnose(output, read_source)
+        diagnostics = diagnose(output, read_source, main_file)
+        if project_root is not None and tmpdir.resolve() != root:
+            for d in diagnostics:
+                f = d.get("file")
+                if isinstance(f, str) and f and not os.path.isabs(f):
+                    try:
+                        d["file"] = (tmpdir / f).resolve().relative_to(root).as_posix()
+                    except (ValueError, OSError):
+                        pass
     except Exception as e:
         logger.debug(f"error localisation skipped: {e}")
         return
@@ -218,6 +295,76 @@ _UNICODE_ENGINE_MARKERS = (
     r"\setmathfont", r"\newfontface", r"\newfontfamily",
     r"\setmainlanguage", r"\directlua", r"\luadirect",
 )
+
+
+# Fontspec setup to neutralize when a blank-output pass tells us the system fonts
+# are missing: comment out the package loads AND the font-selection commands so a
+# retry under pdfLaTeX falls back to Computer Modern instead of selecting an
+# installed font the server does not have.
+_FONTSPEC_PKG_RE = re.compile(
+    r'\\usepackage(?:\[[^\]]*\])?\{(?:fontspec|unicode-math|polyglossia)\}'
+)
+_FONTSPEC_CMD_RE = re.compile(
+    r'\\(?:setmainfont|setsansfont|setmonofont|setromanfont|setmathfont|'
+    r'newfontface|newfontfamily|setmainlanguage|setotherlanguage|setdefaultlanguage)'
+    r'(?:\s*\[[^\]]*\])?\s*\{[^{}]*\}'
+)
+
+
+def _strip_fontspec_setup(code: str) -> str:
+    """
+    Comment out fontspec package loads and font-selection commands so a retry under
+    pdfLaTeX renders in CM. Each stripped line is replaced by a comment that marks
+    what was removed, so line numbers are preserved for diagnostics.
+    """
+    def _pkg(m: re.Match) -> str:
+        return "% [AUTO-DISABLED: Unicode font package: " + m.group(0) + "]"
+
+    def _cmd(m: re.Match) -> str:
+        return "% [AUTO-DISABLED: system font selector: " + m.group(0).replace("\n", " ") + "]"
+
+    out = _FONTSPEC_PKG_RE.sub(_pkg, code)
+    out = _FONTSPEC_CMD_RE.sub(_cmd, out)
+    return out
+
+
+# Beamer-only commands appearing in a non-beamer class is the classic case where the
+# source was authored (by the model or a user) for slides but the documentclass line
+# never got switched. The resulting log is a wall of "Environment columns undefined"
+# / "\end{frame} undefined" errors; swapping the class makes it compile.
+_BEAMER_BODY_RE = re.compile(
+    r'\\begin\s*\{(?:frame|columns|column|block|alertblock|exampleblock)\}'
+    r'|\\column\s*\{'
+    r'|\\frametitle\s*\{'
+    r'|\\usetheme\s*\{'
+    r'|\\usecolortheme\s*\{'
+)
+_DOCCLASS_SWAP_RE = re.compile(
+    r'\\documentclass\s*(\[[^\]]*\])?\s*\{([^{}]+)\}'
+)
+
+
+def _looks_like_beamer_body(code: str) -> bool:
+    return _BEAMER_BODY_RE.search(_strip_tex_comments(code)) is not None
+
+
+def _promote_to_beamer(code: str) -> Tuple[str, Optional[str]]:
+    """
+    Rewrites the first `\\documentclass{...}` to `\\documentclass{beamer}`, keeping
+    the option list intact. Returns (new_code, prior_class) or (code, None) if the
+    class is already beamer-derived or there is no documentclass line.
+    """
+    m = _DOCCLASS_SWAP_RE.search(code)
+    if not m:
+        return code, None
+    prior = m.group(2).strip()
+    low = prior.lower()
+    # Already a beamer or beamer-flavoured class.
+    if low == "beamer" or low.endswith("beamerposter"):
+        return code, None
+    opts = m.group(1) or ""
+    new = f"\\documentclass{opts}{{beamer}}"
+    return code[:m.start()] + new + code[m.end():], prior
 
 
 # Engine-detection conditionals (iftex / ifpdf / ifxetex / ifluatex) and the branch
@@ -363,17 +510,95 @@ def _strip_tex_comments(text: str) -> str:
     return _COMMENT_RE.sub("", text or "")
 
 
-def _project_tex_text(main_code: str, tmpdir: Path, extra_suffixes=(".tex",)) -> str:
-    """main.tex plus every other source file the compile can read (\\input/\\include chapters)."""
+def _project_tex_text(main_code: str, tmpdir: Path, extra_suffixes=(".tex",),
+                      main_path: Optional[Path] = None) -> str:
+    """
+    main.tex plus every other source file the compile can read (\\input/\\include chapters).
+    ``main_path`` is the main document on disk (excluded, since ``main_code`` is its
+    compile copy); by default every file named main.tex is taken to be it.
+    """
     parts = [main_code or ""]
+    main_resolved = main_path.resolve() if main_path is not None else None
     try:
         for item in sorted(tmpdir.rglob("*")):
+            is_main = (item.resolve() == main_resolved) if main_resolved is not None else item.name == "main.tex"
             if (item.is_file() and item.suffix.lower() in extra_suffixes
-                    and item.name != "main.tex" and item.stat().st_size < 4_000_000):
+                    and not is_main and item.stat().st_size < 4_000_000):
                 parts.append(item.read_text(encoding="utf-8", errors="replace"))
     except OSError:
         pass
     return "\n".join(parts)
+
+
+_INPUT_CMD_RE = re.compile(
+    r"\\(?:input|include|subfile|InputIfFileExists|includefrom|inputfrom|subincludefrom|subinputfrom|"
+    r"import|subimport)\*?\s*(?:\{([^{}]*)\}\s*)?\{([^{}]*)\}|\\input\s+([^\s{}\\%]+)")
+
+
+def _reachable_tex_text(main_code: str, workdir: Path, tmpdir: Path, max_files: int = 400) -> Tuple[str, bool]:
+    """
+    The main document plus every file it reaches through \\input / \\include /
+    \\subfile / \\import (transitively), resolved like TeX would (the main file's
+    directory, the including file's directory for \\import, then the project tree).
+    Returns (text, complete) — ``complete`` is False when a target could not be
+    resolved statically (a macro in the path), so callers can fall back to the
+    whole project.
+    """
+    root = tmpdir.resolve()
+    index: Dict[str, List[Path]] = {}
+    for f in root.rglob("*.tex"):
+        if f.is_file():
+            index.setdefault(f.name.lower(), []).append(f)
+    parts = [main_code or ""]
+    seen: set = set()
+    complete = True
+    queue: List[Tuple[str, Path]] = [(main_code or "", workdir)]
+    while queue and len(seen) < max_files:
+        text, here = queue.pop(0)
+        for m in _INPUT_CMD_RE.finditer(_strip_tex_comments(text)):
+            sub_dir, target = (m.group(1) or "").strip(), (m.group(2) or m.group(3) or "").strip()
+            if not target:
+                continue
+            if "\\" in target or "#" in target or "\\" in sub_dir:
+                complete = False
+                continue
+            names = [target] if target.lower().endswith(".tex") else [target + ".tex", target]
+            found = None
+            for base in ([here / sub_dir] if sub_dir else []) + [workdir, here]:
+                for n in names:
+                    cand = base / n
+                    if cand.is_file():
+                        found = cand
+                        break
+                if found:
+                    break
+            if found is None:
+                for n in names:
+                    tail = [p for p in Path(n).parts if p not in (".", "..")]
+                    for f in index.get(tail[-1].lower(), []) if tail else []:
+                        if [x.lower() for x in f.relative_to(root).parts[-len(tail):]] == [x.lower() for x in tail]:
+                            found = f
+                            break
+                    if found:
+                        break
+            if found is None:
+                continue
+            try:
+                key = found.resolve()
+            except OSError:
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                if key.stat().st_size > 4_000_000:
+                    continue
+                sub_text = key.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            parts.append(sub_text)
+            queue.append((sub_text, key.parent if sub_dir else here))
+    return "\n".join(parts), complete
 
 
 def _cite_keys(code: str) -> List[str]:
@@ -402,7 +627,7 @@ def _bib_targets(code: str) -> List[str]:
     return list(dict.fromkeys(out))
 
 
-def _generate_stub_bibs(tmpdir: Path, project_text: str) -> List[str]:
+def _generate_stub_bibs(tmpdir: Path, project_text: str, base_dir: Optional[Path] = None) -> List[str]:
     """
     Writes a placeholder .bib for every bibliography target that has no file, with one
     @misc entry per citation key, so a document whose references have not been added yet
@@ -411,17 +636,25 @@ def _generate_stub_bibs(tmpdir: Path, project_text: str) -> List[str]:
     """
     keys = _cite_keys(project_text)
     root = tmpdir.resolve()
+    base = base_dir or tmpdir
     generated: List[str] = []
     for target in _bib_targets(project_text):
-        dest = (tmpdir / target).resolve()
+        dest = (base / target).resolve()
         if root not in dest.parents or dest.exists():
+            continue
+        # BIBINPUTS searches the project tree recursively: a refs.bib anywhere under
+        # the project is what bibtex/biber will read, and a stub must not shadow it.
+        tail = [p for p in Path(target).parts if p not in (".", "..")]
+        if tail and any(
+                [x.lower() for x in f.relative_to(root).parts[-len(tail):]] == [x.lower() for x in tail]
+                for f in root.rglob(tail[-1]) if f.is_file()):
             continue
         entries = [f"@misc{{{k},\n  title = {{{k}}},\n  note = {{Reference not yet added}}\n}}\n" for k in keys]
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text("% Placeholder generated by the compiler: no bibliography file was provided.\n"
                             + "\n".join(entries), encoding="utf-8")
-            generated.append(target)
+            generated.append(dest.relative_to(root).as_posix() if base_dir is not None else target)
         except OSError:
             continue
     return generated
@@ -440,6 +673,11 @@ def _inject_hyperref(main_code: str, project_text: str, tmpdir: Optional[Path] =
     applied to the COMPILE COPY only (never the user's source). It goes on the same line as
     \\begin{document} (end of the preamble, so it follows every package it must wrap) and adds
     no line, so TeX's reported line numbers still match the user's source.
+
+    The load is wrapped in ``\\@ifpackageloaded{hyperref}``: a class or package the source
+    scan cannot see (a TeX Live class such as elsarticle, a package that loads it
+    internally) may already have loaded hyperref with other options, and a second
+    ``\\usepackage[hidelinks]{hyperref}`` would then be an option clash.
     """
     visible = _strip_tex_comments(project_text)
     if not _has_citations(visible):
@@ -458,14 +696,19 @@ def _inject_hyperref(main_code: str, project_text: str, tmpdir: Optional[Path] =
         line_start = main_code.rfind("\n", 0, m.start()) + 1
         if _COMMENT_RE.search(main_code[line_start:m.start()]):
             continue  # commented out
-        return main_code[:m.start()] + r"\usepackage[hidelinks]{hyperref}" + main_code[m.start():]
+        return main_code[:m.start()] + _HYPERREF_INJECTION + main_code[m.start():]
     return main_code
 
 
-def _run_bibliography(backend: str, tmpdir: Path, timeout: int, env: dict, notes: List[str]) -> None:
+_HYPERREF_INJECTION = (r"\makeatletter\@ifpackageloaded{hyperref}{}{\usepackage[hidelinks]{hyperref}}"
+                       r"\makeatother")
+
+
+def _run_bibliography(backend: str, tmpdir: Path, timeout: int, env: dict, notes: List[str],
+                      jobname: str = "main") -> None:
     """Runs bibtex/biber; anything it complains about goes to ``notes`` (never to errors)."""
     try:
-        rb = _run_tex([backend, "main"], cwd=tmpdir, timeout=timeout, env=env)
+        rb = _run_tex([backend, jobname], cwd=tmpdir, timeout=timeout, env=env)
     except FileNotFoundError:
         notes.append(f"{backend} is not installed; the bibliography could not be built.")
         return
@@ -1045,36 +1288,401 @@ def create_sample_image(target_path: Path, label: str):
         logger.warning(f"Failed to create sample image at {target_path}: {e}")
 
 
-def ensure_sample_images_exist(latex_code: str, tmpdir: Path):
+# Extensions graphicx tries for an \includegraphics target without one (pdfTeX, XeTeX
+# and LuaTeX driver lists combined), in its own order, plus upper-case variants.
+_GRAPHIC_EXTS = (".pdf", ".png", ".jpg", ".jpeg", ".mps", ".jbig2", ".jb2", ".eps", ".ps",
+                 ".bmp", ".tif", ".tiff", ".gif", ".svg", ".webp")
+_INCLUDEGRAPHICS_RE = re.compile(r"\\includegraphics\s*\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]+)\}")
+_GRAPHICSPATH_RE = re.compile(r"\\graphicspath\s*\{((?:\s*\{[^{}]*\}\s*)+)\}")
+
+
+def _graphicspath_dirs(text: str) -> List[str]:
+    dirs: List[str] = []
+    for m in _GRAPHICSPATH_RE.finditer(_strip_tex_comments(text or "")):
+        for d in re.findall(r"\{([^{}]*)\}", m.group(1)):
+            d = d.strip()
+            if d and d not in dirs:
+                dirs.append(d)
+    return dirs
+
+
+def _graphic_names(target: str) -> List[str]:
+    """The file names graphicx would try for ``target``."""
+    names = [target]
+    ext = os.path.splitext(target)[1].lower()
+    if ext not in _GRAPHIC_EXTS:
+        for e in _GRAPHIC_EXTS:
+            names.append(target + e)
+            names.append(target + e.upper())
+    return names
+
+
+def resolve_graphic(target: str, tmpdir: Path, base_dir: Optional[Path] = None,
+                    graphicspath: Iterable[str] = (), _index: Optional[Dict[str, List[Path]]] = None
+                    ) -> Optional[Path]:
     """
-    Finds all \\includegraphics{...} references in latex_code.
-    If the referenced image file does not exist on disk, creates a clean sample image at that path.
+    Where TeX would find an \\includegraphics target, or None: relative to the main
+    file's directory, each \\graphicspath entry, then a recursive search of the
+    project (TEXINPUTS carries ``<project>//``, so kpathsea finds ``fig/plot`` as any
+    ``…/fig/plot.png`` in the tree), trying every extension graphicx tries.
     """
-    matches = re.findall(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}', latex_code)
-    for raw_path in matches:
-        clean_path = raw_path.strip().strip('"').strip("'")
-        if not clean_path:
+    base = base_dir or tmpdir
+    root = tmpdir.resolve()
+    names = _graphic_names(target)
+    for d in [""] + list(graphicspath):
+        for n in names:
+            cand = (base / d / n) if d else (base / n)
+            try:
+                if cand.is_file():
+                    return cand
+            except OSError:
+                continue
+    # Recursive search (kpathsea's `//`): match on the trailing path components.
+    if _index is None:
+        _index = {}
+        for f in root.rglob("*"):
+            if f.is_file():
+                _index.setdefault(f.name.lower(), []).append(f)
+    for n in names:
+        tail = Path(n.lstrip("./")).parts
+        if not tail:
             continue
+        for f in _index.get(tail[-1].lower(), []):
+            parts = f.relative_to(root).parts
+            if len(parts) >= len(tail) and [p.lower() for p in parts[-len(tail):]] == [p.lower() for p in tail]:
+                return f
+    return None
 
-        has_ext = bool(re.search(r'\.[a-zA-Z0-9]+$', clean_path))
-        candidates = [
-            (tmpdir / clean_path),
-            (tmpdir / "images" / clean_path),
-            (tmpdir / "assets" / clean_path),
-        ]
 
-        if not has_ext:
-            for ext in [".png", ".pdf", ".jpg", ".jpeg"]:
-                candidates.append(tmpdir / f"{clean_path}{ext}")
-                candidates.append(tmpdir / "images" / f"{clean_path}{ext}")
-                candidates.append(tmpdir / "assets" / f"{clean_path}{ext}")
+def ensure_sample_images_exist(latex_code: str, tmpdir: Path, base_dir: Optional[Path] = None,
+                               search_text: Optional[str] = None) -> List[str]:
+    r"""
+    For every \includegraphics target that exists NOWHERE TeX would look — the main
+    file's directory (``base_dir``), each \graphicspath entry, or anywhere in the
+    project tree — writes a clean "SAMPLE IMAGE" placeholder so the layout still
+    builds. A placeholder is never written over, or in front of, a real file:
+    because TEXINPUTS starts with ".", a placeholder at ./plot.png used to shadow
+    the real figures/plot.png. Returns the placeholders written (relative paths).
 
-        exists = any(c.exists() and c.is_file() for c in candidates)
-        if not exists:
-            target = tmpdir / clean_path
-            if not has_ext:
-                target = tmpdir / f"{clean_path}.png"
-            create_sample_image(target, Path(clean_path).name)
+    ``search_text`` is every source the compile reads (chapters reference figures
+    too); it defaults to ``latex_code``.
+    """
+    text = _strip_tex_comments(search_text if search_text is not None else latex_code)
+    base = (base_dir or tmpdir)
+    gpath = _graphicspath_dirs(text)
+    root = tmpdir.resolve()
+    index: Dict[str, List[Path]] = {}
+    for f in root.rglob("*"):
+        if f.is_file():
+            index.setdefault(f.name.lower(), []).append(f)
+    written: List[str] = []
+    for raw_path in _INCLUDEGRAPHICS_RE.findall(text):
+        clean_path = raw_path.strip().strip('"').strip("'")
+        # A macro / parameter in the path cannot be resolved here; leave it to TeX.
+        if not clean_path or "\\" in clean_path or "#" in clean_path or os.path.isabs(clean_path):
+            continue
+        if resolve_graphic(clean_path, tmpdir, base, gpath, index) is not None:
+            continue
+        has_ext = os.path.splitext(clean_path)[1].lower() in _GRAPHIC_EXTS
+        target = (base / clean_path) if has_ext else (base / f"{clean_path}.png")
+        try:
+            resolved = target.resolve()
+        except OSError:
+            continue
+        if root not in resolved.parents or resolved.exists():
+            continue
+        create_sample_image(resolved, Path(clean_path).name)
+        if resolved.is_file():
+            rel = resolved.relative_to(root).as_posix()
+            written.append(rel)
+            index.setdefault(resolved.name.lower(), []).append(resolved)
+    return written
+
+
+# --- Font substitution preflight ---------------------------------------------------------
+# fontspec selects system fonts by family name. A family the server does not have makes
+# XeLaTeX/LuaLaTeX error out or draw a text-less PDF. Before compiling, each such family is
+# rewritten IN THE COMPILE COPY ONLY to an installed substitute: metric-compatible first,
+# then by class. Substitutes are taken from fontconfig when installed there, else loaded
+# by file name from the TeX tree (where TeX Live ships them).
+_FONT_SELECTOR_RE = re.compile(
+    r"\\(setmainfont|setsansfont|setmonofont|setromanfont|setmathfont|setmathrm|setboldmathrm|"
+    r"newfontfamily|newfontface|fontspec|setCJKmainfont|setCJKsansfont|setCJKmonofont)\b")
+
+# family (normalised) -> candidate substitutes, best first.
+_METRIC_SUBS: Dict[str, Tuple[str, ...]] = {
+    "calibri": ("Carlito",),
+    "cambria": ("Caladea",),
+    "cambriamath": ("TeX Gyre Termes Math", "Latin Modern Math"),
+    "helvetica": ("TeX Gyre Heros", "Liberation Sans"),
+    "helveticaneue": ("TeX Gyre Heros", "Liberation Sans"),
+    "arial": ("Arial", "Liberation Sans", "TeX Gyre Heros"),
+    "timesnewroman": ("Times New Roman", "Liberation Serif", "TeX Gyre Termes"),
+    "times": ("Times New Roman", "Liberation Serif", "TeX Gyre Termes"),
+    "couriernew": ("Courier New", "Liberation Mono", "TeX Gyre Cursor"),
+    "courier": ("Liberation Mono", "TeX Gyre Cursor"),
+    "palatino": ("TeX Gyre Pagella",),
+    "palatinolinotype": ("TeX Gyre Pagella",),
+    "bookantiqua": ("TeX Gyre Pagella",),
+    "garamond": ("EB Garamond",),
+    "ebgaramond": ("EB Garamond",),
+    "consolas": ("Inconsolata", "DejaVu Sans Mono"),
+    "segoeui": ("Noto Sans", "DejaVu Sans"),
+    "menlo": ("DejaVu Sans Mono",),
+    "monaco": ("DejaVu Sans Mono",),
+    "georgia": ("TeX Gyre Schola", "DejaVu Serif"),
+    "verdana": ("DejaVu Sans",),
+    "tahoma": ("DejaVu Sans",),
+    "centurygothic": ("TeX Gyre Adventor",),
+    "bookmanoldstyle": ("TeX Gyre Bonum",),
+}
+_CLASS_SUBS = {
+    "serif": ("TeX Gyre Termes", "Liberation Serif", "DejaVu Serif"),
+    "sans": ("TeX Gyre Heros", "Liberation Sans", "DejaVu Sans"),
+    "mono": ("Latin Modern Mono", "Liberation Mono", "DejaVu Sans Mono"),
+    "math": ("Latin Modern Math", "TeX Gyre Termes Math"),
+}
+# Families TeX Live ships as files: base name, extension, {variant key: suffix}.
+_TEXMF_FONTS: Dict[str, Tuple[str, str, Dict[str, str]]] = {
+    "carlito": ("Carlito", ".ttf", {"UprightFont": "*-Regular", "BoldFont": "*-Bold",
+                                     "ItalicFont": "*-Italic", "BoldItalicFont": "*-BoldItalic"}),
+    "caladea": ("Caladea", ".ttf", {"UprightFont": "*-Regular", "BoldFont": "*-Bold",
+                                     "ItalicFont": "*-Italic", "BoldItalicFont": "*-BoldItalic"}),
+    "ebgaramond": ("EBGaramond", ".otf", {"UprightFont": "*-Regular", "BoldFont": "*-Bold",
+                                           "ItalicFont": "*-Italic", "BoldItalicFont": "*-BoldItalic"}),
+    "inconsolata": ("Inconsolatazi4", ".otf", {"UprightFont": "*-Regular", "BoldFont": "*-Bold"}),
+    "latinmodernmono": ("lmmono10", ".otf", {"UprightFont": "*-regular", "ItalicFont": "*-italic"}),
+    "latinmodernmath": ("latinmodern-math", ".otf", {}),
+    "texgyretermesmath": ("texgyretermes-math", ".otf", {}),
+    "notosans": ("NotoSans", ".ttf", {"UprightFont": "*-Regular", "BoldFont": "*-Bold",
+                                       "ItalicFont": "*-Italic", "BoldItalicFont": "*-BoldItalic"}),
+    "dejavusansmono": ("DejaVuSansMono", ".ttf", {"UprightFont": "*", "BoldFont": "*-Bold",
+                                                   "ItalicFont": "*-Oblique", "BoldItalicFont": "*-BoldOblique"}),
+}
+for _gy in ("termes", "heros", "pagella", "cursor", "schola", "adventor", "bonum"):
+    _TEXMF_FONTS["texgyre" + _gy] = ("texgyre" + _gy, ".otf", {
+        "UprightFont": "*-regular", "BoldFont": "*-bold", "ItalicFont": "*-italic",
+        "BoldItalicFont": "*-bolditalic"})
+
+_FC_FAMILIES: Optional[set] = None
+_KPSE_CACHE: Dict[str, bool] = {}
+
+
+def _norm_family(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (name or "").lower())
+
+
+def _fc_families() -> set:
+    """Normalised family names fontconfig knows (cached for the process)."""
+    global _FC_FAMILIES
+    if _FC_FAMILIES is None:
+        fams: set = set()
+        try:
+            out = subprocess.run(["fc-list", ":", "family"], capture_output=True, timeout=30)
+            for line in (out.stdout or b"").decode("utf-8", "replace").splitlines():
+                for fam in line.split(","):
+                    if fam.strip():
+                        fams.add(_norm_family(fam))
+        except Exception:
+            pass
+        _FC_FAMILIES = fams
+    return _FC_FAMILIES
+
+
+def _kpse_has(filename: str) -> bool:
+    if filename not in _KPSE_CACHE:
+        try:
+            out = subprocess.run(["kpsewhich", filename], capture_output=True, timeout=20)
+            _KPSE_CACHE[filename] = bool((out.stdout or b"").strip())
+        except Exception:
+            _KPSE_CACHE[filename] = False
+    return _KPSE_CACHE[filename]
+
+
+def _substitute_spec(family: str) -> Optional[Tuple[str, Dict[str, str]]]:
+    """(name to put in the braces, extra fontspec options) for an installed substitute."""
+    key = _norm_family(family)
+    if key in _fc_families():
+        return family, {}
+    spec = _TEXMF_FONTS.get(key)
+    if spec:
+        base, ext, variants = spec
+        first = variants.get("UprightFont", "*").replace("*", base)
+        if _kpse_has(first + ext):
+            opts = {"Extension": ext}
+            for k, v in variants.items():
+                if _kpse_has(v.replace("*", base) + ext):
+                    opts[k] = v
+            return base, opts
+    return None
+
+
+def _font_class(selector: str, family: str) -> str:
+    low = family.lower()
+    if selector in ("setmathfont",) or "math" in low:
+        return "math"
+    if selector in ("setmonofont", "setCJKmonofont") or any(
+            k in low for k in ("mono", "code", "consol", "courier", "menlo", "monaco", "typewriter")):
+        return "mono"
+    if selector in ("setsansfont", "setCJKsansfont") or any(
+            k in low for k in ("sans", "arial", "helvetica", "calibri", "segoe", "verdana", "tahoma",
+                               "roboto", "lato", "inter", "open", "gothic", "futura", "gill")):
+        return "sans"
+    return "serif"
+
+
+def _skip_balanced(text: str, i: int, open_ch: str, close_ch: str) -> int:
+    """Index just past the group opening at ``text[i] == open_ch`` (or -1 if unbalanced)."""
+    depth = 0
+    for j in range(i, len(text)):
+        c = text[j]
+        if c == "\\":
+            continue
+        if c == open_ch:
+            depth += 1
+        elif c == close_ch:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return -1
+
+
+def _parse_font_command(text: str, pos: int, selector: str):
+    """
+    Parses ``\\sel [\\cs] [opts] {Family} [opts]`` starting at ``pos`` (just after the
+    selector). Returns (end, pre_opts_span, name_span, post_opts_span) or None.
+    """
+    i = pos
+    n = len(text)
+
+    def ws(k):
+        while k < n and text[k] in " \t\r\n":
+            k += 1
+        return k
+    i = ws(i)
+    if selector in ("newfontfamily", "newfontface"):
+        if i < n and text[i] == "\\":
+            m = re.match(r"\\[A-Za-z@]+", text[i:])
+            if not m:
+                return None
+            i = ws(i + m.end())
+        elif i < n and text[i] == "{":
+            e = _skip_balanced(text, i, "{", "}")
+            if e < 0:
+                return None
+            i = ws(e)
+        else:
+            return None
+    pre = None
+    if i < n and text[i] == "[":
+        e = _skip_balanced(text, i, "[", "]")
+        if e < 0:
+            return None
+        pre = (i, e)
+        i = ws(e)
+    if i >= n or text[i] != "{":
+        return None
+    e = _skip_balanced(text, i, "{", "}")
+    if e < 0:
+        return None
+    name = (i + 1, e - 1)
+    end = e
+    post = None
+    k = e
+    # Trailing options on the same logical command (fontspec >= 2.4), possibly after spaces.
+    k2 = k
+    while k2 < n and text[k2] in " \t":
+        k2 += 1
+    if k2 < n and text[k2] == "[":
+        e2 = _skip_balanced(text, k2, "[", "]")
+        if e2 > 0:
+            post = (k2, e2)
+            end = e2
+    return end, pre, name, post
+
+
+def substitute_missing_fonts(code: str) -> Tuple[str, List[Tuple[str, str]]]:
+    """
+    Rewrites fontspec family selectors naming a font the server lacks. Returns
+    (new_code, [(family, substitute), ...]). Families loaded from a project font file
+    (Path= / Extension= options, or a file name) and installed families are left alone.
+    Never adds or removes a line.
+    """
+    if not code or "\\" not in code:
+        return code, []
+    out: List[str] = []
+    subs: List[Tuple[str, str]] = []
+    pos = 0
+    for m in _FONT_SELECTOR_RE.finditer(code):
+        if m.start() < pos:
+            continue
+        line_start = code.rfind("\n", 0, m.start()) + 1
+        if _COMMENT_RE.search(code[line_start:m.start()]):
+            continue  # commented out
+        parsed = _parse_font_command(code, m.end(), m.group(1))
+        if not parsed:
+            continue
+        end, pre, name_span, post = parsed
+        family = code[name_span[0]:name_span[1]].strip()
+        opts_text = (code[pre[0]:pre[1]] if pre else "") + (code[post[0]:post[1]] if post else "")
+        if (not family or "\\" in family or "#" in family
+                or re.search(r"\b(?:Path|Extension)\s*=", opts_text)
+                or re.search(r"\.(?:otf|ttf|ttc|pfb|afm)\s*$", family, re.I)
+                or family.startswith("[")):
+            continue
+        if _norm_family(family) in _fc_families():
+            continue
+        candidates = list(_METRIC_SUBS.get(_norm_family(family), ())) + list(
+            _CLASS_SUBS[_font_class(m.group(1), family)])
+        chosen = None
+        for cand in candidates:
+            spec = _substitute_spec(cand)
+            if spec:
+                chosen = (cand, spec)
+                break
+        if chosen is None:
+            continue
+        cand, (new_name, extra) = chosen
+        user_opts = []
+        for a_b in (pre, post):
+            if a_b:
+                inner = code[a_b[0] + 1:a_b[1] - 1].strip()
+                if inner:
+                    user_opts.append(inner)
+        if extra:
+            # The substitute is loaded by file name; drop the user's per-face font
+            # names (they name faces of the missing family) and keep the rest.
+            kept = []
+            for opt in ",".join(user_opts).split(","):
+                if opt.strip() and not re.match(r"\s*(?:Upright|Bold|Italic|BoldItalic|Slanted|BoldSlanted|SmallCaps)Font\s*=", opt):
+                    kept.append(opt.strip())
+            kept += [f"{k}={v}" for k, v in extra.items()]
+            opts = "[" + ", ".join(kept) + "]"
+        else:
+            opts = "[" + ", ".join(user_opts) + "]" if user_opts else ""
+        head_end = pre[0] if pre else name_span[0] - 1
+        cmd_head = code[m.start():head_end].rstrip()
+        # keep any newlines that sat inside the replaced span so line numbers stay put
+        span_nl = code[head_end:end].count("\n")
+        out.append(code[pos:m.start()])
+        out.append(cmd_head + "{" + new_name + "}" + opts + ("\n" * span_nl))
+        pos = end
+        subs.append((family, cand))
+    out.append(code[pos:])
+    return "".join(out), list(dict.fromkeys(subs))
+
+
+def _font_notice(subs: List[Tuple[str, str]]) -> str:
+    pairs = ", ".join(f"{a} → {b}" for a, b in subs)
+    return (f"Font substitution: {pairs}. These fonts are not installed on the compile server; "
+            f"the closest installed (metric-compatible where available) fonts were used. "
+            f"Upload the font files to the project to use the originals.")
+
+
+def _font_diagnostic(message: str) -> Dict[str, Any]:
+    d = _bib_note_diagnostic(message)
+    d["type"] = "FONT"
+    return d
 
 
 _TEMPLATE_ROOTS_CACHE: Optional[List[Path]] = None
@@ -1244,19 +1852,25 @@ def load_project_text_file(project_id: Optional[str], rel_path: str = "main.tex"
     return None
 
 
-def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str]) -> None:
-    """Save main.pdf, main.synctex.gz, and source .tex files to persistent build directory."""
+def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str], workdir: Optional[Path] = None,
+                            jobname: str = "main") -> None:
+    """
+    Save the PDF, its synctex, and source .tex files to the persistent build directory.
+    ``workdir``/``jobname`` locate the output (the main file's directory and stem); it is
+    stored as main.pdf / main.synctex.gz, the names synctex_service reads.
+    """
     try:
         from synctex_service import get_project_build_dir, invalidate_project_synctex_cache
         build_dir = get_project_build_dir(project_id)
         invalidate_project_synctex_cache(project_id)
-        pdf_path = tmpdir / "main.pdf"
+        out_dir = workdir or tmpdir
+        pdf_path = out_dir / f"{jobname}.pdf"
         if pdf_path.exists():
             shutil.copy2(pdf_path, build_dir / "main.pdf")
-        synctex_gz = tmpdir / "main.synctex.gz"
+        synctex_gz = out_dir / f"{jobname}.synctex.gz"
         if synctex_gz.exists():
             shutil.copy2(synctex_gz, build_dir / "main.synctex.gz")
-        synctex_raw = tmpdir / "main.synctex"
+        synctex_raw = out_dir / f"{jobname}.synctex"
         if synctex_raw.exists():
             shutil.copy2(synctex_raw, build_dir / "main.synctex")
         for tex_file in tmpdir.rglob("*.tex"):
@@ -1364,16 +1978,60 @@ def _remap_result_lines(result: dict, healed: str, source: str) -> None:
             d["raw"] = remap_text(d["raw"])
 
 
+_MAIN_MARKER = ".obmain"  # project_storage.MAIN_MARKER (kept in sync; avoids importing supabase here)
+# \include of a file in a parent directory (only rewritten in the compile copy).
+_INCLUDE_PARENT_RE = re.compile(r"(?<!%)\\include\s*\{\s*(\.\./[^{}]*)\}")
+
+
+def _safe_project_rel(rel: Optional[str]) -> Optional[str]:
+    """A project-relative POSIX path that stays inside the project, or None."""
+    if not rel:
+        return None
+    r = str(rel).strip().replace("\\", "/")
+    while r.startswith("./"):
+        r = r[2:]
+    if not r or r.startswith("/") or re.match(r"^[A-Za-z]:", r):
+        return None
+    if any(part in ("", "..") for part in r.split("/")):
+        return None
+    return r
+
+
+def _resolve_main_document(project_id: str, tmpdir: Path) -> Optional[str]:
+    """
+    The project's main document inside the compile copy: the recorded one
+    (marker / projects.default_branch), else main.tex, else a detected root document.
+    """
+    def exists(rel: str) -> bool:
+        safe = _safe_project_rel(rel)
+        return bool(safe) and (tmpdir / safe).is_file()
+    try:
+        import project_storage
+        rel = project_storage.get_main_document(project_id, exists=exists)
+        if rel and exists(rel):
+            return _safe_project_rel(rel)
+        found = project_storage.detect_main_document_in_dir(tmpdir)
+        if found and exists(found):
+            return found
+    except Exception as e:
+        logger.warning(f"main document lookup for {project_id} failed: {e}")
+        if (tmpdir / "main.tex").is_file():
+            return "main.tex"
+    return None
+
+
 def compile_latex(
     latex_code: str,
     engine: str = "pdfLaTeX",
     images: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, str]]] = None,
     project_id: Optional[str] = None,
-    timeout_seconds: int = 60,  # absorbs a cold TeX format/font cache on the first compile after boot
+    timeout_seconds: Optional[int] = None,  # None: TEX_COMPILE_TIMEOUT (env, default 120s)
     persist_synctex: bool = True,
     allow_recovery: bool = True,
     pre_heal: Optional[bool] = None,
+    active_file: Optional[str] = None,
+    active_text: Optional[str] = None,
 ) -> dict:
     """
     Compiles ``latex_code`` (see ``_compile_latex_impl``), optionally healing it first.
@@ -1391,8 +2049,15 @@ def compile_latex(
     the reported lines are translated back to ``latex_code``'s numbering —
     otherwise the error panel, SyncTeX-free jumps and "Ask AI to Fix" all point
     at the wrong line.
+
+    ``active_file`` / ``active_text`` (project compiles from the editor): the open
+    buffer is overlaid at its own path in the project copy and the project's MAIN
+    DOCUMENT is compiled (see _compile_latex_impl). ``latex_code`` is then only a
+    fallback. That compile is never pre-healed — like Overleaf it builds what the
+    user wrote; the recovery cascade still applies.
     """
-    do_heal = allow_recovery if pre_heal is None else pre_heal
+    project_mode = bool(active_file and project_id and str(project_id).strip())
+    do_heal = (allow_recovery if pre_heal is None else pre_heal) and not project_mode
     source = latex_code
     if do_heal:
         try:
@@ -1406,7 +2071,7 @@ def compile_latex(
     result = _compile_latex_impl(
         latex_code, engine=engine, images=images, files=files, project_id=project_id,
         timeout_seconds=timeout_seconds, persist_synctex=persist_synctex,
-        allow_recovery=allow_recovery,
+        allow_recovery=allow_recovery, active_file=active_file, active_text=active_text,
     )
     if latex_code != source:
         try:
@@ -1422,13 +2087,23 @@ def _compile_latex_impl(
     images: Optional[List[Dict[str, str]]] = None,
     files: Optional[List[Dict[str, str]]] = None,
     project_id: Optional[str] = None,
-    timeout_seconds: int = 30,
+    timeout_seconds: Optional[int] = None,
     persist_synctex: bool = True,
     allow_recovery: bool = True,
+    active_file: Optional[str] = None,
+    active_text: Optional[str] = None,
 ) -> dict:
     """
-    High-performance TeX compiler pipeline with smart single/double pass dispatch,
-    direct binary invocation, template asset caching, and ReportLab fallback.
+    TeX compiler pipeline: latexmk from the main file's directory first (what Overleaf
+    runs), then direct engine passes and the recovery cascade as fallbacks.
+
+    Two modes:
+    * legacy (no ``active_file``): ``latex_code`` IS the document, compiled as main.tex
+      at the root of a copy of the project (the agent's shadow compile, old clients).
+    * project (``active_file`` + ``project_id``): the whole project is copied, the open
+      buffer ``active_text`` is overlaid at ``active_file``, and the project's main
+      document (projects.default_branch / marker, see project_storage) is compiled
+      from its own directory — never the active file itself.
     """
     start_time = time.time()
     augment_path_for_latex()
@@ -1459,9 +2134,18 @@ def _compile_latex_impl(
         tmpdir = Path(tmpdir_str)
         last_output = ""
         final_pass = ""  # output of the last complete engine pass: what diagnostics are read from
+        project_mode = bool(active_file and project_id and project_id.strip())
+        main_rel = "main.tex"
+        workdir = tmpdir
+        stem = "main"
+        main_name = "main.tex"
+        pdf_out = tmpdir / "main.pdf"
+        notices: List[str] = []
         try:
             has_disk_files = False
-            # 1. Copy project disk assets if project_id is provided
+            # 1. Copy project disk assets if project_id is provided. In legacy mode the
+            # request's code replaces main.tex; in project mode everything is copied and
+            # the open buffer is overlaid below.
             if project_id and project_id.strip():
                 safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
                 uploads_base_dir = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
@@ -1470,7 +2154,9 @@ def _compile_latex_impl(
                     for item in project_dir.rglob("*"):
                         if item.is_file():
                             rel_path = item.relative_to(project_dir)
-                            if str(rel_path) == "main.tex":
+                            if str(rel_path) == _MAIN_MARKER:
+                                continue
+                            if str(rel_path) == "main.tex" and not project_mode:
                                 continue
                             dest = tmpdir / rel_path
                             dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1488,24 +2174,63 @@ def _compile_latex_impl(
                                 for doc in docs_res.data:
                                     f_path = doc.get("file_path")
                                     r_code = doc.get("raw_code")
-                                    if not f_path or f_path == "main.tex":
+                                    if not f_path or (f_path == "main.tex" and not project_mode):
                                         continue
-                                    dest = tmpdir / f_path
+                                    dest = (tmpdir / f_path).resolve()
+                                    if tmpdir.resolve() not in dest.parents:
+                                        continue
                                     dest.parent.mkdir(parents=True, exist_ok=True)
                                     if r_code and not r_code.startswith("[Binary Asset:"):
                                         dest.write_text(r_code, encoding="utf-8", errors="ignore")
                     except Exception:
                         pass
 
-            # 2. Write current main.tex
-            try:
-                from document_index import ensure_document_environment
-                latex_code = ensure_document_environment(latex_code)
-            except Exception:
-                pass
+            # 2. Project mode: overlay the open buffer at its own path, then resolve the
+            # project's main document. That file — not the active one — is compiled.
+            if project_mode:
+                active_rel = _safe_project_rel(active_file)
+                overlay = active_text if active_text is not None else latex_code
+                if active_rel is not None and overlay is not None:
+                    dest = tmpdir / active_rel
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_text(overlay, encoding="utf-8")
+                resolved_main = _resolve_main_document(project_id.strip(), tmpdir)
+                if resolved_main is not None:
+                    main_rel = resolved_main
+                    latex_code = (tmpdir / main_rel).read_text(encoding="utf-8", errors="replace")
+                else:
+                    # Nothing compilable in the project: compile the buffer itself as before.
+                    project_mode = False
+                    latex_code = overlay if overlay is not None else latex_code
+                if project_mode:
+                    magic_engine = detect_magic_engine(latex_code)
+                    eng_clean = (engine or "pdfLaTeX").strip().lower()
+                    if magic_engine and eng_clean in _DEFAULT_ENGINES:
+                        eng_clean = magic_engine
+                    recovery_engine = eng_clean if eng_clean in ("xelatex", "lualatex") else "pdflatex"
 
-            tex_path = tmpdir / "main.tex"
+            if not project_mode:
+                # 2b. Legacy: the request's code is the document.
+                try:
+                    from document_index import ensure_document_environment
+                    latex_code = ensure_document_environment(latex_code)
+                except Exception:
+                    pass
+
+            tex_path = tmpdir / main_rel
+            workdir = tex_path.parent
+            main_name = tex_path.name
+            stem = tex_path.stem
+            pdf_out = workdir / f"{stem}.pdf"
+            tex_path.parent.mkdir(parents=True, exist_ok=True)
             tex_path.write_text(latex_code, encoding="utf-8")
+            # Build outputs that came with the project (an uploaded main.pdf) must never
+            # be mistaken for this compile's output.
+            for _ext in (".pdf", ".synctex.gz", ".synctex", ".fdb_latexmk", ".fls"):
+                try:
+                    (workdir / f"{stem}{_ext}").unlink()
+                except OSError:
+                    pass
 
             # 3. Write extra payload asset files and images
             if images:
@@ -1532,36 +2257,82 @@ def _compile_latex_impl(
                             except Exception:
                                 pass
 
-            # 5. Ensure any referenced images exist as sample images on disk if missing
-            ensure_sample_images_exist(latex_code, tmpdir)
+            # A main document in a sub-folder that reaches into its parent: \include
+            # writes <name>.aux next to the included file, which openout_any=p refuses
+            # for ../ paths. \input of the same file reads it without writing, so the
+            # compile copy uses \clearpage\input{…}\clearpage (\include's own effect).
+            reaches_parent = False
+            if workdir != tmpdir:
+                for _src in [tex_path] + [p for p in tmpdir.rglob("*.tex") if p != tex_path]:
+                    try:
+                        _txt = _src.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    if "../" in _strip_tex_comments(_txt):
+                        reaches_parent = True
+                    _new = _INCLUDE_PARENT_RE.sub(lambda m: r"\clearpage\input{" + m.group(1) + r"}\clearpage", _txt)
+                    if _new != _txt:
+                        _src.write_text(_new, encoding="utf-8")
+                        if _src == tex_path:
+                            latex_code = _new
 
-            # 6. Bibliography: everything below looks at the WHOLE project (an \addbibresource
+            # 5. Font substitution preflight (compile copy only): fontspec families the
+            # server does not have are swapped for installed, metric-compatible ones.
+            font_subs: List[Tuple[str, str]] = []
+            latex_code, _subs = substitute_missing_fonts(latex_code)
+            font_subs += _subs
+            if _subs:
+                tex_path.write_text(latex_code, encoding="utf-8")
+            for _src in list(tmpdir.rglob("*")):
+                if (_src.is_file() and _src != tex_path and _src.suffix.lower() in (".tex", ".sty", ".cls")
+                        and _src.stat().st_size < 4_000_000):
+                    try:
+                        _txt = _src.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        continue
+                    if not _FONT_SELECTOR_RE.search(_txt):
+                        continue
+                    _new, _subs = substitute_missing_fonts(_txt)
+                    if _subs:
+                        _src.write_text(_new, encoding="utf-8")
+                        font_subs += _subs
+            font_subs = list(dict.fromkeys(font_subs))
+            if font_subs:
+                notices.append(_font_notice(font_subs))
+
+            # 6. Every source TeX will read (chapters, too) — on disk, not just the request.
+            project_text = _project_tex_text(latex_code, tmpdir, main_path=tex_path if project_mode else None)
+            # What the main document actually reads. A project can hold other root
+            # documents (a standalone review, old drafts) that it never \input's; their
+            # text must not decide whether this PDF "looks blank" or needs XeLaTeX.
+            reachable_text, reachable_complete = _reachable_tex_text(latex_code, workdir, tmpdir)
+
+            # 7. Referenced images missing everywhere TeX looks get a placeholder.
+            ensure_sample_images_exist(latex_code, tmpdir, base_dir=workdir, search_text=project_text)
+
+            # 8. Bibliography: everything below looks at the WHOLE project (an \addbibresource
             # or \cite inside an \input chapter counts), and only the compile copy is touched.
-            project_text = _project_tex_text(latex_code, tmpdir)
             bib_notes: List[str] = []
-            for _stub in _generate_stub_bibs(tmpdir, project_text):
+            for _stub in _generate_stub_bibs(tmpdir, project_text, base_dir=workdir if project_mode else None):
                 bib_notes.append(f"{_stub} was not found; generated a placeholder from the document's citation keys.")
             _compile_copy = _inject_hyperref(latex_code, project_text, tmpdir)
             if _compile_copy != latex_code:
                 tex_path.write_text(_compile_copy, encoding="utf-8")
 
-            # Environment configuration
-            comp_env = os.environ.copy()
-            existing_texinputs = comp_env.get("TEXINPUTS", "")
-            comp_env["TEXINPUTS"] = f".:{tmpdir}//:{tmpdir}:{tmpdir}/images:{existing_texinputs}"
-            for _key, _value in _TEX_LOG_ENV.items():
-                comp_env.setdefault(_key, _value)
+            # Environment: an allowlist (no service secrets reach TeX), openout_any=p, and
+            # TEXINPUTS/BIBINPUTS/BSTINPUTS rooted at the project (tex_sandbox).
+            from tex_sandbox import project_tex_env
+            comp_env = project_tex_env(tmpdir, workdir, extra=dict(_TEX_LOG_ENV),
+                                       openin="r" if reaches_parent else "p")
 
-            # Heavy TikZ/pgfplots or very long documents take far longer than a
-            # plain article; Overleaf lets them run for minutes. Give them a
-            # bigger budget than the base request so they are not killed and
-            # reported as a "failure" they never really were.
-            COMPILE_TIMEOUT = timeout_seconds
-            # Judge weight on every source TeX will read. The project's other
-            # .tex files are right here in `files`; without them a thesis whose
-            # main.tex is a list of \input lines is sized as a trivial document
-            # and is given a budget it cannot possibly finish in.
-            _extra_sources = []
+            # Heavy TikZ/pgfplots or very long documents take far longer than a plain
+            # article; Overleaf lets them run for minutes. Weight is judged on every
+            # source in the compile directory (a thesis main.tex is thirty lines of
+            # \input), plus any .tex/.sty/.cls sent in the request.
+            base_timeout = int(timeout_seconds) if timeout_seconds else TEX_COMPILE_TIMEOUT
+            COMPILE_TIMEOUT = base_timeout
+            _extra_sources = [_project_tex_text("", tmpdir, (".tex", ".sty", ".cls"),
+                                                main_path=tex_path if project_mode else None)]
             for _f in (files or []):
                 _name = str(_f.get("filename", ""))
                 if _name.rsplit(".", 1)[-1].lower() in ("tex", "sty", "cls"):
@@ -1570,67 +2341,52 @@ def _compile_latex_impl(
                     except Exception:
                         pass
             if is_heavy_document(latex_code, _extra_sources):
-                COMPILE_TIMEOUT = max(timeout_seconds, 90)
+                COMPILE_TIMEOUT = max(base_timeout, TEX_COMPILE_TIMEOUT_HEAVY)
 
             # Unicode-font documents (fontspec / unicode-math / system fonts /
             # polyglossia) only compile under XeLaTeX or LuaLaTeX. Overleaf picks
             # this from the project's compiler setting; detect it from the source
             # when the caller asked for the default engine and no magic comment
-            # already pinned one.
+            # already pinned one. A project's preamble may live in an \input file.
+            engine_probe = (reachable_text if reachable_complete else project_text) if project_mode else latex_code
             unicode_engine = None
-            if eng_clean in _DEFAULT_ENGINES and not magic_engine and needs_unicode_engine(latex_code):
+            if eng_clean in _DEFAULT_ENGINES and not magic_engine and needs_unicode_engine(engine_probe):
                 unicode_engine = "xelatex"
                 recovery_engine = "xelatex"
 
-            # Target engine selection (Matching Overleaf nonstopmode behavior with SyncTeX enabled).
             # SyncTeX costs an extra output file per run, so it is only asked for when the
             # artifacts will actually be kept (the editor); the PDF importer compiles throwaway
             # pages and never navigates them.
             sx = ["-synctex=1"] if persist_synctex else []
 
             def _direct(engine_bin: str) -> List[str]:
-                return _engine_command(engine_bin, *sx)
+                return _engine_command(engine_bin, *sx, jobname=stem, entry=main_name)
 
-            def _latexmk(engine_flag: Optional[str] = None) -> List[str]:
-                cmd = ["latexmk", *sx, "-pdf", "-f", "-silent", "-interaction=nonstopmode"]
-                if engine_flag:
-                    cmd.append(engine_flag)
-                cmd.append("main.tex")
-                return cmd
+            def _lmk(engine_bin: str) -> List[str]:
+                return _latexmk_command(engine_bin, main_rel, jobname=stem, synctex=persist_synctex)
 
-            cmd_list = []
-            if eng_clean in ["pdflatex", "pdf", "latex"]:
-                # The editor and the agent both ask for pdfLaTeX explicitly, so the
-                # Unicode-font switch has to apply here too, not only to latexmk.
-                cmd_list = [_direct(unicode_engine or "pdflatex")]
-            elif eng_clean in ["xelatex", "xe"]:
-                cmd_list = [_direct("xelatex")]
+            # Candidates: latexmk first (run from the project root with -cd, so it works
+            # from the main file's directory like Overleaf), then a direct engine run of
+            # the same engine (the fallback that also drives the recovery cascade).
+            if eng_clean in ["xelatex", "xe"]:
+                primary = "xelatex"
             elif eng_clean in ["lualatex", "lua"]:
-                cmd_list = [_direct("lualatex")]
-            elif eng_clean == "tectonic":
-                cmd_list = [["tectonic", "main.tex"]]
-            elif eng_clean == "latexmk":
-                # latexmk self-manages passes + biber/bibtex. Tell it which engine
-                # to use for Unicode-font documents, and fall back to a direct
-                # engine run if latexmk is not installed (otherwise a missing
-                # latexmk surfaces as an empty, mysterious failure).
-                if unicode_engine == "xelatex":
-                    cmd_list = [_latexmk("-xelatex"), _direct("xelatex")]
-                elif unicode_engine == "lualatex":
-                    cmd_list = [_latexmk("-lualatex"), _direct("lualatex")]
-                else:
-                    cmd_list = [_latexmk(), _direct("pdflatex")]
+                primary = "lualatex"
             else:
-                if unicode_engine == "xelatex":
-                    cmd_list = [_direct("xelatex"), _direct("lualatex"), _latexmk("-xelatex")]
-                else:
-                    cmd_list = [_direct("pdflatex"), _direct("xelatex"), _latexmk()]
+                primary = unicode_engine or "pdflatex"
+            if eng_clean == "tectonic":
+                cmd_list = [["tectonic", main_name]]
+            else:
+                cmd_list = [_lmk(primary), _direct(primary)]
+                if eng_clean not in ["pdflatex", "pdf", "latex", "xelatex", "xe", "lualatex", "lua", "latexmk", ""]:
+                    # unknown engine name: try the other Unicode engine too, as before
+                    cmd_list.append(_direct("lualatex" if primary == "xelatex" else "xelatex"))
 
             # Blank-output fallback: if the chosen (Xe/Lua) engine renders a text-less PDF
             # because a selected system font is not installed, a dual-engine-safe document
             # (fontspec only behind an \ifPDFTeX guard) can still be rendered by pdfLaTeX.
             # Append it so the blank-output guard below has somewhere to fall through to.
-            if not needs_unicode_engine(latex_code) and not any(c and c[0] == "pdflatex" for c in cmd_list):
+            if not needs_unicode_engine(engine_probe) and not any(c and c[0] == "pdflatex" for c in cmd_list):
                 cmd_list.append(_direct("pdflatex"))
 
             bib_backend = _bibliography_backend(_strip_tex_comments(project_text))
@@ -1641,35 +2397,53 @@ def _compile_latex_impl(
 
             last_output = ""
             blank_seen = False
+            skip_direct_of: Optional[str] = None
             for cmd in cmd_list:
+                is_latexmk = cmd[0] == "latexmk"
+                is_direct = cmd[0] in ["pdflatex", "xelatex", "lualatex"]
+                # latexmk already produced (and we rejected) this engine's PDF: a direct
+                # run of the same engine would only reproduce it.
+                if is_direct and skip_direct_of == cmd[0]:
+                    continue
                 try:
-                    # Pass 1
+                    pdf_out.unlink()
+                except OSError:
+                    pass
+                run_cwd = tmpdir if is_latexmk else workdir
+                try:
+                    # Pass 1 (latexmk: every pass, bibliography and index tools)
                     result = _run_tex(
                         cmd,
-                        cwd=tmpdir,
+                        cwd=run_cwd,
                         timeout=COMPILE_TIMEOUT,
                         env=comp_env
                     )
                     last_output = (result.stdout or "") + "\n" + (result.stderr or "")
                     final_pass = last_output
+                    if is_latexmk:
+                        _log = workdir / f"{stem}.log"
+                        if _log.is_file():
+                            try:
+                                final_pass = _log.read_text(encoding="utf-8", errors="replace")
+                            except OSError:
+                                pass
+                        if "Latexmk:" not in last_output and "Rule '" not in last_output and not pdf_out.exists():
+                            last_output += "\n[LATEXMK] latexmk produced no output; falling back to a direct engine run."
 
-                    pdf_path = tmpdir / "main.pdf"
-
-                    # latexmk/tectonic self-manage passes and bibliography; a direct
-                    # engine run has to resolve cross-references/TOC/citations itself.
-                    is_direct = cmd[0] in ["pdflatex", "xelatex", "lualatex"]
+                    pdf_path = pdf_out
 
                     if pdf_path.exists() and is_direct:
                         # Bibliography: run biber/bibtex, then two more passes so the
                         # citations and the bibliography actually resolve (Overleaf's
                         # latexmk does this automatically).
                         if bib_backend:
-                            _run_bibliography(bib_backend, tmpdir, extra_pass_timeout, comp_env, bib_notes)
+                            _run_bibliography(bib_backend, workdir, extra_pass_timeout, comp_env, bib_notes,
+                                              jobname=stem)
                             for _ in range(2):
                                 try:
                                     rb = _run_tex(
                                         cmd,
-                                        cwd=tmpdir,
+                                        cwd=workdir,
                                         timeout=extra_pass_timeout,
                                         env=comp_env,
                                     )
@@ -1689,7 +2463,7 @@ def _compile_latex_impl(
                             if needs_pass2:
                                 result2 = _run_tex(
                                     cmd,
-                                    cwd=tmpdir,
+                                    cwd=workdir,
                                     timeout=extra_pass_timeout,
                                     env=comp_env
                                 )
@@ -1698,19 +2472,34 @@ def _compile_latex_impl(
 
                     # If PDF was created, persist artifacts and return it.
                     if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in last_output:
+                        engine_of_cmd = primary if is_latexmk else cmd[0]
                         # A PDF that compiled but has no text layer (a system font selected by
                         # the document is not installed, so the engine drew no glyphs) is a blank
                         # result, not a success. Treat it as a failed attempt and try the next
                         # engine candidate (a dual-engine-safe document falls back to pdfLaTeX).
-                        if _looks_blank(pdf_path, project_text):
+                        if _looks_blank(pdf_path, reachable_text):
                             blank_seen = True
+                            if is_latexmk:
+                                skip_direct_of = engine_of_cmd
                             msg = (f"'{cmd[0]}' produced a PDF with no visible text — a selected font may "
                                    f"not be installed on the server.")
                             last_output += f"\n[BLANK OUTPUT] {msg} Trying the next engine."
                             logger.warning(f"⚠️ [COMPILER] {msg}")
                             continue
+                        # Beamer syntax (\begin{frame}, \column) in a non-beamer class leaves
+                        # pdflatex producing a one-page error-content PDF while the real slides
+                        # went undefined. Treat this as a failed pass so the cascade can promote
+                        # the documentclass to beamer and re-render.
+                        if (_looks_like_beamer_body(project_text)
+                                and "Environment columns undefined" in last_output
+                                and _promote_to_beamer(project_text)[1] is not None):
+                            logger.warning("⚠️ [COMPILER] beamer syntax in non-beamer class; "
+                                           "treating pass as failed to allow class promotion recovery")
+                            if is_latexmk:
+                                skip_direct_of = engine_of_cmd
+                            continue
                         if persist_synctex:
-                            _save_synctex_artifacts(tmpdir, project_id)
+                            _save_synctex_artifacts(tmpdir, project_id, workdir, stem)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -1719,23 +2508,31 @@ def _compile_latex_impl(
                             "pdf_base64": pdf_base64,
                             "compile_time_ms": elapsed_ms,
                             "log": last_output[-1000:] if last_output else f"Compiled via {cmd[0]}",
-                            "errors": tex_errors(last_output),
+                            "errors": tex_errors(final_pass if is_latexmk else last_output),
                             # Overfull boxes are warnings, so they never reach the
                             # truncated log above; keep them for layout checks.
-                            "overfull": _overfull_boxes(last_output),
+                            "overfull": _overfull_boxes(final_pass if is_latexmk else last_output),
+                            "main_file": main_rel,
+                            "engine_used": ("latexmk " + engine_of_cmd) if is_latexmk else cmd[0],
                         }
                         # A PDF produced despite errors is the common case for the
                         # errors that matter here (a misplaced & never stops TeX),
                         # and the truncated log above holds none of their context.
-                        _attach_diagnostics(compiled, final_pass, tmpdir)
+                        _attach_diagnostics(compiled, final_pass, workdir, main_name, tmpdir)
                         if bib_notes:
                             # diagnostics, never errors: a bibliography problem must not fail the compile
                             compiled.setdefault("diagnostics", []).extend(
                                 _bib_note_diagnostic(n) for n in dict.fromkeys(bib_notes))
+                        if notices:
+                            compiled["notices"] = list(notices)
+                            compiled.setdefault("diagnostics", []).extend(_font_diagnostic(n) for n in notices)
+                            compiled["log"] = "\n".join(notices) + "\n\n" + compiled["log"]
                         return compiled
                 except subprocess.TimeoutExpired:
                     last_output += f"\n[TIMEOUT] {cmd[0]} exceeded {COMPILE_TIMEOUT}s"
-                    continue
+                    # The whole process group was killed. Another engine run of the same
+                    # document would only burn the same budget again.
+                    break
                 except FileNotFoundError as fnf:
                     last_output += f"\n[INFRASTRUCTURE ERROR] Executable '{cmd[0]}' not found: {fnf}"
                     continue
@@ -1750,7 +2547,7 @@ def _compile_latex_impl(
                 # silently disabling a package is a result such a caller rejects anyway.
                 failed = _compile_failure(last_output)
                 _mark_blank_failure(failed, blank_seen)
-                _attach_diagnostics(failed, final_pass or last_output, tmpdir)
+                _attach_diagnostics(failed, final_pass or last_output, workdir, main_name, tmpdir)
                 return failed
 
             # Every recovery run must still report the TeX errors it saw: a PDF obtained
@@ -1760,16 +2557,20 @@ def _compile_latex_impl(
             # are mapped back to the code this function was given.
             def _recovery_success(log_text: str, output_text: str, patched: str) -> dict:
                 if persist_synctex:
-                    _save_synctex_artifacts(tmpdir, project_id)
+                    _save_synctex_artifacts(tmpdir, project_id, workdir, stem)
                 res = {
                     "success": True,
-                    "pdf_base64": base64.b64encode((tmpdir / "main.pdf").read_bytes()).decode("utf-8"),
+                    "pdf_base64": base64.b64encode((pdf_out).read_bytes()).decode("utf-8"),
                     "compile_time_ms": int((time.time() - start_time) * 1000),
                     "log": log_text,
                     "errors": tex_errors(output_text),
                     "overfull": _overfull_boxes(output_text),
                 }
-                _attach_diagnostics(res, output_text, tmpdir)
+                res["main_file"] = main_rel
+                _attach_diagnostics(res, output_text, workdir, main_name, tmpdir)
+                if notices:
+                    res["notices"] = list(notices)
+                    res.setdefault("diagnostics", []).extend(_font_diagnostic(n) for n in notices)
                 if patched != latex_code:
                     try:
                         _remap_result_lines(res, patched, latex_code)
@@ -1811,13 +2612,13 @@ def _compile_latex_impl(
                 tex_path.write_text(patched_code, encoding="utf-8")
                 try:
                     result = _run_tex(
-                        _engine_command(recovery_engine),
-                        cwd=tmpdir,
+                        _direct(recovery_engine),
+                        cwd=workdir,
                         timeout=15,
                         env=comp_env
                     )
                     cur_output = (result.stdout or "") + "\n" + (result.stderr or "")
-                    pdf_path = tmpdir / "main.pdf"
+                    pdf_path = pdf_out
                     if pdf_path.exists() and pdf_path.stat().st_size > 0:
                         errs = tex_errors(cur_output)
                         has_fatal_or_jargon = any(
@@ -1854,13 +2655,21 @@ def _compile_latex_impl(
                     if r"\usepackage[T1]{fontenc}" in patched_code:
                         patched_code = patched_code.replace(r"\usepackage[T1]{fontenc}", r"\usepackage[T1]{fontenc}" + "\n" + r"\usepackage{lmodern}")
                     elif r"\documentclass" in patched_code:
-                        patched_code = re.sub(r'(\\documentclass(?:\[.*?\])?\{.*?\})', r'\1' + "\n" + r"\usepackage{lmodern}", patched_code, count=1)
+                        # A literal \usepackage{lmodern} appears in a re.sub replacement string;
+                        # re on Python 3.12+ rejects "\u" as a bad escape in a replacement, so
+                        # a lambda is used to keep the backslash literal.
+                        patched_code = re.sub(
+                            r'(\\documentclass(?:\[.*?\])?\{.*?\})',
+                            lambda m: m.group(1) + "\n" + r"\usepackage{lmodern}",
+                            patched_code,
+                            count=1,
+                        )
 
                 if patched_code != latex_code:
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
-                        result = _run_tex(_engine_command(recovery_engine), cwd=tmpdir, timeout=15, env=comp_env)
-                        pdf_path = tmpdir / "main.pdf"
+                        result = _run_tex(_direct(recovery_engine), cwd=workdir, timeout=15, env=comp_env)
+                        pdf_path = pdf_out
                         if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via font auto-recovery (lmodern patch)",
@@ -1880,12 +2689,12 @@ def _compile_latex_impl(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = _run_tex(
-                            _engine_command(recovery_engine),
-                            cwd=tmpdir,
+                            _direct(recovery_engine),
+                            cwd=workdir,
                             timeout=15,
                             env=comp_env
                         )
-                        pdf_path = tmpdir / "main.pdf"
+                        pdf_path = pdf_out
                         if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via beamercolorbox bg auto-recovery",
@@ -1932,16 +2741,83 @@ def _compile_latex_impl(
                     tex_path.write_text(patched_code, encoding="utf-8")
                     try:
                         result = _run_tex(
-                            _engine_command(recovery_engine),
-                            cwd=tmpdir,
+                            _direct(recovery_engine),
+                            cwd=workdir,
                             timeout=15,
                             env=comp_env,
                         )
-                        pdf_path = tmpdir / "main.pdf"
+                        pdf_path = pdf_out
                         if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in (result.stdout or ""):
                             return _recovery_success(
                                 "Compiled via titlesec/spacing auto-recovery",
                                 (result.stdout or "") + "\n" + (result.stderr or ""), patched_code,
+                            )
+                    except Exception:
+                        pass
+
+            # 5. Missing system font / blank-output recovery.
+            # Two signatures of a missing system font selected via fontspec:
+            #  (a) an engine produced a well-paginated but text-less PDF (blank_seen).
+            #  (b) an engine hard-errored on the font load ("fontspec Error", "not
+            #      loadable", "I can't find file") and no PDF was produced.
+            # In either case: strip fontspec setup and retry under pdflatex so the
+            # body renders in Computer Modern.
+            font_missing_signals = (
+                "fontspec Error",
+                "not loadable",
+                "cannot be\n(fontspec)",
+                "cannot be found",
+            )
+            has_font_markers = any(m in latex_code for m in _UNICODE_ENGINE_MARKERS)
+            font_hard_error = has_font_markers and any(s in last_output for s in font_missing_signals)
+            if blank_seen or font_hard_error:
+                patched_code = _strip_fontspec_setup(latex_code)
+                if patched_code != latex_code:
+                    tex_path.write_text(patched_code, encoding="utf-8")
+                    try:
+                        result = _run_tex(_direct("pdflatex"), cwd=workdir, timeout=15, env=comp_env)
+                        pdf_path = pdf_out
+                        out = (result.stdout or "") + "\n" + (result.stderr or "")
+                        if (pdf_path.exists() and pdf_path.stat().st_size > 0
+                                and "Emergency stop" not in out
+                                and not _looks_blank(pdf_path, patched_code)):
+                            notice = (
+                                "System fonts selected via fontspec are not installed on the server. "
+                                "The document was rendered in Computer Modern as a fallback — install the "
+                                "fonts on the server or guard \\setmainfont behind \\ifPDFTeX in the source."
+                            )
+                            logger.info("✅ [COMPILER RECOVERY] fontspec-stripped pdflatex pass succeeded")
+                            return _recovery_success(
+                                f"Compiled via fontspec strip (fonts missing on server)\n\n[FONT NOTICE]\n{notice}",
+                                out, patched_code,
+                            )
+                    except Exception:
+                        pass
+
+            # 6. Beamer-syntax-in-non-beamer-class recovery.
+            # When the body uses \begin{frame}, \column{} or \usetheme but the
+            # documentclass is not beamer, every \end{frame} and \column goes
+            # undefined and the log is a wall of "Environment X undefined" lines.
+            # Promote the class to beamer and retry.
+            if (_looks_like_beamer_body(latex_code)
+                    and ("undefined" in last_output.lower() or "Package keyval Error" in last_output)):
+                patched_code, prior_class = _promote_to_beamer(latex_code)
+                if prior_class is not None and patched_code != latex_code:
+                    tex_path.write_text(patched_code, encoding="utf-8")
+                    try:
+                        result = _run_tex(_direct("pdflatex"), cwd=workdir, timeout=15, env=comp_env)
+                        pdf_path = pdf_out
+                        out = (result.stdout or "") + "\n" + (result.stderr or "")
+                        if pdf_path.exists() and pdf_path.stat().st_size > 0 and "Emergency stop" not in out:
+                            notice = (
+                                f"The source used beamer commands (\\begin{{frame}}, \\column, …) but the "
+                                f"document class was '{prior_class}'. Promoted to \\documentclass{{beamer}} "
+                                f"so the deck would compile — change the first line of the source to make this permanent."
+                            )
+                            logger.info("✅ [COMPILER RECOVERY] documentclass promoted %r → beamer", prior_class)
+                            return _recovery_success(
+                                f"Compiled via beamer class promotion ({prior_class} → beamer)\n\n[CLASS NOTICE]\n{notice}",
+                                out, patched_code,
                             )
                     except Exception:
                         pass
@@ -1952,6 +2828,6 @@ def _compile_latex_impl(
         # No fallback PDFs — return clean compilation error directly so user can see it and ask AI to fix it
         failed = _compile_failure(last_output)
         _mark_blank_failure(failed, blank_seen)
-        _attach_diagnostics(failed, final_pass or last_output, tmpdir)
+        _attach_diagnostics(failed, final_pass or last_output, workdir, main_name, tmpdir)
         return failed
 

@@ -250,6 +250,24 @@ def _project_files(workspace: "ShadowWorkspace") -> List[Dict[str, str]]:
     return files
 
 
+def _norm_rel(path: Any) -> str:
+    return re.sub(r"^(\./)+", "", str(path or "").replace("\\", "/")).strip("/")
+
+
+def _same_path(a: Any, b: Any) -> bool:
+    return _norm_rel(a).lower() == _norm_rel(b).lower()
+
+
+def _project_main_document(project_id: str) -> str:
+    """The project's main document path (project_storage.get_main_document), main.tex on any failure."""
+    try:
+        import project_storage
+        return project_storage.get_main_document(project_id) or "main.tex"
+    except Exception as e:
+        logger.warning(f"main document lookup for {project_id} failed: {e}")
+        return "main.tex"
+
+
 def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_seconds: int) -> Dict[str, Any]:
     """One compile of ``code`` with the project's files. Raw result + parsed errors + PDF bytes."""
     from compiler import compile_latex
@@ -261,22 +279,44 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
     file_path = getattr(workspace, "_file_path", "main.tex")
     files = _project_files(workspace)
     main_code = code
+    active_file: Optional[str] = None
+    active_text: Optional[str] = None
 
-    # If the user is editing an auxiliary file (not main.tex), ensure the edited buffer
-    # is passed as that file, and the real main.tex is used as latex_code. Without
-    # the real main.tex the fragment itself was compiled as the document, so the
-    # check said nothing about the project the user builds.
-    if file_path != "main.tex":
+    if project_id:
+        # A real project builds its MAIN DOCUMENT (project_storage.get_main_document: an
+        # imported thesis may keep it in thesis/thesis.tex), never the file the agent happens
+        # to be editing. The main document's current text rides in as the compile request's
+        # active_file/active_text; every other file the agent touched is a plain payload
+        # file written over the project's copy. When the main document is main.tex and the
+        # buffer is main.tex this is the same document the legacy path built.
+        main_rel = _project_main_document(project_id)
+        aux = getattr(workspace, "_aux_files", {}) or {}
+        if _same_path(file_path, main_rel):
+            main_text = code
+        else:
+            files.append({
+                "filename": file_path,
+                "data": base64.b64encode(code.encode("utf-8")).decode("ascii"),
+            })
+            main_text = next((v for k, v in aux.items() if _same_path(k, main_rel)), None)
+            if not main_text:
+                from compiler import load_project_text_file
+                main_text = load_project_text_file(project_id, main_rel)
+                if main_text:
+                    workspace.__dict__.setdefault("_aux_files", {})[main_rel] = main_text
+        files = [f for f in files if not _same_path(f["filename"], main_rel)]
+        if main_text:
+            active_file, active_text, main_code = main_rel, main_text, main_text
+    elif file_path != "main.tex":
+        # No project to resolve (scratch document): the legacy path. If the user is editing
+        # an auxiliary file, the edited buffer is passed as that file and main.tex is the
+        # document. Without the real main.tex the fragment itself was compiled as the
+        # document, so the check said nothing about the project the user builds.
         files.append({
             "filename": file_path,
             "data": base64.b64encode(code.encode("utf-8")).decode("ascii"),
         })
         aux_main = getattr(workspace, "_aux_files", {}).get("main.tex")
-        if not aux_main:
-            from compiler import load_project_text_file
-            aux_main = load_project_text_file(project_id, "main.tex")
-            if aux_main:
-                workspace.__dict__.setdefault("_aux_files", {})["main.tex"] = aux_main
         if aux_main:
             main_code = aux_main
 
@@ -286,6 +326,8 @@ def _run_compile(workspace: "ShadowWorkspace", code: str, engine: str, timeout_s
             engine=engine,
             project_id=project_id,
             files=files or None,
+            active_file=active_file,
+            active_text=active_text,
             timeout_seconds=timeout,
             persist_synctex=False,
             allow_recovery=True,

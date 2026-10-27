@@ -41,6 +41,14 @@ def detect_math(pg, page: PageExtract, asset_prefix: str, out_dir: Path, furnitu
     for k, (rx0, ry0, rx1, ry1) in enumerate(_delimiter_regions(page), 1):
         band = [ln for ln in page.lines if ln.text.strip() and id(ln) not in furn
                 and ry0 - 2 <= (ln.bbox[1] + ln.bbox[3]) / 2 <= ry1 + 2]
+        # on a two-column page the band is the delimiter's column only: the other column's lines
+        # level with it are text, not part of the equation
+        cx = page.width / 2
+        two_col = (sum(1 for l in page.lines if l.bbox[2] < cx - 4 and l.bbox[2] - l.bbox[0] > 0.3 * cx) >= 6
+                   and sum(1 for l in page.lines if l.bbox[0] > cx + 4 and l.bbox[2] - l.bbox[0] > 0.3 * cx) >= 6)
+        if band and two_col and not any(l.bbox[0] < cx - 4 and l.bbox[2] > cx + 4 for l in band):
+            left_side = (rx0 + rx1) / 2 < cx
+            band = [l for l in band if ((l.bbox[0] + l.bbox[2]) / 2 < cx) == left_side]
         if len(band) < 2:
             continue
         x0 = min(min(l.bbox[0] for l in band), rx0) - 2

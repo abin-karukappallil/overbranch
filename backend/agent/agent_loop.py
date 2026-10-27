@@ -490,18 +490,52 @@ def format_compile_diagnostics(errors: List[Dict[str, Any]], code: str, file_pat
 
 
 def _friendly_llm_error(err: Exception) -> str:
-    from providers.errors import FailureKind, classify_exception
-    kind, _ = classify_exception(err)
-    tried = [a.get("provider") for a in getattr(err, "attempts", []) or []]
-    via = f" (tried: {', '.join(dict.fromkeys(t for t in tried if t))})" if tried else ""
-    return {
-        FailureKind.RATE_LIMIT: "The AI providers are rate-limited right now",
-        FailureKind.QUOTA: "The AI providers' quota is exhausted",
-        FailureKind.TIMEOUT: "The AI provider timed out",
-        FailureKind.AUTH: "The AI provider rejected the server's credentials",
-        FailureKind.MODEL_UNAVAILABLE: "The selected model is unavailable",
-        FailureKind.BAD_REQUEST: "The AI provider rejected the request",
-    }.get(kind, "The AI provider is unavailable") + via + "."
+    """The one thing a user is ever told when the model gateways are exhausted.
+    Which gateway failed, and how, stays in the logs and the trace."""
+    from providers.errors import OUTAGE_MESSAGE
+    return OUTAGE_MESSAGE
+
+
+def _chat_with_outage_status(step: int, agent_trace: Any, **chat_kwargs: Any) -> Generator[Dict[str, Any], None, Dict[str, Any]]:
+    """
+    provider_router.chat on a worker thread, so the loop can say "Model outage — retrying
+    (n/total)…" while the gateway chain is still being walked instead of going silent.
+    Yields status events; returns the chat response (or raises what chat raised).
+    """
+    import queue
+    import threading
+    from providers.errors import outage_retrying
+
+    events: "queue.Queue[Any]" = queue.Queue()
+    finished = object()
+    box: Dict[str, Any] = {}
+
+    def observer(attempt: Dict[str, Any]) -> None:
+        agent_trace.record_llm_attempt(attempt)
+        events.put(attempt)
+
+    def work() -> None:
+        try:
+            box["response"] = provider_router.chat(observer=observer, **chat_kwargs)
+        except BaseException as e:  # re-raised in the loop's thread
+            box["error"] = e
+        finally:
+            events.put(finished)
+
+    threading.Thread(target=work, daemon=True, name="agent-llm-call").start()
+    while True:
+        item = events.get()
+        if item is finished:
+            break
+        if not item.get("ok") and item.get("will_retry"):
+            yield {
+                "type": "status",
+                "step": step,
+                "message": outage_retrying(int(item.get("attempt") or 0) + 1, int(item.get("total") or 0)),
+            }
+    if "error" in box:
+        raise box["error"]
+    return box["response"]
 
 
 def format_mentioned_context(mentions: Optional[List[Dict[str, Any]]]) -> str:
@@ -2558,11 +2592,6 @@ def stream_agent(
             "from the lines shown above, then set done=true."
         )
 
-    had_fallback = False
-    fallback_model_name = None
-    fallback_provider_name = None
-    fallback_key_id_name = None
-
     # A fix request starts from what the compiler says now, not from the text that
     # was pasted. The pasted error carries the line TeX printed, which for anything
     # inside a Beamer frame is the frame's \end{frame}: the model was sent to a
@@ -2958,30 +2987,20 @@ def stream_agent(
         # LLM call via provider router
         t_llm_start = time.time()
         try:
-            response = provider_router.chat(
+            response = yield from _chat_with_outage_status(
+                steps_taken,
+                agent_trace,
                 messages=compact_messages,
                 model=model,
                 temperature=0.1,
                 max_tokens=step_max_tokens,
                 api_keys=api_keys,
                 cancel_token=cancel_token,
-                observer=agent_trace.record_llm_attempt,
             )
             agent_trace.record_llm_call(
                 latency_ms=(time.time() - t_llm_start) * 1000,
                 usage=response.get("usage") if isinstance(response, dict) else None,
             )
-            if response.get("is_fallback"):
-                had_fallback = True
-                fallback_model_name = response.get("model_used") or "minimax/minimax-m3"
-                fallback_provider_name = response.get("provider") or "OpenRouter"
-                fallback_key_id_name = response.get("key_id")
-                key_tag = f" ({fallback_key_id_name})" if fallback_key_id_name else ""
-                yield {
-                    "type": "status",
-                    "step": steps_taken,
-                    "message": f"⚡ Switched to fallback: {fallback_model_name} via {fallback_provider_name}{key_tag}",
-                }
         except LLMOperationCancelled:
             raise
         except Exception as e:
@@ -3001,7 +3020,7 @@ def stream_agent(
             if not salvageable:
                 # With edits in the buffer the outcome is decided by the final
                 # compile gate below: verified edits are kept, not discarded.
-                yield _phase("failed", llm_failure)
+                yield _phase("failed", llm_failure, details={"operation": "llm_call"})
             break
 
         raw_content = response.get("content", "")
@@ -3017,20 +3036,16 @@ def stream_agent(
             })
             cont_succeeded = False
             try:
-                continuation = provider_router.chat(
+                continuation = yield from _chat_with_outage_status(
+                    steps_taken,
+                    agent_trace,
                     messages=_compact_conversation_history(messages),
                     model=model,
                     temperature=0.1,
                     max_tokens=4096,
                     api_keys=api_keys,
                     cancel_token=cancel_token,
-                    observer=agent_trace.record_llm_attempt,
                 )
-                if continuation.get("is_fallback"):
-                    had_fallback = True
-                    fallback_model_name = continuation.get("model_used") or "minimax/minimax-m3"
-                    fallback_provider_name = continuation.get("provider") or "OpenRouter"
-                    fallback_key_id_name = continuation.get("key_id")
                 cont_text = continuation.get("content", "")
                 cont_finish = continuation.get("finish_reason", "stop")
                 if cont_text:
@@ -3882,10 +3897,10 @@ def stream_agent(
         agent_trace.compile_result = "partial"
         n_edits = workspace.get_edit_count()
         partial_payload = {
-            "message": (f"{llm_failure.rstrip('.')} before the run finished. The {n_edits} edit(s) completed "
+            "message": (f"{llm_failure} The {n_edits} edit(s) completed "
                         f"before that were compiled and verified, and are kept."),
             "operation": "edit",
-            "reason": "The AI provider stopped responding mid-run; ask again to continue with the rest.",
+            "reason": llm_failure,
             "errors": [],
             "detailed_errors": [],
             "compile_log": "",
@@ -3900,7 +3915,7 @@ def stream_agent(
         errored_code = None
         agent_trace.compile_result = "not_run"
         failure_payload = {
-            "message": f"{llm_failure} The document was not modified.",
+            "message": llm_failure,
             "operation": "llm_call",
             "reason": llm_failure,
             "attempts": [f"{a.get('provider')}:{a.get('failure') or 'ok'}" for a in agent_trace.llm_attempts[-6:]],
@@ -4223,12 +4238,9 @@ def stream_agent(
                 "modified_files": all_modified,
                 "imported_assets": kept_assets,
                 "pdf_conversion_job_id": pdf_conversion_job_id,
-                "is_fallback": had_fallback,
-                "model_used": fallback_model_name if had_fallback else model,
-                "fallback_notice": (
-                    f"Gemini was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
-                    + (f" ({fallback_key_id_name})" if fallback_key_id_name else "")
-                ) if had_fallback else None,
+                "is_fallback": False,
+                "model_used": model,
+                "fallback_notice": None,
             },
         }
     else:
@@ -4256,12 +4268,9 @@ def stream_agent(
                 "errored_code": errored_code,
                 "detailed_errors": detailed_errors[:10],
                 "compile_log": compile_log[-4000:] if compile_log else "",
-                "is_fallback": had_fallback,
-                "model_used": fallback_model_name if had_fallback else model,
-                "fallback_notice": (
-                    f"Gemini Web2API was delayed or unavailable. Generated with {fallback_model_name} via {fallback_provider_name}"
-                    + (f" ({fallback_key_id_name})" if fallback_key_id_name else "")
-                ) if had_fallback else None,
+                "is_fallback": False,
+                "model_used": model,
+                "fallback_notice": None,
             },
         }
 

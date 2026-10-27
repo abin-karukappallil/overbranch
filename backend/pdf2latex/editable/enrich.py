@@ -52,6 +52,12 @@ def assemble_with_enrichment(extract: DocExtract, doc, out_dir, source_name: str
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Page backgrounds failed, continuing without them: {e}")
         extract.metadata["_editable_backgrounds"] = {}
+    try:
+        from . import figures
+        extract.metadata["_editable_trims"] = figures.trim_images(extract, out_dir)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Figure trimming failed, continuing with the full pictures: {e}")
+        extract.metadata["_editable_trims"] = {}
     return assemble_fn(extract, doc, source_name)
 
 
@@ -65,13 +71,18 @@ def _detect(extract: DocExtract, doc, out_dir) -> Tuple[Dict[int, List[Block]], 
         furn_ids = F.detect(extract.pages).furniture_line_ids
     except Exception:  # noqa: BLE001
         furn_ids = set()
+    try:
+        from . import hyphen as HY
+        vocab = HY.vocabulary(ln.text for p in extract.pages for ln in p.lines)
+    except Exception:  # noqa: BLE001
+        vocab = None
     for page in extract.pages:
         pno = page.number
         try:
             pg = doc[pno - 1]
         except Exception:
             continue
-        tbs = T.detect_tables(pg, page)
+        tbs = T.detect_tables(pg, page, vocab)
         if tbs:
             table_blocks[pno] = tbs
         mbs = M.detect_math(pg, page, extract.asset_prefix, out_dir, furn_ids)

@@ -140,7 +140,7 @@ def test_provider_failure_keeps_the_edits_that_compile(scripted_llm, stub_compil
     assert "Partial." in final_buffer(events, DOC)
     data = result_event(events)
     assert data["has_changes"] is True and data["partial"]["document_unchanged"] is False
-    assert "rate-limited" in data["partial"]["message"]
+    assert "Model outage" in data["partial"]["message"]
 
 
 def test_provider_failure_before_any_edit_leaves_document_unchanged(scripted_llm, stub_compiler):
@@ -148,4 +148,4 @@ def test_provider_failure_before_any_edit_leaves_document_unchanged(scripted_llm
     events = run_agent("Rewrite the intro sentence and then the closing sentence", DOC)
     assert final_buffer(events, DOC) == DOC
     failure = result_event(events)["failure"]
-    assert failure["document_unchanged"] and "rate-limited" in failure["message"]
+    assert failure["document_unchanged"] and "Model outage" in failure["message"]

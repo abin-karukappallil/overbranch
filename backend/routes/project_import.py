@@ -2,7 +2,19 @@
 project_import.py — FastAPI router that turns an uploaded .zip of LaTeX sources into a NEW project.
 
 Endpoint:
-- POST /api/projects/import-zip   multipart (file, project_name?) -> {project_id, name, files_count, ...}
+- POST /api/projects/import-zip   multipart (file, project_name?) ->
+      {project_id, name, files_count, assets_count, main_file, main_tex_path, created_main_tex,
+       projects: [{project_id, name, files_count, assets_count, main_file, main_tex_path,
+                   created_main_tex, folder}]}
+  The top-level fields describe the FIRST project (back-compat). An archive holding several
+  projects (Prism exports one per top-level folder) creates one project per folder; every
+  one of them is in ``projects``.
+
+Files keep their archived paths (a main document in a sub-folder is NOT moved to the root:
+that broke its relative \input / \includegraphics / \bibliography paths). The main
+document is detected and recorded as the project's main document (projects.default_branch
++ an on-disk marker, see project_storage.set_main_document). Dotfiles such as .latexmkrc
+are stored (never executed); only VCS / OS junk is dropped.
 
 Safety model (all checks run before a project row or any file exists):
 - upload size cap, ZIP structure validation (BadZipFile / LargeZipFile)
@@ -49,8 +61,10 @@ _rate_limit = RateLimiter(times=IMPORTS_PER_HOUR, seconds=3600, key_prefix="rl_z
 
 _SYMLINK_MODE = 0o120000
 _S_IFMT = 0o170000
-_DOCCLASS_RE = re.compile(r"^[^%\n]*\\documentclass", re.MULTILINE)
-_NOISE_PARTS = {"__MACOSX"}
+# Path parts that are VCS / OS junk, never project content.
+_NOISE_PARTS = {"__MACOSX", ".git", ".svn", ".hg", ".DS_Store", "Thumbs.db", "desktop.ini",
+                ".Trashes", ".Spotlight-V100", ".fseventsd", ".idea", ".vscode",
+                project_storage.MAIN_MARKER}
 
 
 def _bad(code: str, status: int = 400) -> HTTPException:
@@ -98,8 +112,8 @@ def analyze_archive(zf: zipfile.ZipFile) -> List[Tuple[zipfile.ZipInfo, str]]:
         parts = [x for x in p.parts if x not in ("", ".")]
         if not parts:
             continue
-        if any(x.startswith(".") or x in _NOISE_PARTS for x in parts):
-            logger.info("zip import: skipping hidden member %r", zi.filename)
+        if any(x in _NOISE_PARTS or x.startswith("._") for x in parts):
+            logger.info("zip import: skipping VCS/OS junk member %r", zi.filename)
             continue
         candidates.append((zi, PurePosixPath(*parts)))
 
@@ -177,18 +191,37 @@ def _rollback(project_id: str, sb) -> None:
 # Extraction (sync; runs in a worker thread)
 # ---------------------------------------------------------------------------
 
-def _pick_main_candidate(disk_paths: Dict[str, Path]) -> Optional[str]:
-    """A .tex with \\documentclass, preferring the shallowest path, then alphabetical."""
-    tex = sorted((r for r in disk_paths if r.lower().endswith(".tex")), key=lambda r: (r.count("/"), r))
-    for rel in tex:
-        try:
-            with open(disk_paths[rel], "rb") as fh:
-                head = fh.read(256 * 1024).decode("utf-8", errors="ignore")
-        except OSError:
-            continue
-        if _DOCCLASS_RE.search(head):
-            return rel
-    return None
+def _member_head(zf: zipfile.ZipFile, zi: zipfile.ZipInfo) -> str:
+    with zf.open(zi) as fh:
+        return fh.read(project_storage.MAIN_SCAN_BYTES).decode("utf-8", errors="ignore")
+
+
+def detect_main(zf: zipfile.ZipFile, members: List[Tuple[zipfile.ZipInfo, str]]) -> Optional[str]:
+    """The main document of one project's members (see project_storage.detect_main_document)."""
+    by_rel = {rel: zi for zi, rel in members}
+    return project_storage.detect_main_document(lambda rel: _member_head(zf, by_rel[rel]), list(by_rel))
+
+
+def split_projects(zf: zipfile.ZipFile, members: List[Tuple[zipfile.ZipInfo, str]]
+                   ) -> List[Tuple[Optional[str], List[Tuple[zipfile.ZipInfo, str]]]]:
+    """
+    [(folder, members relative to that folder)]. An archive with no loose root files
+    and two or more top-level folders that EACH hold their own main document is
+    several projects (a Prism multi-project export); anything else is one project
+    ``[(None, members)]``.
+    """
+    if any("/" not in rel for _, rel in members):
+        return [(None, members)]
+    groups: Dict[str, List[Tuple[zipfile.ZipInfo, str]]] = {}
+    for zi, rel in members:
+        top, rest = rel.split("/", 1)
+        groups.setdefault(top, []).append((zi, rest))
+    if len(groups) < 2:
+        return [(None, members)]
+    for sub in groups.values():
+        if detect_main(zf, sub) is None:
+            return [(None, members)]
+    return [(name, groups[name]) for name in sorted(groups)]
 
 
 def _extract(zf: zipfile.ZipFile, members: List[Tuple[zipfile.ZipInfo, str]], project_id: str, sb) -> Dict[str, Any]:
@@ -205,28 +238,33 @@ def _extract(zf: zipfile.ZipFile, members: List[Tuple[zipfile.ZipInfo, str]], pr
         else:
             assets += 1
 
+    # Every file stays at its archived path; the main document is only RECORDED.
     created_main = False
-    main_dest = project_storage.get_project_disk_path(project_id, "main.tex")
-    if "main.tex" not in disk_paths:
-        src_rel = _pick_main_candidate(disk_paths)
-        if src_rel is not None:
-            os.replace(disk_paths[src_rel], main_dest)  # also overwrites the empty seeded main.tex
-            text = main_dest.read_text(encoding="utf-8", errors="ignore")
-            if sb is not None:
-                project_storage.upsert_latex_document(sb, project_id, "main.tex", text)
-                try:
-                    sb.table("latex_documents").delete().eq("project_id", project_id).eq("file_path", src_rel).execute()
-                except Exception as e:
-                    logger.warning("could not remove old row for %s: %s", src_rel, e)
-        else:
+    main_rel = detect_main(zf, members)
+    main_dest = project_storage.get_project_disk_path(project_id, project_storage.DEFAULT_MAIN_DOCUMENT)
+    if main_rel is None:
+        main_rel = project_storage.DEFAULT_MAIN_DOCUMENT
+        if project_storage.DEFAULT_MAIN_DOCUMENT not in disk_paths:
+            # Nothing compilable in the archive: keep the empty main.tex seeded by
+            # create_empty_project so the editor has a document to open.
             main_dest.parent.mkdir(parents=True, exist_ok=True)
-            main_dest.write_text("", encoding="utf-8")
+            if not main_dest.exists():
+                main_dest.write_text("", encoding="utf-8")
             if sb is not None:
-                project_storage.upsert_latex_document(sb, project_id, "main.tex", "")
+                project_storage.upsert_latex_document(sb, project_id, project_storage.DEFAULT_MAIN_DOCUMENT, "")
             created_main = True
             files += 1
-    return {"files_count": files, "assets_count": assets, "main_tex_path": "main.tex",
-            "created_main_tex": created_main}
+    elif project_storage.DEFAULT_MAIN_DOCUMENT not in disk_paths:
+        # create_empty_project seeded an empty root main.tex; the real main document is
+        # elsewhere, so the stray placeholder goes.
+        try:
+            if main_dest.is_file() and main_dest.stat().st_size == 0:
+                main_dest.unlink()
+        except OSError as e:
+            logger.warning("could not remove seeded main.tex for %s: %s", project_id, e)
+    project_storage.set_main_document(project_id, main_rel, sb=sb)
+    return {"files_count": files, "assets_count": assets, "main_file": main_rel,
+            "main_tex_path": main_rel, "created_main_tex": created_main}
 
 
 # ---------------------------------------------------------------------------
@@ -269,24 +307,37 @@ async def import_zip(
     data = await _read_limited(file, IMPORT_ZIP_MAX_MB * MB)
 
     zf, members = await asyncio.to_thread(_open_and_analyze, data)
+    created: List[Dict[str, Any]] = []
+    sb = None
     try:
         owner_id: str = auth["user_id"]
         guest_session_id = auth.get("session_id") if auth.get("is_guest") else None
         name_hint = (project_name or "").strip() or Path(filename).stem
 
-        project = await asyncio.to_thread(
-            project_storage.create_empty_project, owner_id, name_hint, guest_session_id, "ZIP Import")
-        project_id = project["project_id"]
+        groups = await asyncio.to_thread(split_projects, zf, members)
+        multi = len(groups) > 1
         sb = _supabase()
-        try:
-            result = await asyncio.to_thread(_extract, zf, members, project_id, sb)
-        except BaseException as e:
-            logger.exception("zip import %s failed; rolling back", project_id)
-            await asyncio.to_thread(_rollback, project_id, sb)
-            if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
-                raise
-            # The code is the contract with the client; the cause stays in the server log.
-            raise HTTPException(status_code=500, detail="extract-failed")
+        for folder, group_members in groups:
+            hint = folder if multi and folder else name_hint
+            project = await asyncio.to_thread(
+                project_storage.create_empty_project, owner_id, hint, guest_session_id, "ZIP Import")
+            project_id = project["project_id"]
+            created.append({"project_id": project_id, "name": project["name"], "folder": folder})
+            result = await asyncio.to_thread(_extract, zf, group_members, project_id, sb)
+            created[-1].update(result)
+    except BaseException as e:
+        if created:
+            logger.exception("zip import failed; rolling back %d project(s)", len(created))
+            for entry in created:
+                await asyncio.to_thread(_rollback, entry["project_id"], sb)
+        if isinstance(e, HTTPException) and not created:
+            raise
+        if isinstance(e, (KeyboardInterrupt, SystemExit, asyncio.CancelledError)):
+            raise
+        # The code is the contract with the client; the cause stays in the server log.
+        raise HTTPException(status_code=500, detail="extract-failed")
     finally:
         zf.close()
-    return {"project_id": project_id, "name": project["name"], **result}
+    first = created[0]
+    return {**{k: v for k, v in first.items() if k != "folder"}, "projects": created,
+            "projects_count": len(created)}

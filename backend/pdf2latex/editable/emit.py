@@ -32,9 +32,13 @@ def _cname(profile: EditProfile, rgb: RGB) -> str:
 
 class Emitter:
     def __init__(self, profile: EditProfile, source_name: str = "", furniture=None, backgrounds=None,
-                 deck: bool = False):
+                 deck: bool = False, lock: Optional[bool] = None):
         self.p = profile
         self.deck = deck
+        # page-locked: each source page is set on its own output page (a deck's slides already are)
+        self.lock = (not deck) if lock is None else lock
+        self.page_fit: Dict[int, Dict] = {}     # source page → fit directives (pagefit)
+        self._cur_page: Optional[int] = None
         self.furniture = furniture
         self.backgrounds: Dict[int, str] = dict(backgrounds or {})
         self.source = source_name
@@ -58,6 +62,8 @@ class Emitter:
         docclass = "report" if p.has_chapters else "article"
         paper = p.paper if not p.paper.startswith("custom") else ""
         opts = f"{base}pt" + (f",{paper}" if paper else "")
+        if getattr(self, "two_column", False):
+            opts += ",twocolumn"
         L.append(f"\\documentclass[{opts}]{{{docclass}}}")
         L.append("\\usepackage[T1]{fontenc}")
         L.append("\\usepackage[utf8]{inputenc}")
@@ -74,11 +80,6 @@ class Emitter:
             L.append("\\usepackage{multirow}")
             L.append("\\usepackage{booktabs}")
             L.append("\\usepackage{longtable}")
-        if has_floats:
-            # The vision-layout pass promotes some figures/tables to floats; "H" placement needs the
-            # float package. "htbp" and "!htbp" work without it but we always load it when any float
-            # specifier was set so the specifier string need not be inspected here.
-            L.append("\\usepackage{float}")
         L.append("\\usepackage{enumitem}")
         L.append("\\usepackage{setspace}")
         L.append("\\usepackage{titlesec}")
@@ -91,8 +92,9 @@ class Emitter:
             L.append("\\usepackage{adjustbox}")
             L.append("% One slide per page: the slide's content in a box the height of the page, scaled down")
             L.append("% only if it would not fit.")
+            L.append("% (slide text is set ragged right, as Beamer sets it)")
             L.append("\\newenvironment{slide}{\\noindent\\begin{adjustbox}{max totalheight=\\textheight}"
-                     "\\begin{minipage}{\\linewidth}}{\\end{minipage}\\end{adjustbox}\\clearpage}")
+                     "\\begin{minipage}{\\linewidth}\\raggedright}{\\end{minipage}\\end{adjustbox}\\clearpage}")
         if self.multicol:
             L.append("\\usepackage{multicol}")
             L.append(f"\\setlength{{\\columnsep}}{{{fmt(max(8.0, self.p.columnsep or 18.0))}bp}}")
@@ -126,6 +128,19 @@ class Emitter:
         # into the margin (the PDF has no overfull lines)
         L.append("\\setlength{\\emergencystretch}{1.5em}")
         L.append(f"\\setlength{{\\parskip}}{{{fmt(p.parskip)}pt}}")
+        if self.lock:
+            L.append("% Page-locked: every page of the PDF starts a new page here, so the pages and their page")
+            L.append("% numbers stay as in the PDF. Redefine \\sourcepage to \\par to let the text flow freely.")
+            L.append("\\newcommand{\\sourcepage}[1]{\\clearpage}")
+            if getattr(self, "two_column", False):
+                L.append("% the PDF's column break (the next column of the same page)")
+                L.append("\\newcommand{\\sourcecolumn}[1]{\\newpage}")
+                L.append(f"\\setlength{{\\columnsep}}{{{fmt(max(4.0, self.p.columnsep or 18.0))}bp}}")
+                L.append("\\fussy")
+            L.append("% a page may hold less than it has room for: no stretching to fill it")
+            L.append("\\raggedbottom")
+            L.append("% the page fit: a page set a little tighter to keep it on its page")
+            L.append("\\newenvironment{tighterpage}[1]{\\par\\setstretch{#1}}{\\par}")
         L.append("")
         # page numbers
         L.extend(self._page_style_lines())
@@ -154,6 +169,10 @@ class Emitter:
             body = f"\\textit{{{body}}}"
         if it.get("bold"):
             body = f"\\textbf{{{body}}}"
+        fam = it.get("family")
+        if fam and fam != self.p.body_family:
+            # the header/footer's own typeface (a sans running head over a serif body)
+            body = "{" + {"sans": "\\sffamily ", "mono": "\\ttfamily ", "serif": "\\rmfamily "}[fam] + body + "}"
         col = tuple(it.get("color") or (0, 0, 0))
         if col != self.body_color and col != (0, 0, 0) or (col == (0, 0, 0) and self.body_color != (0, 0, 0)):
             body = f"\\textcolor{{{_cname(self.p, col)}}}{{{body}}}"
@@ -310,18 +329,23 @@ class Emitter:
 
     # ------------------------------------------------------------------ body
     def document(self, blocks: List[Block], has_notes: bool) -> Tuple[str, LineMap]:
+        self.two_column = bool(self.lock and getattr(self.p, "two_column", False) and not self.deck)
         self.multicol = any(getattr(b, "cols", 1) == 2 for b in blocks)
         self.boxes = contains_kind(blocks, "box")
         has_notes = has_notes or contains_kind(blocks, "note")
         has_tables = any(isinstance(b, Table) for b in blocks) or \
             any(isinstance(b, Box) and any(isinstance(c, Table) for c in b.content) for b in blocks)
-        has_floats = any(isinstance(b, (Figure, Table)) and getattr(b, "float_spec", None) for b in blocks)
-        pre = self.preamble(has_notes, has_tables, has_floats)
         body_lines: List[Tuple[str, int]] = []
         in_cols = False
         in_slide = False
         bg_done: set = set()
-        for b in blocks:
+        col_now = -1
+        first = next((b for b in blocks if b.kind != "pagemark"), None)
+        if self.lock and not self.two_column and not self.deck and first is not None \
+                and (not blocks or blocks[0].kind != "pagemark"):
+            for line in self._page_open(first.page):
+                body_lines.append((line, first.id))
+        for b in (blocks if not self.two_column else []):
             if self.deck and b.kind == "pagemark":
                 if in_cols:
                     body_lines.append(("\\end{multicols}", b.id))
@@ -336,7 +360,9 @@ class Emitter:
                 bg_done.add(b.page)
                 body_lines.append((background_command(self.backgrounds[b.page]), b.id))
             if self.deck and not in_slide:
-                body_lines.append(("\\begin{slide}", b.id))
+                fitst = self._fit_of(b.page).get("stretch")
+                body_lines.append(("\\begin{slide}" + (f"\\setstretch{{{fmt(round(fitst * self._base_stretch(), 3))}}}"
+                                                          if fitst else ""), b.id))
                 in_slide = True
             hard_mark = b.kind == "pagemark" and getattr(b, "hard", False)
             want_cols = getattr(b, "cols", 1) == 2 and b.kind != "pagemark"
@@ -347,11 +373,29 @@ class Emitter:
             if want_cols and not in_cols:
                 body_lines.append(("\\begin{multicols}{2}", b.id))
                 in_cols = True
+                col_now = 0
+            if self.deck:
+                pass      # a slide is a box: multicols balances its columns there (no breaks)
+            elif in_cols and want_cols and getattr(b, "column", -1) == 1 and col_now == 0:
+                # the source's own column break: the right column starts here
+                body_lines.append(("\\columnbreak", b.id))
+                col_now = 1
+            elif in_cols and want_cols and getattr(b, "column", -1) == 0 and col_now == 1:
+                body_lines.append(("\\end{multicols}", b.id))
+                body_lines.append(("\\begin{multicols}{2}", b.id))
+                col_now = 0
             self._emit(b, body_lines, top=True)
+        if self.two_column:
+            self._two_column_body(blocks, body_lines)
+        if self.lock and not self.deck:
+            for line in self._page_close():
+                body_lines.append((line, 0))
         if in_cols:
             body_lines.append(("\\end{multicols}", 0))
         if in_slide:
             body_lines.append(("\\end{slide}", 0))
+        # the preamble last: the body decides which packages it needs (multicol on a mixed page)
+        pre = self.preamble(has_notes or self.notes, has_tables)
         # assemble and build the line map
         start = ["", "\\begin{document}", "\\pagestyle{obmain}"] + self._numbering_start()
         if self.body_color != (0, 0, 0):
@@ -370,7 +414,132 @@ class Emitter:
         all_lines.append("")
         return "\n".join(all_lines), lm
 
+    # ------------------------------------------------------------------ two-column, page-locked
+    def _two_column_body(self, blocks: List[Block], out: List[Tuple[str, int]]) -> None:
+        """
+        A two-column document, page by page as in the PDF (native ``twocolumn``):
+          - a page that is a full-width band over the two columns: \\twocolumn[{band}], the left
+            column, \\sourcecolumn, the right column;
+          - a page of two columns: \\sourcepage, left, \\sourcecolumn, right;
+          - a page in one column: \\onecolumn;
+          - a page with a full-width band between or below its columns: one column, its column
+            bands in multicols with the PDF's column break (\\columnbreak).
+        """
+        pages: List[Tuple[Optional[Block], List[Block]]] = []
+        cur: List[Block] = []
+        mark: Optional[Block] = None
+        for b in blocks:
+            if b.kind == "pagemark":
+                if cur or mark is not None:
+                    pages.append((mark, cur))
+                mark, cur = b, []
+            else:
+                cur.append(b)
+        if cur or mark is not None:
+            pages.append((mark, cur))
+        mode_now = "two"
+        bg_done: set = set()
+        for k, (mk, bl) in enumerate(pages):
+            segs = _column_segments(bl)
+            ncols = sum(1 for sg in segs if sg[0] == "cols")
+            if ncols == 0:
+                mode = "one"
+            elif ncols == 1 and (len(segs) == 1 or (len(segs) == 2 and segs[0][0] == "full")):
+                mode = "two"
+            else:
+                mode = "mixed"
+            band = segs[0][1] if mode == "two" and len(segs) == 2 else []
+            mid = mk.id if mk is not None else (bl[0].id if bl else 0)
+            if mk is not None:
+                close, _mark, rest = self._pagemark_parts(mk)
+            else:
+                close, rest = [], self._page_open(bl[0].page) if bl else []
+            for line in close:
+                out.append((line, mid))
+            pno = mk.page if mk is not None else (bl[0].page if bl else 0)
+            if mode == "two" and band:
+                inner: List[Tuple[str, int]] = []
+                self._page_top = True
+                for c in band:
+                    self._emit(c, inner, top=False)
+                body = "\n".join(t for t, _ in inner if t)
+                out.append((f"\\twocolumn[{{%\n{body}\n}}]", mid))
+                mode_now = "two"
+            elif k == 0:
+                if mode != "two":
+                    out.append(("\\onecolumn", mid))
+                    mode_now = "one"
+            elif mode == "two":
+                out.append((f"\\sourcepage{{{pno}}}" if mode_now == "two" else "\\twocolumn", mid))
+                mode_now = "two"
+            else:
+                out.append((f"\\sourcepage{{{pno}}}" if mode_now == "one" else "\\onecolumn", mid))
+                mode_now = "one"
+            for line in rest:
+                if line and line != "%":
+                    out.append((line, mid))
+            if pno in self.backgrounds and pno not in bg_done:
+                from ..preamble import background_command
+                bg_done.add(pno)
+                out.append((background_command(self.backgrounds[pno]), mid))
+            self._page_top = True
+            if mode == "two":
+                kind, left, right = segs[-1]
+                for c in left:
+                    self._emit(c, out, top=True)
+                if right:
+                    if not left:
+                        out.append(("\\null", mid))
+                    out.append((f"\\sourcecolumn{{{pno}}}", mid))
+                    self._page_top = True
+                    for c in right:
+                        self._emit(c, out, top=True)
+                continue
+            for sg in segs:
+                if sg[0] == "full":
+                    for c in sg[1]:
+                        self._emit(c, out, top=True)
+                    continue
+                _kind, left, right = sg
+                self.multicol = True
+                out.append(("\\begin{multicols}{2}", mid))
+                for c in left:
+                    self._emit(c, out, top=False)
+                if right:
+                    out.append(("\\columnbreak", mid))
+                    for c in right:
+                        self._emit(c, out, top=False)
+                out.append(("\\end{multicols}", mid))
+
     def _emit(self, b: Block, out: List[Tuple[str, int]], top: bool = False) -> None:
+        if b.kind == "pagemark":
+            out.append((self._pagemark(b), b.id))
+            if getattr(b, "hard", False):
+                self._page_top = True     # the next block's space above must survive the break
+            return
+        # TeX discards glue at a page top, so a \vspace before the first block of a page is lost
+        # and the block rides up to the margin (a centred "CONTENTS" title landed ~54pt high).
+        # The first block after a hard break writes its space as \vspace*, which is not discarded.
+        self._space_star = getattr(self, "_page_top", False)
+        self._page_top = False
+        anchor = getattr(b, "anchor_bottom", None) if self.lock and top else None
+        if anchor is not None:
+            # the PDF sets this block at the foot of its page (a signature, a closing line)
+            out.append(("\\vspace{\\fill}", b.id))
+            self._space_star = False
+            self._anchored = True
+        try:
+            self._emit_block(b, out)
+        finally:
+            self._anchored = False
+        if anchor is not None:
+            # \\vspace{\\fill} puts the last baseline on the text area's foot; the text area may run
+            # lower than the PDF's, so the block is lifted back to its own baseline
+            lift = (self.p.paper_pt[1] - self.p.margins.get("bottom", 72.0)) - anchor
+            if lift >= 0.5:
+                out.append((f"\\vspace{{{fmt(round(lift, 1))}bp}}", b.id))
+
+    def _emit_block(self, b: Block, out: List[Tuple[str, int]]) -> None:
         if isinstance(b, TitlePage):
             self._emit_titlepage(b, out)
         elif isinstance(b, Heading):
@@ -397,8 +566,21 @@ class Emitter:
         elif isinstance(b, Note):
             out.append((self._note(b), b.id))
         elif isinstance(b, Box):
-            out.append((self._box(b), b.id))
-            out.append(("", b.id))
+            if b.row_next or b.row_prev:
+                # boxes side by side: each at its own width, top-aligned, with the PDF's gap
+                lead = ""
+                if not b.row_prev:
+                    dx = b.bbox[0] - (b.left or self.p.margins.get("left", 0.0))
+                    lead = "\\noindent" + (f"\\hspace*{{{fmt(round(dx, 1))}bp}}" if dx > 2 else "")
+                # (\\nobreak: the row never wraps, whatever the paragraph's alignment)
+                tail = (f"\\nobreak\\hspace{{{fmt(round(b.gap_after, 1))}bp}}\\nobreak%" if b.row_next
+                        else "\\par")
+                out.append((lead + self._box(b, inline=True) + tail, b.id))
+                if not b.row_next:
+                    out.append(("", b.id))
+            else:
+                out.append((self._box(b), b.id))
+                out.append(("", b.id))
         elif b.kind == "pagemark":
             out.append((self._pagemark(b), b.id))
 
@@ -532,7 +714,10 @@ class Emitter:
         else:
             want = p.leading / (1.2 * size)
         have = self.p.line_stretch if abs(self.p.line_stretch - 1.0) > 0.05 else 1.0
-        return round(want, 2) if abs(want - have) > 0.08 else None
+        if abs(want - have) <= 0.08:
+            return None
+        # a page set tighter to fit scales its local pitches by the same factor
+        return round(want * (self._fit_of(self._cur_page).get("stretch") or 1.0), 3)
 
     def _uniform_size(self, runs: List[Run]) -> Optional[float]:
         """The size ≥90% of the text is set in, when that differs from the body; else None."""
@@ -562,6 +747,11 @@ class Emitter:
             self._base_size = prev
         if not body:
             return "%"
+        if p.ends_mid:
+            # it breaks off at the foot of its page, mid-sentence: the last line runs full
+            body += "{\\parfillskip=0pt\\par}"
+        if p.looseness:
+            body = f"\\looseness={p.looseness} " + body
         st = self._local_stretch(p)
         if size is None and not st:
             return self._para_aligned(p, body)
@@ -590,7 +780,12 @@ class Emitter:
 
     def _para_aligned(self, p: Para, body: str, space: bool = True) -> str:
         pre = self._space(p) if space else ""
-        if (self.p.parindent or 0) > 0 and p.align in ("left", "justify") and p.first_indent < 4 \
+        if p.joins_prev:
+            # the rest of the paragraph the previous page broke off: no indent, no space above
+            body = "\\noindent " + body
+            if p.indent_l > 6:
+                return self._indented(pre, body, p.indent_l)
+        elif (self.p.parindent or 0) > 0 and p.align in ("left", "justify") and p.first_indent < 4 \
                 and p.indent_l <= 6:
             body = "\\noindent " + body      # this paragraph's first line is not indented
         # {\centering …\par} / {\raggedleft …\par} rather than the center/flushright environments,
@@ -600,21 +795,37 @@ class Emitter:
         if p.align == "right":
             return pre + "{\\raggedleft " + body + "\\par}"
         if p.align == "offset":
+            if self.lock:
+                return self._indented(pre, body, "0.5\\linewidth", p)
             return pre + "\\begin{adjustwidth}{0.5\\linewidth}{0pt}\n" + body + "\n\\end{adjustwidth}"
         if p.align == "left":
             # ragged right (not justified)
             if p.indent_l > 6:
+                if self.lock:
+                    return self._indented(pre, body, p.indent_l, p)
                 return (pre + f"\\begin{{adjustwidth}}{{{fmt(p.indent_l)}pt}}{{0pt}}\n"
                         + body + "\n\\end{adjustwidth}")
         return pre + body
 
+    @staticmethod
+    def _indented(pre: str, body: str, indent, p: Optional[Para] = None) -> str:
+        """A paragraph indented from the left as a plain paragraph with \\leftskip (adjustwidth is a
+        list: it adds \\topsep above and below, space the PDF does not have)."""
+        amount = indent if isinstance(indent, str) else f"{fmt(indent)}pt"
+        if p is not None and p.first_indent < 4 and not body.startswith("\\noindent"):
+            body = "\\noindent " + body
+        return pre + "{\\leftskip=" + amount + "\\relax " + body + "\\par}"
+
     def _space(self, b: Block) -> str:
+        if getattr(self, "_anchored", False) or getattr(b, "joins_prev", False):
+            return ""         # set from the page foot / it goes on at the top of its page
+        v = "\\vspace*" if getattr(self, "_space_star", False) else "\\vspace"
         if b.space_exact and b.space_before and abs(b.space_before) >= 2.0:
-            return f"\\vspace{{{fmt(round(b.space_before * 2) / 2)}pt}}\n"
+            return f"{v}{{{fmt(round(b.space_before * 2) / 2)}pt}}\n"
         if b.space_before and abs(b.space_before) >= max(4.0, 0.4 * (self.p.leading or 12)):
             k = round(b.space_before / max(1.0, self.p.leading) * 2) / 2
             if abs(k) >= 0.5:
-                return f"\\vspace{{{fmt(k)}\\baselineskip}}\n"
+                return f"{v}{{{fmt(k)}\\baselineskip}}\n"
         return ""
 
     # -- heading -----------------------------------------------------------
@@ -662,6 +873,11 @@ class Emitter:
         d = h.kern
         if not h.starts_page and h.before_measured is not None and lv and lv.get("space_before_measured") is not None:
             d += h.before_measured - lv["space_before_measured"]
+        if h.starts_page:
+            # At a page top a \kern is discardable (TeX drops it) and titlesec's \addvspace would
+            # absorb a plain \vspace. Calibration zeroes the level's own space for page-opening
+            # levels, so this one \vspace* places the heading exactly where the PDF has it.
+            return f"\\vspace*{{{fmt(round(d, 1))}pt}}\n" if abs(d) >= 1.0 else ""
         if abs(d) < 4:
             return ""
         # under another heading no page break may fall between the two
@@ -758,29 +974,91 @@ class Emitter:
         parts = []
         for b in it.body:
             if isinstance(b, Para):
-                parts.append(self._para_lines_text(b).strip())
+                txt = self._para_lines_text(b).strip()
+                if b.ends_mid and txt:
+                    txt += "{\\parfillskip=0pt\\par}"
+                parts.append(txt)
             elif isinstance(b, ListBlock):
                 parts.append("\n" + self._list(b))
         return " ".join(x for x in parts if x)
 
     # -- figure ------------------------------------------------------------
     def _figure(self, f: Figure) -> str:
-        """An image in the flow ({\\centering …\\par} rather than the center environment, whose
-        \\topsep above and below would add space the PDF doesn't have). When ``float_spec`` is set
-        by the vision-layout pass, the image is wrapped in a figure float with that placement
-        specifier so a tall image near a page break no longer pushes body text onto an extra page."""
-        align = {"center": "\\centering", "right": "\\raggedleft"}.get(f.align, "\\noindent")
-        imgs = " ".join(f"\\includegraphics[width={fmt(min(1.0, frac))}\\linewidth]{{{img}}}"
-                        for img, frac in zip(f.images, f.width_frac))
-        cap = ("\\\\\n" + self._para_lines_text(f.caption).strip()) if f.caption else ""
-        if f.float_spec:
-            spec = f.float_spec
-            body = f"\\begin{{figure}}[{spec}]\n{align} " + imgs + cap + "\n\\end{figure}"
-            pre = self._space(f).rstrip("\n")
-            return (pre + "\n" + body) if pre else body
-        lines = [self._space(f).rstrip("\n")] if self._space(f) else []
-        lines.append("{" + align + " " + imgs + cap + "\\par}")
-        return "\n".join(x for x in lines if x)
+        """Pictures at their PDF size (the ink box, in bp), where the PDF has them on the line: a
+        centred picture in a \\makebox as wide as the line (a picture wider than the text overhangs
+        both margins evenly instead of shrinking or running overfull), any other one shifted from
+        the left edge by its measured offset; pictures side by side keep their measured gaps."""
+        pre = self._space(f).rstrip("\n")
+        if f.beside:
+            body = self._figure_beside(f)
+        else:
+            body = self._figure_row(f)
+        cap = ("\n{\\centering " + self._para_lines_text(f.caption).strip() + "\\par}") if f.caption else ""
+        return "\n".join(x for x in (pre, body + cap) if x)
+
+    def _figure_graphics(self, f: Figure) -> Tuple[str, float, float]:
+        """The pictures as one row of \\includegraphics joined by their gaps; (tex, left, right)."""
+        boxes = list(f.boxes) or [tuple(f.bbox)] * len(f.images)
+        parts: List[str] = []
+        prev_x1 = None
+        for k, (img, box) in enumerate(zip(f.images, boxes)):
+            w = box[2] - box[0]
+            h = box[3] - box[1]
+            opts = f"width={fmt(round(w, 2))}bp"
+            px = f.px[k] if k < len(f.px) else (0, 0)
+            if px[0] > 0 and px[1] > 0 and w > 0 and h > 0:
+                # set the height too where the PDF stretched the picture out of its own proportions
+                if abs((w / h) / (px[0] / px[1]) - 1.0) > 0.01:
+                    opts += f",height={fmt(round(h, 2))}bp"
+            elif not f.boxes:
+                frac = f.width_frac[k] if k < len(f.width_frac) else 0.5
+                opts = f"width={fmt(frac)}\\linewidth"
+            if prev_x1 is not None:
+                parts.append(f"\\hspace{{{fmt(round(box[0] - prev_x1, 2))}bp}}")
+            parts.append(f"\\includegraphics[{opts}]{{{img}}}")
+            prev_x1 = box[2]
+        left = min(b[0] for b in boxes)
+        right = max(b[2] for b in boxes)
+        return "".join(parts), left, right
+
+    def _figure_row(self, f: Figure) -> str:
+        g, x0, x1 = self._figure_graphics(f)
+        col_l = f.left or self.p.margins.get("left", 0.0)
+        col_r = f.right or (self.p.paper_pt[0] - self.p.margins.get("right", 0.0))
+        if not f.boxes:
+            return "{\\centering " + g + "\\par}"
+        if abs((x0 + x1) / 2 - (col_l + col_r) / 2) <= 6.0:
+            return "\\noindent\\makebox[\\linewidth][c]{" + g + "}\\par"
+        return (f"\\noindent\\makebox[\\linewidth][l]{{\\hspace*{{{fmt(round(x0 - col_l, 2))}bp}}"
+                + g + "}\\par")
+
+    def _figure_beside(self, f: Figure) -> str:
+        """A picture with text set beside it: two top-aligned minipages, each as wide as in the PDF."""
+        g, x0, x1 = self._figure_graphics(f)
+        col_l = f.left or self.p.margins.get("left", 0.0)
+        col_r = f.right or (self.p.paper_pt[0] - self.p.margins.get("right", 0.0))
+        tx0 = min(b.bbox[0] for b in f.beside)
+        tx1 = max(max(b.bbox[2] for b in f.beside), tx0 + 20)
+        inner: List[Tuple[str, int]] = []
+        for c in f.beside:
+            self._emit(c, inner)
+        text = "\n".join(t for t, _ in inner if t).strip() or "~"
+        if f.beside_side == "right":
+            fig_w = x1 - col_l
+            gap = tx0 - x1
+            text_w = col_r - tx0
+            fig = f"\\hspace*{{{fmt(round(x0 - col_l, 2))}bp}}" + g
+            return ("\\noindent\\begin{minipage}[t]{" + fmt(round(fig_w, 2)) + "bp}\\vspace{0pt}" + fig
+                    + "\\end{minipage}\\hspace{" + fmt(round(gap, 2)) + "bp}%\n"
+                    + "\\begin{minipage}[t]{" + fmt(round(text_w, 2)) + "bp}\\vspace{0pt}\n" + text
+                    + "\n\\end{minipage}\\par")
+        text_w = tx1 - col_l
+        gap = x0 - tx1
+        fig_w = col_r - x0
+        return ("\\noindent\\begin{minipage}[t]{" + fmt(round(text_w, 2)) + "bp}\\vspace{0pt}\n" + text
+                + "\n\\end{minipage}\\hspace{" + fmt(round(gap, 2)) + "bp}%\n"
+                + "\\begin{minipage}[t]{" + fmt(round(fig_w, 2)) + "bp}\\vspace{0pt}" + g
+                + "\\end{minipage}\\par")
 
     # -- rule --------------------------------------------------------------
     def _rule(self, r: Rule) -> str:
@@ -810,11 +1088,6 @@ class Emitter:
     # -- table -------------------------------------------------------------
     def _table(self, t: Table) -> str:
         body = render_table(self, t)
-        if t.float_spec:
-            spec = t.float_spec
-            wrapped = f"\\begin{{table}}[{spec}]\n{body}\n\\end{{table}}"
-            pre = self._space(t).rstrip("\n")
-            return (pre + "\n" + wrapped) if pre else wrapped
         return self._space(t) + body
 
     # -- note --------------------------------------------------------------
@@ -833,7 +1106,7 @@ class Emitter:
         return f"\\obnote{{{fmt(n.dx)}pt}}{{{fmt(-n.dy)}pt}}{{{fmt(n.width)}pt}}{{{content}}}"
 
     # -- box ---------------------------------------------------------------
-    def _box(self, b: Box) -> str:
+    def _box(self, b: Box, inline: bool = False) -> str:
         """A shaded box (a Beamer block, a coloured call-out) as a tcolorbox: background colour,
         title-bar colour and title as in the PDF; the content is ordinary LaTeX."""
         inner: List[Tuple[str, int]] = []
@@ -847,7 +1120,11 @@ class Emitter:
         if self.body_color != (0, 0, 0):
             # tcolorbox resets the text colour to black; keep the document's body colour
             opts.append(f"coltext={_cname(self.p, self.body_color)}")
-        if b.width_frac and b.width_frac < 0.97:
+        if self.deck:
+            opts.append("halign=flush left")     # Beamer sets a block's text ragged right
+        if inline:
+            opts += [f"width={fmt(round(b.bbox[2] - b.bbox[0], 1))}bp", "nobeforeafter", "box align=top"]
+        elif b.width_frac and b.width_frac < 0.97:
             opts.append(f"width={fmt(b.width_frac)}\\linewidth")
         if b.title_runs:
             title = "".join(self._run(r) for r in b.title_runs).strip()
@@ -971,11 +1248,20 @@ class Emitter:
 
     # -- page mark ---------------------------------------------------------
     def _pagemark(self, pm) -> str:
-        """A page boundary. The page is cleared *before* the numbering changes, so the change
-        applies to the next page, not to the one being finished."""
+        close, mark, after = self._pagemark_parts(pm)
+        return "\n".join(close + ([mark] if mark else []) + after) or "%"
+
+    def _pagemark_parts(self, pm) -> Tuple[List[str], str, List[str]]:
+        """A page boundary: (what closes the page before, the break, what opens the new page). The
+        page is cleared *before* the numbering changes, so the change applies to the next page,
+        not to the one being finished; the page's fit directives come last."""
         if not getattr(pm, "hard", False):
-            return "%"           # the source page turned here; the text just flows on
-        parts = ["\\clearpage"]
+            # the source page turned here; the text just flows on (an empty first page holds a box)
+            after = self._page_open(pm.page) if getattr(self, "lock", True) else []
+            return [], ("\\null" if getattr(pm, "empty", False) else "%"), after
+        close = self._page_close() if getattr(self, "lock", True) else []
+        mark = f"\\sourcepage{{{pm.page}}}" if getattr(self, "lock", True) else "\\clearpage"
+        parts: List[str] = []
         if pm.numbering:
             style, start = pm.numbering
             if style == "none":
@@ -986,7 +1272,39 @@ class Emitter:
                 parts.append(f"\\pagenumbering{{{style}}}")
                 if start and start != 1:
                     parts.append(f"\\setcounter{{page}}{{{start}}}")
-        return "\n".join(parts)
+        if getattr(pm, "counter", None) is not None:
+            # an earlier page spilled onto an extra page: the printed numbers stay the PDF's
+            parts.append(f"\\setcounter{{page}}{{{pm.counter}}}")
+        parts.extend(getattr(pm, "fit", None) or [])
+        if getattr(self, "lock", True):
+            parts.extend(self._page_open(pm.page))
+        if getattr(pm, "empty", False):
+            parts.append("\\null")     # an empty source page is a page of its own
+        return close, mark, parts
+
+    def _fit_of(self, pno: Optional[int]) -> Dict:
+        if pno is None:
+            return {}
+        return (getattr(self, "page_fit", None) or {}).get(pno) or {}
+
+    def _base_stretch(self) -> float:
+        return self.p.line_stretch if abs(self.p.line_stretch - 1.0) > 0.05 else 1.0
+
+    def _page_open(self, pno: int) -> List[str]:
+        """The page fit's directives for a source page: a little more room at its foot, a slightly
+        tighter line pitch (never a smaller font)."""
+        self._cur_page = pno
+        pf = self._fit_of(pno)
+        out: List[str] = []
+        if pf.get("enlarge"):
+            out.append(f"\\enlargethispage{{{fmt(round(pf['enlarge'], 1))}bp}}")
+        if pf.get("stretch"):
+            out.append(f"\\begin{{tighterpage}}{{{fmt(round(pf['stretch'] * self._base_stretch(), 3))}}}")
+        return out
+
+    def _page_close(self) -> List[str]:
+        pf = self._fit_of(getattr(self, "_cur_page", None))
+        return ["\\end{tighterpage}"] if pf.get("stretch") else []
 
 
 # TeX Gyre fonts the PDF names, which pdfLaTeX has as such: the same glyphs and widths, so the
@@ -1080,43 +1398,137 @@ def _url(s: str) -> str:
 # Table rendering (kept here so the emitter owns all LaTeX text)
 # ---------------------------------------------------------------------------
 
+def _column_segments(blocks: List[Block]) -> List[Tuple]:
+    """A page's blocks as bands: ("full", blocks) or ("cols", left blocks, right blocks). A note
+    goes with the block after it."""
+    segs: List[List] = []
+    pending: List[Block] = []
+    for b in blocks:
+        if b.kind == "note":
+            pending.append(b)
+            continue
+        col = getattr(b, "column", -1)
+        if col < 0:
+            if not segs or segs[-1][0] != "full":
+                segs.append(["full", []])
+            segs[-1][1].extend(pending + [b])
+        else:
+            if not segs or segs[-1][0] != "cols" or (col == 0 and segs[-1][2]):
+                segs.append(["cols", [], []])
+            segs[-1][1 + col].extend(pending + [b])
+        pending = []
+    if pending:
+        if segs and segs[-1][0] == "cols":
+            segs[-1][2 if segs[-1][2] else 1].extend(pending)
+        elif segs:
+            segs[-1][1].extend(pending)
+        else:
+            segs.append(["full", pending])
+    return [tuple(s) for s in segs]
+
+
+def _grid(t: Table) -> Tuple[int, List[List["Cell"]], List[float], List[str]]:
+    """
+    The table as a rectangular grid: (ncol, rows, fracs, aligns). The column count is the widest
+    of the column specs and of every row's *spans* (a borderless row of a spanning field and two
+    cells covers four columns while holding three cells: counting cells gave "Extra alignment tab
+    has been changed to \\cr"). Each row is clamped to the grid: a span is cut at the last column,
+    a cell past it has its text folded into the row's last cell (no word is lost), and a short row
+    is padded with empty cells, so every row has exactly ncol-1 '&'.
+    """
+    from .model import Cell
+    spans = [sum(max(1, c.colspan) for c in row) for row in t.rows]
+    ncol = max([len(t.col_align), len(t.col_frac)] + spans + [0])
+    rows: List[List[Cell]] = []
+    for row in t.rows:
+        out: List[Cell] = []
+        k = 0
+        for c in row:
+            if k >= ncol:
+                # past the last column: fold the text into the last cell
+                last = out[-1]
+                out[-1] = Cell(paras=list(last.paras) + list(c.paras), colspan=last.colspan,
+                               rowspan=last.rowspan, stack=last.stack, fill=last.fill, bold=last.bold)
+                continue
+            span = min(max(1, c.colspan), ncol - k)
+            if span != c.colspan:
+                c = Cell(paras=c.paras, colspan=span, rowspan=c.rowspan, stack=c.stack, fill=c.fill,
+                         bold=c.bold)
+            out.append(c)
+            k += span
+        while k < ncol:
+            out.append(Cell())
+            k += 1
+        rows.append(out)
+    fracs = [max(0.0, f) for f in t.col_frac] + [0.0] * (ncol - len(t.col_frac))
+    aligns = list(t.col_align) + ["p"] * (ncol - len(t.col_align))
+    return ncol, rows, fracs, aligns
+
+
+def _borderless_fracs(t: Table, ncol: int, fracs: List[float], sep: float) -> List[float]:
+    """Borderless columns: a missing width shares what is left of the line, and the columns plus
+    the gaps between them never exceed the line (@{} edges, two \\tabcolsep per gap)."""
+    fr = list(fracs)
+    missing = [k for k in range(ncol) if fr[k] <= 0]
+    if missing:
+        rest = max(0.03 * len(missing), 1.0 - sum(fr) - (ncol - 1) * sep)
+        for k in missing:
+            fr[k] = rest / len(missing)
+    budget = 1.0 - (ncol - 1) * sep
+    total = sum(fr)
+    if total > budget and total > 0:
+        fr = [f * max(0.05, budget) / total for f in fr]
+    import math
+    return [math.floor(max(0.01, f) * 1000) / 1000 for f in fr]
+
+
 def render_table(em: "Emitter", t: Table) -> str:
-    ncol = max((len(row) for row in t.rows), default=0)
-    if ncol == 0:
+    ncol, rows, fracs, aligns = _grid(t)
+    if ncol == 0 or not rows:
         return "%"
     if not t.ruled and not t.booktabs:
-        return _render_borderless(em, t, ncol)
-    colspec = _colspec(t, ncol)
+        return _render_borderless(em, t, ncol, rows, fracs, aligns)
+    colspec = _colspec(t, ncol, fracs, aligns)
     # A dense booktabs table (many columns / rows) is set a size down with tighter column spacing,
     # as the source does, so the columns fit the text width; a tall one uses longtable so it breaks
     # across pages (a plain tabular would overrun the bottom margin into the footer) and repeats its
-    # header on each page.
+    # header on each page. Page-locked output never breaks a table: the source page holds it.
     small = getattr(t, "small", False)
-    tall = small and len(t.rows) >= 12
+    lock = getattr(em, "lock", False)
+    tall = small and len(rows) >= 12 and not lock
     top = "\\toprule" if t.booktabs else ("\\hline" if t.ruled else "")
     bot = "\\bottomrule" if t.booktabs else ("\\hline" if t.ruled else "")
     mid = "\\midrule" if t.booktabs else ("\\hline" if t.ruled else "")
-    header = [top] + ([" & ".join(_cell_text(em, t, c) for c in t.rows[0]) + " \\\\", mid]
-                      if t.header_rows and t.rows else [])
+    cell = lambda c: _cell_text(em, t, c, fracs, aligns)  # noqa: E731
+    header = [top] + ([" & ".join(_row_cells(rows[0], cell)) + " \\\\", mid]
+                      if t.header_rows and rows else [])
     if tall:
-        lines = [f"{{\\footnotesize\\setlength{{\\tabcolsep}}{{4pt}}"]
+        lines = ["{" + _table_size(em, t) + "\\setlength{\\tabcolsep}{0pt}\\hyphenpenalty=9000"]
         lines.append(f"\\begin{{longtable}}{{{colspec}}}")
         lines += header + ["\\endfirsthead"] + header + ["\\endhead"]
         lines.append(f"{bot}\\endfoot")
-        for row in t.rows[t.header_rows:]:
-            lines.append(" & ".join(_cell_text(em, t, cell) for cell in row) + " \\\\")
+        for row in rows[t.header_rows:]:
+            lines.append(" & ".join(_row_cells(row, cell)) + " \\\\")
         lines.append("\\end{longtable}}")
         return "\n".join(lines)
-    lines = ["\\begin{center}"]
+    # {\centering …\par} rather than the center environment in a page-locked document: center adds
+    # \topsep above and below, space the PDF does not have
+    lines = ["{\\centering" if lock else "\\begin{center}"]
+    if lock:
+        # a table's rows are set at single spacing, as in the PDF (the body's \\setstretch would
+        # open every row up by half a line)
+        lines.append("\\setstretch{1}")
     if small:
-        lines.append("\\footnotesize\\setlength{\\tabcolsep}{4pt}")
+        lines.append(_table_size(em, t) + "\\setlength{\\tabcolsep}{0pt}\\hyphenpenalty=9000")
+    elif getattr(t, "text_size", 0.0) and abs(t.text_size - em.p.body_size) > 0.75:
+        lines.append(_table_size(em, t))
     if t.caption:
         lines.append(em._para_lines_text(t.caption).strip() + "\\par\\smallskip")
     lines.append(f"\\begin{{tabular}}{{{colspec}}}")
     if top:
         lines.append(top)
-    for ri, row in enumerate(t.rows):
-        lines.append(" & ".join(_cell_text(em, t, cell) for cell in row) + " \\\\")
+    for ri, row in enumerate(rows):
+        lines.append(" & ".join(_row_cells(row, cell)) + " \\\\")
         if t.booktabs and ri + 1 == t.header_rows:
             lines.append("\\midrule")
         elif t.ruled and not t.booktabs:
@@ -1124,56 +1536,78 @@ def render_table(em: "Emitter", t: Table) -> str:
     if t.booktabs:
         lines.append("\\bottomrule")
     lines.append("\\end{tabular}")
-    lines.append("\\end{center}")
+    lines.append("\\par}" if lock else "\\end{center}")
     return "\n".join(lines)
 
 
-def _cell_text(em: "Emitter", t: Table, cell) -> str:
+def _table_size(em: "Emitter", t: Table) -> str:
+    """The table's own measured size (a dense table is set smaller than the body), else
+    \\footnotesize."""
+    sz = getattr(t, "text_size", 0.0) or 0.0
+    if sz:
+        cmd = em.p.size_cmds.get(round(sz * 2) / 2)
+        if cmd:
+            return cmd
+        if abs(sz - em.p.body_size) <= 0.75:
+            return "\\normalsize"
+    return "\\footnotesize"
+
+
+def _row_cells(row, cell) -> List[str]:
+    return [cell(c) for c in row]
+
+
+def _pcol(width: str, align: str = "p") -> str:
+    a = {"r": "\\raggedleft", "c": "\\centering"}.get(align, "\\raggedright")
+    return f">{{{a}\\arraybackslash}}p{{{width}}}"
+
+
+def _cell_text(em: "Emitter", t: Table, cell, fracs: Optional[List[float]] = None,
+               aligns: Optional[List[str]] = None, k: Optional[int] = None) -> str:
     txt = " ".join(em._para_lines_text(p).strip() for p in cell.paras) if cell.paras else ""
     if cell.bold and txt:
         txt = f"\\textbf{{{txt}}}"
     if cell.colspan > 1:
-        a = t.col_align[0] if t.col_align else "l"
-        txt = f"\\multicolumn{{{cell.colspan}}}{{{a}}}{{{txt}}}"
+        # a spanning cell needs a complete column type: a bare "p" has no width
+        w = sum((fracs or [])[:cell.colspan]) if fracs else 0.0
+        a = (aligns or t.col_align or ["l"])[0]
+        spec = _pcol(f"\\dimexpr{fmt(round(w, 3))}\\linewidth-2\\tabcolsep\\relax") \
+            if a == "p" and w > 0 else (a if a in ("l", "c", "r") else "l")
+        txt = f"\\multicolumn{{{cell.colspan}}}{{{spec}}}{{{txt}}}"
     return txt
 
 
-def _render_borderless(em: "Emitter", t: Table, ncol: int) -> str:
+def _render_borderless(em: "Emitter", t: Table, ncol: int, rows=None, fracs=None, aligns=None) -> str:
     """An aligned list without rules (abbreviations, symbols, contents): flush with the text margin
     (@{} edges), columns as wide as in the PDF, rows as far apart as in the PDF; a field that spans
     several columns is a \\multicolumn, a page-number column is right-aligned."""
-    if getattr(t, "centered", False) and len(t.rows) == 1 and t.rows[0] \
-            and all(getattr(c, "stack", False) for c in t.rows[0]):
+    if rows is None:
+        ncol, rows, fracs, aligns = _grid(t)
+    if getattr(t, "centered", False) and len(rows) == 1 and rows[0] \
+            and all(getattr(c, "stack", False) for c in rows[0] if c.paras):
         return _render_signatures(em, t)
     if getattr(t, "leaders", False):
-        return _render_contents(em, t, ncol)
-    fracs = list(t.col_frac) + [0.2] * (ncol - len(t.col_frac))
-    aligns = list(t.col_align) + ["p"] * (ncol - len(t.col_align))
+        return _render_contents(em, t, ncol, rows, fracs, aligns)
+    sep = (12.0 / t.width_pt) if t.width_pt else 0.02     # two \\tabcolsep, as a share of the line
+    fracs = _borderless_fracs(t, ncol, fracs, sep)
 
     def col(k: int, frac: float) -> str:
-        a = {"r": "\\raggedleft", "c": "\\centering"}.get(aligns[k], "\\raggedright")
-        return f">{{{a}\\arraybackslash}}p{{{fmt(frac)}\\linewidth}}"
+        return _pcol(f"{fmt(frac, 3)}\\linewidth", aligns[k])
 
     cols = "".join(col(k, fracs[k]) for k in range(ncol))
-    sep = (12.0 / t.width_pt) if t.width_pt else 0.02     # two \\tabcolsep, as a share of the line
     body = [f"\\begin{{tabular}}{{@{{}}{cols}@{{}}}}"]
-    for row in t.rows:
+    for row in rows:
         cells = []
         k = 0
         for cell in row:
             sep_txt = "\\newline " if getattr(cell, "stack", False) else " "
             txt = sep_txt.join(em._para_lines_text(p).strip() for p in cell.paras) if cell.paras else ""
             if cell.colspan > 1:
-                span = min(cell.colspan, ncol - k)
+                span = cell.colspan
                 w = sum(fracs[k:k + span]) + (span - 1) * sep
                 txt = f"\\multicolumn{{{span}}}{{{col(k, round(w, 3))}}}{{{txt}}}"
-                k += span
-            else:
-                k += 1
+            k += cell.colspan
             cells.append(txt)
-        while k < ncol:
-            cells.append("")
-            k += 1
         body.append(" & ".join(cells) + " \\\\")
     body.append("\\end{tabular}")
     inner = "\n".join(body)
@@ -1186,21 +1620,22 @@ def _render_borderless(em: "Emitter", t: Table, ncol: int) -> str:
     return "\\noindent" + inner
 
 
-def _render_contents(em: "Emitter", t: Table, ncol: int) -> str:
+def _render_contents(em: "Emitter", t: Table, ncol: int, rows=None, fracs=None, aligns=None) -> str:
     """A table of contents / list of figures / list of tables: one entry per line, the title (with
     its section number and indentation) flush left, dot leaders (\\dotfill) filling to a right-flush
     page number, continuation lines of a long title hanging under the title. Reconstructs the source
     layout as editable text rather than a live \\tableofcontents (whose numbers would need the whole
     document's counters to be reproduced)."""
-    fracs = list(t.col_frac) + [0.0] * (ncol - len(t.col_frac))
-    aligns = list(t.col_align) + ["p"] * (ncol - len(t.col_align))
+    if rows is None:
+        ncol, rows, fracs, aligns = _grid(t)
     page_col = ncol - 1 if aligns and aligns[-1] == "r" else None
     out: List[str] = []
-    for row in t.rows:
+    for row in rows:
         texts = []
         for cell in row:
             txt = " ".join(em._para_lines_text(p).strip() for p in cell.paras) if cell.paras else ""
             texts.append(txt)
+            texts.extend([""] * (cell.colspan - 1))     # one text per column
         if page_col is not None and page_col < len(texts):
             page_txt = texts[page_col]
             label_upto = page_col
@@ -1227,6 +1662,12 @@ def _render_contents(em: "Emitter", t: Table, ncol: int) -> str:
         page = f"\\hbox{{{page_txt}}}" if page_txt else ""
         out.append("{" + hang + "\\noindent" + indent + label + "\\nobreak\\dotfill\\nobreak " + page + "\\par}")
     body = "\n".join(out)
+    lp = getattr(t, "line_pitch", None) or getattr(t, "row_pitch", None)
+    rp = getattr(t, "row_pitch", None)
+    if lp and rp:
+        # the PDF's own pitches: a wrapped entry's lines, and one entry to the next
+        return (f"{{\\setlength{{\\baselineskip}}{{{fmt(round(lp, 2))}bp}}"
+                f"\\setlength{{\\parskip}}{{{fmt(round(max(0.0, rp - lp), 2))}bp}}\n{body}\\par}}")
     if t.stretch and t.stretch > 1.0:
         body = f"{{\\setlength{{\\parskip}}{{{fmt(min(t.stretch - 1.0, 0.8))}\\baselineskip}}\n{body}\\par}}"
     return body
@@ -1244,16 +1685,20 @@ def _render_signatures(em: "Emitter", t: Table) -> str:
     return "\\noindent" + ends + "\n\\hfill\n".join(stacks) + ends + "\\par"
 
 
-def _colspec(t: Table, ncol: int) -> str:
-    aligns = list(t.col_align) + ["l"] * (ncol - len(t.col_align))
-    fracs = list(t.col_frac) + [0.0] * (ncol - len(t.col_frac))
+def _colspec(t: Table, ncol: int, fracs: Optional[List[float]] = None,
+             aligns: Optional[List[str]] = None) -> str:
+    """Ruled / booktabs columns. A width is the source column's extent (its text plus the gap to
+    the next column), so the cell text gets that less its two \\tabcolsep: the table is as wide
+    as in the PDF whatever the column spacing."""
+    aligns = aligns or (list(t.col_align) + ["l"] * (ncol - len(t.col_align)))
+    fracs = fracs or (list(t.col_frac) + [0.0] * (ncol - len(t.col_frac)))
     parts = []
-    vrule = "|" if (t.ruled and not t.booktabs) else ""
+    vrule = "|" if (t.ruled and not t.booktabs and t.vrules) else ""
     parts.append(vrule)
     for i in range(ncol):
         a = aligns[i]
         if a == "p" and fracs[i] > 0:
-            parts.append(f">{{\\raggedright\\arraybackslash}}p{{{fmt(fracs[i])}\\linewidth}}")
+            parts.append(_pcol(f"\\dimexpr{fmt(fracs[i])}\\linewidth-2\\tabcolsep\\relax"))
         elif a in ("l", "c", "r"):
             parts.append(a)
         else:
@@ -1314,4 +1759,5 @@ def emit_document(doc) -> Tuple[str, LineMap]:
     """Re-emit a whole EditDoc (after a compile repair or a polish edit) with its own settings."""
     em = Emitter(doc.profile, source_name=doc.title, furniture=doc.furniture,
                  backgrounds=getattr(doc, "backgrounds", {}) or {}, deck=getattr(doc, "deck", False))
+    em.page_fit = getattr(doc, "page_fit", {}) or {}
     return em.document(doc.blocks, contains_kind(doc.blocks, "note"))

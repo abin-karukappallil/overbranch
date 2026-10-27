@@ -114,6 +114,7 @@ from routes.pdf_convert import router as pdf_convert_router
 from routes.agent_routes import router as agent_router
 from routes.collab_routes import router as collab_router
 from routes import project_import
+from routes import project_export
 
 app.include_router(project_storage.router)
 app.include_router(template_service.router)
@@ -122,6 +123,7 @@ app.include_router(pdf_convert_router)
 app.include_router(agent_router)
 app.include_router(collab_router)
 app.include_router(project_import.router, prefix='/api/projects')
+app.include_router(project_export.router, prefix='/api/projects')
 
 
 class FileAsset(BaseModel):
@@ -136,6 +138,12 @@ class CompileRequest(BaseModel):
     engine: str = "latexmk"
     images: Optional[List[FileAsset]] = []
     files: Optional[List[FileAsset]] = []
+    # Project compile from the editor: the path of the file open in the editor and
+    # its live text. When set (with project_id), the open buffer is overlaid at its
+    # own path in the project copy and the project's MAIN DOCUMENT is compiled —
+    # never the open file itself. Absent: latex_code is the document (legacy).
+    active_file: Optional[str] = None
+    active_text: Optional[str] = None
 
 
 @app.get("/api/models")
@@ -237,6 +245,14 @@ async def compile_endpoint(
             raise
 
     code = req.latex_code if req.latex_code.strip() else req.latex
+    active_file = (req.active_file or "").strip() or None
+    active_text = req.active_text if active_file else None
+    if active_file and active_text is None:
+        active_text = code  # an editor that only sent latex_code: that IS the open buffer
+    if active_file and not (req.project_id or "").strip():
+        # No project to build: the open buffer is the whole document.
+        code = active_text if active_text is not None else code
+        active_file = active_text = None
     images_dict = [{"filename": img.filename, "data": img.data} for img in (req.images or [])]
     files_dict = [{"filename": f.filename, "data": f.data} for f in (req.files or [])]
 
@@ -250,6 +266,8 @@ async def compile_endpoint(
             images=images_dict,
             files=files_dict,
             project_id=req.project_id,
+            active_file=active_file,
+            active_text=active_text,
         )
         return result
     except CompileQueueFullError as qfe:

@@ -9,6 +9,8 @@ export interface ProjectFile {
   size: number;
   type: "document" | "image";
   ext: string;
+  /** True for the project's main document (list-files `is_main`). */
+  is_main?: boolean;
 }
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -16,14 +18,14 @@ const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_
 // In-memory SWR cache for instant file tree display across views and re-renders.
 // Module-level on purpose: every consumer (the Files panel, the @mention popover,
 // both the desktop and mobile layouts) shares one cache and one fetch.
-const fileListCache = new Map<string, { files: ProjectFile[]; timestamp: number }>();
-const listeners = new Map<string, Set<(files: ProjectFile[]) => void>>();
+const fileListCache = new Map<string, { files: ProjectFile[]; mainFile: string | null; timestamp: number }>();
+const listeners = new Map<string, Set<(files: ProjectFile[], mainFile: string | null) => void>>();
 const inFlight = new Map<string, Promise<void>>();
 // Bumped per request so an older response can never overwrite a newer one.
 const requestSeq = new Map<string, number>();
 
-function publish(projectId: string, files: ProjectFile[]) {
-  listeners.get(projectId)?.forEach((fn) => fn(files));
+function publish(projectId: string, files: ProjectFile[], mainFile: string | null) {
+  listeners.get(projectId)?.forEach((fn) => fn(files, mainFile));
 }
 
 /** Fetch the list into the shared cache. Non-forced calls join a request already in flight. */
@@ -40,8 +42,10 @@ function loadFiles(projectId: string, force: boolean): Promise<void> {
       if (res.ok) {
         const data = await res.json();
         if (data.files && Array.isArray(data.files) && requestSeq.get(projectId) === seq) {
-          fileListCache.set(projectId, { files: data.files, timestamp: Date.now() });
-          publish(projectId, data.files);
+          // list-files reports the project's MAIN document (it can live in a sub-folder).
+          const mainFile = typeof data.main_file === "string" && data.main_file ? data.main_file : null;
+          fileListCache.set(projectId, { files: data.files, mainFile, timestamp: Date.now() });
+          publish(projectId, data.files, mainFile);
         }
       }
     } catch (err) {
@@ -59,13 +63,15 @@ function loadFiles(projectId: string, force: boolean): Promise<void> {
  *
  * `refetch()` drops the cache and reloads with the spinner (use it after a file is
  * created, renamed, deleted or uploaded). `refreshTrigger` changing reloads quietly,
- * keeping whatever is cached on screen.
+ * keeping whatever is cached on screen. `mainFile` is the project's main document path
+ * from list-files (null until the first list arrives).
  */
 export function useProjectFiles(
   projectId: string,
   refreshTrigger?: unknown,
-): { files: ProjectFile[]; loading: boolean; refetch: () => void } {
+): { files: ProjectFile[]; mainFile: string | null; loading: boolean; refetch: () => void } {
   const [files, setFiles] = useState<ProjectFile[]>(() => fileListCache.get(projectId)?.files || []);
+  const [mainFile, setMainFile] = useState<string | null>(() => fileListCache.get(projectId)?.mainFile ?? null);
   const [loading, setLoading] = useState(() => !fileListCache.has(projectId));
   const projectRef = useRef(projectId);
   projectRef.current = projectId;
@@ -75,9 +81,13 @@ export function useProjectFiles(
     if (!projectId) return;
     const cached = fileListCache.get(projectId);
     setFiles(cached?.files || []);
+    setMainFile(cached?.mainFile ?? null);
     setLoading(!cached);
 
-    const fn = (next: ProjectFile[]) => setFiles(next);
+    const fn = (next: ProjectFile[], nextMain: string | null) => {
+      setFiles(next);
+      setMainFile(nextMain);
+    };
     let set = listeners.get(projectId);
     if (!set) listeners.set(projectId, (set = new Set()));
     set.add(fn);
@@ -108,5 +118,5 @@ export function useProjectFiles(
     fetchNow(true);
   }, [fetchNow]);
 
-  return { files, loading, refetch };
+  return { files, mainFile, loading, refetch };
 }

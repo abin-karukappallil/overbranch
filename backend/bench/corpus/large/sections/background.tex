@@ -1,0 +1,49 @@
+\chapter{Background}\label{ch:background}
+
+This chapter collects the mathematical facts used later. Notation follows
+Chapter~\ref{ch:intro}, and the definitions introduced here are referred to
+from Chapter~\ref{ch:model}.
+
+\section{Probability preliminaries}\label{sec:prob}
+
+Let $(\Omega,\mathcal{F},\mathbb{P})$ be a probability space. A random vector
+$X$ taking values in $\mathbb{R}^d$ has mean $\mu = \mathbb{E}[X]$ and
+covariance matrix $\Sigma = \mathbb{E}[(X-\mu)(X-\mu)^\top]$, which is
+symmetric and positive semidefinite.
+
+\lipsum[7-8]
+
+\section{Linear algebra}\label{sec:linalg}
+
+For a symmetric matrix $A$ with eigendecomposition $A = Q\Lambda Q^\top$, the
+matrix function $f(A)$ is defined by
+\begin{equation}\label{eq:matfun}
+  f(A) = Q\,\operatorname{diag}\bigl(f(\lambda_1),\dots,f(\lambda_d)\bigr)\,Q^\top .
+\end{equation}
+Equation~\eqref{eq:matfun} is used in Section~\ref{sec:estimators}.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lll}
+    \toprule
+    Symbol & Meaning & Typical size \\
+    \midrule
+    $n$ & number of observations & $10^2$--$10^4$ \\
+    $d$ & dimension of each observation & $2$--$50$ \\
+    $k$ & number of mixture components & $1$--$8$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Symbols used throughout the report.}\label{tab:symbols}
+\end{table}
+
+Table~\ref{tab:symbols} lists the recurring symbols and their typical sizes.
+
+\lipsum[9-10]
+
+\section{Further remarks}\label{sec:further-background}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[63-74]

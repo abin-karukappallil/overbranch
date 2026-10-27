@@ -10,6 +10,12 @@
 export const POLL_MS = 1500;
 export const POLL_MAX_MS = 10000;
 export const POLL_MAX_FAILURES = 20;
+/**
+ * A 403 job_forbidden is retried this many times in a row (with a fresh session each time)
+ * before it is believed. One request that went out without the user's credential is answered
+ * 403 exactly like a job that is really someone else's.
+ */
+export const FORBIDDEN_MAX_RETRIES = 5;
 
 export const GONE_MESSAGE = "This import expired or was removed.";
 export const FORBIDDEN_MESSAGE = "You no longer have access to this import.";
@@ -44,6 +50,10 @@ export function classifyPollResponse(status: number, body: any): PollOutcome {
 export function nextPollDelay(consecutiveFailures: number): number {
   if (!(consecutiveFailures > 0)) return POLL_MS;
   return Math.min(POLL_MS * 2 ** consecutiveFailures, POLL_MAX_MS);
+}
+
+export function shouldTreatForbiddenAsFinal(consecutiveForbidden: number): boolean {
+  return consecutiveForbidden >= FORBIDDEN_MAX_RETRIES;
 }
 
 export function shouldGiveUp(consecutiveFailures: number): boolean {

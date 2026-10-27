@@ -15,13 +15,64 @@ export const IMPORT_ZIP_ENDPOINT = "/api/projects/import-zip";
 
 export type ZipImportState = "idle" | "uploading" | "extracting" | "done" | "error";
 
-export interface ZipImportResult {
+export interface ImportedProject {
   project_id: string;
   name: string;
+  /** Top-level archive folder this project came from (null for a single-project archive). */
+  folder?: string | null;
   files_count: number;
   assets_count: number;
+  /** The project's main document (may be in a sub-folder, e.g. "thesis/thesis.tex"). */
+  main_file?: string;
   main_tex_path: string;
   created_main_tex: boolean;
+}
+
+/**
+ * The import response. The top-level fields describe the FIRST project (back-compat with the
+ * single-project shape); `projects` lists every project an archive produced (a Prism-style
+ * archive with one folder per project creates several).
+ */
+export interface ZipImportResult extends ImportedProject {
+  projects?: ImportedProject[];
+  projects_count?: number;
+}
+
+/** Every project an import created, whichever response shape the server used. */
+export function importedProjects(result: ZipImportResult): ImportedProject[] {
+  return result.projects && result.projects.length > 0 ? result.projects : [result];
+}
+
+export const EXPORT_PROJECT_ENDPOINT = "/api/projects/export";
+export const EXPORT_ALL_ENDPOINT = "/api/projects/export-all";
+
+/**
+ * Starts a browser download of an endpoint with a same-origin <a download> click: the Next
+ * proxy routes carry the session cookie and stream the backend's .zip. Never a backend URL.
+ */
+function triggerDownload(href: string, fileName: string) {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = fileName;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+}
+
+/** Downloads one project as "<project name>.zip". */
+export function downloadProjectZip(projectId: string, projectName?: string) {
+  if (!projectId) return;
+  triggerDownload(
+    `${EXPORT_PROJECT_ENDPOINT}?project_id=${encodeURIComponent(projectId)}`,
+    `${(projectName || "project").trim() || "project"}.zip`,
+  );
+}
+
+/** Downloads every project the user can access: one top-level folder per project. */
+export function downloadAllProjectsZip() {
+  triggerDownload(EXPORT_ALL_ENDPOINT, "overbranch-projects.zip");
 }
 
 /** Backend `detail` codes -> friendly sentences. */

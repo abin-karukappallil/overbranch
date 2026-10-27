@@ -1,21 +1,28 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { AlertCircle, CheckCircle2, FileArchive, Loader2, UploadCloud, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useZipImport } from "./useZipImport";
+import { importedProjects, useZipImport, type ImportedProject, type ZipImportResult } from "./useZipImport";
 
 export interface ImportZipDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess?: (projectId: string, name: string) => void;
+  /** A single project was imported: the caller usually navigates to it. */
+  onSuccess?: (projectId: string, name: string, result: ZipImportResult) => void;
+  /**
+   * An archive produced SEVERAL projects. The dialog stays open listing them (each links to
+   * its editor) so the user chooses where to go; the caller should refresh its project list.
+   */
+  onMultipleImported?: (projects: ImportedProject[], result: ZipImportResult) => void;
 }
 
 const MAX_ZIP_MB = 50;
 
-export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDialogProps) {
+export function ImportZipDialog({ open, onOpenChange, onSuccess, onMultipleImported }: ImportZipDialogProps) {
   const { start, reset, progress, error, state, result } = useZipImport();
   const [file, setFile] = useState<File | null>(null);
   const [projectName, setProjectName] = useState("");
@@ -25,6 +32,8 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
   const fileInput = useRef<HTMLInputElement>(null);
 
   const busy = state === "uploading" || state === "extracting";
+  const imported = state === "done" && result ? importedProjects(result) : [];
+  const multi = imported.length > 1;
 
   // Fresh form every time the dialog opens.
   useEffect(() => {
@@ -59,11 +68,17 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || busy) return;
+    if (!file || busy || multi) return;
     const res = await start(file, projectName);
     if (res) {
-      onSuccess?.(res.project_id, res.name);
-      onOpenChange(false);
+      const all = importedProjects(res);
+      if (all.length > 1) {
+        // Stay open: the "Imported N projects" list below is the result.
+        onMultipleImported?.(all, res);
+      } else {
+        onSuccess?.(res.project_id, res.name, res);
+        onOpenChange(false);
+      }
     }
   };
 
@@ -83,7 +98,7 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
             <div className="min-w-0">
               <DialogTitle className="text-sm font-semibold">Import from ZIP</DialogTitle>
               <DialogDescription className="text-xs text-[#8A8F98]">
-                Upload a .zip of your LaTeX sources to create a new project.
+                Upload a .zip of your LaTeX sources to create a new project (an archive with one folder per project creates several).
               </DialogDescription>
             </div>
           </div>
@@ -100,6 +115,7 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
 
         <form className="p-5 space-y-4 overflow-y-auto min-h-0" onSubmit={submit}>
           {/* Dropzone */}
+          {!multi && (
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -170,7 +186,10 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
             )}
           </div>
 
+          )}
+
           {/* Project name */}
+          {!multi && (
           <div className="space-y-1.5">
             <label htmlFor="zip-project-name" className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider">
               Project name
@@ -188,6 +207,8 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
               className="h-9 text-xs bg-[#191A1B] border-[#23252A] text-[#F7F8F8] placeholder:text-[#62666D]"
             />
           </div>
+
+          )}
 
           {/* Progress */}
           {busy && (
@@ -209,13 +230,42 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
             </div>
           )}
 
-          {state === "done" && result && (
+          {state === "done" && result && !multi && (
             <div className="flex items-start gap-2 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">
               <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
               <span>
                 Imported {result.files_count + result.assets_count} files.
                 {result.created_main_tex && " No .tex file was found, so an empty main.tex was created."}
               </span>
+            </div>
+          )}
+
+          {multi && (
+            <div className="space-y-2" role="status" aria-live="polite">
+              <div className="flex items-start gap-2 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-300">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>Imported {imported.length} projects.</span>
+              </div>
+              <ul className="space-y-1.5 max-h-52 overflow-y-auto" data-testid="imported-projects">
+                {imported.map((p) => (
+                  <li key={p.project_id}>
+                    <Link
+                      href={`/editor/${p.project_id}`}
+                      onClick={() => onOpenChange(false)}
+                      className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-[#23252A] bg-[#191A1B] hover:border-[#3B3D45] text-xs transition-colors"
+                    >
+                      <span className="min-w-0">
+                        <span className="block font-semibold truncate">{p.name}</span>
+                        <span className="block text-[11px] text-[#8A8F98] truncate">
+                          {p.files_count + p.assets_count} files
+                          {p.main_file ? ` · main: ${p.main_file}` : ""}
+                        </span>
+                      </span>
+                      <span className="text-[#5E6AD2] shrink-0">Open →</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -227,16 +277,28 @@ export function ImportZipDialog({ open, onOpenChange, onSuccess }: ImportZipDial
           )}
 
           <div className="flex items-center justify-end gap-2 pt-1">
-            <Button type="button" variant="ghost" onClick={close} disabled={busy} className="h-9 text-xs text-[#8A8F98] hover:text-[#F7F8F8] cursor-pointer">
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={!file || busy}
-              className="h-9 px-4 text-xs bg-[#5E6AD2] hover:bg-[#6B77DE] text-white cursor-pointer disabled:opacity-50"
-            >
-              {busy ? "Importing…" : "Import project"}
-            </Button>
+            {multi ? (
+              <Button
+                type="button"
+                onClick={() => onOpenChange(false)}
+                className="h-9 px-4 text-xs bg-[#5E6AD2] hover:bg-[#6B77DE] text-white cursor-pointer"
+              >
+                Done
+              </Button>
+            ) : (
+              <>
+                <Button type="button" variant="ghost" onClick={close} disabled={busy} className="h-9 text-xs text-[#8A8F98] hover:text-[#F7F8F8] cursor-pointer">
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!file || busy}
+                  className="h-9 px-4 text-xs bg-[#5E6AD2] hover:bg-[#6B77DE] text-white cursor-pointer disabled:opacity-50"
+                >
+                  {busy ? "Importing…" : "Import project"}
+                </Button>
+              </>
+            )}
           </div>
         </form>
       </DialogContent>

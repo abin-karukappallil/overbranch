@@ -60,6 +60,32 @@ def _supabase_or_503():
                             detail="Project storage database is not configured.")
 
 
+def _owned_via_migrated_guest(job_id: str, state: Dict[str, Any], auth: Dict[str, Any]) -> bool:
+    """
+    A job started as a guest is stored under owner "guest_<sid>". When that guest later signs in,
+    the migration re-owns the jobs it can see, but a job created or left behind around that moment
+    (or by an older build) still carries the guest id. Access is granted when that guest's
+    project has since been migrated to the caller, and the job is re-owned so later polls take the
+    fast path. An unauthenticated or guest caller never qualifies.
+    """
+    owner = state.get("owner")
+    if not isinstance(owner, str) or not owner.startswith("guest_") or auth.get("is_guest"):
+        return False
+    caller = auth.get("user_id")
+    if not caller:
+        return False
+    try:
+        from services.guest_migrator import project_migrated_to
+        if not project_migrated_to(owner, state.get("project_id", ""), caller):
+            return False
+    except Exception as e:  # noqa: BLE001 — a lookup failure is "not proven", i.e. forbidden
+        logger.warning(f"Could not check guest migration for job {job_id}: {e}")
+        return False
+    jobs.reassign_owner(owner, caller)
+    state["owner"] = caller
+    return True
+
+
 def _owned_job(job_id: str, auth: Dict[str, Any]) -> Dict[str, Any]:
     # Unknown and forbidden are distinct so the client can tell "your job was lost" from
     # "this is someone else's job"; the code field lets it branch without parsing the message.
@@ -67,7 +93,7 @@ def _owned_job(job_id: str, auth: Dict[str, Any]) -> Dict[str, Any]:
     if not state:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail={"code": "job_unknown", "message": "Conversion job not found."})
-    if state.get("owner") != auth["user_id"]:
+    if state.get("owner") != auth["user_id"] and not _owned_via_migrated_guest(job_id, state, auth):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
                             detail={"code": "job_forbidden",
                                     "message": "You do not have access to this conversion job."})
@@ -97,13 +123,26 @@ def _running_in_other_worker(state: Dict[str, Any]) -> bool:
     return True
 
 
+def _live_view(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
+    """The on-disk state of a job this process is running, without the synthesised stale error."""
+    if not state.get("stale"):
+        return state
+    raw = jobs._read_raw(job_id)
+    return raw if raw is not None else state
+
+
 def _resume_if_interrupted(job_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Relaunches a job whose task died with its worker (recycle, restart, crash). Returns the state
     to report. Uses jobs.is_resumable rather than the status field: load_job reports a job that
     stopped updating as "error", but that is synthesised and the job on disk is still resumable.
     """
-    if not jobs.is_resumable(state) or is_job_running(job_id) or _running_in_other_worker(state):
+    if is_job_running(job_id):
+        # This worker is the one running the job. A stale flag here can only mean the heartbeat
+        # was late (a starved loop), not that the worker died, so never report the synthesised
+        # "worker stopped responding" error for a job whose task is demonstrably alive.
+        return _live_view(job_id, state)
+    if not jobs.is_resumable(state) or _running_in_other_worker(state):
         return state
     now = time.time()
     if now - (state.get("resumed_at") or 0) < RESUME_DEBOUNCE_S:

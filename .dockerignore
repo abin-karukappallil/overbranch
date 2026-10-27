@@ -9,3 +9,9 @@ uploads
 dist
 out
 *.log
+.bench-baseline
+brag-output
+backend/bench/results
+backend/bench/editable
+.claude
+*.tar.gz

@@ -17,6 +17,7 @@ import {
   XCircle,
   Crown,
   Trash2,
+  Download,
   AlertTriangle,
   ArrowRight,
   Sparkles,
@@ -31,6 +32,7 @@ import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
 import { ImportZipDialog } from "@/components/project-import/ImportZipDialog";
+import { downloadAllProjectsZip, downloadProjectZip } from "@/components/project-import/useZipImport";
 
 function DashboardContent() {
   const router = useRouter();
@@ -188,6 +190,16 @@ function DashboardContent() {
             </Button>
 
             <Button
+              onClick={() => downloadAllProjectsZip()}
+              size="lg"
+              disabled={ownedProjects.length + sharedProjects.length === 0}
+              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium border border-slate-200 dark:border-[#282A30] rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all flex items-center gap-2 disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-[#E2E4E9]" />
+              <span>Export all projects</span>
+            </Button>
+
+            <Button
               onClick={() => setNewModalOpen(true)}
               size="lg"
               className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all border border-emerald-600 dark:border-[#282A30] shadow-sm"
@@ -200,7 +212,7 @@ function DashboardContent() {
       </div>
 
       {/* Quick Action Creation Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* PDF to LaTeX Card */}
         <div
           onClick={() => setPdfModalOpen(true)}
@@ -440,6 +452,18 @@ function DashboardContent() {
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
+                                downloadProjectZip(project.id, project.name);
+                              }}
+                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-emerald-600 dark:hover:text-[#10B981] transition-colors cursor-pointer"
+                              title="Export (.zip)"
+                              aria-label={`Export ${project.name} (.zip)`}
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
                                 setDeleteConfirmProj(project);
                               }}
                               className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors cursor-pointer"
@@ -502,6 +526,18 @@ function DashboardContent() {
                             <span className="px-2 py-0.5 rounded text-[10px] font-medium font-mono bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase">
                               {project.role}
                             </span>
+                            <button
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                downloadProjectZip(project.id, project.name);
+                              }}
+                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-emerald-600 dark:hover:text-[#10B981] transition-colors cursor-pointer"
+                              title="Export (.zip)"
+                              aria-label={`Export ${project.name} (.zip)`}
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
                             <button
                               onClick={(e) => {
                                 e.preventDefault();
@@ -672,6 +708,8 @@ function DashboardContent() {
           utils.projects.invalidate();
           router.push(`/editor/${id}`);
         }}
+        // An archive with one folder per project: the dialog lists them; just refresh the grid.
+        onMultipleImported={() => utils.projects.invalidate()}
       />
 
       {/* PDF → LaTeX import (creates a new project) */}

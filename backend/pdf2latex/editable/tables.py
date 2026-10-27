@@ -16,7 +16,7 @@ from .model import Run, Segment
 logger = logging.getLogger("pdf2latex.editable.tables")
 
 
-def detect_tables(pg, page: PageExtract) -> List[Block]:
+def detect_tables(pg, page: PageExtract, vocab=None) -> List[Block]:
     """Ruled tables via find_tables('lines'). Conservative: ≥2×2, <80% of page, ≥2 text lines."""
     out: List[Block] = []
     try:
@@ -44,7 +44,7 @@ def detect_tables(pg, page: PageExtract) -> List[Block]:
     # their rules. Only for regions the lines strategy did not already claim.
     covered = [b.bbox for b in out]
     try:
-        out.extend(_booktabs_tables(pg, page, covered))
+        out.extend(_booktabs_tables(pg, page, covered, vocab))
     except Exception as e:  # noqa: BLE001
         logger.debug(f"booktabs detect failed p{page.number}: {e}")
     return out
@@ -62,7 +62,7 @@ def _normalize_fracs(fracs: List[float], budget: float) -> List[float]:
     return [round(f, 3) for f in fracs]
 
 
-def _booktabs_tables(pg, page: PageExtract, covered: List[tuple]) -> List[Block]:
+def _booktabs_tables(pg, page: PageExtract, covered: List[tuple], vocab=None) -> List[Block]:
     """Tables ruled only with horizontal (booktabs) rules — invisible to find_tables('lines'). The
     rules bound the table (minus the running header/footer rules); a text-strategy scan clipped to
     that band recovers the columns without swallowing the surrounding prose, and wrapped lines are
@@ -104,27 +104,31 @@ def _booktabs_tables(pg, page: PageExtract, covered: List[tuple]) -> List[Block]
             grid = tb.extract()
         except Exception:
             continue
-        tbl = _build_booktabs(tb, grid, page, (x0, y0, x1, y1))
+        tbl = _build_booktabs(tb, grid, page, (x0, y0, x1, y1), vocab)
         if tbl is not None:
             out.append(tbl)
     return out
 
 
-def _cell_text_from_lines(page: PageExtract, cb: tuple) -> str:
+def _cell_text_from_lines(page: PageExtract, cb: tuple, vocab=None) -> str:
     """Text of one cell, read from the page's own spans by the cell's box (so a word the text
-    strategy split across a column edge stays whole), de-hyphenating line-wrapped words."""
+    strategy split across a column edge stays whole). A hyphen ending a wrapped line is dropped only
+    when it is the line break's ("redun-dancy"); a real compound keeps it ("security-focused")."""
     x0, y0, x1, y1 = cb
     spans = [sp for ln in page.lines for sp in ln.spans if sp.text.strip()
              and x0 - 1 <= (sp.bbox[0] + sp.bbox[2]) / 2 <= x1 + 1
              and y0 - 1 <= (sp.bbox[1] + sp.bbox[3]) / 2 <= y1 + 1]
     spans.sort(key=lambda s: (round(s.bbox[1] / 3), s.bbox[0]))
+    words, compounds = vocab if vocab else (set(), set())
     out = ""
     for sp in spans:
         t = sp.text.strip()
         if not t:
             continue
         if out.endswith("-") and t[:1].islower():
-            out = out[:-1] + t
+            from . import hyphen as HY
+            keep = bool(vocab) and HY.keep_hyphen(out.split()[-1], t, words, compounds)
+            out = (out + t) if keep else (out[:-1] + t)
         elif out:
             out += " " + t
         else:
@@ -133,6 +137,7 @@ def _cell_text_from_lines(page: PageExtract, cb: tuple) -> str:
 
 
 def _page_body_w(page: PageExtract) -> float:
+    """The width of the page's text column (its lines' common left and right edges)."""
     if getattr(page, "lines", None):
         vis = [ln for ln in page.lines if ln.text.strip()]
         if vis:
@@ -143,7 +148,7 @@ def _page_body_w(page: PageExtract) -> float:
     return max(100.0, page.width - 144.0)
 
 
-def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
+def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple, vocab=None):
     ncol = tb.col_count
     if ncol < 3 or ncol > 10:
         return None
@@ -155,7 +160,7 @@ def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
             cbs = r.cells
             if not cbs or len(cbs) != ncol:
                 raise ValueError
-            prows.append([_cell_text_from_lines(page, cb) if cb else "" for cb in cbs])
+            prows.append([_cell_text_from_lines(page, cb, vocab) if cb else "" for cb in cbs])
     except Exception:
         prows = [[" ".join((c or "").split()) for c in row] for row in grid]
     if len(prows) < 3:
@@ -165,12 +170,23 @@ def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
     for cells in prows:
         if not any(cells):
             continue
-        if logical and not cells[0]:
+        # a continuation row has an empty first cell, or one that is itself the wrapped tail of the
+        # entry above it ("P2P-SFS" / "(2026)", "Shin et al." / "(2023)")
+        head = cells[0].strip()
+        cont = (not head) or head.startswith("(") or head[:1].islower()
+        if logical and cont:
             for k in range(ncol):
                 if cells[k]:
                     prev = logical[-1][k]
-                    logical[-1][k] = (prev[:-1] + cells[k]) if prev.endswith("-") \
-                        else (prev + " " + cells[k]).strip()
+                    if prev.endswith("-") and prev.split():
+                        # the hyphen is the line break's ("redun-dancy") unless the word is a real
+                        # compound the document uses elsewhere ("Capacity-aware")
+                        from . import hyphen as HY
+                        keep = bool(vocab) and HY.keep_hyphen(prev.split()[-1], cells[k],
+                                                              vocab[0], vocab[1])
+                        logical[-1][k] = (prev + cells[k]) if keep else (prev[:-1] + cells[k])
+                    else:
+                        logical[-1][k] = (prev + " " + cells[k]).strip()
         else:
             logical.append(list(cells))
     if len(logical) < 2:
@@ -181,60 +197,122 @@ def _build_booktabs(tb, grid, page: PageExtract, bbox: tuple):
     if any(not header[k] for k in range(1, ncol)):
         return None
     cells_grid: List[List[Cell]] = []
+    tcolor, tfamily, tcls = _dominant_face(page, bbox)
     for ri, row in enumerate(logical):
-        cells_grid.append([Cell(paras=[_text_para(t, page)] if t else [], bold=(ri == 0)) for t in row])
-    widths = _col_widths(tb, ncol, max_x1=bbox[2])
-    tb_w = bbox[2] - bbox[0]
+        cells_grid.append([Cell(paras=[_text_para(t, page, 0.0, tcolor, tfamily, tcls)] if t else [],
+                                bold=(ri == 0)) for t in row])
     body_w = _page_body_w(page)
-    table_frac = 1.0 if tb_w >= body_w * 0.90 else min(1.0, max(0.5, tb_w / body_w))
+    # each column from its cells' left edge to the next column's, the first from the rules' left
+    # end and the last to their right end (the clip box reaches 3pt past the rules on each side)
+    widths = _col_widths(tb, ncol, left=bbox[0] + 3, right=bbox[2] - 3)
     total = sum(widths) or 1.0
-    pad_frac = min(0.35, (2 * max(1, ncol - 1) * 4.0) / max(1.0, body_w))
-    budget = max(0.60, table_frac - pad_frac)
-    raw_fracs = [budget * w / total for w in widths]
-    min_col = max(0.06, min(0.12, 40.0 / body_w))
-    col_frac = _normalize_fracs([max(min_col, f) for f in raw_fracs], budget)
+    table_frac = min(1.0, total / body_w) if body_w else 0.9
+    # The source column widths already span from one column's start to the next, so they include the
+    # gap between columns; the emitter sets \tabcolsep to 0 for these tables and uses them as they
+    # are. Reserving extra room for \tabcolsep here made every column ~14% narrower than the PDF's,
+    # which hyphenated the headings ("redun-dancy") and pushed long cells into the next column.
+    col_frac = _normalize_fracs([table_frac * w / total for w in widths], table_frac)
     small = ncol >= 5 or len(logical) >= 10
     return Table(page=page.number, bbox=bbox, rows=cells_grid, col_align=["p"] * ncol,
-                 col_frac=col_frac, header_rows=1, ruled=True, booktabs=True, vrules=set(), small=small)
+                 col_frac=col_frac, header_rows=1, ruled=True, booktabs=True, vrules=set(), small=small,
+                 text_size=_dominant_size(page, bbox), frac_base=body_w)
+
+
+def _dominant_size(page: PageExtract, bbox: tuple) -> float:
+    """The size most of the table's text is set in (0 when it has none)."""
+    from collections import Counter
+    x0, y0, x1, y1 = bbox
+    c: Counter = Counter()
+    for ln in page.lines:
+        for sp in ln.spans:
+            cx, cy = (sp.bbox[0] + sp.bbox[2]) / 2, (sp.bbox[1] + sp.bbox[3]) / 2
+            if sp.text.strip() and x0 <= cx <= x1 and y0 <= cy <= y1:
+                c[rsz(sp.size)] += len(sp.text.strip())
+    return c.most_common(1)[0][0] if c else 0.0
 
 
 def _build_ruled(tb, rows, page: PageExtract) -> Table:
     ncol = tb.col_count
     cells_grid: List[List[Cell]] = []
     header_rows = 0
+    # rows the PDF separates by no rule come out as one row of multi-line cells: when every cell
+    # of such a row holds the same number of lines, each line is a row of its own
+    split_rows = []
     for ri, row in enumerate(rows):
+        parts = [(v or "").split("\n") for v in row]
+        counts = {len(p_) for v, p_ in zip(row, parts) if v}
+        if len(counts) == 1 and next(iter(counts)) > 1 and all(v is not None for v in row):
+            k = next(iter(counts))
+            for j in range(k):
+                split_rows.append((ri, [p_[j] if len(p_) == k else "" for p_ in parts]))
+        else:
+            split_rows.append((ri, row))
+    for ri_out, (ri, row) in enumerate(split_rows):
         cells: List[Cell] = []
         bold_count = 0
         for cj, val in enumerate(row):
+            if val is None and cj > 0 and cells and _spans_into(tb, ri, cj):
+                # a cell merged into the one on its left (find_tables gives None for it)
+                cells[-1].colspan += 1
+                continue
             text = " ".join((val or "").split())   # collapse internal newlines to spaces
             bold, size, color = _cell_style(tb, page, ri, cj)
             if bold and text:
                 bold_count += 1
-            para = _text_para(text, page, size, color) if text else None
+            para = _text_para(text, page, size, color, *_dominant_face(page, tuple(tb.bbox))[1:]) if text else None
             cells.append(Cell(paras=[para] if para else [], bold=bold))
         cells_grid.append(cells)
-        if ri == 0 and bold_count >= max(1, ncol // 2):
+        if ri_out == 0 and bold_count >= max(1, ncol // 2):
             header_rows = 1
     # p-columns sized proportionally to each column's pixel width, summing to the table's share
     tb_w = tb.bbox[2] - tb.bbox[0]
     body_w = _page_body_w(page)
-    table_frac = 1.0 if tb_w >= body_w * 0.90 else min(1.0, max(0.5, tb_w / body_w))
-    widths = _col_widths(tb, ncol, max_x1=tb.bbox[2])
+    table_frac = min(1.0, tb_w / body_w) if body_w else 0.9
+    widths = _col_widths(tb, ncol)
     total = sum(widths) or 1.0
-    pad_frac = min(0.35, (2 * max(1, ncol - 1) * 4.0) / max(1.0, body_w))
-    budget = max(0.60, table_frac - pad_frac)
-    col_frac = _normalize_fracs([budget * w / total for w in widths], budget)
+    col_frac = _normalize_fracs([table_frac * w / total for w in widths], table_frac)
     col_align = ["p"] * ncol
+    # vertical rules only where the PDF draws them (a table ruled across only is booktabs-like)
+    x0, y0, x1, y1 = tb.bbox
+    vr = [d.rect for d in page.drawings if d.kind == "vrule"
+          and x0 - 3 <= d.rect[0] <= x1 + 3 and d.rect[1] >= y0 - 3 and d.rect[3] <= y1 + 3]
+    if not vr:
+        rule_ys = sorted({round(d.rect[1]) for d in page.drawings if d.kind == "hrule"
+                          and d.rect[0] <= x0 + 3 and d.rect[2] >= x1 - 3 and y0 - 3 <= d.rect[1] <= y1 + 3})
+        hdr = 1 if len(rule_ys) >= 3 else header_rows
+        if len(rule_ys) >= len(cells_grid) + 1:
+            # a rule under every row, none down the columns
+            return Table(page=page.number, bbox=tuple(tb.bbox), rows=cells_grid, col_align=col_align,
+                         col_frac=col_frac, header_rows=header_rows, ruled=True, booktabs=False,
+                         vrules=set(), text_size=_dominant_size(page, tuple(tb.bbox)), frac_base=body_w)
+        return Table(page=page.number, bbox=tuple(tb.bbox), rows=cells_grid, col_align=col_align,
+                     col_frac=col_frac, header_rows=hdr, ruled=True, booktabs=True, vrules=set(),
+                     text_size=_dominant_size(page, tuple(tb.bbox)), small=ncol >= 5, frac_base=body_w)
     return Table(page=page.number, bbox=tuple(tb.bbox), rows=cells_grid, col_align=col_align,
                  col_frac=col_frac, header_rows=header_rows, ruled=True, booktabs=False,
-                 vrules=set(range(ncol - 1)))
+                 vrules=set(range(ncol - 1)), frac_base=body_w)
 
 
-def _col_widths(tb, ncol: int, max_x1: float = 0.0) -> List[float]:
+def _spans_into(tb, ri: int, cj: int) -> bool:
+    """Whether the cell left of column cj in row ri reaches across into column cj (a horizontal
+    merge), rather than column cj being covered from the row above (a vertical one)."""
     try:
-        right_edge = max(round(tb.bbox[2], 1), round(max_x1, 1)) if max_x1 > 0 else round(tb.bbox[2], 1)
-        edges = sorted({round(c[0], 1) for r in tb.rows for c in (r.cells or []) if c} |
-                       {right_edge})
+        cells = tb.rows[ri].cells
+        left = next((cells[k] for k in range(cj - 1, -1, -1) if cells[k]), None)
+        edges = sorted({round(c[0], 1) for r in tb.rows for c in (r.cells or []) if c})
+        if left is None or cj >= len(edges):
+            return False
+        return left[2] > edges[cj] + 2
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _col_widths(tb, ncol: int, left: Optional[float] = None, right: Optional[float] = None) -> List[float]:
+    try:
+        starts = sorted({round(c[0], 1) for r in tb.rows for c in (r.cells or []) if c})
+        if left is not None and starts:
+            starts[0] = min(starts[0], round(left, 1))
+        edges = starts + [round(max(tb.bbox[2], right or 0.0), 1)]
         if len(edges) >= ncol + 1:
             return [edges[i + 1] - edges[i] for i in range(ncol)]
     except Exception:
@@ -266,8 +344,28 @@ def _cell_style(tb, page: PageExtract, ri: int, cj: int):
     return all(sp.bold for sp in spans), szc.most_common(1)[0][0], cc.most_common(1)[0][0]
 
 
-def _text_para(text: str, page: PageExtract, size: float = 0.0, color=(0, 0, 0)) -> Para:
-    run = Run(text=text, size=size or 0.0, family="serif", font_cls="times", bold=False,
+def _dominant_face(page: PageExtract, bbox: tuple):
+    """(colour, family, font class) most of the table's text is set in."""
+    from collections import Counter
+    from ..fontmap import editable_font
+    x0, y0, x1, y1 = bbox
+    cc: Counter = Counter()
+    fc: Counter = Counter()
+    for ln in page.lines:
+        for sp in ln.spans:
+            cx, cy = (sp.bbox[0] + sp.bbox[2]) / 2, (sp.bbox[1] + sp.bbox[3]) / 2
+            if sp.text.strip() and x0 <= cx <= x1 and y0 <= cy <= y1:
+                n = len(sp.text.strip())
+                cc[sp.color] += n
+                fc[editable_font(sp.font, sp.flags)] += n
+    color = cc.most_common(1)[0][0] if cc else (0, 0, 0)
+    cls, fam = fc.most_common(1)[0][0] if fc else ("times", "serif")
+    return color, fam, cls
+
+
+def _text_para(text: str, page: PageExtract, size: float = 0.0, color=(0, 0, 0), family: str = "serif",
+               font_cls: str = "times") -> Para:
+    run = Run(text=text, size=size or 0.0, family=family, font_cls=font_cls, bold=False,
               italic=False, color=color)
     seg = Segment(runs=[run], x0=0, x1=0)
     tl = TLine(segments=[seg], x0=0, x1=0, top=0, bottom=0, baseline=0, page=page.number,

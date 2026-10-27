@@ -240,7 +240,9 @@ def _size_ladder(sizes: List[float], base: float) -> Tuple[Dict[float, str], Lis
 
     clusters: List[List[float]] = []
     for sz in sorted(set(sizes)):
-        if clusters and sz - clusters[-1][0] <= 0.6 and \
+        # sizes are already rounded to 0.5pt: two of them are two sizes (a 16.8pt title is not the
+        # 17.3pt one beside it; set at 17.5 it wraps where the PDF's does not)
+        if clusters and sz - clusters[-1][0] <= 0.25 and \
                 (abs(sz - base) <= 0.75) == (abs(clusters[-1][0] - base) <= 0.75):
             clusters[-1].append(sz)
         else:
@@ -565,3 +567,28 @@ def _mode(xs: List[float], bin_pt: int) -> float:
         return 0.0
     c: Counter = Counter(int(round(x / bin_pt)) * bin_pt for x in xs)
     return float(c.most_common(1)[0][0])
+
+
+def two_column_layout(profile: EditProfile, page_layout) -> None:
+    """A two-column document: two-column bands on at least 60% of the pages that carry text. The
+    gap between the columns is measured (right column's left edge less left column's right edge)."""
+    text_pages = 0
+    two = 0
+    seps: List[float] = []
+    for pno, layout in page_layout.items():
+        if not any(rows for _z, rows in layout):
+            continue
+        text_pages += 1
+        lefts = [(z, rows) for z, rows in layout if z.of_columns == 2 and z.column == 0 and rows]
+        rights = [(z, rows) for z, rows in layout if z.of_columns == 2 and z.column == 1 and rows]
+        if lefts and rights:
+            two += 1
+            for (zl, rl), (zr, rr) in zip(lefts, rights):
+                full_l = [r.x1 for r in rl]
+                full_r = [r.x0 for r in rr]
+                if len(full_l) >= 3 and len(full_r) >= 3:
+                    seps.append(min(full_r) - max(full_l))
+    profile.two_column = bool(text_pages) and two >= 0.6 * text_pages and two >= 1
+    seps = sorted(x for x in seps if 2 <= x <= 60)
+    if seps:
+        profile.columnsep = round(seps[len(seps) // 2], 2)
