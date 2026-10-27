@@ -15,3 +15,8 @@ backend/bench/results
 backend/bench/editable
 .claude
 *.tar.gz
+# Secrets and localhost URLs must never be baked into image layers; runtime config comes from
+# compose env_file, and NEXT_PUBLIC_* build values from the ARGs in the Dockerfile.
+.env
+.env.*
+!.env.example

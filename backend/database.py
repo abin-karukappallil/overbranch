@@ -7,6 +7,7 @@ Provides an asynchronous SQLAlchemy connection pool to the shared PostgreSQL dat
 
 from __future__ import annotations
 
+import asyncio
 import os
 import logging
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse

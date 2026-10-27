@@ -48,6 +48,11 @@ async def lifespan(app: FastAPI):
         warn_if_multi_worker()
         await room_manager.start_reaper()
 
+    # Prime TeX's font/format caches off the request path (first xelatex/lualatex run in a
+    # fresh container can take minutes) and log whether each engine works here at all.
+    import tex_health
+    asyncio.get_running_loop().run_in_executor(None, tex_health.warm_up)
+
     yield
 
     logger.info("OverBranch TeX Engine API shutting down gracefully...")
@@ -173,6 +178,13 @@ def health_check():
     }
 
 
+@app.get("/api/health/tex")
+async def tex_health_check(refresh: bool = False):
+    """Builds a one-line document with each engine and reports timings (cached for 60s)."""
+    import tex_health
+    return await asyncio.to_thread(tex_health.check, 120.0, refresh)
+
+
 from fastapi import Depends
 from auth import get_current_user_or_guest, verify_project_ownership_or_member
 from rate_limiter import RateLimiter
@@ -238,8 +250,13 @@ async def compile_endpoint(
     is_guest = bool(auth_info.get("is_guest"))
     if user_id and req.project_id:
         try:
-            sb = get_supabase_client()
-            verify_project_ownership_or_member(sb, req.project_id, user_id, is_guest=is_guest)
+            # Blocking Supabase round-trip: off the event loop, or every request (including
+            # the polls of compiles already running) stalls behind it.
+            await asyncio.to_thread(
+                lambda: verify_project_ownership_or_member(
+                    get_supabase_client(), req.project_id, user_id, is_guest=is_guest
+                )
+            )
         except Exception as e:
             logger.warning(f"Project compile verification warning: {e}")
             raise
@@ -269,6 +286,11 @@ async def compile_endpoint(
             active_file=active_file,
             active_text=active_text,
         )
+        if isinstance(result, dict) and result.get("success") is not True and not (result.get("error_log") or "").strip():
+            result["error_log"] = (
+                "Compilation failed without a TeX log (the engine produced no output or was cut off by the "
+                "compile timeout). Check GET /api/health/tex on the server for the toolchain status."
+            )
         return result
     except CompileQueueFullError as qfe:
         return JSONResponse(

@@ -71,7 +71,11 @@ echo ""
 echo "══════════════════════════════════════════"
 echo "  Step 2: Build app image"
 echo "══════════════════════════════════════════"
-docker build --build-arg "TEX_BASE=$TEX_IMAGE" -t "$IMAGE_NAME" -t "overbranch:$GIT_SHA" .
+# Public (browser-visible) build values: .env is not in the image context, so pass the one
+# that has no sensible default. Everything else defaults to the production URLs.
+GA_ID="${NEXT_PUBLIC_GA_ID:-$(grep -E '^NEXT_PUBLIC_GA_ID=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"')}"
+docker build --build-arg "TEX_BASE=$TEX_IMAGE" --build-arg "NEXT_PUBLIC_GA_ID=$GA_ID" \
+  -t "$IMAGE_NAME" -t "overbranch:$GIT_SHA" .
 
 if [ "$MODE" = "scp" ]; then
   # ────────────────────────────────────────

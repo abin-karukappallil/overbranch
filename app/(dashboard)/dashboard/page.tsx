@@ -156,18 +156,17 @@ function DashboardContent() {
     <div className="space-y-8 animate-fade-in pb-16 text-slate-900 dark:text-[#E2E4E9]">
       {/* Header Banner */}
       <div className="relative p-6 sm:p-8 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shadow-sm dark:shadow-none overflow-hidden">
-        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
-          <div className="space-y-1.5">
-
+        <div className="relative z-10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5">
+          <div className="space-y-1.5 min-w-0 max-w-2xl">
             <h1 className="text-xl sm:text-2xl font-archivo font-bold tracking-tight text-slate-900 dark:text-[#E2E4E9]">
               Document Projects
             </h1>
-            <p className="text-xs sm:text-sm text-slate-500 dark:text-[#9E9E9E] max-w-2xl leading-relaxed">
+            <p className="text-xs sm:text-sm text-slate-500 dark:text-[#9E9E9E] leading-relaxed">
               Co-author seminar reports, assignments, project thesis, slides, and research papers with real-time compilation and SyncTeX.
             </p>
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-2.5 w-full sm:w-auto shrink-0">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full xl:w-auto">
             <Button
               onClick={() => setPdfModalOpen(true)}
               size="lg"

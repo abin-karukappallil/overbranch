@@ -2163,8 +2163,10 @@ def _compile_latex_impl(
                             shutil.copy2(item, dest)
                             has_disk_files = True
 
-                # Only query DB if no disk files were present
-                if not has_disk_files:
+                # The DB mirror fills in whatever the disk copy lacks (a sibling the editor lists
+                # from latex_documents but that was never written to this host's volume). Disk
+                # always wins: the mirror may be older than the file the user last saved.
+                if project_mode or not has_disk_files:
                     try:
                         from project_storage import get_supabase_client
                         supabase = get_supabase_client()
@@ -2177,7 +2179,7 @@ def _compile_latex_impl(
                                     if not f_path or (f_path == "main.tex" and not project_mode):
                                         continue
                                     dest = (tmpdir / f_path).resolve()
-                                    if tmpdir.resolve() not in dest.parents:
+                                    if tmpdir.resolve() not in dest.parents or dest.exists():
                                         continue
                                     dest.parent.mkdir(parents=True, exist_ok=True)
                                     if r_code and not r_code.startswith("[Binary Asset:"):

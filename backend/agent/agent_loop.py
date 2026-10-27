@@ -20,7 +20,7 @@ from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 from cancellation import CancellationToken, LLMOperationCancelled
 from providers.router import DEFAULT_MODEL, provider_router
-from scope_classifier import classify_scope, ScopeType, ScopeClassificationResult
+from scope_classifier import classify_scope, extract_topic_transition_terms, ScopeType, ScopeClassificationResult
 from document_index import DocumentIndex, DocumentChunk, get_expansion_units
 from edit_validator import (
     validate_coverage, CoverageValidationResult, validate_latex_pre_commit, validate_edit,
@@ -1450,6 +1450,35 @@ def _raw_step_budget(
 # Streaming Agent Loop
 # ============================================================================
 
+SCOPE_CLASSIFY_TIMEOUT_S = float(os.getenv("SCOPE_CLASSIFY_TIMEOUT_S", "5"))
+
+
+def _classify_scope_bounded(**kwargs):
+    """
+    classify_scope with a wall-clock cap. Its heuristics answer instantly; only an ambiguous
+    prompt reaches the LLM fallback, which walks the whole gateway chain and could hold the
+    run (and the chat) for tens of seconds before the first step. Past the cap the safe
+    default (a targeted edit) applies, exactly as when that call fails.
+    """
+    import concurrent.futures
+
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="scope-classify")
+    future = pool.submit(classify_scope, **kwargs)
+    try:
+        return future.result(timeout=SCOPE_CLASSIFY_TIMEOUT_S)
+    except concurrent.futures.TimeoutError:
+        logger.warning(f"Scope classification exceeded {SCOPE_CLASSIFY_TIMEOUT_S}s; defaulting to targeted edit")
+        return ScopeClassificationResult(
+            scope=ScopeType.TARGETED_EDIT.value,
+            reason="Scope classifier timed out",
+            confidence=0.5,
+            is_heuristic=True,
+            forbidden_terms=extract_topic_transition_terms(kwargs.get("user_instruction") or ""),
+        )
+    finally:
+        pool.shutdown(wait=False)
+
+
 def stream_agent(
     user_instruction: str,
     project_id: str,
@@ -1501,6 +1530,10 @@ def stream_agent(
             },
         }
         return
+
+    # First byte immediately: everything below (workspace setup, the scope classifier's
+    # possible LLM call) used to run before the client saw anything but "Starting...".
+    yield {"type": "status", "step": 0, "message": "Reading your document..."}
 
     # 1. Initialize ShadowWorkspace
     workspace = ShadowWorkspace(
@@ -1554,7 +1587,7 @@ def stream_agent(
         }
 
     # 2. Classify edit scope (TARGETED_EDIT vs FULL_DOCUMENT_REWRITE vs FULL_DOCUMENT_EXPANSION)
-    scope_result = classify_scope(
+    scope_result = _classify_scope_bounded(
         user_instruction=user_instruction,
         current_code=current_code,
         model=model,

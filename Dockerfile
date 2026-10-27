@@ -224,6 +224,15 @@ COPY . .
 
 # 7. Production environment
 ENV NODE_ENV=production
+# NEXT_PUBLIC_* values are inlined into the browser bundle at build time, so they are build
+# args (defaults match docker-compose.yml). Without them the build would fall back to
+# http://localhost:8000 and every visitor's browser would call its own machine.
+ARG NEXT_PUBLIC_BACKEND_URL=https://overapi.abinthomas.dev
+ARG NEXT_PUBLIC_APP_URL=https://overbranch.app
+ARG NEXT_PUBLIC_GA_ID=
+ENV NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL} \
+    NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL} \
+    NEXT_PUBLIC_GA_ID=${NEXT_PUBLIC_GA_ID}
 
 # 8. Build Next.js application
 RUN bun run build

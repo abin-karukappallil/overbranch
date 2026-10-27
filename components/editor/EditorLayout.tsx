@@ -403,6 +403,17 @@ export function EditorLayout({
   // every time the user switches file (the collaboration remote-change handler).
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
+  // The file whose text the editor currently holds. `activeFilePath` flips the moment a tab is
+  // chosen, but the editor keeps showing the PREVIOUS file until the new one's content arrives;
+  // a change reported in that window used to be saved under the new path, overwriting it with
+  // the old file's text (main.tex ended up holding details.tex). Saves are gated on this.
+  const loadedFilePathRef = useRef<string | null>(null);
+  // Monaco commands (Ctrl+S) are registered once at mount; they must call the CURRENT render's
+  // save/compile, not the first render's (whose activeFilePath is "main.tex" forever).
+  const editorActionsRef = useRef<{
+    save: (code: string, showToast?: boolean) => Promise<void>;
+    compile: (code?: string) => Promise<void>;
+  } | null>(null);
   // Main-file auto-open bookkeeping (see the effect after handleSelectFile).
   const userPickedFileRef = useRef(false);
   const autoOpeningMainRef = useRef(false);
@@ -1538,6 +1549,7 @@ export function EditorLayout({
     // Instant cache lookup for 0ms transition
     const cached = fileContentCacheRef.current.get(filePath);
     if (cached) {
+      loadedFilePathRef.current = filePath;
       setCode(cached.content);
       setSaveStatus("saved");
     } else {
@@ -1545,6 +1557,7 @@ export function EditorLayout({
       try {
         const saved = localStorage.getItem(savedKey);
         if (saved !== null) {
+          loadedFilePathRef.current = filePath;
           setCode(saved);
           setSaveStatus("saved");
           fileContentCacheRef.current.set(filePath, { content: saved, timestamp: Date.now() });
@@ -1589,12 +1602,17 @@ export function EditorLayout({
     // Fast synchronous cache hit
     const cached = fileContentCacheRef.current.get(activeFilePath);
     if (cached) {
+      loadedFilePathRef.current = activeFilePath;
       setCode(cached.content);
       setSaveStatus("saved");
     } else {
+      // Nothing local for this file yet: until the server copy lands the editor still shows
+      // the previous file, so no change may be saved under this path.
+      loadedFilePathRef.current = null;
       try {
         const savedCode = localStorage.getItem(storageKey);
         if (savedCode !== null) {
+          loadedFilePathRef.current = activeFilePath;
           setCode(savedCode);
           setSaveStatus("saved");
           fileContentCacheRef.current.set(activeFilePath, { content: savedCode, timestamp: Date.now() });
@@ -1622,12 +1640,18 @@ export function EditorLayout({
         if (res.ok && !isCancelled) {
           const data = await res.json();
           if (data.raw_code !== undefined) {
+            loadedFilePathRef.current = activeFilePath;
             setCode(data.raw_code);
             setSaveStatus("saved");
             fileContentCacheRef.current.set(activeFilePath, { content: data.raw_code, timestamp: Date.now() });
             localStorage.setItem(storageKey, data.raw_code);
             return;
           }
+          // The server answered but holds no text for this file: it is genuinely empty.
+          loadedFilePathRef.current = activeFilePath;
+          setCode("");
+          setSaveStatus("saved");
+          return;
         }
       } catch (err) {
         console.warn("Backend load failed, falling back to LocalStorage:", err);
@@ -1638,6 +1662,7 @@ export function EditorLayout({
         try {
           const savedCode = localStorage.getItem(storageKey);
           if (savedCode !== null) {
+            loadedFilePathRef.current = activeFilePath;
             setCode(savedCode);
             setSaveStatus("saved");
           }
@@ -1654,6 +1679,8 @@ export function EditorLayout({
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
   const saveDocument = async (newCode: string, showToast = true) => {
     const activeProj = projectId || "proj-1";
+    // See loadedFilePathRef: never write text that was not loaded for this file into it.
+    if (loadedFilePathRef.current !== activeFilePath) return;
     fileContentCacheRef.current.set(activeFilePath, { content: newCode, timestamp: Date.now() });
 
     // While a collaboration room is bound, the *server* persists the document
@@ -1710,6 +1737,9 @@ export function EditorLayout({
    */
   const handleCodeChange = (newCode: string | undefined) => {
     const updated = newCode ?? "";
+    // Text that belongs to another file (the editor has not caught up with a tab switch, or a
+    // child reported a stale snapshot) must never be cached or saved under this file's path.
+    if (loadedFilePathRef.current !== activeFilePath) return;
     const signature = `${activeFilePath}\u0000${updated}`;
     if (lastCodeChangeRef.current === signature) return;
     lastCodeChangeRef.current = signature;
@@ -1973,8 +2003,8 @@ export function EditorLayout({
     // Register Ctrl+S / Cmd+S save shortcut inside Monaco Editor
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       const currentVal = editor.getValue();
-      saveDocument(currentVal, true);
-      handleCompile(currentVal);
+      editorActionsRef.current?.save(currentVal, true);
+      editorActionsRef.current?.compile(currentVal);
     });
 
     // Ctrl/Cmd+M: pin the selection to the chat message (both editors).
@@ -2150,6 +2180,8 @@ export function EditorLayout({
       setIsCompiling(false);
     }
   };
+
+  editorActionsRef.current = { save: saveDocument, compile: handleCompile };
 
   const sendPromptMessage = async (customPrompt?: string, modeOverride?: ChatMode) => {
     // "Ask AI to Fix" must run in Edit mode whatever the toggle says: in Ask mode the

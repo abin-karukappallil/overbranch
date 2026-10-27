@@ -181,8 +181,8 @@ export default function ProjectsPage() {
   return (
     <div className="space-y-6 animate-fade-in pb-16 text-slate-900 dark:text-[#E2E4E9]">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div className="space-y-1">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div className="space-y-1 min-w-0 max-w-2xl">
           <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-slate-100 dark:bg-[#1E2026] border border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] text-[11px] font-mono">
             <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
             <span>Repository Index</span>
@@ -195,7 +195,7 @@ export default function ProjectsPage() {
           </p>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
         <Button
           onClick={() => setZipModalOpen(true)}
           className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium rounded-lg h-9 px-4 text-xs border border-slate-200 dark:border-[#282A30] shrink-0 justify-center cursor-pointer transition-all flex items-center gap-1.5"
