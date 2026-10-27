@@ -14,6 +14,17 @@ from enum import Enum
 from typing import Optional, Tuple
 
 
+# The only wording a user ever sees when the model gateways are down. Provider names,
+# status codes and per-gateway detail stay in the logs and the trace.
+OUTAGE_MESSAGE = "Model outage — please retry."
+OUTAGE_RETRYING = "Model outage — retrying…"
+
+
+def outage_retrying(n: int, total: int) -> str:
+    """Status line shown while the gateway chain is still being worked through."""
+    return f"Model outage — retrying ({n}/{total})…"
+
+
 class FailureKind(str, Enum):
     RATE_LIMIT = "rate_limit"
     QUOTA = "quota"
@@ -119,4 +130,16 @@ def classify_exception(exc: BaseException) -> Tuple[FailureKind, Optional[float]
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(getattr(exc, "response", None), "status_code", None)
+    # Transport failures from the HTTP client: a stalled stream is a timeout, an
+    # unreachable host is an outage, whatever the exception text happens to say.
+    try:
+        import httpx
+        if isinstance(exc, httpx.TimeoutException):
+            return FailureKind.TIMEOUT, None
+        if isinstance(exc, (httpx.TransportError, httpx.RemoteProtocolError)):
+            return FailureKind.UNAVAILABLE, None
+    except ImportError:  # pragma: no cover
+        pass
+    if isinstance(exc, TimeoutError):
+        return FailureKind.TIMEOUT, None
     return classify(status if isinstance(status, int) else None, str(exc))

@@ -1,14 +1,20 @@
 """
 llm.py — Page-level LLM calls through the agentic edit feature's own client.
 
-Every call goes through providers.router.provider_router.chat with DEFAULT_MODEL
-using GeminiProvider (GEMINI_WEB2API_BASE_URL, rotating GEMINI_WEB2API_API_KEY_*).
-Fallback to OpenRouter / MiniMax M3 is disabled to prevent token limit errors
-and time-taking delays on large PDF prompts and images.
+Every call goes through providers.router.provider_router.chat with DEFAULT_MODEL,
+i.e. the strict Web2API gateway chain (WEB2API_GATEWAYS, in order, cycled up to
+LLM_CHAIN_CYCLES times). allow_fallback=True is the contract here: a page call may
+walk and cycle the whole chain, so one dead gateway never fails a page. No other
+provider (OpenRouter, Groq, NVIDIA) is ever consulted.
+
+Because the router already retries internally, `complete()` does not retry on top of
+it while the chain is active (that would nest retries 3 x attempts); the page-level
+PDF2LATEX_PAGE_RETRIES only applies to the legacy single-endpoint setup.
 """
 
 import asyncio
 import logging
+import os
 import random
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +23,7 @@ from typing import Any, Dict, List, Optional
 from cancellation import CancellationToken
 from providers.multimodal import image_part, text_part
 from providers.router import DEFAULT_MODEL, provider_router
-from providers.web2api_keys import get_web2api_base_url, load_web2api_keys
+from providers.web2api_keys import gateways_configured
 
 logger = logging.getLogger("pdf2latex.llm")
 
@@ -36,11 +42,8 @@ def model_name() -> str:
 
 
 def llm_available() -> bool:
-    if get_web2api_base_url() and load_web2api_keys():
-        return True
-    if get_web2api_base_url("GEMINI2") and load_web2api_keys("GEMINI2"):
-        return True
-    return bool(getattr(provider_router.openrouter, "candidates", None))
+    """True when any gateway of the chain (WEB2API_GATEWAYS, or the legacy GEMINI*/GEMINI2*) is configured."""
+    return gateways_configured()
 
 
 def _slots_for(n: int) -> threading.BoundedSemaphore:
@@ -92,6 +95,15 @@ async def complete(system: str, user: str, image_png: Optional[bytes] = None, *,
     text-only one, so a gateway that chokes on images still gets a chance to answer.
     """
     slots = _slots_for(concurrency)
+    if provider_router.chain_active():
+        # The router retries across gateways and cycles itself; don't nest 3 x attempts, and
+        # don't let the per-page timeout cut the chain off after the first few dead gateways
+        # (45s idle each). PDF2LATEX_CHAIN_TIMEOUT bounds the whole walk instead.
+        retries = 0
+        try:
+            timeout = max(timeout, float(os.getenv("PDF2LATEX_CHAIN_TIMEOUT", "1800")))
+        except ValueError:
+            timeout = max(timeout, 1800.0)
     attempts = retries + 1
     last_error = "no attempt made"
     for attempt in range(attempts):

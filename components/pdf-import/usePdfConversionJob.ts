@@ -7,10 +7,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { authFetch } from "@/lib/api-client";
+import { authFetch, refreshSession } from "@/lib/api-client";
 import {
   LOST_CONTACT_MESSAGE,
+  POLL_MS,
   classifyPollResponse,
+  shouldTreatForbiddenAsFinal,
   nextPollDelay,
   shouldGiveUp,
 } from "@/lib/pdf-import-poll";
@@ -204,6 +206,7 @@ export function usePdfConversionJob() {
   // generation after every await, so a stale chain can never schedule a second timer.
   const generation = useRef(0);
   const failures = useRef(0);
+  const forbidden = useRef(0);
 
   const stopPolling = useCallback(() => {
     generation.current += 1;
@@ -230,11 +233,25 @@ export function usePdfConversionJob() {
           transient = true;
         } else if (outcome.kind === "ok") {
           failures.current = 0;
+          forbidden.current = 0;
           const data: ConversionJob = outcome.job;
           setJob(data);
           if (data.status === "error") setError(data.error || "Conversion failed.");
           if (TERMINAL.has(data.status)) return;
-        } else if (outcome.kind === "gone" || outcome.kind === "forbidden") {
+        } else if (outcome.kind === "forbidden") {
+          // Transient until it has happened several times in a row: a poll that went out without
+          // the user's credential gets the same 403 as a job that is really someone else's.
+          forbidden.current += 1;
+          if (shouldTreatForbiddenAsFinal(forbidden.current)) {
+            setError(outcome.message);
+            return;
+          }
+          await refreshSession(); // fresh getSession() before the retry
+          if (stale()) return;
+          // Retried at the normal cadence and not counted as a lost-contact failure.
+          timer.current = setTimeout(() => poll(jobId, gen), POLL_MS);
+          return;
+        } else if (outcome.kind === "gone") {
           setError(outcome.message);
           return;
         } else {
@@ -262,6 +279,7 @@ export function usePdfConversionJob() {
       stopPolling();
       activeId.current = jobId;
       failures.current = 0;
+      forbidden.current = 0;
       setError(null);
       setErrorJobId(null);
       poll(jobId, generation.current);
@@ -374,6 +392,7 @@ export function usePdfConversionJob() {
     stopPolling();
     activeId.current = null;
     failures.current = 0;
+    forbidden.current = 0;
     setJob(null);
     setError(null);
     setErrorJobId(null);

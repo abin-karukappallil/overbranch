@@ -33,10 +33,70 @@ _NUM_PREFIX = re.compile(r"^\s*((?:chapter|section|part)\s+)?"
 # ---------------------------------------------------------------------------
 
 class _FigItem:
-    def __init__(self, img: ImageRef):
-        self.img = img
-        self.top = img.bbox[1]
+    def __init__(self, img):
+        self.img = img            # one placed picture, or a list of pictures side by side
+        self.top = min(i.bbox[1] for i in img) if isinstance(img, list) else img.bbox[1]
         self.kind = "fig"
+
+
+class _Placed:
+    """A picture as placed: its file (the ink crop when there is one) and its ink box."""
+    def __init__(self, img: ImageRef, trims: Dict):
+        t = trims.get(img.file)
+        self.src = img
+        if t:
+            self.file, self.bbox = t[0], tuple(t[1])
+            self.width_px, self.height_px = t[2]
+        else:
+            self.file, self.bbox = img.file, tuple(img.bbox)
+            self.width_px, self.height_px = img.width_px, img.height_px
+
+
+def _placed(img: ImageRef, trims: Dict) -> "_Placed":
+    return _Placed(img, trims)
+
+
+def _assign_images(p: PageExtract, layout: List[Tuple[Zone, List[TLine]]], used: Set[int],
+                   trims: Dict) -> Dict[int, List[List["_Placed"]]]:
+    """Each picture goes to the zone it overlaps most in height among those covering its x (no
+    slack: a full-width band below must not take a column's picture); pictures of one zone that
+    overlap by half their height or more sit side by side and make one figure."""
+    from .columns import zone_captures_x
+    per_zone: Dict[int, List["_Placed"]] = {}
+    zones = [z for z, _rows in layout]
+    for img in p.images:
+        if id(img) in used:
+            continue
+        pl = _Placed(img, trims)
+        x0, y0, x1, y1 = pl.bbox
+        cx = (x0 + x1) / 2
+        best, best_key = None, None
+        for z in zones:
+            if not zone_captures_x(z, cx):
+                continue
+            ov = min(y1, z.bbox[3]) - max(y0, z.bbox[1])
+            dist = 0.0 if ov > 0 else min(abs(y0 - z.bbox[3]), abs(z.bbox[1] - y1))
+            key = (ov > 0, ov if ov > 0 else -dist)
+            if best_key is None or key > best_key:
+                best, best_key = z, key
+        if best is None:
+            continue
+        used.add(id(img))
+        per_zone.setdefault(id(best), []).append(pl)
+    out: Dict[int, List[List["_Placed"]]] = {}
+    for zid, pls in per_zone.items():
+        pls.sort(key=lambda q: (q.bbox[1], q.bbox[0]))
+        groups: List[List["_Placed"]] = []
+        for q in pls:
+            for g in groups:
+                if any(min(q.bbox[3], r.bbox[3]) - max(q.bbox[1], r.bbox[1])
+                       >= 0.5 * min(q.bbox[3] - q.bbox[1], r.bbox[3] - r.bbox[1]) for r in g):
+                    g.append(q)
+                    break
+            else:
+                groups.append([q])
+        out[zid] = [g if len(g) > 1 else g[0] for g in groups]
+    return out
 
 
 class _RuleItem:
@@ -144,7 +204,7 @@ class _Builder:
         return self._id
 
     def build_zone(self, page: int, items: List, col_left: float, col_right: float) -> List[Block]:
-        items = sorted(items, key=lambda it: it.top)
+        items = self._take_beside(sorted(items, key=lambda it: it.top), col_left, col_right)
         out: List[Block] = []
         i = 0
         n = len(items)
@@ -155,7 +215,19 @@ class _Builder:
                 i += 1
                 continue
             if it.kind == "fig":
-                out.append(self._figure(page, it.img, col_left, col_right))
+                fig = self._figure(page, it.img, col_left, col_right)
+                beside = getattr(it, "beside", None)
+                if beside:
+                    tx0 = min(r.row.x0 for r in beside)
+                    tx1 = max(r.row.x1 for r in beside)
+                    fig.beside_side = "right" if tx0 >= fig.bbox[2] else "left"
+                    fig.beside = self.build_zone(page, beside, tx0, max(tx1, col_right if
+                                                 fig.beside_side == "right" else tx1))
+                    for c in fig.beside:
+                        c.space_before = 0.0
+                    fig.bbox = (min(fig.bbox[0], tx0), min(fig.bbox[1], min(r.row.top for r in beside)),
+                                max(fig.bbox[2], tx1), max(fig.bbox[3], max(r.row.bottom for r in beside)))
+                out.append(fig)
                 i += 1
                 continue
             if it.kind == "rule":
@@ -234,15 +306,53 @@ class _Builder:
         return out
 
     # -- figures -----------------------------------------------------------
-    def _figure(self, page: int, img: ImageRef, col_left: float, col_right: float) -> Figure:
-        # width relative to the zone it sits in (a column of a two-column band, or the full body)
+    def _figure(self, page: int, img, col_left: float, col_right: float) -> Figure:
+        """A picture (or a row of pictures side by side) at its PDF size: its ink box, in points."""
+        imgs = img if isinstance(img, list) else [img]
+        imgs = sorted(imgs, key=lambda i: i.bbox[0])
+        x0 = min(i.bbox[0] for i in imgs)
+        x1 = max(i.bbox[2] for i in imgs)
+        y0 = min(i.bbox[1] for i in imgs)
+        y1 = max(i.bbox[3] for i in imgs)
         W = col_right - col_left
-        frac = min(1.0, round((img.bbox[2] - img.bbox[0]) / W, 2)) if W > 0 else 0.5
-        cx = (img.bbox[0] + img.bbox[2]) / 2
+        cx = (x0 + x1) / 2
         mid = (col_left + col_right) / 2
         align = "center" if abs(cx - mid) <= 0.15 * W else ("left" if cx < mid else "right")
-        return Figure(page=page, bbox=img.bbox, id=self.nid(), images=[img.file],
-                      width_frac=[max(0.05, frac)], align=align)
+        return Figure(page=page, bbox=(x0, y0, x1, y1), id=self.nid(), images=[i.file for i in imgs],
+                      width_frac=[round((i.bbox[2] - i.bbox[0]) / W, 3) if W > 0 else 0.5 for i in imgs],
+                      boxes=[tuple(i.bbox) for i in imgs],
+                      px=[(int(i.width_px or 0), int(i.height_px or 0)) for i in imgs],
+                      align=align, left=col_left, right=col_right)
+
+    def _take_beside(self, items: List, col_left: float, col_right: float) -> List:
+        """Text set beside a narrow picture (rows level with it, clear of it horizontally) goes
+        with the picture, to be set in a minipage next to it; needs two rows or more."""
+        W = max(1.0, col_right - col_left)
+        figs = [it for it in items if it.kind == "fig"]
+        if not figs:
+            return items
+        taken = set()
+        for f in figs:
+            imgs = f.img if isinstance(f.img, list) else [f.img]
+            x0 = min(i.bbox[0] for i in imgs)
+            x1 = max(i.bbox[2] for i in imgs)
+            y0 = min(i.bbox[1] for i in imgs)
+            y1 = max(i.bbox[3] for i in imgs)
+            if x1 - x0 > 0.65 * W:
+                continue
+            side = [it for it in items if it.kind == "row" and id(it) not in taken
+                    and y0 - 2 <= (it.row.top + it.row.bottom) / 2 <= y1 + 2
+                    and (it.row.x1 < x0 - 4 or it.row.x0 > x1 + 4)]
+            if len(side) < 2:
+                continue
+            right = [it for it in side if it.row.x0 > x1]
+            left = [it for it in side if it.row.x1 < x0]
+            side = right if len(right) >= len(left) else left
+            if len(side) < 2:
+                continue
+            f.beside = side
+            taken.update(id(it) for it in side)
+        return [it for it in items if id(it) not in taken]
 
     # -- rules -------------------------------------------------------------
     def _rule(self, page: int, d: Drawing, col_left: float, col_right: float) -> Optional[Rule]:
@@ -479,7 +589,11 @@ class _Builder:
                 limit = len(cells) - (1 if aligns[-1] == "r" else 0)
                 while nxt < limit and not cells[nxt]:
                     nxt += 1
-                span = max(1, (nxt - k) if nxt < len(cells) and cells[nxt] else 1)
+                if nxt < len(cells) and cells[nxt]:
+                    span = max(1, nxt - k)
+                else:
+                    # the row's last field runs to the end of the row (a wrapped description)
+                    span = max(1, limit - k)
                 lines = [TLine(segments=[sg], x0=sg.x0, x1=sg.x1, top=0, bottom=0, baseline=0,
                                page=page, size=0) for sg in segs]
                 row_cells.append(Cell(paras=[Para(page=page, lines=lines)], colspan=span))
@@ -530,7 +644,13 @@ class _Builder:
         entries: List[Dict] = []
         title_rows: List[List[Segment]] = []
         first: Optional[TLine] = None
+        line_steps: List[float] = []
+        entry_steps: List[float] = []
+        prev_base: Optional[float] = None
         for r in raw:
+            if prev_base is not None and 0 < r.baseline - prev_base < 4 * leading:
+                (entry_steps if first is None else line_steps).append(r.baseline - prev_base)
+            prev_base = r.baseline
             if first is None:
                 first = r
             last = r.segments[-1] if r.segments else None
@@ -578,9 +698,11 @@ class _Builder:
             grid.append(cells)
         aligns = ["p"] * (ncol - 1) + ["r"]
         bbox = (levels[0], raw[0].top, col_right, raw[-1].bottom)
+        med = lambda xs: sorted(xs)[len(xs) // 2] if xs else None  # noqa: E731
         return Table(page=page, bbox=bbox, id=self.nid(), rows=grid, col_align=aligns,
                      col_frac=fracs, ruled=False, indent=round(levels[0] - col_left, 1),
-                     width_pt=W, leaders=True), start + len(raw)
+                     width_pt=W, leaders=True, line_pitch=med(line_steps),
+                     row_pitch=med(entry_steps)), start + len(raw)
 
     def _page_w(self) -> float:
         return self.p.paper_pt[0] if self.p.paper_pt else 0.0
@@ -815,7 +937,7 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
                  math_blocks: Optional[Dict[int, List[Block]]] = None,
                  note_stacks: Optional[Dict[int, List[List[TLine]]]] = None,
                  boxes: Optional[Dict[int, List[dict]]] = None,
-                 furniture=None) -> List[Block]:
+                 furniture=None, trims=None) -> List[Block]:
     """Build the ordered block list across all pages. Returns blocks only (no PageMarks;
     pages.py inserts those)."""
     table_blocks = table_blocks or {}
@@ -843,6 +965,8 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
             extra_items.append(_PreItem(mb))
             suppress.append(mb.bbox)
         all_rows = [r for _z, rows in page_layout.get(p.number, []) for r in rows]
+        zone_imgs = _assign_images(p, page_layout.get(p.number, []), used_imgs, trims or {})
+        box_rects = [spec["bbox"] for spec in boxes.get(p.number, [])]
         for spec in boxes.get(p.number, []):
             bx = _build_box(b, p.number, spec, all_rows, col_left, col_right)
             if bx is not None:
@@ -850,16 +974,11 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
                 suppress.append(spec["bbox"])
         for z, rows in page_layout.get(p.number, []):
             # drop rows whose content is already carried by a table/math block
-            kept = [r for r in rows if not _covered(r, suppress)]
+            kept = [r for r in rows if not _covered(r, suppress) and not _in_boxes(r, box_rects)]
             items: List = [_RowItem(r) for r in kept]
-            # figures whose centre-x falls in this zone
-            for img in p.images:
-                cx = (img.bbox[0] + img.bbox[2]) / 2
-                if id(img) in used_imgs:
-                    continue
-                if zone_captures_x(z, cx) and z.bbox[1] - 2 <= img.bbox[1] <= z.bbox[3] + 40:
-                    used_imgs.add(id(img))
-                    items.append(_FigItem(img))
+            # pictures this zone holds (assigned per page below, by vertical overlap)
+            for group in zone_imgs.get(id(z), []):
+                items.append(_FigItem(group))
             for d in p.drawings:
                 if d.kind == "hrule" and not _rect_covered(d.rect, suppress) and id(d) not in used_rules:
                     cx = (d.rect[0] + d.rect[2]) / 2
@@ -868,12 +987,37 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
                         items.append(_RuleItem(d))
             # splice table/math items that fall in this zone's vertical span
             for pi in list(extra_items):
-                if z.bbox[1] - 2 <= pi.top <= z.bbox[3] + 2:
+                pcx = (pi.block.bbox[0] + pi.block.bbox[2]) / 2
+                # a table or an equation goes to the column it stands in; a shaded box (a slide's
+                # block, often two side by side) to the band, where a row of boxes stays together
+                if z.bbox[1] - 2 <= pi.top <= z.bbox[3] + 2 and (isinstance(pi.block, Box)
+                                                                 or zone_captures_x(z, pcx)):
                     items.append(pi)
                     extra_items.remove(pi)
-            zone_blocks = b.build_zone(p.number, items, z.bbox[0], z.bbox[2])
+            zl, zr = z.bbox[0], z.bbox[2]
+            if z.of_columns == 2 and kept:
+                # a column's own text edges (the zone splits the gutter in half)
+                if z.column == 0:
+                    zr = max(r.x1 for r in kept)
+                else:
+                    zl = min(r.x0 for r in kept)
+            for it in items:
+                tb = getattr(it, "block", None)
+                base = getattr(tb, "frac_base", 0.0) if tb is not None else 0.0
+                if base and zr - zl > 20 and abs(base - (zr - zl)) > 2:
+                    # the table's column widths are shares of the page's text width; in a column
+                    # they are shares of the column's
+                    k = base / (zr - zl)
+                    fr = [f * k for f in tb.col_frac]
+                    tot = sum(fr)
+                    if tot > 1.0:
+                        fr = [f / tot for f in fr]
+                    tb.col_frac = [round(f, 3) for f in fr]
+                    tb.frac_base = zr - zl
+            zone_blocks = b.build_zone(p.number, items, zl, zr)
             for zb in zone_blocks:
                 zb.cols = z.of_columns
+                zb.column = z.column if z.of_columns == 2 else -1
             page_blocks.extend(zone_blocks)
         # any leftover tables/math (no matching zone) appended at the end
         for pi in extra_items:
@@ -881,9 +1025,10 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
         # images no zone captured (e.g. in a margin) still belong to the page
         for img in p.images:
             if id(img) not in used_imgs:
-                page_blocks.append(b._figure(p.number, img, col_left, col_right))
+                page_blocks.append(b._figure(p.number, _placed(img, trims or {}), col_left, col_right))
         page_blocks = _insert_notes(b, p.number, page_blocks, note_stacks.get(p.number, []),
                                     col_left, col_right)
+        _box_rows(page_blocks, col_left)
         out.extend(page_blocks)
     _measured_spacing(out, b)
     _pin_keep_together(out)
@@ -891,10 +1036,16 @@ def build_blocks(pages: List[PageExtract], page_layout: Dict[int, List[Tuple[Zon
 
 
 def _pin_keep_together(blocks: List[Block]) -> None:
-    """Keep a run of short right-/centre-aligned paragraphs together across a page break — an author
-    or signature block (names stacked at the end of a certificate/acknowledgement), a stacked
-    address. Reflow can otherwise push the group over a page boundary and split it, which the source
-    never did. Sets ``keep_with_next`` on every block of the run but the last."""
+    """
+    Hold a run of short right-/centre-aligned paragraphs together — an author or signature block
+    (names stacked at the end of a certificate or acknowledgement), a stacked address.
+
+    A run the PDF sets at *line* spacing is merged into one paragraph: emitted as separate
+    paragraphs each would take paragraph spacing — 28pt where the PDF has 18 — and the extra height
+    pushed whole signature blocks onto a page of their own. A run at wider spacing stays separate
+    and is only kept from breaking across a page.
+    """
+    out: List[Block] = []
     i, n = 0, len(blocks)
     while i < n:
         b = blocks[i]
@@ -911,11 +1062,28 @@ def _pin_keep_together(blocks: List[Block]) -> None:
                 else:
                     break
             if 2 <= len(run) <= 8:
+                lead = run[0].leading or (run[0].lines[0].size * 1.2 if run[0].lines else 12.0)
+                line_spaced = all(
+                    a.lines and c.lines
+                    and 0 < c.lines[0].baseline - a.lines[-1].baseline <= 1.45 * max(1.0, lead)
+                    for a, c in zip(run, run[1:]))
+                if line_spaced:
+                    first = run[0]
+                    for r in run[1:]:
+                        first.lines.extend(r.lines)
+                    first.bbox = (min(r.bbox[0] for r in run), first.bbox[1],
+                                  max(r.bbox[2] for r in run), run[-1].bbox[3])
+                    out.append(first)
+                    i = j + 1
+                    continue
                 for blk in run[:-1]:
                     blk.keep_with_next = True
+            out.extend(run)
             i = j + 1
         else:
+            out.append(b)
             i += 1
+    blocks[:] = out
 
 
 class _PreItem:
@@ -1094,11 +1262,55 @@ def _block_text_size(blk) -> float:
     return max(w, key=w.get) if w else 0.0
 
 
+def _box_rows(blocks: List[Block], col_left: float) -> None:
+    """Boxes standing side by side (two Beamer blocks in columns) are marked as one row."""
+    for i in range(len(blocks) - 1):
+        a, c = blocks[i], blocks[i + 1]
+        if not (isinstance(a, Box) and isinstance(c, Box)):
+            continue
+        ov = min(a.bbox[3], c.bbox[3]) - max(a.bbox[1], c.bbox[1])
+        if c.bbox[2] <= a.bbox[0] + 2 and ov > 0:
+            blocks[i], blocks[i + 1] = c, a
+            a, c = c, a
+        if c.bbox[0] >= a.bbox[2] - 2 and ov >= 0.5 * min(a.bbox[3] - a.bbox[1], c.bbox[3] - c.bbox[1]):
+            a.row_next = True
+            c.row_prev = True
+            a.gap_after = c.bbox[0] - a.bbox[2]
+            # a row of boxes spans the page, whatever band it was spliced into
+            for x in (a, c):
+                x.cols, x.column = 1, -1
+            a.left = c.left = col_left
+
+
+def _clip_row(row: TLine, bb) -> Optional[TLine]:
+    """The part of a row whose fields lie in a box (by each field's centre), or None."""
+    cy = (row.top + row.bottom) / 2
+    if not (bb[1] - 2 <= cy <= bb[3] + 2):
+        return None
+    segs = [sg for sg in row.segments if bb[0] - 2 <= (sg.x0 + sg.x1) / 2 <= bb[2] + 2]
+    if not segs:
+        return None
+    if len(segs) == len(row.segments):
+        return row
+    return TLine(segments=segs, x0=segs[0].x0, x1=segs[-1].x1, top=row.top, bottom=row.bottom,
+                 baseline=row.baseline, page=row.page, size=row.size, src=row.src,
+                 has_leader=row.has_leader)
+
+
+def _in_boxes(row: TLine, boxes) -> bool:
+    """Every field of the row lies in one of the boxes (a row across two boxes side by side)."""
+    return bool(row.segments) and all(
+        any(x0 - 2 <= (sg.x0 + sg.x1) / 2 <= x1 + 2 and y0 - 2 <= (row.top + row.bottom) / 2 <= y1 + 2
+            for x0, y0, x1, y1 in boxes) for sg in row.segments)
+
+
 def _build_box(b: "_Builder", page: int, spec: dict, rows: List[TLine], col_left: float,
                col_right: float) -> Optional[Box]:
     """A shaded box: its title bar's text as the title, the rows inside it as ordinary blocks."""
     bb = spec["bbox"]
-    inside = [r for r in rows if _covered(r, [bb])]
+    # a row running across two boxes side by side ("Datasets   Software, ML & XAI Stack") gives
+    # each box only its own fields
+    inside = [c for c in (_clip_row(r, bb) for r in rows) if c is not None]
     if not inside:
         return None
     tb = spec.get("title_bbox")
@@ -1129,10 +1341,12 @@ def _last_para(b: Block) -> Optional[Para]:
 
 def _join_across_pages(blocks: List[Block]) -> List[Block]:
     """
-    A paragraph or list item broken by the page turn ("…modifications en-" / "gineered by …")
-    is one paragraph: the next page's opening paragraph is folded back into it when it plainly
-    continues — the previous line runs to the right edge or ends in a hyphen, and the next line
-    starts in lower case or after that hyphen, without a first-line indent.
+    A paragraph or list item broken by the page turn ("…modifications en-" / "gineered by …"):
+    the next page's opening paragraph plainly continues it — the previous line runs to the right
+    edge or ends in a hyphen, and the next line starts in lower case or after that hyphen, without
+    a first-line indent. Page-locked, the two halves stay on their own pages, broken at the same
+    word: the first ends mid-paragraph (``ends_mid``: its last line runs full) and the second goes
+    on without an indent (``joins_prev``). A hyphenated word keeps its hyphen at the break.
     """
     out: List[Block] = []
     for b in blocks:
@@ -1150,8 +1364,12 @@ def _join_across_pages(blocks: List[Block]) -> List[Block]:
                 no_indent = first.x0 <= body_x + 4
                 same_size = abs(first.size - last.size) <= 0.6
                 if same_size and no_indent and (hyphen or (full and lower)):
-                    tail.lines.extend(b.lines)
-                    continue
+                    tail.ends_mid = True
+                    b.joins_prev = True
+                    b.first_indent = 0.0
+                    if isinstance(prev, ListBlock):
+                        # it goes on under the item's text
+                        b.indent_l = max(b.indent_l, round(prev.text_x - (prev.left or b.left), 1))
         out.append(b)
     return out
 
@@ -1225,6 +1443,7 @@ def _measured_spacing(blocks: List[Block], builder: "_Builder") -> None:
     for x in blocks:
         if isinstance(x, ListBlock) and x.topsep is None:
             x.topsep = usual
+    ps = prof.parskip or 0.0
     for a, b, extra, _exact in gaps():
         if isinstance(b, ListBlock):
             continue
@@ -1238,3 +1457,8 @@ def _measured_spacing(blocks: List[Block], builder: "_Builder") -> None:
                 b.space_exact = True
         elif extra >= max(6.0, 0.5 * builder._leading_for(prof.body_size)):
             b.space_before = round(extra, 1)
+        elif isinstance(a, Para) and isinstance(b, Para) and ps > 2 and extra <= -0.5 * ps:
+            # the PDF sets b at line spacing under a (a definition under its term): no paragraph
+            # space between them
+            b.space_before = round(extra, 1)
+            b.space_exact = True

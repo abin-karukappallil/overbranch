@@ -122,6 +122,11 @@ def body_column(pages: List[PageExtract], furniture: Optional[Set[Tuple[int, int
     if not lefts:
         lefts, lw = [ln.bbox[0] for p in pages for ln in p.lines], [1] * sum(len(p.lines) for p in pages)
     col_left = _mode_bin(lefts, lw, 1.0) if lefts else 0.0
+    # two columns of equal weight (no full-width line to tell): the body starts at the left one
+    if lefts:
+        far = [(x, w) for x, w in zip(lefts, lw) if x < col_left - 0.25 * max(1.0, widest)]
+        if far and sum(w for _x, w in far) >= 0.4 * sum(w for x, w in zip(lefts, lw) if abs(x - col_left) <= 1.5):
+            col_left = _mode_bin([x for x, _ in far], [w for _, w in far], 1.0)
     # Right edge: the modal full-line x1 if a real cluster exists, else the 95th percentile.
     if rights:
         col_right = _mode_bin(rights, rw, 1.0)
@@ -142,7 +147,7 @@ def body_column(pages: List[PageExtract], furniture: Optional[Set[Tuple[int, int
 # ---------------------------------------------------------------------------
 
 def detect_zones(page: PageExtract, body_lines: List[Tuple[int, Line]], col_left: float,
-                 col_right: float) -> List[Zone]:
+                 col_right: float, boxes=()) -> List[Zone]:
     """
     Split the page into reading-order zones. A two-column band needs a gutter with ≥6 lines fully
     left and ≥6 fully right and ≤2 crossing it; a crossing row ends the band. Returns zones top to
@@ -169,16 +174,35 @@ def detect_zones(page: PageExtract, body_lines: List[Tuple[int, Line]], col_left
     if best is None:
         return [Zone(page=page.number, bbox=(col_left, 0, col_right, page.height), of_columns=1)]
     g = best[1]
+    # Pictures, tables and ruled regions that straddle the gutter are full width, and so is every
+    # line inside them (a table's cells sit left and right of the gutter without crossing it).
+    cross_boxes = [tuple(b) for b in boxes if b[0] < g - 4 and b[2] > g + 4]
+    cross_boxes += _rule_regions(page, g)
+
+    def in_box(ln) -> bool:
+        cy = (ln.bbox[1] + ln.bbox[3]) / 2
+        return any(b[1] - 1 <= cy <= b[3] + 1 and b[0] - 2 <= (ln.bbox[0] + ln.bbox[2]) / 2 <= b[2] + 2
+                   for b in cross_boxes)
+
+    def crossing(ln) -> bool:
+        return (ln.bbox[0] < g - 4 and ln.bbox[2] > g + 4) or in_box(ln)
+
+    # a box with no lines in it (a picture) still ends the band above it: it stands in the sweep
+    # as a crossing pseudo-line
+    pseudo = []
+    for b in cross_boxes:
+        if not any(in_box(ln) for _, ln in body_lines):
+            pseudo.append((-1, Line(spans=[], bbox=tuple(b), block=0)))
     # Sweep rows top to bottom; a wide crossing row toggles back to a full-width band.
-    ordered = sorted(body_lines, key=lambda t: t[1].baseline)
+    ordered = sorted(list(body_lines) + pseudo,
+                     key=lambda t: t[1].baseline if t[0] >= 0 else t[1].bbox[1])
     zones: List[Zone] = []
     i = 0
     n = len(ordered)
     while i < n:
         ln = ordered[i][1]
         # column text never crosses the gutter, so anything straddling it is full width
-        crosses = ln.bbox[0] < g - 4 and ln.bbox[2] > g + 4
-        if crosses:
+        if ordered[i][0] < 0 or crossing(ln):
             zones.append(Zone(page=page.number, bbox=(col_left, ln.bbox[1], col_right, ln.bbox[3]),
                               of_columns=1))
             i += 1
@@ -188,7 +212,7 @@ def detect_zones(page: PageExtract, body_lines: List[Tuple[int, Line]], col_left
         band = []
         while j < n:
             l2 = ordered[j][1]
-            if l2.bbox[0] < g - 4 and l2.bbox[2] > g + 4:
+            if ordered[j][0] < 0 or crossing(l2):
                 break
             band.append(ordered[j]); j += 1
         y0 = min(l[1].bbox[1] for l in band)
@@ -201,7 +225,35 @@ def detect_zones(page: PageExtract, body_lines: List[Tuple[int, Line]], col_left
         else:
             zones.append(Zone(page=page.number, bbox=(col_left, y0, col_right, y1), of_columns=1))
         i = j
-    return zones
+    # consecutive full-width zones are one band
+    merged: List[Zone] = []
+    for z in zones:
+        if merged and z.of_columns == 1 and merged[-1].of_columns == 1:
+            m = merged[-1]
+            merged[-1] = Zone(page=m.page, bbox=(m.bbox[0], min(m.bbox[1], z.bbox[1]), m.bbox[2],
+                                                 max(m.bbox[3], z.bbox[3])), of_columns=1)
+        else:
+            merged.append(z)
+    return merged
+
+
+def _rule_regions(page: PageExtract, g: float) -> List[Tuple[float, float, float, float]]:
+    """A table ruled across the gutter: from the first to the last of ≥2 horizontal rules that cross
+    it, close together (a booktabs table's top, mid and bottom rules)."""
+    rules = sorted((d.rect for d in page.drawings
+                    if d.kind == "hrule" and d.rect[0] < g - 20 and d.rect[2] > g + 20
+                    and 0.08 * page.height < d.rect[1] < 0.92 * page.height), key=lambda r: r[1])
+    out = []
+    cl: List = []
+    for r in rules:
+        if cl and r[1] - cl[-1][3] > 0.45 * page.height:
+            if len(cl) >= 2:
+                out.append((min(c[0] for c in cl), cl[0][1] - 2, max(c[2] for c in cl), cl[-1][3] + 2))
+            cl = []
+        cl.append(r)
+    if len(cl) >= 2:
+        out.append((min(c[0] for c in cl), cl[0][1] - 2, max(c[2] for c in cl), cl[-1][3] + 2))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -581,11 +633,11 @@ def _merge_runs(runs: List[Run]) -> List[Run]:
 
 
 def page_zones_and_rows(page: PageExtract, furniture: Set[Tuple[int, int]], col_left: float,
-                        col_right: float) -> List[Tuple[Zone, List[TLine]]]:
+                        col_right: float, boxes=()) -> List[Tuple[Zone, List[TLine]]]:
     """Full per-page pipeline: zones in reading order, each with its rebuilt rows."""
     body = [(i, ln) for i, ln in enumerate(page.lines)
             if (page.number, i) not in furniture and ln.text.strip()]
-    zones = detect_zones(page, body, col_left, col_right)
+    zones = detect_zones(page, body, col_left, col_right, boxes)
     assigned: Set[int] = set()
     result: List[Tuple[Zone, List[TLine]]] = []
     for z in zones:

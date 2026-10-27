@@ -13,10 +13,49 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
+from pdf2latex import jobs as pdf_jobs
 from project_storage import get_supabase_client
 from .guest_identity import verify_guest_token
 
 logger = logging.getLogger("guest_migrator")
+
+
+def _reown_conversion_jobs(synthetic_guest_user_id: str, target_user_id: str) -> List[str]:
+    """
+    Moves the guest's PDF import jobs (running and finished) to the new user. Without this the
+    job keeps owner "guest_<sid>", the signed-in user's next poll is answered 403, and the import
+    they started a moment ago looks like it belongs to someone else. Never raises: a job that
+    cannot be re-owned here is still reachable through the route's migrated-guest check.
+    """
+    try:
+        moved = pdf_jobs.reassign_owner(synthetic_guest_user_id, target_user_id, is_guest=False)
+        if moved:
+            logger.info(f"Re-owned {len(moved)} conversion job(s) from {synthetic_guest_user_id} to {target_user_id}")
+        return moved
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not re-own conversion jobs of {synthetic_guest_user_id}: {e}")
+        return []
+
+
+def project_migrated_to(guest_owner_id: str, project_id: str, user_id: str) -> bool:
+    """
+    Whether the project of a "guest_<sid>" owner now belongs to `user_id`: the project's owner_id
+    is the user, and, when the guest_projects row survives, it records that migration. The
+    guest_sessions row is deleted at migration, so the project's own owner is the durable proof.
+    """
+    if not (guest_owner_id.startswith("guest_") and project_id and user_id):
+        return False
+    supabase = get_supabase_client()
+    proj = supabase.table("projects").select("owner_id").eq("id", project_id).limit(1).execute()
+    if not (proj.data and proj.data[0].get("owner_id") == user_id):
+        return False
+    session_id = guest_owner_id[len("guest_"):]
+    gp = supabase.table("guest_projects").select("migrated_to_user_id") \
+        .eq("guest_session_id", session_id).eq("project_id", project_id).limit(1).execute()
+    if gp.data:
+        return gp.data[0].get("migrated_to_user_id") == user_id
+    # The row is gone (it went with the session); the project owner alone is the evidence.
+    return True
 
 
 def migrate_guest_projects_to_user(
@@ -48,6 +87,7 @@ def migrate_guest_projects_to_user(
 
     guest_records = gp_res.data or []
     if not guest_records:
+        _reown_conversion_jobs(f"guest_{session_id}", target_user_id)
         return {
             "success": True,
             "migrated_count": 0,
@@ -111,6 +151,9 @@ def migrate_guest_projects_to_user(
         except Exception as p_err:
             logger.error(f"Error migrating project {project_id}: {p_err}", exc_info=True)
             raise RuntimeError(f"Failed migrating project {project_id}: {str(p_err)}")
+
+    # 5b. The guest's PDF import jobs follow their projects to the new owner.
+    _reown_conversion_jobs(synthetic_guest_user_id, target_user_id)
 
     # 6. Clean up temporary synthetic guest user row and migrated session
     try:

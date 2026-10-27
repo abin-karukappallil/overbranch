@@ -90,7 +90,7 @@ def test_editor_compile_adds_the_package_and_reports_source_lines(monkeypatch):
         return types.SimpleNamespace(stdout=f"./main.tex:{n}: Undefined control sequence.\n", stderr="",
                                      returncode=1)
 
-    monkeypatch.setattr(compiler.subprocess, "run", run)
+    monkeypatch.setattr(compiler, "_run_tex", run)
     doc = _doc(*TABLE, B + "undefinedmacro")
     r = compiler.compile_latex(doc, engine="pdflatex", persist_synctex=False)
     assert B + "usepackage{booktabs}" in seen["src"]

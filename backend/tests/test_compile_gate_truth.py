@@ -146,11 +146,13 @@ def _capture_engine(monkeypatch):
     seen = []
 
     def run(cmd, cwd=None, **kw):
-        seen.append(cmd[0])
+        # latexmk is the first candidate; record the engine it was told to drive
+        flags = {"-pdf": "pdflatex", "-pdfxe": "xelatex", "-pdflua": "lualatex"}
+        seen.append(next((flags[a] for a in cmd if a in flags), cmd[0]) if cmd[0] == "latexmk" else cmd[0])
         (Path(cwd) / "main.pdf").write_bytes(b"%PDF-1.4")
         return types.SimpleNamespace(stdout="", stderr="", returncode=0)
 
-    monkeypatch.setattr(compiler.subprocess, "run", run)
+    monkeypatch.setattr(compiler, "_run_tex", run)
     return seen
 
 
@@ -192,7 +194,7 @@ def test_recovery_success_still_reports_errors(monkeypatch):
         out = "./main.tex:4: Undefined control sequence.\nl.4 " + B + "foo\n"
         return types.SimpleNamespace(stdout=out, stderr="", returncode=1)
 
-    monkeypatch.setattr(compiler.subprocess, "run", run)
+    monkeypatch.setattr(compiler, "_run_tex", run)
     doc = "\n".join([B + "documentclass{article}", B + "usepackage{fancypkg}", B + "begin{document}",
                      B + "foo", B + "end{document}", ""])
     r = compiler.compile_latex(doc, engine="pdflatex", persist_synctex=False, pre_heal=False)
@@ -228,11 +230,18 @@ def test_pdflatex_non_utf8_output_byte_0xed_does_not_raise_infra_error(monkeypat
     """
     raw_non_utf8 = b"This is pdfTeX\n" + b"x" * 13840 + b"\xed" + b"invalid continuation\nOutput written on main.pdf (1 page).\n"
 
-    def run(cmd, cwd=None, **kw):
-        (Path(cwd) / "main.pdf").write_bytes(b"%PDF-1.4 simulated pdf")
-        return types.SimpleNamespace(stdout=raw_non_utf8, stderr=b"", returncode=0)
+    import tex_sandbox
 
-    monkeypatch.setattr(compiler.subprocess, "run", run)
+    class FakePopen:
+        """Stands in for the engine process tex_sandbox starts; emits raw non-UTF-8 bytes."""
+        def __init__(self, cmd, cwd=None, **kw):
+            self.pid, self.returncode = 0, 0
+            (Path(cwd) / "main.pdf").write_bytes(b"%PDF-1.4 simulated pdf")
+
+        def communicate(self, timeout=None):
+            return raw_non_utf8, b""
+
+    monkeypatch.setattr(tex_sandbox.subprocess, "Popen", FakePopen)
     doc = "\n".join([B + "documentclass{article}", B + "begin{document}", "Hello", B + "end{document}", ""])
     res = compiler.compile_latex(doc, engine="pdflatex", persist_synctex=False)
 

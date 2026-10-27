@@ -35,7 +35,7 @@ def fake_tex(monkeypatch):
             out = (f"./main.tex:{n}: Undefined control sequence.\nl.{n} {B}undefinedmacro\n"
                    f"Overfull {B}hbox (12.0pt too wide) in paragraph at lines {w}--{w}\n")
             return types.SimpleNamespace(stdout=out, stderr="", returncode=1)
-        monkeypatch.setattr(compiler.subprocess, "run", run)
+        monkeypatch.setattr(compiler, "_run_tex", run)
         return seen
 
     return install

@@ -1,13 +1,22 @@
 """
-router.py — Provider Router by Task Type
+router.py — Provider Router: the strict Web2API gateway chain
 
-Routes tasks and model names to the appropriate LLM provider:
-  - Task classification (§2.1) → Fast tier (Groq GPT-OSS-120B / Gemini 3.7 Flash)
-  - Query rewriting → Fast tier
-  - Node-scoped editing → Mid-size strong instruction following (Gemini 3.7 Flash)
-  - Document-wide restructuring → Strongest available reasoning (Gemini 3.7 Flash / MiniMax-M3)
-  - PDF section synthesis → Strong long-context tier
-  - Fidelity-diff vision check → Vision-capable tier (Gemini → Gemini secondary, looped)
+Every LLM request goes through the same ordered chain of self-hosted Web2API
+Gemini gateways (WEB2API_GATEWAYS, e.g. g1 → g2 → g3 → g4 → g5 → model → overmodel)
+and the WHOLE chain is cycled up to LLM_CHAIN_CYCLES (12) times. No other provider
+(OpenRouter, Groq, NVIDIA) is ever consulted.
+
+Rules
+  - Attempts per call = gateways × cycles. Between full cycles the router backs off
+    1, 2, 4, 8, 15, 15… seconds (cancellation-aware).
+  - A gateway that timed out or answered 5xx is skipped for LLM_GATEWAY_COOLDOWN
+    (30s) — unless every gateway is cooling, in which case all are tried.
+  - A 400 moves on to the next gateway, but no further cycle is started after the
+    pass that saw it (the same request will fail everywhere).
+  - Timeouts are liveness-based: the HTTP read timeout (LLM_IDLE_TIMEOUT, ~45s) is
+    the max silence between two streamed chunks, so a slow answer that keeps
+    streaming is never cut off. One attempt is capped at LLM_ATTEMPT_WALL_CAP (300s).
+  - Exhaustion raises LLMProviderError whose message is only "Model outage — please retry."
 
 Includes JSON schema validation and reject-retry-fail-loud error handling.
 """
@@ -24,12 +33,10 @@ from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from .base_provider import LLMProvider, LLMProviderError
-from .errors import FALLBACK_KINDS, FailureKind, classify_exception
-from .groq_provider import GroqProvider
+from .errors import OUTAGE_MESSAGE, FailureKind, classify_exception
 from .multimodal import has_image_parts, strip_image_parts
-from .gemini_provider import GeminiProvider, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
-from .nvidia_provider import NvidiaProvider
-from .openrouter_provider import OpenRouterProvider
+from .gemini_provider import GeminiProvider, ALLOWED_GEMINI_MODELS, ALLOWED_MODEL_IDS as GEMINI_MODEL_IDS
+from .web2api_keys import GatewaySpec, get_chain_cycles, get_gateway_specs
 
 logger = logging.getLogger("provider_router")
 
@@ -46,56 +53,94 @@ class TaskType(str, Enum):
     VISION_DIFF = "vision_diff"
 
 
-# Task type to recommended model class mapping
-TASK_ROUTING_TABLE: Dict[TaskType, str] = {
-    TaskType.TASK_CLASSIFICATION: "llama-3.1-8b-instant",
-    TaskType.QUERY_REWRITING: "llama-3.1-8b-instant",
-    TaskType.FAST_PLAN: "llama-3.1-8b-instant",
-    TaskType.OUTLINE_PLAN: "llama-3.1-8b-instant",
-    TaskType.NODE_EDITING: "gemini-3.7-flash",
-    TaskType.DOC_RESTRUCTURING: "gemini-3.7-flash",
-    TaskType.VISION_DIFF: "gemini-3.7-flash",
-}
+# Every task runs on a gateway model; the gateways serve Gemini only.
+TASK_ROUTING_TABLE: Dict[TaskType, str] = {t: DEFAULT_MODEL for t in TaskType}
 
 
-# Primary is the Gemini Web2API endpoint. When it times out the next stop is its
-# twin deployment (same provider class, GEMINI2_* env), then OpenRouter MiniMax M3.
-# A request carrying images keeps only the image-capable hops, so it cycles
-# gemini → gemini2 → gemini → … (see fallback_chain's needs_images).
-DEFAULT_FALLBACK_CHAIN = "gemini2,openrouter:minimax/minimax-m3"
+# Pause before cycle 2, 3, 4, 5 and every later one.
+CYCLE_BACKOFF_SECONDS = (1.0, 2.0, 4.0, 8.0, 15.0)
+
+# A gateway that timed out / answered 5xx sits out this long (seconds).
+DEFAULT_GATEWAY_COOLDOWN = 30.0
+
+# Hard cap on ONE attempt, however lively its stream. The idle (read) timeout is
+# what normally ends a dead attempt; this only bounds a stream that never finishes.
+DEFAULT_ATTEMPT_WALL_CAP = 300.0
 
 
-# Total wall-clock budget for ONE provider's attempt, when a fallback is still
-# waiting behind it. Gemini rotates its own keys on timeout (GEMINI_TIMEOUT x up to
-# 5 keys), so without a bound the caller can give up before the router ever sees a
-# failure. The default clears one full GEMINI_TIMEOUT attempt and part of a second,
-# so a slow-but-working endpoint still answers while a dead one is handed on rather
-# than burning every key slot. 0 disables the bound.
-DEFAULT_PROVIDER_ATTEMPT_TIMEOUT = 30.0
-
-
-# Maximum number of fallback attempts when cycling through providers.
-# The chain (e.g. gemini → gemini2 → openrouter) repeats until this cap.
-DEFAULT_MAX_FALLBACK_ATTEMPTS = 12
-
-
-def _attempt_timeout() -> float:
+def _env_float(name: str, default: float) -> float:
     try:
-        return float(os.getenv("LLM_PROVIDER_ATTEMPT_TIMEOUT", DEFAULT_PROVIDER_ATTEMPT_TIMEOUT))
+        return float(os.getenv(name, default))
     except ValueError:
-        return DEFAULT_PROVIDER_ATTEMPT_TIMEOUT
+        return default
 
 
-def _max_fallback_attempts() -> int:
-    try:
-        return int(os.getenv("LLM_MAX_FALLBACK_ATTEMPTS", DEFAULT_MAX_FALLBACK_ATTEMPTS))
-    except ValueError:
-        return DEFAULT_MAX_FALLBACK_ATTEMPTS
+def _attempt_wall_cap() -> float:
+    return max(0.05, _env_float("LLM_ATTEMPT_WALL_CAP", DEFAULT_ATTEMPT_WALL_CAP))
 
 
-def _call_with_deadline(fn: Callable[[], Dict[str, Any]], timeout: float, label: str) -> Dict[str, Any]:
+def _gateway_cooldown() -> float:
+    return max(0.0, _env_float("LLM_GATEWAY_COOLDOWN", DEFAULT_GATEWAY_COOLDOWN))
+
+
+class _AttemptToken:
+    """Cancellation view for ONE attempt: cancelled when the caller's token is, or when
+    the router abandons the attempt (wall cap), which also closes its open stream so
+    the worker thread stops instead of streaming on in the background."""
+
+    def __init__(self, parent: Optional[Any]):
+        self._parent = parent
+        self._abandoned = False
+        self._lock = threading.Lock()
+        self._resources: set = set()
+
+    def is_cancelled(self) -> bool:
+        return self._abandoned or bool(self._parent is not None and self._parent.is_cancelled())
+
+    def check_cancelled(self) -> None:
+        from cancellation import LLMOperationCancelled
+        if self.is_cancelled():
+            raise LLMOperationCancelled("LLM call cancelled.")
+
+    def register_resource(self, res: Any) -> None:
+        if res is None:
+            return
+        with self._lock:
+            self._resources.add(res)
+            abandoned = self._abandoned
+        if self._parent is not None:
+            self._parent.register_resource(res)
+        if abandoned:
+            self._close(res)
+
+    def unregister_resource(self, res: Any) -> None:
+        with self._lock:
+            self._resources.discard(res)
+        if self._parent is not None:
+            self._parent.unregister_resource(res)
+
+    def abandon(self) -> None:
+        with self._lock:
+            self._abandoned = True
+            resources = list(self._resources)
+            self._resources.clear()
+        for res in resources:
+            self._close(res)
+
+    @staticmethod
+    def _close(res: Any) -> None:
+        try:
+            if hasattr(res, "close") and callable(res.close):
+                res.close()
+        except Exception:
+            pass
+
+
+def _call_with_deadline(
+    fn: Callable[[], Dict[str, Any]], timeout: float, label: str, on_abandon: Optional[Callable[[], None]] = None
+) -> Dict[str, Any]:
     """Runs fn() and gives up after ``timeout`` seconds with a TIMEOUT-kind error.
-    The abandoned call finishes (or hits its own client timeout) on a daemon thread."""
+    The abandoned call is told to stop (``on_abandon``) and finishes on a daemon thread."""
     if timeout <= 0:
         return fn()
     box: Dict[str, Any] = {}
@@ -110,8 +155,13 @@ def _call_with_deadline(fn: Callable[[], Dict[str, Any]], timeout: float, label:
     t.start()
     t.join(timeout)
     if t.is_alive():
+        if on_abandon is not None:
+            try:
+                on_abandon()
+            except Exception:
+                pass
         raise LLMProviderError(
-            f"{label} timed out after {timeout:.0f}s (provider attempt budget)",
+            f"{label} timed out after {timeout:.0f}s (attempt wall cap)",
             status_code=504, provider=label, kind=FailureKind.TIMEOUT,
         )
     if "error" in box:
@@ -119,24 +169,14 @@ def _call_with_deadline(fn: Callable[[], Dict[str, Any]], timeout: float, label:
     return box["value"]
 
 
-def _fallback_entries() -> List[str]:
-    """LLM_FALLBACK_CHAIN entries first, then the default entry unless already named,
-    so a configured chain can never shrink the router to a single candidate."""
-    raw = os.getenv("LLM_FALLBACK_CHAIN", DEFAULT_FALLBACK_CHAIN)
-    entries = [e.strip() for e in raw.split(",") if e.strip()]
-    for default in DEFAULT_FALLBACK_CHAIN.split(","):
-        default = default.strip()
-        if default and default.lower() not in (e.lower() for e in entries):
-            entries.append(default)
-    return entries
-
-
 def _is_configured(provider: LLMProvider, name: str, api_keys: Optional[Dict[str, str]]) -> bool:
-    """A fallback is only worth trying when it has a key: server-side or the user's own."""
-    if api_keys and (api_keys.get(name) or "").strip():
+    """A gateway is only worth trying with a URL and a key: server-side or the user's own."""
+    if api_keys and (api_keys.get("gemini") or "").strip():
         return True
     if hasattr(provider, "reload_keys"):
         provider.reload_keys()
+    if not getattr(provider, "base_url", "x"):
+        return False
     candidates = getattr(provider, "candidates", None)
     if candidates is None:
         return True
@@ -164,50 +204,117 @@ def validate_json_schema(payload: Any, required_fields: List[str]) -> Tuple[bool
 
 class ProviderRouter:
     """
-    Routes model names and task types to provider instances.
+    Routes every request through the ordered Web2API gateway chain.
     """
 
     def __init__(self):
-        self.groq = GroqProvider()
-        self.gemini = GeminiProvider()
-        # The same Web2API provider against a second deployment, so a timed-out
-        # primary endpoint falls over to its twin before leaving Gemini entirely.
-        self.gemini2 = GeminiProvider(namespace="GEMINI2", label="Gemini (secondary)")
-        self.openrouter = OpenRouterProvider()
-        self.nvidia = NvidiaProvider()
-        self._providers: Dict[str, LLMProvider] = {
-            "groq": self.groq,
-            "gemini": self.gemini,
-            "gemini2": self.gemini2,
-            "openrouter": self.openrouter,
-            "nvidia": self.nvidia,
-        }
+        self._clock: Callable[[], float] = time.monotonic
+        self._sleep: Callable[[float], None] = time.sleep
+        self._lock = threading.Lock()
+        self._cooldown_until: Dict[str, float] = {}
+        self._gateways: List[Tuple[str, LLMProvider]] = []
+        self._gateway_sig: Optional[Tuple[Any, ...]] = None
+        self._pinned = False
+        self._sync_gateways()
+
+    # ------------------------------------------------------------------
+    # Gateway chain
+    # ------------------------------------------------------------------
+
+    def _sync_gateways(self) -> None:
+        """(Re)builds the chain when the gateway env changed; reuses providers otherwise."""
+        if self._pinned:
+            return
+        specs = get_gateway_specs()
+        sig = tuple((s.name, s.base_url, s.shared_key, s.namespace) for s in specs)
+        if sig == self._gateway_sig:
+            return
+        existing = dict(self._gateways)
+        built: List[Tuple[str, LLMProvider]] = []
+        for spec in specs:
+            prev = existing.get(spec.name)
+            if isinstance(prev, GeminiProvider) and prev.base_url == (spec.base_url or prev.base_url):
+                built.append((spec.name, prev))
+            else:
+                built.append((spec.name, self._make_gateway(spec)))
+        self._gateways = built
+        self._gateway_sig = sig
+        logger.info("LLM gateway chain: " + " -> ".join(n for n, _ in built) if built
+                    else "LLM gateway chain: (none configured)")
+
+    @staticmethod
+    def _make_gateway(spec: GatewaySpec) -> GeminiProvider:
+        return GeminiProvider(namespace=spec.namespace, label=spec.label or spec.name,
+                              base_url=spec.base_url, shared_key=spec.shared_key)
+
+    def set_gateway_chain(self, entries: List[Tuple[str, LLMProvider]]) -> None:
+        """Pins an explicit ordered chain (tests, tooling); env changes no longer rebuild it."""
+        self._gateways = list(entries)
+        self._pinned = True
+        self._cooldown_until.clear()
+
+    def gateway_chain(self, api_keys: Optional[Dict[str, str]] = None) -> List[Tuple[str, LLMProvider]]:
+        """The ordered, usable gateways: configured ones only, order preserved."""
+        self._sync_gateways()
+        return [(n, p) for n, p in self._gateways if _is_configured(p, n, api_keys)]
+
+    def chain_active(self) -> bool:
+        """True when at least one gateway is configured."""
+        return bool(self.gateway_chain())
+
+    @property
+    def gemini(self) -> Optional[LLMProvider]:
+        """The first gateway (compat for callers that wanted 'the Gemini provider')."""
+        chain = self.gateway_chain()
+        return chain[0][1] if chain else None
+
+    # -- cooldown ------------------------------------------------------
+
+    def _is_cooling(self, name: str, now: float) -> bool:
+        with self._lock:
+            return self._cooldown_until.get(name, 0.0) > now
+
+    def _mark_down(self, name: str) -> None:
+        with self._lock:
+            self._cooldown_until[name] = self._clock() + _gateway_cooldown()
+
+    def _mark_up(self, name: str) -> None:
+        with self._lock:
+            self._cooldown_until.pop(name, None)
+
+    def _wait(self, seconds: float, cancel_token: Optional[Any]) -> None:
+        """Backoff sleep that notices a cancellation within ~0.25s."""
+        from cancellation import LLMOperationCancelled
+        remaining = seconds
+        while remaining > 0:
+            if cancel_token is not None and cancel_token.is_cancelled():
+                raise LLMOperationCancelled("LLM call cancelled.")
+            step = min(0.25, remaining)
+            self._sleep(step)
+            remaining -= step
+        if cancel_token is not None and cancel_token.is_cancelled():
+            raise LLMOperationCancelled("LLM call cancelled.")
+
+    # ------------------------------------------------------------------
+    # Routing
+    # ------------------------------------------------------------------
 
     def route(self, model: str) -> LLMProvider:
-        """Determines which provider handles a given model name."""
-        if not model:
-            return self.gemini
+        """Every model is served by the gateway chain; this is its first gateway."""
+        chain = self.gateway_chain()
+        if not chain:
+            raise LLMProviderError(OUTAGE_MESSAGE, provider="router", kind=FailureKind.UNAVAILABLE)
+        return chain[0][1]
 
-        clean_model = model.strip().lower()
-
-        if clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
-            return self.gemini
-
-        if clean_model.startswith("gemini-") or clean_model in GEMINI_MODEL_IDS or "gemini" in clean_model:
-            return self.gemini
-
-        if (
-            clean_model.startswith("groq/")
-            or clean_model.startswith("groq:")
-            or clean_model.startswith("llama-3")
-            or clean_model.startswith("llama3")
-            or clean_model in ("fast", "groq-fast", "mixtral", "gemma2-9b", "gemma2-9b-it")
-            or "gpt-oss-120b" in clean_model
-            or "instant" in clean_model
-        ):
-            return self.groq
-
-        return self.openrouter
+    @staticmethod
+    def gateway_model(model: Optional[str]) -> str:
+        """The gateway model for a requested name: itself when the gateways serve it, else the default."""
+        clean = (model or "").strip()
+        if clean in GEMINI_MODEL_IDS:
+            return clean
+        if clean.lower() in GEMINI_MODEL_IDS:
+            return clean.lower()
+        return DEFAULT_MODEL
 
     def get_model_for_task(self, task_type: TaskType) -> str:
         """Returns the optimal model ID for a specific task type."""
@@ -217,13 +324,13 @@ class ProviderRouter:
         return DEFAULT_MODEL
 
     def get_fallback_provider(self) -> LLMProvider:
-        return self.openrouter
+        return self.route(DEFAULT_MODEL)
 
     def get_fallback_model(self) -> str:
-        return self.openrouter.default_model
+        return DEFAULT_MODEL
 
     def get_fast_model(self) -> str:
-        return "llama-3.1-8b-instant"
+        return DEFAULT_MODEL
 
     def get_strong_model(self) -> str:
         return DEFAULT_MODEL
@@ -238,41 +345,11 @@ class ProviderRouter:
             return 120_000  # Conservative default
 
     def get_available_models(self) -> Dict[str, Any]:
-        providers_list = []
-
-        gemini_models = self.gemini.get_available_models()
-        if gemini_models:
-            providers_list.append({
-                "name": "Gemini Web2API",
-                "models": gemini_models,
-            })
-
-        groq_models = self.groq.get_available_models()
-        if groq_models:
-            providers_list.append({
-                "name": "Groq (Ultra-Fast Inference)",
-                "models": groq_models,
-            })
-
-        openrouter_models = self.openrouter.get_available_models()
-        if openrouter_models:
-            providers_list.append({
-                "name": self.openrouter.get_provider_name(),
-                "models": openrouter_models,
-            })
-
+        """Gateway models only."""
         return {
-            "providers": providers_list,
+            "providers": [{"name": "Gemini Web2API", "models": list(ALLOWED_GEMINI_MODELS)}],
             "default_model": DEFAULT_MODEL,
         }
-
-    # ------------------------------------------------------------------
-    # Fallback chain
-    # ------------------------------------------------------------------
-
-    def register_provider(self, name: str, provider: LLMProvider) -> None:
-        """Adds a provider that LLM_FALLBACK_CHAIN entries can name."""
-        self._providers[name] = provider
 
     def fallback_chain(
         self,
@@ -281,48 +358,23 @@ class ProviderRouter:
         allow_fallback: bool = True,
         needs_images: bool = False,
     ) -> List[Tuple[str, LLMProvider, str]]:
-        """
-        [(provider_name, provider, model)] to try in order: the provider that
-        serves ``model`` first, then every configured fallback that is not the
-        same provider+model. Fallbacks come from LLM_FALLBACK_CHAIN
-        ("provider:model,provider:model"), plus DEFAULT_FALLBACK_CHAIN entries it
-        does not already name — the second Web2API endpoint, then MiniMax M3.
+        """[(gateway_name, provider, model)] in the order they are tried: one pass of the chain.
 
-        With ``needs_images`` (the request carries image parts) only providers that
-        accept image input stay in the chain, so a vision request cycles
-        Gemini → Gemini (secondary) instead of reaching a text-only hop that would
-        have to drop the pictures the question is about.
-        """
-        primary = self.route(model)
-        if needs_images and not getattr(primary, "supports_images", False):
-            logger.info(
-                f"Model '{model}' routes to a text-only provider but the request carries images; "
-                f"using the Gemini Web2API endpoints instead."
-            )
-            primary, model = self.gemini, DEFAULT_MODEL
-        primary_name = next((n for n, p in self._providers.items() if p is primary), primary.get_provider_name())
-        chain: List[Tuple[str, LLMProvider, str]] = [(primary_name, primary, model)]
-        if not allow_fallback:
-            return chain
-        for entry in _fallback_entries():
-            name, _, fb_model = entry.partition(":")
-            name = name.strip().lower()
-            provider = self._providers.get(name)
-            if provider is None:
-                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: unknown provider '{name}'")
-                continue
-            fb_model = fb_model.strip() or (self.get_fallback_model() if provider is self.openrouter else model)
-            if provider is primary and fb_model == model:
-                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: same provider and model as the primary")
-                continue
-            if not _is_configured(provider, name, api_keys):
-                logger.warning(f"LLM_FALLBACK_CHAIN entry '{entry}' dropped: provider '{name}' has no API key configured")
-                continue
+        ``allow_fallback`` only controls cycling (see chat): the gateways themselves are
+        always the whole chain. ``needs_images`` drops a gateway whose provider cannot
+        take image parts (every Web2API gateway can)."""
+        target = self.gateway_model(model)
+        chain: List[Tuple[str, LLMProvider, str]] = []
+        for name, provider in self.gateway_chain(api_keys):
             if needs_images and not getattr(provider, "supports_images", False):
-                logger.info(f"Fallback '{entry}' skipped for this call: it does not accept image input")
+                logger.info(f"Gateway '{name}' skipped for this call: it does not accept image input")
                 continue
-            chain.append((name, provider, fb_model))
+            chain.append((name, provider, target))
         return chain
+
+    # ------------------------------------------------------------------
+    # chat
+    # ------------------------------------------------------------------
 
     def chat(
         self,
@@ -336,100 +388,133 @@ class ProviderRouter:
         allow_fallback: bool = True,
     ) -> Dict[str, Any]:
         """
-        Calls the provider for ``model`` and walks the fallback chain on provider
-        failures (rate limit, quota, timeout, outage, unavailable model). A user
-        cancellation or a malformed request is raised immediately — another
-        provider would not do better.
+        Walks the gateway chain in order, cycling it up to LLM_CHAIN_CYCLES times (see the
+        module docstring for the cooldown / 400 / backoff rules). A user cancellation is
+        raised immediately.
 
-        The response carries ``provider``, ``model_used``, ``key_id`` (never a
-        key), ``is_fallback`` and ``attempts``. ``observer`` receives one dict per
-        attempt, for tracing.
+        ``allow_fallback=False`` makes ONE pass over the chain instead of cycling it.
+
+        The response carries ``provider`` (the gateway name), ``model_used``, ``key_id``
+        (never a key), ``is_fallback`` (True when an earlier attempt failed) and
+        ``attempts``. ``observer`` receives one dict per attempt: provider, model, ok,
+        failure, status_code, latency_ms, attempt, total, cycle, cycles, will_retry.
         """
         from cancellation import LLMOperationCancelled
 
-        clean_model = (model or "").strip().lower()
-        if not clean_model or clean_model in ("auto:smart", "auto", "smart", "default") or clean_model.startswith("auto"):
-            model = DEFAULT_MODEL
-
         needs_images = has_image_parts(messages)
-        chain = self.fallback_chain(
-            model, api_keys, allow_fallback=allow_fallback, needs_images=needs_images
-        )
-        cancel_kwargs = {"cancel_token": cancel_token} if cancel_token is not None else {}
+        chain = self.fallback_chain(model, api_keys, allow_fallback=allow_fallback, needs_images=needs_images)
         attempts: List[Dict[str, Any]] = []
+        if not chain:
+            logger.error("LLM call failed: no Web2API gateway is configured (set WEB2API_GATEWAYS + WEB2API_API_KEY)")
+            err = LLMProviderError(OUTAGE_MESSAGE, provider="router", kind=FailureKind.UNAVAILABLE)
+            setattr(err, "attempts", attempts)
+            raise err
 
-        # With fallbacks, cycle through the chain up to max_attempts, capped at 2 full cycles.
-        max_attempts = min(_max_fallback_attempts(), len(chain) * 2) if allow_fallback and len(chain) > 1 else len(chain)
-        dead_providers: set = set()
+        n = len(chain)
+        cycles = get_chain_cycles() if allow_fallback else 1
+        total = n * cycles
+        attempt_no = 0
+        last_err: Optional[BaseException] = None
+        last_kind = FailureKind.UNAVAILABLE
+        last_status: Optional[int] = None
 
-        for idx in range(max_attempts):
+        for cycle in range(cycles):
+            if cycle > 0:
+                self._wait(CYCLE_BACKOFF_SECONDS[min(cycle - 1, len(CYCLE_BACKOFF_SECONDS) - 1)], cancel_token)
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise LLMOperationCancelled("LLM call cancelled.")
 
-            name, provider, target_model = chain[idx % len(chain)]
-            if name in dead_providers and len(dead_providers) < len(chain):
-                continue
-            t0 = time.time()
-            # Image-capable providers are the only ones left in the chain when images are
-            # present; a text-only provider can still be the single candidate (no fallback,
-            # or none configured), and then it gets the same step as text.
-            provider_messages = messages
-            if needs_images and not getattr(provider, "supports_images", False):
-                provider_messages = strip_image_parts(messages)
-            is_last = idx == max_attempts - 1 or (len(dead_providers) + 1 >= len(chain))
-            try:
-                resp = _call_with_deadline(
-                    lambda p=provider, pm=provider_messages, tm=target_model: p.chat(
-                        messages=pm,
-                        model=tm,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        api_keys=api_keys,
-                        **cancel_kwargs,
-                    ),
-                    0 if is_last else _attempt_timeout(),
-                    name,
-                )
-            except LLMOperationCancelled:
-                raise
-            except Exception as err:
-                kind, _retry_after = classify_exception(err)
-                status = getattr(err, "status_code", None)
-                if status in (401, 402, 403, 404) or "SSL" in str(err) or "certificate" in str(err).lower():
-                    dead_providers.add(name)
+            now = self._clock()
+            cooling = {name for name, _, _ in chain if self._is_cooling(name, now)}
+            skip = cooling if len(cooling) < n else set()
+            pass_saw_bad_request = False
+            pass_names = [i for i, (name, _, _) in enumerate(chain) if name not in skip]
+
+            for idx in pass_names:
+                name, provider, target_model = chain[idx]
+                if cancel_token is not None and cancel_token.is_cancelled():
+                    raise LLMOperationCancelled("LLM call cancelled.")
+                attempt_no += 1
+                t0 = time.time()
+                provider_messages = messages
+                if needs_images and not getattr(provider, "supports_images", False):
+                    provider_messages = strip_image_parts(messages)
+                attempt_token = _AttemptToken(cancel_token)
+                try:
+                    resp = _call_with_deadline(
+                        lambda p=provider, pm=provider_messages, tm=target_model, tok=attempt_token: p.chat(
+                            messages=pm,
+                            model=tm,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            api_keys=api_keys,
+                            cancel_token=tok,
+                        ),
+                        _attempt_wall_cap(),
+                        name,
+                        on_abandon=attempt_token.abandon,
+                    )
+                except LLMOperationCancelled:
+                    raise
+                except Exception as err:
+                    if cancel_token is not None and cancel_token.is_cancelled():
+                        raise LLMOperationCancelled("LLM call cancelled.")
+                    kind, _retry_after = classify_exception(err)
+                    status = getattr(err, "status_code", None)
+                    if kind == FailureKind.CANCELLED:
+                        raise
+                    if kind == FailureKind.BAD_REQUEST:
+                        pass_saw_bad_request = True
+                    elif kind in (FailureKind.TIMEOUT, FailureKind.UNAVAILABLE, FailureKind.UNKNOWN) or (
+                            isinstance(status, int) and status >= 500):
+                        self._mark_down(name)
+                    last_err, last_kind, last_status = err, kind, status if isinstance(status, int) else None
+                    later_in_pass = idx != pass_names[-1]
+                    will_retry = later_in_pass or (cycle < cycles - 1 and not pass_saw_bad_request)
+                    attempt = {
+                        "provider": name, "model": target_model, "ok": False, "failure": kind.value,
+                        "status_code": status,
+                        "latency_ms": round((time.time() - t0) * 1000, 1),
+                        "attempt": attempt_no, "total": total, "cycle": cycle + 1, "cycles": cycles,
+                        "will_retry": will_retry,
+                    }
+                    attempts.append(attempt)
+                    _notify(observer, attempt)
+                    logger.warning(
+                        f"Gateway '{name}' failed ({kind.value}, status={status}): {str(err)[:200]} "
+                        f"[attempt {attempt_no}/{total}, cycle {cycle + 1}/{cycles}"
+                        f"{'' if will_retry else ', chain exhausted'}]"
+                    )
+                    continue
+
+                self._mark_up(name)
+                resp = dict(resp)
+                resp["provider"] = name
+                resp.setdefault("model_used", target_model)
+                resp.setdefault("key_id", None)
+                resp["is_fallback"] = attempt_no > 1
                 attempt = {
-                    "provider": name, "model": target_model, "ok": False, "failure": kind.value,
-                    "status_code": status,
-                    "latency_ms": round((time.time() - t0) * 1000, 1),
+                    "provider": name, "model": resp.get("model_used") or target_model, "ok": True,
+                    "key_id": resp.get("key_id"), "latency_ms": round((time.time() - t0) * 1000, 1),
+                    "usage": resp.get("usage") or {},
+                    "attempt": attempt_no, "total": total, "cycle": cycle + 1, "cycles": cycles,
+                    "will_retry": False,
                 }
                 attempts.append(attempt)
                 _notify(observer, attempt)
-                if kind not in FALLBACK_KINDS or is_last:
-                    tail = "no fallback for this failure" if not is_last else f"fallback chain exhausted after {len(attempts)} attempts"
-                    logger.error(f"LLM call failed on {name} ({kind.value}); {tail}")
-                    setattr(err, "attempts", attempts)
-                    raise
-                next_entry = chain[(idx + 1) % len(chain)]
-                logger.warning(f"Provider '{name}' failed or delayed ({kind.value}); falling back to "
-                               f"{next_entry[0]}:{next_entry[2]} (attempt {idx + 2}/{max_attempts})")
-                continue
+                resp["attempts"] = attempts
+                return resp
 
-            resp = dict(resp)
-            resp["provider"] = name
-            resp.setdefault("model_used", target_model)
-            resp.setdefault("key_id", None)
-            resp["is_fallback"] = idx > 0
-            attempt = {
-                "provider": name, "model": resp.get("model_used") or target_model, "ok": True,
-                "key_id": resp.get("key_id"), "latency_ms": round((time.time() - t0) * 1000, 1),
-                "usage": resp.get("usage") or {},
-            }
-            attempts.append(attempt)
-            _notify(observer, attempt)
-            resp["attempts"] = attempts
-            return resp
+            if pass_saw_bad_request:
+                logger.error("LLM call rejected as a bad request by a gateway; not cycling the chain again")
+                break
 
-        raise LLMProviderError("No LLM provider is configured.", provider="router")
+        logger.error(f"LLM call failed: gateway chain exhausted after {len(attempts)} attempt(s) "
+                     f"(last: {last_kind.value}: {str(last_err)[:200]})")
+        err = LLMProviderError(OUTAGE_MESSAGE, status_code=last_status, provider="router", kind=last_kind)
+        err.__cause__ = last_err
+        setattr(err, "attempts", attempts)
+        raise err
 
     def chat_fast_tier(
         self,
@@ -438,24 +523,9 @@ class ProviderRouter:
         max_tokens: int = 2048,
         api_keys: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        fast_model = self.get_fast_model()
-        try:
-            return self.groq.chat(
-                messages=messages,
-                model=fast_model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_keys=api_keys,
-            )
-        except Exception as groq_err:
-            logger.info(f"Fast tier Groq failed ({groq_err}), routing to Gemini Web2API fallback...")
-            return self.gemini.chat(
-                messages=messages,
-                model=DEFAULT_MODEL,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_keys=api_keys,
-            )
+        """The fast tier is the same gateway chain."""
+        return self.chat(messages=messages, model=self.get_fast_model(), temperature=temperature,
+                         max_tokens=max_tokens, api_keys=api_keys)
 
     def chat_json_with_retry(
         self,
@@ -472,12 +542,11 @@ class ProviderRouter:
         Implements reject-retry-then-fail-loud pattern.
         """
         model = self.get_model_for_task(task_type)
-        provider = self.route(model)
 
         current_messages = list(messages)
         for attempt in range(max_retries + 1):
             try:
-                resp = provider.chat(
+                resp = self.chat(
                     messages=current_messages,
                     model=model,
                     temperature=temperature,

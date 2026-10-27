@@ -1,0 +1,1269 @@
+{
+  "ok": true,
+  "strict": false,
+  "browserSkipped": false,
+  "lint": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "filesScanned": 9
+  },
+  "runtime": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": []
+  },
+  "layout": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 1,
+    "findings": [
+      {
+        "code": "content_overlap",
+        "severity": "info",
+        "time": 16.859,
+        "selector": "#dc-lines > div:nth-of-type(17)",
+        "message": "Two text blocks overlap and may render unreadable.",
+        "rect": {
+          "left": 0,
+          "top": 842,
+          "right": 58.44,
+          "bottom": 870,
+          "width": 58.44,
+          "height": 28
+        },
+        "containerSelector": "#dc-stamp",
+        "text": "\\includegraphics[width=0.9\\linewidth]{assets/figure_1.png}",
+        "fixHint": "Give each block its own zone, or put data-layout-allow-overlap on the text or on a container inside the scene. A marker on the scene root does not apply.",
+        "dataAttributes": {
+          "data-hf-id": "hf-5sqh"
+        },
+        "sourceFile": "compositions/decompile.html",
+        "bbox": {
+          "x": 0,
+          "y": 842,
+          "width": 58.44,
+          "height": 28
+        },
+        "firstSeen": 16.859,
+        "lastSeen": 16.859,
+        "occurrences": 1,
+        "heldMs": 0,
+        "times": [
+          16.859
+        ]
+      }
+    ],
+    "duration": 38.2,
+    "samples": [
+      2.122,
+      6.367,
+      10.611,
+      14.856,
+      19.1,
+      23.344,
+      27.589,
+      31.833,
+      36.078
+    ],
+    "transitionSamples": [],
+    "transitionSamplesDropped": 0,
+    "tolerance": 2,
+    "totalIssueCount": 1,
+    "truncated": false
+  },
+  "motion": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": false,
+    "samples": 0
+  },
+  "contrast": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 0,
+    "infoCount": 0,
+    "findings": [],
+    "enabled": true,
+    "samples": [
+      2.122,
+      10.611,
+      19.1,
+      27.589,
+      36.078
+    ],
+    "checked": 33,
+    "passed": 33
+  },
+  "craft": {
+    "ok": true,
+    "errorCount": 0,
+    "warningCount": 5,
+    "infoCount": 0,
+    "findings": [
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 6 text elements stay under it for 0.5 s or more, the smallest \"BETA\" at 15 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "BETA",
+        "selector": "span.rv-mini-beta",
+        "dataAttributes": {},
+        "sourceFile": "compositions/reveal.html",
+        "bbox": {
+          "x": 641.55,
+          "y": 44.97,
+          "width": 43.92,
+          "height": 22
+        },
+        "time": 3.246,
+        "times": [
+          3.246,
+          3.246,
+          3.246,
+          3.246,
+          3.246,
+          3.246
+        ],
+        "fontPx": 15,
+        "floorPx": 28,
+        "seconds": 2.871,
+        "elements": [
+          {
+            "selector": "span.rv-mini-beta",
+            "text": "BETA",
+            "fontPx": 15,
+            "time": 3.246,
+            "seconds": 2.871
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(1)",
+            "text": "PDF TO LATEX",
+            "fontPx": 20,
+            "time": 3.246,
+            "seconds": 2.871
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(2)",
+            "text": "TEMPLATES",
+            "fontPx": 20,
+            "time": 3.246,
+            "seconds": 2.871
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(3)",
+            "text": "FEATURES",
+            "fontPx": 20,
+            "time": 3.246,
+            "seconds": 2.871
+          },
+          {
+            "selector": "#rv-pill > span:nth-of-type(4)",
+            "text": "SELF-HOST",
+            "fontPx": 20,
+            "time": 3.246,
+            "seconds": 2.871
+          },
+          {
+            "selector": "span.gh",
+            "text": "★ GITHUB",
+            "fontPx": 20,
+            "time": 3.246,
+            "seconds": 2.871
+          }
+        ]
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 27 text elements stay under it for 0.5 s or more, the smallest \"14 pages\" at 16 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "14 pages",
+        "selector": "#dc-chips > span:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/decompile.html",
+        "bbox": {
+          "x": 301.01,
+          "y": 468,
+          "width": 78.34,
+          "height": 24
+        },
+        "time": 12.359,
+        "times": [
+          11.859,
+          11.984,
+          11.984,
+          11.984,
+          12.359,
+          12.359,
+          12.359,
+          12.858,
+          12.983,
+          13.108,
+          13.233,
+          13.358,
+          13.358,
+          13.482,
+          13.607,
+          13.607,
+          13.732,
+          13.857,
+          13.982,
+          13.982,
+          14.107,
+          14.231,
+          14.356,
+          14.481,
+          14.481,
+          14.856,
+          14.856
+        ],
+        "fontPx": 16,
+        "floorPx": 28,
+        "seconds": 4.369,
+        "elements": [
+          {
+            "selector": "#dc-chips > span:nth-of-type(1)",
+            "text": "14 pages",
+            "fontPx": 16,
+            "time": 12.359,
+            "seconds": 4.369
+          },
+          {
+            "selector": "#dc-chips > span:nth-of-type(2)",
+            "text": "38 equations",
+            "fontPx": 16,
+            "time": 12.359,
+            "seconds": 4.494
+          },
+          {
+            "selector": "#dc-chips > span:nth-of-type(3)",
+            "text": "6 raster figures",
+            "fontPx": 16,
+            "time": 12.359,
+            "seconds": 4.494
+          },
+          {
+            "selector": "span.dc-tab.on",
+            "text": "main.tex",
+            "fontPx": 19,
+            "time": 11.984,
+            "seconds": 4.869
+          },
+          {
+            "selector": "#dc-tabs > span:nth-of-type(2)",
+            "text": "refs.bib",
+            "fontPx": 19,
+            "time": 11.984,
+            "seconds": 4.869
+          },
+          {
+            "selector": "#dc-tabs > span:nth-of-type(3)",
+            "text": "assets/ (6)",
+            "fontPx": 19,
+            "time": 11.984,
+            "seconds": 4.869
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(1)",
+            "text": "% Decompiled from ReportTemplate.pdf",
+            "fontPx": 19,
+            "time": 12.858,
+            "seconds": 3.995
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(2)",
+            "text": "\\documentclass[10pt,journal,compsoc]{IEEEtran}",
+            "fontPx": 19,
+            "time": 12.983,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(3)",
+            "text": "\\usepackage[utf8]{inputenc}",
+            "fontPx": 19,
+            "time": 13.108,
+            "seconds": 3.745
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(4)",
+            "text": "\\usepackage{amsmath,amssymb,amsfonts}",
+            "fontPx": 19,
+            "time": 13.233,
+            "seconds": 3.62
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(5)",
+            "text": "\\usepackage{graphicx}",
+            "fontPx": 19,
+            "time": 13.358,
+            "seconds": 3.495
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(6)",
+            "text": "\\usepackage{booktabs}",
+            "fontPx": 19,
+            "time": 13.358,
+            "seconds": 3.495
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(7)",
+            "text": "\\usepackage{cite}",
+            "fontPx": 19,
+            "time": 13.482,
+            "seconds": 3.371
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(8)",
+            "text": "\\begin{document}",
+            "fontPx": 19,
+            "time": 13.607,
+            "seconds": 3.246
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(9)",
+            "text": "\\title{Byzantine Fault-Tolerant Consensus on Async Networks}",
+            "fontPx": 19,
+            "time": 13.607,
+            "seconds": 3.371
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(10)",
+            "text": "\\author{Devon Vance, Marcus Sterling, and H. K. Rao}",
+            "fontPx": 19,
+            "time": 13.732,
+            "seconds": 3.121
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(11)",
+            "text": "\\maketitle",
+            "fontPx": 19,
+            "time": 13.857,
+            "seconds": 2.996
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(12)",
+            "text": "\\section{System Formalization}",
+            "fontPx": 19,
+            "time": 13.982,
+            "seconds": 2.871
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(13)",
+            "text": "Let $\\mathcal{N} = \\{1, \\dots, n\\}$ denote the set of nodes...",
+            "fontPx": 19,
+            "time": 13.982,
+            "seconds": 2.996
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(14)",
+            "text": "\\begin{align}",
+            "fontPx": 19,
+            "time": 14.107,
+            "seconds": 2.746
+          },
+          {
+            "selector": "div.dc-ln.i2",
+            "text": "Q_{valid} &\\ge \\left\\lfloor \\frac{2n+1}{3} \\right\\rfloor + f_{byz}",
+            "fontPx": 19,
+            "time": 14.231,
+            "seconds": 2.747
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(16)",
+            "text": "\\end{align}",
+            "fontPx": 19,
+            "time": 14.356,
+            "seconds": 2.497
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(17)",
+            "text": "\\includegraphics[width=0.9\\linewidth]{assets/figure_1.png}",
+            "fontPx": 19,
+            "time": 14.481,
+            "seconds": 2.497
+          },
+          {
+            "selector": "#dc-lines > div:nth-of-type(18)",
+            "text": "\\end{document}",
+            "fontPx": 19,
+            "time": 14.481,
+            "seconds": 2.372
+          },
+          {
+            "selector": "#dc-dsub",
+            "text": "Convert a PDF into LaTeX inside this project.",
+            "fontPx": 22,
+            "time": 11.859,
+            "seconds": 4.994
+          },
+          {
+            "selector": "#dc-verified-sub",
+            "text": "with pdflatex",
+            "fontPx": 22,
+            "time": 14.856,
+            "seconds": 1.872
+          },
+          {
+            "selector": "#dc-verified",
+            "text": "[✓] VERIFIED ZERO-ERROR COMPILATION",
+            "fontPx": 26,
+            "time": 14.856,
+            "seconds": 1.997
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"Seminar Report\" (2 words) is on screen 0.06 s (±0.01 s), under its 0.40 s floor: hold it about 0.5 s + 0.3 s a word (1.10 s here) before it leaves or changes; see references/motion.md.",
+        "text": "Seminar Report",
+        "selector": "#ag-proj",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 41.53,
+          "y": 179.3,
+          "width": 199.46,
+          "height": 32.25999999999999
+        },
+        "time": 27.839,
+        "words": 2,
+        "seconds": 0.062,
+        "floorSeconds": 0.4
+      },
+      {
+        "code": "text_below_floor",
+        "severity": "warning",
+        "message": "Type floor is 28 px (2.6% of the 1080 px short side, what a phone can read) and 95 text elements stay under it for 0.5 s or more, the smallest \"AR\" at 14 px: set reading text to at least 28 px, or put data-layout-ignore on text that is texture rather than reading; see references/look.md.",
+        "text": "AR",
+        "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 1406.49,
+          "y": 185.42,
+          "width": 21.87,
+          "height": 18.91
+        },
+        "time": 27.839,
+        "times": [
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          27.839,
+          28.338,
+          28.338,
+          28.338,
+          28.962,
+          29.087,
+          29.087,
+          29.087,
+          29.087,
+          29.087,
+          29.087,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.711,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836,
+          29.836
+        ],
+        "fontPx": 14,
+        "floorPx": 28,
+        "seconds": 3.87,
+        "elements": [
+          {
+            "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1)",
+            "text": "AR",
+            "fontPx": 14,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-top > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2)",
+            "text": "SV",
+            "fontPx": 14,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-latest",
+            "text": "Latest",
+            "fontPx": 14,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-accept",
+            "text": "Accept",
+            "fontPx": 16.74,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-engine",
+            "text": "pdfLaTeX",
+            "fontPx": 17,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-file",
+            "text": "/ main.tex",
+            "fontPx": 18,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "1",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.872
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2)",
+            "text": "[12pt,report]{report}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.872
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(2) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\documentclass",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.872
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "2",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{graphicx}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(1)",
+            "text": "3",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(2)",
+            "text": "{amsmath,amssymb,amsfonts}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(4) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(1)",
+            "text": "4",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(2)",
+            "text": "{hyperref}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(5) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\usepackage",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(6) > span:nth-of-type(1)",
+            "text": "5",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(1)",
+            "text": "6",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(2)",
+            "text": "{Seminar & Project Report: Modern Machine Learning Systems}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(7) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\title",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(1)",
+            "text": "7",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(2)",
+            "text": "{Alex Rivers, Sam Vance}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(8) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\author",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(9) > span:nth-of-type(1)",
+            "text": "8",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.997
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(1)",
+            "text": "9",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(2)",
+            "text": "{document}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(10) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(11) > span:nth-of-type(1)",
+            "text": "10",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(11) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\maketitle",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(12) > span:nth-of-type(1)",
+            "text": "11",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(1)",
+            "text": "12",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(2)",
+            "text": "{Introduction}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(13) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\section",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(14) > span:nth-of-type(1)",
+            "text": "13",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(14) > span:nth-of-type(2)",
+            "text": "Academic collaboration on reports and presentations requires",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(15) > span:nth-of-type(1)",
+            "text": "14",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(15) > span:nth-of-type(2)",
+            "text": "fast TeX symbol insertion and instant PDF rendering.",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(16) > span:nth-of-type(1)",
+            "text": "15",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(1)",
+            "text": "16",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(2)",
+            "text": "{Project Methodology & Results}",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-code > div:nth-of-type(17) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\section",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "17",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.747
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "18",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.747
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "19",
+            "fontPx": 19,
+            "time": 27.839,
+            "seconds": 1.747
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "Students and team members can co-author reports, lab",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.998
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(1)",
+            "text": "17",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(2)",
+            "text": "{table}[h]",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(1) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "18",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(2) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\centering",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(1)",
+            "text": "19",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{Experimental results}",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\caption",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(1)",
+            "text": "20",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(2)",
+            "text": "{tabular}{lcc}",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(4) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\begin",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(5) > span:nth-of-type(1)",
+            "text": "21",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(5) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\hline",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(6) > span:nth-of-type(1)",
+            "text": "22",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(6) > span:nth-of-type(2)",
+            "text": "Method & Dataset & Result \\\\",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(7) > span:nth-of-type(1)",
+            "text": "23",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(7) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\hline",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(1)",
+            "text": "24",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(2)",
+            "text": "{tabular}",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(8) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(1) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "26",
+            "fontPx": 19,
+            "time": 29.711,
+            "seconds": 1.998
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(2)",
+            "text": "assignments, and Beamer slides anywhere.",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "{document}",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(1)",
+            "text": "25",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.748
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(2)",
+            "text": "{table}",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.748
+          },
+          {
+            "selector": "#ag-diff > div:nth-of-type(9) > span:nth-of-type(2) > span:nth-of-type(1)",
+            "text": "\\end",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.748
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(2) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "27",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-tail > div:nth-of-type(3) > span:nth-of-type(3) > span:nth-of-type(2)",
+            "text": "28",
+            "fontPx": 19,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-live",
+            "text": "Live",
+            "fontPx": 20,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-cmp-a",
+            "text": "Compile TeX",
+            "fontPx": 20,
+            "time": 27.839,
+            "seconds": 2.247
+          },
+          {
+            "selector": "#ag-toggle > span:nth-of-type(1)",
+            "text": "Ask",
+            "fontPx": 22,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-toggle > span:nth-of-type(2)",
+            "text": "Edit",
+            "fontPx": 22,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-review > span:nth-of-type(1)",
+            "text": "1 / 1",
+            "fontPx": 22,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "span.add",
+            "text": "+9",
+            "fontPx": 22,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "span.del",
+            "text": "−0",
+            "fontPx": 22,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-review > span:nth-of-type(3)",
+            "text": "main.tex",
+            "fontPx": 22,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-reject",
+            "text": "Reject",
+            "fontPx": 22,
+            "time": 29.836,
+            "seconds": 1.873
+          },
+          {
+            "selector": "#ag-l1",
+            "text": "Finding target…",
+            "fontPx": 23,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-l2",
+            "text": "Applying patch…",
+            "fontPx": 23,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-l3",
+            "text": "Compiling…",
+            "fontPx": 23,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-l4",
+            "text": "Done",
+            "fontPx": 23,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-proj",
+            "text": "Seminar Report",
+            "fontPx": 24,
+            "time": 27.839,
+            "seconds": 3.87
+          },
+          {
+            "selector": "#ag-reason-head",
+            "text": "Agent Reasoning",
+            "fontPx": 24,
+            "time": 29.087,
+            "seconds": 2.622
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(1)",
+            "text": "a",
+            "fontPx": 26,
+            "time": 28.338,
+            "seconds": 0.624
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(2)",
+            "text": "d",
+            "fontPx": 26,
+            "time": 28.338,
+            "seconds": 0.624
+          },
+          {
+            "selector": "#ag-typed > span:nth-of-type(3)",
+            "text": "d",
+            "fontPx": 26,
+            "time": 28.338,
+            "seconds": 0.624
+          },
+          {
+            "selector": "#ag-ph",
+            "text": "Ask agent to edit LaTeX...",
+            "fontPx": 26,
+            "time": 28.962,
+            "seconds": 2.747
+          }
+        ]
+      },
+      {
+        "code": "line_unread",
+        "severity": "warning",
+        "message": "\"a d d a r e s u l t s t a b l e\" (16 words) is on screen 0.70 s (±0.01 s), under its 3.97 s floor: hold it about 0.5 s + 0.3 s a word (5.30 s here) before it leaves or changes; see references/motion.md.",
+        "text": "a d d a r e s u l t s t a b l e",
+        "selector": "#ag-typed",
+        "dataAttributes": {},
+        "sourceFile": "compositions/agent.html",
+        "bbox": {
+          "x": 1227,
+          "y": 874,
+          "width": 46.450000000000045,
+          "height": 31
+        },
+        "time": 28.236,
+        "words": 16,
+        "seconds": 0.702,
+        "floorSeconds": 3.975
+      }
+    ],
+    "enabled": true,
+    "step": 0.125,
+    "samples": 306
+  },
+  "hdr": {
+    "autoPromotion": null,
+    "inspection": "available"
+  },
+  "snapshots": {
+    "enabled": false,
+    "files": [],
+    "times": [],
+    "findingFiles": []
+  },
+  "saved": {
+    "id": "348ffc9c-8112-47b4-b572-f25179fb08d2",
+    "revision": "ca97ea4f-85b1-48b6-9497-339aa761a3ed",
+    "report": "/home/abin/overbranch/brag-output/composition/.hyperframes/artifacts/checks/348ffc9c-8112-47b4-b572-f25179fb08d2.json",
+    "attribution": "recorded-revision"
+  },
+  "_meta": {
+    "version": "0.8.191",
+    "latestVersion": "0.8.191",
+    "updateAvailable": false
+  }
+}

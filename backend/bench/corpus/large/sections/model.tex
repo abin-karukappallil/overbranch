@@ -1,0 +1,74 @@
+\chapter{The Model}\label{ch:model}
+
+We consider a finite mixture of Gaussian components, which is the model whose
+estimation problem is studied in this report. The background facts from
+Chapter~\ref{ch:background} are used throughout.
+
+\section{Mixture density}\label{sec:mixture}
+
+Given weights $\pi_1,\dots,\pi_k$ with $\pi_j\ge 0$ and $\sum_j \pi_j = 1$, the
+density of an observation is
+\begin{equation}\label{eq:mixture}
+  p(x \mid \theta) = \sum_{j=1}^{k} \pi_j\, \phi\bigl(x;\,\mu_j,\Sigma_j\bigr),
+\end{equation}
+where $\phi(\cdot;\mu,\Sigma)$ denotes the multivariate normal density and
+$\theta = \{\pi_j,\mu_j,\Sigma_j\}_{j=1}^{k}$ collects all parameters.
+
+\lipsum[11-12]
+
+\section{Identifiability}\label{sec:identifiability}
+
+The mixture in Equation~\eqref{eq:mixture} is identifiable up to relabelling of
+the components, provided the component means are distinct and the mixing
+weights are strictly positive. Section~\ref{sec:prob} supplies the probabilistic
+language needed for this statement.
+
+\lipsum[13-14]
+
+\section{Likelihood}\label{sec:likelihood}
+
+For an independent sample $x_1,\dots,x_n$ the log-likelihood is
+\begin{equation}\label{eq:loglik}
+  \ell(\theta) = \sum_{i=1}^{n} \log \sum_{j=1}^{k} \pi_j\,\phi(x_i;\mu_j,\Sigma_j).
+\end{equation}
+Maximising Equation~\eqref{eq:loglik} directly is not convenient because the
+logarithm does not act on individual terms. The estimation procedure of
+Chapter~\ref{ch:estimation} avoids this difficulty.
+
+\lipsum[15-16]
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{lcc}
+    \toprule
+    Component & Parameters & Free scalars \\
+    \midrule
+    Weight & $\pi_j$ & $1$ \\
+    Mean & $\mu_j$ & $d$ \\
+    Covariance & $\Sigma_j$ & $d(d+1)/2$ \\
+    \bottomrule
+  \end{tabular}
+  \caption{Free parameters contributed by each component.}\label{tab:params}
+\end{table}
+
+Table~\ref{tab:params} counts the free parameters, which determine the cost
+of the estimation problem discussed in Section~\ref{sec:counting}.
+
+\section{Parameter counting}\label{sec:counting}
+
+Summing the entries of Table~\ref{tab:params} over $k$ components, and
+subtracting one for the normalisation constraint on the weights, gives
+\begin{equation}\label{eq:count}
+  N(k,d) = k\Bigl(1 + d + \tfrac{d(d+1)}{2}\Bigr) - 1 .
+\end{equation}
+Equation~\eqref{eq:count} grows quadratically in $d$ and linearly in $k$.
+
+\lipsum[17-18]
+
+\section{Further remarks}\label{sec:further-model}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[75-86]

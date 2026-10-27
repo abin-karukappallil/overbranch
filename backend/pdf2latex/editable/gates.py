@@ -21,6 +21,8 @@ MERGE_TIMEOUT_BASE = 90
 # Body constructs that must never appear (editability lint).
 _FORBIDDEN = [r"\\begin\{tikzpicture\}", r"\\node", r"\\put\b", r"\\begin\{picture\}",
               r"\\textblock", r"\\obfit\b", r"\\obhfit\b"]
+# Floats move a picture or a table away from where the source page has it: never in editable output.
+_FLOATS = r"\\begin\{(?:figure|table)\*?\}"
 
 
 async def compile_with_repair(ctx, tex: str, doc: EditDoc, lm: LineMap,
@@ -34,7 +36,6 @@ async def compile_with_repair(ctx, tex: str, doc: EditDoc, lm: LineMap,
     pdf, log = await compile_tex(ctx, tex, timeout)
     if pdf is not None:
         return tex, pdf
-    from ..pipeline import _error_lines, _log_errors
     prev_errors = None
     for _ in range(4):
         lines = _error_lines(log)
@@ -56,6 +57,13 @@ async def compile_with_repair(ctx, tex: str, doc: EditDoc, lm: LineMap,
             break
         prev_errors = n_err
     return tex, None
+
+
+def _error_lines(log: str) -> List[int]:
+    # (as pipeline._error_lines; read here so the gates never import the LLM providers)
+    nums = [int(m) for m in re.findall(r"\.tex:(\d+):", log or "")]
+    nums += [int(m) for m in re.findall(r"^l\.(\d+)", log or "", flags=re.MULTILINE)]
+    return nums
 
 
 def _degrade(doc: EditDoc, bad_ids: set) -> bool:
@@ -115,7 +123,7 @@ def _plain_para(page: int, text: str):
 # Gates
 # ---------------------------------------------------------------------------
 
-def run_gates(extract: DocExtract, doc: EditDoc, tex: str, pdf: bytes, settings) -> Dict:
+def run_gates(extract: DocExtract, doc: EditDoc, tex: str, pdf: bytes, settings, out_dir=None) -> Dict:
     from . import measure as MEAS
     result: Dict = {"gates": {}, "failed": []}
     # G2/G3 coverage + order
@@ -124,23 +132,35 @@ def run_gates(extract: DocExtract, doc: EditDoc, tex: str, pdf: bytes, settings)
     result["gates"]["extra_ratio"] = cov["extra_ratio"]
     result["gates"]["order"] = cov["order"]
     result["page_coverage"] = cov.get("page_coverage", {})
+    result["missing"] = cov.get("missing", [])
+    result["extra"] = cov.get("extra", [])
     # G4 style
     style = MEAS.style_fidelity(extract, doc, pdf)
     result["style"] = style
     result["gates"]["style"] = style.get("overall", 0.0)
-    # G5 pages
-    from ..pipeline import _page_count
+    # G5 pages: page-locked, the output has exactly the source's pages, each starting where the
+    # source page starts
     out_pages = _page_count(pdf)
     result["gates"]["pages_out"] = out_pages
     result["gates"]["pages_source"] = doc.page_count
+    ps = MEAS.page_start(doc, pdf)
+    result["page_start"] = ps
+    result["gates"]["page_start"] = ps["score"]
+    # G7 figures where the source page has them, at the source size
+    fp = MEAS.figure_position(doc, pdf, out_dir) if out_dir is not None else None
+    if fp is not None:
+        result["figure_position"] = fp
+        result["gates"]["figure_position"] = fp["score"]
+    # running header/footer typeface
+    ch = MEAS.chrome_style(extract, doc, pdf)
+    result["chrome_style"] = ch
+    result["gates"]["chrome_family"] = ch["family"]
     # G6 assets
-    result["assets"] = _asset_gate(extract, doc, tex)
+    result["assets"] = _asset_gate(extract, doc, tex, out_dir)
     # G8 lint
     result["lint"] = _lint(tex, doc)
 
     # decide failures
-    # Editable targets: coverage/extra/style stay strict (they measure text & style fidelity);
-    # order and page count are naturally looser under reflow.
     if cov["coverage"] < settings.coverage_target:
         result["failed"].append("coverage")
     if cov["extra_ratio"] > 0.01:
@@ -150,29 +170,59 @@ def run_gates(extract: DocExtract, doc: EditDoc, tex: str, pdf: bytes, settings)
     tgt = getattr(settings, "style_target", 0.97)
     if style.get("overall", 1.0) < tgt:
         result["failed"].append("style")
-    allow = max(1, round(0.25 * doc.page_count))
-    if abs(out_pages - doc.page_count) > allow:
+    if out_pages != doc.page_count:
         result["failed"].append("pages")
+    if ps["score"] < 1.0:
+        result["failed"].append("page_start")
+    if fp is not None and fp["score"] < 1.0:
+        result["failed"].append("figure_position")
+    if ch["family"] < 0.97:
+        result["failed"].append("chrome_style")
     if not result["assets"].get("ok", True):
         result["failed"].append("assets")
-    if result["lint"].get("forbidden", 0) > 0:
+    if result["lint"].get("forbidden", 0) > 0 or result["lint"].get("floats", 0) > 0:
         result["failed"].append("lint")
     return result
 
 
-def _asset_gate(extract: DocExtract, doc: EditDoc, tex: str) -> Dict:
+def _page_count(pdf: bytes) -> int:
+    # read here rather than from ..pipeline, whose import pulls in the LLM providers
+    import pymupdf
+    with pymupdf.open(stream=pdf, filetype="pdf") as d:
+        return d.page_count
+
+
+_DERIVED = ("_trim", "_eq", "_bg")
+
+
+def _asset_gate(extract: DocExtract, doc: EditDoc, tex: str, out_dir=None) -> Dict:
+    """Every picture the document references exists, and every content picture of the source
+    (not a running header/footer's, not a page background) is referenced, itself or as its
+    derived file (a crop to its ink: ``*_trim.png``)."""
     from pathlib import Path
     refs = set(re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", tex))
-    extracted = set()
+    furn = getattr(doc.furniture, "image_keys", set()) or set()
+    extracted, needed = set(), set()
     for p in extract.pages:
         for img in p.images:
             extracted.add(img.file)
-    # equation crops (page{n}_eq{k}.png) are generated by editable mode, not extracted images,
-    # so they are expected references, not "extra".
+            if (p.number, img.file) not in furn and p.number not in doc.scanned:
+                needed.add(img.file)
+
+    def base(ref: str) -> str:
+        stem, dot, ext = ref.rpartition(".")
+        for suf in _DERIVED:
+            if stem.endswith(suf):
+                return stem[: -len(suf)] + dot + ext
+        return ref
+    covered = {base(r) for r in refs} | refs
+    unreferenced = sorted(needed - covered)
+    missing = sorted(r for r in refs if out_dir is not None and not (Path(out_dir) / r).exists())
     extra = {r for r in refs - extracted
-             if not any(t in r.rsplit("/", 1)[-1] for t in ("_eq", "_bg"))}
-    return {"ok": True, "referenced": sorted(refs), "extracted": sorted(extracted),
-            "extra": sorted(extra)}
+             if not any(t in r.rsplit("/", 1)[-1] for t in _DERIVED)}
+    ok = not unreferenced and not missing
+    return {"ok": ok, "referenced": len(refs), "needed": len(needed), "unreferenced": unreferenced[:20],
+            "missing_files": missing[:20], "extra": sorted(extra)[:20]}
 
 
 def _lint(tex: str, doc: EditDoc) -> Dict:
@@ -187,6 +237,7 @@ def _lint(tex: str, doc: EditDoc) -> Dict:
     hspace = len(re.findall(r"\\hspace\{[-0-9.]+\s*(?:pt|bp|cm|mm|in)", body))
     notes = len(re.findall(r"\\obnote", body))
     sections = len(re.findall(r"\\(?:chapter|section|subsection|subsubsection)\*?\{", body))
-    return {"forbidden": forbidden, "fontsize": fontsize, "nodes": nodes,
+    floats = len(re.findall(_FLOATS, body))
+    return {"forbidden": forbidden, "floats": floats, "fontsize": fontsize, "nodes": nodes,
             "vspace_per_page": round(vspace / npages, 2), "hspace_per_page": round(hspace / npages, 2),
             "notes": notes, "sections": sections}

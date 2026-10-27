@@ -4,6 +4,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # The app image is built FROM the TeX base image. Build it first:
+      #   docker build -f docker/texlive.Dockerfile -t overbranch-texlive:2026.1 .
+      # (or run ./deploy.sh, which builds the base when it is missing).
+      args:
+        TEX_BASE: ${TEX_BASE:-overbranch-texlive:2026.1}
     container_name: overbranch
     restart: always
     ports:

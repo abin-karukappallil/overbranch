@@ -1,0 +1,451 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-workbench, #0e0f12);
+      font-family: "Inter", sans-serif;
+    }
+    #dc-stage {
+      position: absolute;
+      inset: 0;
+    }
+    #dc-kick {
+      position: absolute;
+      left: 120px;
+      top: 80px;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 28px;
+      letter-spacing: 0.14em;
+      color: #00cc68;
+    }
+    #dc-head {
+      position: absolute;
+      left: 120px;
+      top: 124px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 64px;
+      line-height: 1;
+      letter-spacing: -0.03em;
+      color: #ffffff;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .dc-w {
+      display: inline-block;
+      margin-right: 0.24em;
+    }
+    /* Import PDF dialog (components/pdf-import/ImportPdfDialog.tsx) */
+    #dc-dialog {
+      position: absolute;
+      left: 120px;
+      top: 236px;
+      width: 660px;
+      height: 770px;
+      background: #141519;
+      border: 2px solid #282a30;
+      border-radius: 22px;
+    }
+    #dc-dtitle {
+      position: absolute;
+      left: 36px;
+      top: 32px;
+      font-weight: 600;
+      font-size: 34px;
+      color: #e2e4e9;
+    }
+    #dc-dsub {
+      position: absolute;
+      left: 36px;
+      top: 84px;
+      font-size: 22px;
+      color: #9e9e9e;
+    }
+    #dc-drop {
+      position: absolute;
+      left: 36px;
+      top: 136px;
+      width: 588px;
+      height: 170px;
+      border: 2px dashed #3a3d45;
+      border-radius: 16px;
+    }
+    #dc-drop-hint {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 66px;
+      text-align: center;
+      font-weight: 500;
+      font-size: 22px;
+      color: #9e9e9e;
+    }
+    #dc-file {
+      position: absolute;
+      left: 136px;
+      top: 40px;
+    }
+    #dc-fname {
+      font-weight: 600;
+      font-size: 28px;
+      color: #e2e4e9;
+    }
+    #dc-chips {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+    }
+    .dc-chip {
+      font-family: "Space Mono", monospace;
+      font-size: 16px;
+      color: #c9ccd3;
+      background: #1a1c22;
+      border: 1px solid #282a30;
+      border-radius: 6px;
+      padding: 3px 9px;
+    }
+    #dc-stages {
+      position: absolute;
+      left: 36px;
+      top: 344px;
+    }
+    .dc-row {
+      position: relative;
+      height: 62px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .dc-icon {
+      position: relative;
+      width: 30px;
+      height: 30px;
+    }
+    .dc-ring,
+    .dc-spin,
+    .dc-done {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+    }
+    .dc-ring {
+      border: 3px solid #3a3d45;
+    }
+    .dc-spin {
+      border: 3px solid transparent;
+      border-top-color: #10b981;
+      border-right-color: #10b981;
+      opacity: 0;
+    }
+    .dc-done {
+      background: #10b981;
+      color: #04130d;
+      font-weight: 800;
+      font-size: 18px;
+      line-height: 30px;
+      text-align: center;
+      opacity: 0;
+    }
+    .dc-label {
+      font-weight: 500;
+      font-size: 28px;
+      color: #9e9e9e;
+    }
+    #dc-rule {
+      position: absolute;
+      left: 36px;
+      right: 36px;
+      top: 612px;
+      height: 1px;
+      background: #282a30;
+    }
+    #dc-verified {
+      position: absolute;
+      left: 36px;
+      top: 640px;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 26px;
+      color: #00cc68;
+    }
+    #dc-verified-sub {
+      margin-top: 8px;
+      font-weight: 400;
+      font-size: 22px;
+      color: #9e9e9e;
+    }
+    /* The paper that gets decompiled */
+    #dc-page {
+      position: absolute;
+      left: 180px;
+      top: 395px;
+      width: 96px;
+      height: 124px;
+      border-radius: 4px;
+      background: #fafafa;
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+    }
+    #dc-page .pt {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 11px;
+      height: 7px;
+      background: #2b2b2b;
+      border-radius: 1px;
+    }
+    #dc-page .pa {
+      position: absolute;
+      left: 30px;
+      right: 30px;
+      top: 22px;
+      height: 3px;
+      background: #8a8a8a;
+    }
+    #dc-page .pc {
+      position: absolute;
+      top: 32px;
+      width: 36px;
+      height: 46px;
+      background: repeating-linear-gradient(#bdbdbd 0 2px, transparent 2px 6px);
+    }
+    #dc-page .pe {
+      position: absolute;
+      left: 26px;
+      right: 26px;
+      top: 84px;
+      height: 4px;
+      background: #4a4a4a;
+    }
+    #dc-page .pf {
+      position: absolute;
+      left: 26px;
+      right: 26px;
+      top: 94px;
+      height: 20px;
+      background: #d6d6d6;
+    }
+    /* Code panel (components/landing/PdfToLatexSection.tsx workbench) */
+    #dc-code {
+      position: absolute;
+      left: 820px;
+      top: 236px;
+      width: 980px;
+      height: 770px;
+      background: #0a0a0c;
+      border: 2px solid #333338;
+      border-radius: 22px;
+      overflow: hidden;
+    }
+    #dc-tabs {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-left: 18px;
+      background: #18181b;
+      border-bottom: 1px solid #2a2a2e;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 19px;
+      color: #a1a1aa;
+    }
+    .dc-tab {
+      padding: 6px 14px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+    }
+    .dc-tab.on {
+      background: #000000;
+      color: #00cc68;
+      border-color: #3f3f46;
+    }
+    #dc-lines {
+      padding: 26px 30px;
+      font-family: "Space Mono", monospace;
+      font-size: 19px;
+      line-height: 32px;
+      color: #d4d4d8;
+    }
+    .dc-ln {
+      height: 32px;
+      white-space: pre;
+    }
+    .i1 {
+      padding-left: 32px;
+    }
+    .i2 {
+      padding-left: 64px;
+    }
+    .c-com {
+      color: #a1a1aa;
+    }
+    .c-key {
+      color: #00cc68;
+      font-weight: 700;
+    }
+    .c-ttl {
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .c-sec {
+      color: #6ee7b7;
+    }
+    .c-env {
+      color: #fcd34d;
+    }
+    #dc-stamp {
+      position: absolute;
+      left: 1420px;
+      top: 850px;
+      padding: 12px 24px;
+      background: #00cc68;
+      color: #000000;
+      border: 4px solid #000000;
+      box-shadow: 8px 8px 0 0 #ffffff;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 46px;
+      line-height: 0.95;
+      letter-spacing: -0.02em;
+      text-align: center;
+    }
+  </style>
+  <div data-hf-id="hf-ginh" id="root" data-composition-id="decompile" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-6016" id="dc-stage" data-layout-allow-overflow>
+      <div data-hf-id="hf-wfzb" id="dc-kick">02 // PDF TO LATEX CODE</div>
+      <div data-hf-id="hf-mbt1" id="dc-head"><span data-hf-id="hf-egr6" class="dc-w">Decompile</span><span data-hf-id="hf-bug5" class="dc-w">PDFs</span><span data-hf-id="hf-uw1c" class="dc-w">into</span><span data-hf-id="hf-36ou" class="dc-w">real</span><span data-hf-id="hf-xt9s" class="dc-w">LaTeX.</span></div>
+
+      <div data-hf-id="hf-r59z" id="dc-dialog">
+        <div data-hf-id="hf-slky" id="dc-dtitle">Import PDF</div>
+        <div data-hf-id="hf-ph3a" id="dc-dsub">Convert a PDF into LaTeX inside this project.</div>
+        <div data-hf-id="hf-31vs" id="dc-drop">
+          <div data-hf-id="hf-bzp1" id="dc-drop-hint">Click to choose a PDF</div>
+          <div data-hf-id="hf-34ol" id="dc-file">
+            <div data-hf-id="hf-11pm" id="dc-fname">ReportTemplate.pdf</div>
+            <div data-hf-id="hf-p01c" id="dc-chips"><span data-hf-id="hf-00ws" class="dc-chip">14 pages</span><span data-hf-id="hf-sy7h" class="dc-chip">38 equations</span><span data-hf-id="hf-olq7" class="dc-chip">6 raster figures</span></div>
+          </div>
+        </div>
+        <div data-hf-id="hf-r01m" id="dc-stages">
+          <div data-hf-id="hf-agl9" class="dc-row" id="dc-r1"><div data-hf-id="hf-w44b" class="dc-icon"><div data-hf-id="hf-35ty" class="dc-ring"></div><div data-hf-id="hf-qbde" class="dc-spin" id="dc-s1"></div><div data-hf-id="hf-bqmg" class="dc-done" id="dc-d1">✓</div></div><div data-hf-id="hf-95pn" class="dc-label" id="dc-l1">Extracting Assets</div></div>
+          <div data-hf-id="hf-eepa" class="dc-row" id="dc-r2"><div data-hf-id="hf-ec63" class="dc-icon"><div data-hf-id="hf-hykq" class="dc-ring"></div><div data-hf-id="hf-md9d" class="dc-spin" id="dc-s2"></div><div data-hf-id="hf-tgqx" class="dc-done" id="dc-d2">✓</div></div><div data-hf-id="hf-61iq" class="dc-label" id="dc-l2">Generating</div></div>
+          <div data-hf-id="hf-ictb" class="dc-row" id="dc-r3"><div data-hf-id="hf-dxv2" class="dc-icon"><div data-hf-id="hf-icvr" class="dc-ring"></div><div data-hf-id="hf-jdzs" class="dc-spin" id="dc-s3"></div><div data-hf-id="hf-brim" class="dc-done" id="dc-d3">✓</div></div><div data-hf-id="hf-amzv" class="dc-label" id="dc-l3">Compiling LaTeX</div></div>
+          <div data-hf-id="hf-oij4" class="dc-row" id="dc-r4"><div data-hf-id="hf-djk1" class="dc-icon"><div data-hf-id="hf-ir6s" class="dc-ring"></div><div data-hf-id="hf-ffvr" class="dc-spin" id="dc-s4"></div><div data-hf-id="hf-p40n" class="dc-done" id="dc-d4">✓</div></div><div data-hf-id="hf-sp89" class="dc-label" id="dc-l4">Checking coverage &amp; style fidelity</div></div>
+        </div>
+        <div data-hf-id="hf-cf79" id="dc-rule"></div>
+        <div data-hf-id="hf-rv3i" id="dc-verified">[✓] VERIFIED ZERO-ERROR COMPILATION<div data-hf-id="hf-2a30" id="dc-verified-sub">with pdflatex</div></div>
+      </div>
+
+      <div data-hf-id="hf-po9d" id="dc-page" data-layout-ignore>
+        <div data-hf-id="hf-t48k" class="pt"></div><div data-hf-id="hf-rkp5" class="pa"></div>
+        <div data-hf-id="hf-8ku7" class="pc" style="left: 10px"></div><div data-hf-id="hf-ir74" class="pc" style="right: 10px"></div>
+        <div data-hf-id="hf-cr3h" class="pe"></div><div data-hf-id="hf-gp7i" class="pf"></div>
+      </div>
+
+      <div data-hf-id="hf-d98w" id="dc-code">
+        <div data-hf-id="hf-2ht7" id="dc-tabs"><span data-hf-id="hf-uj3p" class="dc-tab on">main.tex</span><span data-hf-id="hf-qhep" class="dc-tab">refs.bib</span><span data-hf-id="hf-a9k7" class="dc-tab">assets/ (6)</span></div>
+        <div data-hf-id="hf-fwp4" id="dc-lines">
+          <div data-hf-id="hf-2mik" class="dc-ln c-com">% Decompiled from ReportTemplate.pdf</div>
+          <div data-hf-id="hf-pndn" class="dc-ln c-key">\documentclass[10pt,journal,compsoc]{IEEEtran}</div>
+          <div data-hf-id="hf-rqca" class="dc-ln">\usepackage[utf8]{inputenc}</div>
+          <div data-hf-id="hf-higz" class="dc-ln">\usepackage{amsmath,amssymb,amsfonts}</div>
+          <div data-hf-id="hf-2q77" class="dc-ln">\usepackage{graphicx}</div>
+          <div data-hf-id="hf-4row" class="dc-ln">\usepackage{booktabs}</div>
+          <div data-hf-id="hf-9fxe" class="dc-ln">\usepackage{cite}</div>
+          <div data-hf-id="hf-wrnh" class="dc-ln c-key">\begin{document}</div>
+          <div data-hf-id="hf-fceh" class="dc-ln i1 c-ttl">\title{Byzantine Fault-Tolerant Consensus on Async Networks}</div>
+          <div data-hf-id="hf-o9cp" class="dc-ln i1">\author{Devon Vance, Marcus Sterling, and H. K. Rao}</div>
+          <div data-hf-id="hf-ju00" class="dc-ln i1">\maketitle</div>
+          <div data-hf-id="hf-4l3s" class="dc-ln i1 c-sec">\section{System Formalization}</div>
+          <div data-hf-id="hf-4a7h" class="dc-ln i1">Let $\mathcal{N} = \{1, \dots, n\}$ denote the set of nodes...</div>
+          <div data-hf-id="hf-ohol" class="dc-ln i1 c-env">\begin{align}</div>
+          <div data-hf-id="hf-z9x8" class="dc-ln i2">Q_{valid} &amp;\ge \left\lfloor \frac{2n+1}{3} \right\rfloor + f_{byz}</div>
+          <div data-hf-id="hf-tkkp" class="dc-ln i1 c-env">\end{align}</div>
+          <div data-hf-id="hf-5sqh" class="dc-ln i1 c-com">\includegraphics[width=0.9\linewidth]{assets/figure_1.png}</div>
+          <div data-hf-id="hf-sv2h" class="dc-ln c-key">\end{document}</div>
+        </div>
+      </div>
+
+      <div data-hf-id="hf-id43" id="dc-stamp" data-layout-allow-occlusion>ACTUALLY<br data-hf-id="hf-x5px" />EDITABLE</div>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+
+      // Arrive: panels rise out of the grown BETA chip's ground
+      tl.fromTo("#dc-dialog", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "expo.out" }, 0.04);
+      tl.fromTo("#dc-code", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.42, ease: "expo.out" }, 0.12);
+      tl.fromTo("#dc-kick", { opacity: 0 }, { opacity: 1, duration: 0.15, ease: "power2.out" }, 0.06);
+      // Headline: per word, blur to sharp, no translate
+      tl.fromTo(
+        "#dc-head .dc-w",
+        { opacity: 0, filter: "blur(6px)" },
+        { opacity: 1, filter: "blur(0px)", duration: 0.13, ease: "power2.out", stagger: 0.067 },
+        0.1,
+      );
+      tl.set("#dc-file", { opacity: 0 }, 0);
+      tl.set(".dc-ln", { opacity: 0 }, 0);
+
+      // beat-grid: the paper swoops in and drops into the dialog at 6.82s
+      tl.fromTo(
+        "#dc-page",
+        { x: -380, y: -330, rotation: -24, scale: 2.6, opacity: 0 },
+        { x: 0, y: 0, rotation: 0, scale: 1, opacity: 1, duration: 0.5, ease: "power3.out" },
+        0.06,
+      );
+      tl.to("#dc-drop-hint", { opacity: 0, duration: 0.1 }, 0.46);
+      tl.to("#dc-drop", { borderColor: "#10b981", duration: 0.2 }, 0.54);
+      tl.fromTo("#dc-file", { opacity: 0, x: -12 }, { opacity: 1, x: 0, duration: 0.22, ease: "power3.out" }, 0.56);
+
+      // beat-grid: stages at 7.35, 7.79, 8.22, 8.73s; each finishes as the next starts, the set then holds
+      const starts = [1.07, 1.51, 1.94, 2.45];
+      const ends = [1.51, 1.94, 2.45, 2.9];
+      starts.forEach((t, i) => {
+        const n = i + 1;
+        tl.set("#dc-s" + n, { opacity: 1 }, t);
+        tl.to("#dc-l" + n, { color: "#e2e4e9", duration: 0.12 }, t);
+        tl.fromTo("#dc-s" + n, { rotation: 0 }, { rotation: 360 * 1.2, duration: ends[i] - t, ease: "none" }, t);
+        tl.set("#dc-s" + n, { opacity: 0 }, ends[i]);
+        tl.fromTo("#dc-d" + n, { opacity: 0, scale: 0.4 }, { opacity: 1, scale: 1, duration: 0.2, ease: "back.out(2)" }, ends[i]);
+      });
+
+      // LaTeX streams in line by line while the pipeline runs
+      tl.fromTo(
+        ".dc-ln",
+        { opacity: 0, x: -10 },
+        { opacity: 1, x: 0, duration: 0.12, ease: "power2.out", stagger: 0.095 },
+        1.07,
+      );
+
+      // beat-grid: verified at 9.29s
+      tl.fromTo("#dc-verified", { opacity: 0, x: -14 }, { opacity: 1, x: 0, duration: 0.2, ease: "power3.out" }, 3.01);
+      // Audio-reactive glow: bass peak of each beat window (assets data, baked at build time)
+      [
+        [3.01, 0.7],
+        [3.55, 0.47],
+        [4.1, 0.67],
+      ].forEach(([t, b]) =>
+        tl.to(
+          "#dc-verified",
+          { textShadow: "0 0 " + Math.round(6 + b * 22) + "px rgba(0,204,104," + (0.25 + b * 0.45).toFixed(2) + ")", duration: 0.25, ease: "power2.out" },
+          t,
+        ),
+      );
+
+      // beat-grid: ACTUALLY EDITABLE slaps on at 9.83s
+      tl.fromTo(
+        "#dc-stamp",
+        { opacity: 0, scale: 1.8, rotation: -16 },
+        { opacity: 1, scale: 1, rotation: -6, duration: 0.2, ease: "expo.out" },
+        3.55,
+      );
+
+      // Whip left into the editor
+      tl.to("#dc-stage", { x: -1500, filter: "blur(16px)", duration: 0.42, ease: "power3.in" }, 4.65);
+
+      window.__timelines["decompile"] = tl;
+    })();
+  </script>
+</template>

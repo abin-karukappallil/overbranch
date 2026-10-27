@@ -1,0 +1,124 @@
+<!doctype html>
+<html
+  lang="en"
+  data-composition-variables='[
+    {"id":"color-poster","type":"color","label":"Poster green","default":"#00CC68"},
+    {"id":"color-ink","type":"color","label":"Ink","default":"#000000"},
+    {"id":"color-paper","type":"color","label":"Paper","default":"#FFFFFF"},
+    {"id":"color-workbench","type":"color","label":"Workbench ground","default":"#0E0F12"},
+    {"id":"color-accent","type":"color","label":"Editor accent","default":"#10B981"},
+    {"id":"font-display","type":"string","label":"Display font","default":"Archivo Black"},
+    {"id":"font-label","type":"string","label":"Label font","default":"Space Mono"}
+  ]'
+>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="assets/vendor/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #000000;
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div data-hf-id="hf-p4v7"
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="21.8"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- Scenes: durations sum to 21.80s; seams sit on the music's beat grid -->
+      <div data-hf-id="hf-l7vz" id="hook" class="clip" data-composition-id="hook" data-composition-src="compositions/hook.html"
+        data-start="0" data-duration="3.01" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-2eqb" id="reveal" class="clip" data-composition-id="reveal" data-composition-src="compositions/reveal.html"
+        data-start="3.01" data-duration="3.27" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-t5n5" id="decompile" class="clip" data-composition-id="decompile" data-composition-src="compositions/decompile.html"
+        data-start="6.28" data-duration="5.19" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-jzzk" id="agent" class="clip" data-composition-id="agent" data-composition-src="compositions/agent.html"
+        data-start="11.47" data-duration="3.81" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-wr8v" id="receipts" class="clip" data-composition-id="receipts" data-composition-src="compositions/receipts.html"
+        data-start="15.28" data-duration="3.27" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+      <div data-hf-id="hf-hgpq" id="outro" class="clip" data-composition-id="outro" data-composition-src="compositions/outro.html"
+        data-start="18.55" data-duration="3.25" data-track-index="1" data-track-kind="graphics"
+        data-width="1920" data-height="1080"></div>
+
+      <!-- Music: enters on the hook slam (0.80s). data-media-start equals data-start so the
+           track's beat grid stays aligned with the timeline (beats at 0.82, 3.01, ... 18.55). -->
+      <audio data-hf-id="hf-z24d" id="music" data-start="0.8" data-media-start="0.8" data-duration="21.0" data-track-index="10"
+        data-volume="0.32" data-fade-out="1.2"
+        src="assets/music/happy-beats-business-moves-vol-10-by-ende-dot-app.mp3"></audio>
+
+      <!-- Scene 1: hand-typing, then the slam -->
+      <audio data-hf-id="hf-5oxv" id="sfx-key-1" data-start="0.06" data-track-index="11" data-volume="0.5" src="assets/sfx/keyboard/keypress-003.wav"></audio>
+      <audio data-hf-id="hf-v327" id="sfx-key-2" data-start="0.16" data-track-index="12" data-volume="0.45" src="assets/sfx/keyboard/keypress-011.wav"></audio>
+      <audio data-hf-id="hf-c0qq" id="sfx-key-3" data-start="0.28" data-track-index="13" data-volume="0.5" src="assets/sfx/keyboard/keypress-019.wav"></audio>
+      <audio data-hf-id="hf-rrnr" id="sfx-key-4" data-start="0.37" data-track-index="14" data-volume="0.45" src="assets/sfx/keyboard/keypress-007.wav"></audio>
+      <audio data-hf-id="hf-hf76" id="sfx-key-5" data-start="0.5" data-track-index="15" data-volume="0.5" src="assets/sfx/keyboard/keypress-027.wav"></audio>
+      <audio data-hf-id="hf-hyoq" id="sfx-key-6" data-start="0.59" data-track-index="16" data-volume="0.45" src="assets/sfx/keyboard/keypress-015.wav"></audio>
+      <audio data-hf-id="hf-b5cd" id="sfx-key-7" data-start="0.7" data-track-index="17" data-volume="0.5" src="assets/sfx/keyboard/keypress-031.wav"></audio>
+      <audio data-hf-id="hf-yq2b" id="sfx-hook-slam" data-start="0.8" data-track-index="18" data-volume="0.75" src="assets/sfx/impact/impactSoft_heavy_003.ogg"></audio>
+      <audio data-hf-id="hf-b3jm" id="sfx-flood" data-start="2.99" data-track-index="19" data-volume="0.7" src="assets/sfx/impact/impactSoft_medium_001.ogg"></audio>
+
+      <!-- Scene 2: BETA chip, chip grows into the workbench -->
+      <audio data-hf-id="hf-glgu" id="sfx-beta" data-start="3.54" data-track-index="20" data-volume="0.55" src="assets/sfx/interface/click_003.ogg"></audio>
+      <audio data-hf-id="hf-jb0j" id="sfx-grow" data-start="5.76" data-track-index="21" data-volume="0.45" src="assets/sfx/casino/card-slide-1.ogg"></audio>
+
+      <!-- Scene 3: PDF drop, stage ticks (beat-grid), verified, stamp, whip -->
+      <audio data-hf-id="hf-bmql" id="sfx-drop" data-start="6.8" data-track-index="22" data-volume="0.6" src="assets/sfx/interface/drop_002.ogg"></audio>
+      <audio data-hf-id="hf-mkqa" id="sfx-stage-1" data-start="7.35" data-track-index="23" data-volume="0.45" src="assets/sfx/interface/click_002.ogg"></audio>
+      <audio data-hf-id="hf-2bjd" id="sfx-stage-2" data-start="7.79" data-track-index="24" data-volume="0.45" src="assets/sfx/interface/click_005.ogg"></audio>
+      <audio data-hf-id="hf-qvx1" id="sfx-stage-3" data-start="8.22" data-track-index="25" data-volume="0.45" src="assets/sfx/interface/click_002.ogg"></audio>
+      <audio data-hf-id="hf-uo5o" id="sfx-stage-4" data-start="8.73" data-track-index="26" data-volume="0.45" src="assets/sfx/interface/click_005.ogg"></audio>
+      <audio data-hf-id="hf-6x79" id="sfx-verified" data-start="9.29" data-track-index="27" data-volume="0.6" src="assets/sfx/interface/bong_001.ogg"></audio>
+      <audio data-hf-id="hf-dwxq" id="sfx-stamp" data-start="9.82" data-track-index="28" data-volume="0.75" src="assets/sfx/impact/impactSoft_medium_000.ogg"></audio>
+      <audio data-hf-id="hf-yg7t" id="sfx-whip" data-start="10.95" data-track-index="29" data-volume="0.5" src="assets/sfx/casino/card-slide-1.ogg"></audio>
+
+      <!-- Scene 4: prompt keys, send, accept -->
+      <audio data-hf-id="hf-47up" id="sfx-pkey-1" data-start="11.86" data-track-index="30" data-volume="0.35" src="assets/sfx/keyboard/keypress-023.wav"></audio>
+      <audio data-hf-id="hf-hel3" id="sfx-pkey-2" data-start="11.98" data-track-index="31" data-volume="0.32" src="assets/sfx/keyboard/keypress-003.wav"></audio>
+      <audio data-hf-id="hf-fsuf" id="sfx-pkey-3" data-start="12.11" data-track-index="32" data-volume="0.35" src="assets/sfx/keyboard/keypress-019.wav"></audio>
+      <audio data-hf-id="hf-7ir2" id="sfx-pkey-4" data-start="12.24" data-track-index="33" data-volume="0.32" src="assets/sfx/keyboard/keypress-011.wav"></audio>
+      <audio data-hf-id="hf-73j4" id="sfx-pkey-5" data-start="12.37" data-track-index="34" data-volume="0.35" src="assets/sfx/keyboard/keypress-027.wav"></audio>
+      <audio data-hf-id="hf-nw52" id="sfx-send" data-start="12.55" data-track-index="35" data-volume="0.55" src="assets/sfx/ui/click2.ogg"></audio>
+      <audio data-hf-id="hf-dqnn" id="sfx-accept" data-start="14.72" data-track-index="36" data-volume="0.6" src="assets/sfx/interface/click_003.ogg"></audio>
+
+      <!-- Scene 5: 100% FREE slam + four cards (first card beat-locked to the 15.82 strong cue) -->
+      <audio data-hf-id="hf-y41j" id="sfx-free" data-start="15.27" data-track-index="37" data-volume="0.72" src="assets/sfx/impact/impactSoft_heavy_003.ogg"></audio>
+      <audio data-hf-id="hf-b54k" id="sfx-card-1" data-start="15.82" data-track-index="38" data-volume="0.65" src="assets/sfx/impact/impactSoft_medium_004.ogg"></audio>
+      <audio data-hf-id="hf-j730" id="sfx-card-2" data-start="16.1" data-track-index="39" data-volume="0.6" src="assets/sfx/impact/impactSoft_medium_001.ogg"></audio>
+      <audio data-hf-id="hf-ln0d" id="sfx-card-3" data-start="16.38" data-track-index="40" data-volume="0.65" src="assets/sfx/impact/impactSoft_medium_002.ogg"></audio>
+      <audio data-hf-id="hf-jb3j" id="sfx-card-4" data-start="16.65" data-track-index="41" data-volume="0.7" src="assets/sfx/impact/impactSoft_medium_000.ogg"></audio>
+
+      <!-- Scene 6: the bell lands the manifesto on the 18.55 strong cue -->
+      <audio data-hf-id="hf-s95h" id="sfx-bell" data-start="18.55" data-track-index="42" data-volume="0.75" src="assets/sfx/impact/impactBell_heavy_000.ogg"></audio>
+      <audio data-hf-id="hf-epyp" id="sfx-logo" data-start="19.09" data-track-index="43" data-volume="0.5" src="assets/sfx/interface/drop_001.ogg"></audio>
+    </div>
+    <script>
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = gsap.timeline({ paused: true });
+    </script>
+  </body>
+</html>

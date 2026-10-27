@@ -1,0 +1,34 @@
+\chapter{Supporting Derivations}\label{ch:appendix}
+
+This appendix collects derivations referred to earlier in the report. It
+relies on the notation of Chapter~\ref{ch:model} and the update rules of
+Section~\ref{sec:mstep}.
+
+\section{Derivation of the mixing weight update}\label{sec:derive-pi}
+
+Maximising the expected complete-data log-likelihood under the constraint
+$\sum_j \pi_j = 1$ uses a Lagrange multiplier $\lambda$. Setting the derivative
+of
+\begin{equation}\label{eq:lagrange}
+  \mathcal{L} = \sum_{i,j} r_{ij}\log \pi_j - \lambda\Bigl(\sum_j \pi_j - 1\Bigr)
+\end{equation}
+with respect to $\pi_j$ to zero gives $\pi_j = \sum_i r_{ij}/\lambda$. Summing
+over $j$ shows $\lambda = n$, which recovers Equation~\eqref{eq:upd-pi}.
+
+\lipsum[47-48]
+
+\section{Checklist of symbols}\label{sec:checklist}
+
+The symbols of Table~\ref{tab:symbols} and the parameters of
+Table~\ref{tab:params} are the only quantities that appear in the
+equations of this appendix.
+
+\lipsum[49-50]
+
+\section{Further remarks}\label{sec:further-appendix}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[135-146]

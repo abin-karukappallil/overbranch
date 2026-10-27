@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   Plus,
+  FileArchive,
   Search,
   Star,
   UserPlus,
   FileCode2,
   X,
   Trash2,
+  Download,
   Crown,
   AlertTriangle,
   ArrowRight,
@@ -22,6 +24,8 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
+import { ImportZipDialog } from "@/components/project-import/ImportZipDialog";
+import { downloadAllProjectsZip, downloadProjectZip } from "@/components/project-import/useZipImport";
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -29,6 +33,7 @@ export default function ProjectsPage() {
   const [templateFilter, setTemplateFilter] = useState("all");
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const [zipModalOpen, setZipModalOpen] = useState(false);
   const [newProjName, setNewProjName] = useState("");
   const [inviteModalProj, setInviteModalProj] = useState<any | null>(null);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -190,6 +195,24 @@ export default function ProjectsPage() {
           </p>
         </div>
 
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full sm:w-auto shrink-0">
+        <Button
+          onClick={() => setZipModalOpen(true)}
+          className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium rounded-lg h-9 px-4 text-xs border border-slate-200 dark:border-[#282A30] shrink-0 justify-center cursor-pointer transition-all flex items-center gap-1.5"
+        >
+          <FileArchive className="w-3.5 h-3.5 mr-1" />
+          Import ZIP
+        </Button>
+
+        <Button
+          onClick={() => downloadAllProjectsZip()}
+          disabled={!dbProjects || dbProjects.length === 0}
+          className="w-full sm:w-auto bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium rounded-lg h-9 px-4 text-xs border border-slate-200 dark:border-[#282A30] shrink-0 justify-center cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-50"
+        >
+          <Download className="w-3.5 h-3.5 mr-1" />
+          Export all projects
+        </Button>
+
         <Button
           onClick={() => setNewModalOpen(true)}
           className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold rounded-lg h-9 px-4 text-xs border border-emerald-600 dark:border-[#282A30] shrink-0 justify-center cursor-pointer transition-all flex items-center gap-1.5 shadow-sm"
@@ -197,6 +220,7 @@ export default function ProjectsPage() {
           <Plus className="w-4 h-4 mr-1 text-white dark:text-[#E2E4E9] stroke-[2.5]" />
           New Project
         </Button>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -260,6 +284,18 @@ export default function ProjectsPage() {
                       title="Toggle Favorite"
                     >
                       <Star className={`w-3.5 h-3.5 ${proj.isFavorite ? "text-amber-400 fill-amber-400" : ""}`} />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        downloadProjectZip(proj.id, proj.name);
+                      }}
+                      className="p-1 text-slate-400 dark:text-[#62666D] hover:text-emerald-600 dark:hover:text-[#10B981] transition-colors cursor-pointer"
+                      title="Export (.zip)"
+                      aria-label={`Export ${proj.name} (.zip)`}
+                    >
+                      <Download className="w-3.5 h-3.5" />
                     </button>
                     {proj.isOwner && (
                       <>
@@ -532,6 +568,14 @@ export default function ProjectsPage() {
           </div>
         </div>
       )}
+
+      <ImportZipDialog
+        open={zipModalOpen}
+        onOpenChange={setZipModalOpen}
+        onSuccess={(id) => router.push(`/editor/${id}`)}
+        // An archive with one folder per project: the dialog lists them; just refresh the grid.
+        onMultipleImported={() => refetch()}
+      />
     </div>
   );
 }

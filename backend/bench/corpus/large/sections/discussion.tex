@@ -1,0 +1,39 @@
+\chapter{Discussion}\label{ch:discussion}
+
+The experiments of Chapter~\ref{ch:experiments} support the use of
+$k$-means initialisation, and they raise several questions that this chapter
+discusses. The estimator is that of Chapter~\ref{ch:estimation}, computed by
+the algorithm of Chapter~\ref{ch:algorithms}.
+
+\section{Speed and accuracy}\label{sec:discussion-speed}
+
+Table~\ref{tab:recovery} shows that accuracy improves with sample size under
+every strategy. The cost per iteration scales with $nkd^2$, which is dominated
+by the covariance updates of Equation~\eqref{eq:upd-sigma}. Parameter counts from
+Equation~\eqref{eq:count} give the complexity of the model itself.
+
+\lipsum[41-42]
+
+\section{Limitations}\label{sec:limitations}
+
+The analysis assumes Gaussian components, and real data may be heavy-tailed.
+Identifiability, discussed in Section~\ref{sec:identifiability}, also depends on
+separation between components, which the synthetic designs control only
+partially.
+
+\lipsum[43-44]
+
+\section{Future work}\label{sec:future}
+
+Extensions to non-Gaussian components and to streaming updates are natural next
+steps. Chapter~\ref{ch:intro} lists the questions that motivated this work.
+
+\lipsum[45-46]
+
+\section{Further remarks}\label{sec:further-discussion}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[123-134]

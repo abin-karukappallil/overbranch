@@ -1,0 +1,45 @@
+\chapter{Introduction}\label{ch:intro}
+
+This report is a long, multi-file workload for the OverBranch compiler
+benchmark. Its purpose is to exercise the parts of a \LaTeX{} build that
+only matter at scale: several input files, a table of contents, cross-references
+that need more than one pass to settle, and enough pages that the cost of
+each run is clearly measurable.
+
+\section{Motivation}\label{sec:motivation}
+
+Long documents are common in practice. Theses, technical reports and
+manuals routinely run to dozens of pages, split into chapters that are
+maintained by different people. A compiler that handles such documents well
+must resolve labels across files, keep the table of contents consistent, and
+converge on a stable set of page numbers.
+
+\lipsum[1-2]
+
+\section{Scope}\label{sec:scope}
+
+The report covers a simple statistical model, the estimators used to fit it,
+the algorithms that compute those estimators, and a set of synthetic
+experiments. Chapter~\ref{ch:background} gives the background, and
+Chapter~\ref{ch:model} introduces the model itself. The experiments in
+Chapter~\ref{ch:experiments} rely on the algorithms of
+Chapter~\ref{ch:algorithms}.
+
+\lipsum[3-4]
+
+\section{Organisation}\label{sec:organisation}
+
+Each chapter is stored in its own file under \texttt{sections/}. The main file
+simply inputs them in order. Equation numbers, figure numbers and table
+numbers are all automatic, so a reader can follow the references without
+manual bookkeeping.
+
+\lipsum[5-6]
+
+\section{Further remarks}\label{sec:further-introduction}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[51-62]

@@ -1,0 +1,53 @@
+\chapter{Experiments}\label{ch:experiments}
+
+This chapter reports synthetic experiments that test the algorithm of
+Chapter~\ref{ch:algorithms} under controlled conditions. The data are generated
+from the model of Chapter~\ref{ch:model} so that the true parameters are known.
+
+\section{Setup}\label{sec:setup}
+
+We generate samples of size $n\in\{200,1000,5000\}$ in dimension $d=2$ with
+$k=3$ components. Each configuration is repeated with twenty random seeds, and
+the initialisation strategies of Table~\ref{tab:init} are compared.
+
+\lipsum[35-36]
+
+\section{Recovery accuracy}\label{sec:recovery}
+
+Table~\ref{tab:recovery} reports the mean absolute error in the estimated
+mixing weights, averaged over seeds. The errors decrease with $n$, as expected
+from the usual asymptotic theory.
+
+\begin{table}[ht]
+  \centering
+  \begin{tabular}{rccc}
+    \toprule
+    $n$ & Random & $k$-means & Hierarchical \\
+    \midrule
+    200  & 0.081 & 0.047 & 0.052 \\
+    1000 & 0.034 & 0.021 & 0.023 \\
+    5000 & 0.012 & 0.009 & 0.009 \\
+    \bottomrule
+  \end{tabular}
+  \caption{Mean absolute error in mixing weights across initialisation strategies.}
+  \label{tab:recovery}
+\end{table}
+
+\lipsum[37-38]
+
+\section{Iteration counts}\label{sec:iterations}
+
+The number of EM iterations needed to meet the stopping rule of
+Equation~\eqref{eq:stop} is reported in Section~\ref{sec:discussion-speed}
+of the discussion. Initialisation by $k$-means typically halves the count
+compared with random starts.
+
+\lipsum[39-40]
+
+\section{Further remarks}\label{sec:further-experiments}
+
+The remarks in this section restate the main point of the chapter in more
+general terms, so that the argument can be read without the surrounding
+derivations.
+
+\lipsum[111-122]

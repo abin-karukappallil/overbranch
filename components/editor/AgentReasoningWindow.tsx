@@ -26,6 +26,14 @@ const PHASE_LABELS: Record<string, string> = {
   failed: "Not applied",
 };
 
+/** A failed phase caused by the model gateways being down, not by the edit itself. */
+function isModelOutage(step?: AgentProgressStep): boolean {
+  return (
+    step?.phase === "failed" &&
+    (step.details?.operation === "llm_call" || (step.message || "").startsWith("Model outage"))
+  );
+}
+
 const SHOW_DEBUG_DETAILS = process.env.NODE_ENV !== "production";
 
 interface AgentReasoningWindowProps {
@@ -144,7 +152,7 @@ export function AgentReasoningWindow({
               }`}
               title={currentPhase.message}
             >
-              {PHASE_LABELS[currentPhase.phase] || currentPhase.phase}
+              {isModelOutage(currentPhase) ? "Model outage" : PHASE_LABELS[currentPhase.phase] || currentPhase.phase}
             </span>
           )}
         </div>

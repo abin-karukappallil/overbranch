@@ -1,0 +1,31 @@
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{lipsum}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\title{A Multi-File Technical Report}
+\author{OverBranch Benchmark Corpus}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\input{sections/introduction}
+\input{sections/background}
+\input{sections/model}
+\input{sections/estimation}
+\input{sections/algorithms}
+\input{sections/experiments}
+\input{sections/discussion}
+\input{sections/appendix}
+
+\end{document}

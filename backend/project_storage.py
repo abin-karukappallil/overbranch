@@ -1,6 +1,8 @@
 import os
 import re
+import uuid
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Request, HTTPException, status, UploadFile, File, Form, Depends
@@ -45,6 +47,203 @@ def get_project_disk_path(project_id: str, file_path: str) -> Path:
             detail="Invalid file path (path traversal detected)."
         )
     return target_path
+
+
+# ============================================================================
+# Main document (the file the project compiles)
+# ============================================================================
+# A project's main document is stored in `projects.default_branch` (schema
+# default "main.tex"). The DB is not always reachable (disk-only/local/tests),
+# so the same value is also kept on disk in a marker file next to the project's
+# sources. The marker is written only by set_main_document, which writes both.
+
+DEFAULT_MAIN_DOCUMENT = "main.tex"
+MAIN_MARKER = ".obmain"
+
+_MAIN_DOCCLASS_RE = re.compile(r"^[^%\n]*\\documentclass\s*(?:\[[^\]]*\])?\s*\{", re.MULTILINE)
+_MAIN_BEGIN_DOC_RE = re.compile(r"^[^%\n]*\\begin\s*\{document\}", re.MULTILINE)
+_TEX_ROOT_RE = re.compile(r"^\s*%\s*!\s*TeX\s+root\s*=\s*(\S[^\n]*?)\s*$", re.IGNORECASE | re.MULTILINE)
+MAIN_SCAN_BYTES = 256 * 1024
+
+
+def project_dir(project_id: str) -> Path:
+    safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id)
+    return UPLOADS_BASE_DIR / safe_project
+
+
+def _clean_rel(rel: Optional[str]) -> Optional[str]:
+    """A safe project-relative POSIX path, or None."""
+    if not rel:
+        return None
+    r = str(rel).strip().replace("\\", "/")
+    while r.startswith("./"):
+        r = r[2:]
+    if not r or r.startswith("/") or any(p in ("..", "") for p in r.split("/")):
+        return None
+    return r
+
+
+def is_main_document_text(head: str) -> bool:
+    """An uncommented \\documentclass and \\begin{document}: a compilable root file."""
+    return bool(_MAIN_DOCCLASS_RE.search(head or "") and _MAIN_BEGIN_DOC_RE.search(head or ""))
+
+
+def detect_main_document(read_head, rel_paths) -> Optional[str]:
+    """
+    Picks a project's main document from its file paths. ``read_head(rel)``
+    returns the first MAIN_SCAN_BYTES of a file as text (or None).
+
+    1. A ``% !TeX root = …`` magic comment that points at an existing root
+       document (the most-referenced one wins).
+    2. A root-level main.tex that is a root document.
+    3. The shallowest, then alphabetical, .tex file with an uncommented
+       \\documentclass and \\begin{document} in its first 256 KB.
+    4. The same, with \\documentclass alone.
+    """
+    tex = sorted({r for r in rel_paths if r.lower().endswith(".tex")}, key=lambda r: (r.count("/"), r))
+    heads: Dict[str, str] = {}
+
+    def head(rel: str) -> str:
+        if rel not in heads:
+            try:
+                heads[rel] = read_head(rel) or ""
+            except Exception:
+                heads[rel] = ""
+        return heads[rel]
+
+    texset = set(tex)
+    votes: Dict[str, int] = {}
+    for rel in tex:
+        m = _TEX_ROOT_RE.search("\n".join(head(rel).splitlines()[:40]))
+        if not m:
+            continue
+        target = m.group(1).strip().strip('"').strip("'")
+        if not target.lower().endswith(".tex"):
+            target += ".tex"
+        base = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        parts: List[str] = []
+        for part in ((base + "/" + target) if base else target).split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not parts:
+                    parts = ["\0"]  # escapes the project
+                    break
+                parts.pop()
+            else:
+                parts.append(part)
+        resolved = "/".join(parts)
+        if resolved in texset and resolved != rel and is_main_document_text(head(resolved)):
+            votes[resolved] = votes.get(resolved, 0) + 1
+    if votes:
+        return sorted(votes.items(), key=lambda kv: (-kv[1], kv[0].count("/"), kv[0]))[0][0]
+    if DEFAULT_MAIN_DOCUMENT in texset and is_main_document_text(head(DEFAULT_MAIN_DOCUMENT)):
+        return DEFAULT_MAIN_DOCUMENT
+    for rel in tex:
+        if is_main_document_text(head(rel)):
+            return rel
+    for rel in tex:
+        if _MAIN_DOCCLASS_RE.search(head(rel)):
+            return rel
+    return None
+
+
+def detect_main_document_in_dir(root: Path) -> Optional[str]:
+    """detect_main_document over the .tex files under ``root`` on disk."""
+    root = Path(root)
+    rels = []
+    try:
+        for p in root.rglob("*.tex"):
+            if p.is_file():
+                rels.append(p.relative_to(root).as_posix())
+    except OSError:
+        return None
+
+    def read_head(rel: str) -> str:
+        with open(root / rel, "rb") as fh:
+            return fh.read(MAIN_SCAN_BYTES).decode("utf-8", errors="ignore")
+
+    return detect_main_document(read_head, rels)
+
+
+def _read_marker(project_id: str) -> Optional[str]:
+    try:
+        marker = project_dir(project_id) / MAIN_MARKER
+        if marker.is_file():
+            return _clean_rel(marker.read_text(encoding="utf-8").strip())
+    except Exception:
+        pass
+    return None
+
+
+def _read_default_branch(project_id: str) -> Optional[str]:
+    try:
+        sb = get_supabase_client()
+        res = sb.table("projects").select("default_branch").eq("id", project_id).limit(1).execute()
+        rows = res.data or []
+        if rows:
+            return _clean_rel(rows[0].get("default_branch"))
+    except Exception:
+        pass
+    return None
+
+
+def get_main_document(project_id: str, exists=None) -> str:
+    """
+    The project's main document path (project-relative). Order: the on-disk
+    marker, then projects.default_branch, then main.tex. ``exists(rel)``, when
+    given, filters out a recorded path whose file is gone; if none of the
+    recorded paths exist the project's files are scanned for a root document.
+    """
+    if exists is None:
+        def exists(rel: str) -> bool:
+            try:
+                return get_project_disk_path(project_id, rel).is_file()
+            except Exception:
+                return False
+    seen: List[str] = []
+    for source in (_read_marker, _read_default_branch, lambda _pid: DEFAULT_MAIN_DOCUMENT):
+        cand = source(project_id)  # lazily: the DB is only asked when the marker is absent
+        if cand and cand not in seen:
+            seen.append(cand)
+            if exists(cand):
+                return cand
+    found = detect_main_document_in_dir(project_dir(project_id))
+    return found or (seen[0] if seen else DEFAULT_MAIN_DOCUMENT)
+
+
+def set_main_document(project_id: str, rel_path: str, sb=None) -> str:
+    """
+    Records ``rel_path`` as the project's main document: projects.default_branch
+    (best effort) and the on-disk marker. Returns the stored path.
+    """
+    rel = _clean_rel(rel_path)
+    if rel is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid main document path.")
+    pdir = project_dir(project_id)
+    marker = pdir / MAIN_MARKER
+    try:
+        if rel == DEFAULT_MAIN_DOCUMENT:
+            if marker.exists():
+                marker.unlink()
+        else:
+            pdir.mkdir(parents=True, exist_ok=True)
+            marker.write_text(rel, encoding="utf-8")
+    except OSError as e:
+        logger.warning(f"Could not write main document marker for {project_id}: {e}")
+    try:
+        client = sb if sb is not None else get_supabase_client()
+        client.table("projects").update({"default_branch": rel}).eq("id", project_id).execute()
+    except Exception as e:
+        logger.warning(f"Could not store default_branch for {project_id}: {e}")
+    return rel
+
+
+def is_main_document(project_id: str, rel_path: str) -> bool:
+    rel = _clean_rel(rel_path)
+    if rel is None:
+        return False
+    return rel.lower() == get_main_document(project_id).lower()
 
 
 _supabase_client: Optional[Client] = None
@@ -109,6 +308,79 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
             }).execute()
     except Exception as e:
         logger.warning(f"Failed to upsert latex_document ({file_path}): {e}")
+
+
+# Suffixes whose content is mirrored into latex_documents as text; everything else
+# gets a "[Binary Asset: ...]" placeholder row (the bytes live on disk only).
+TEXT_SUFFIXES = {".tex", ".sty", ".cls", ".bib", ".txt", ".md", ".bst", ".bbl", ".def", ".cfg", ".ltx", ".csv"}
+
+
+def create_empty_project(owner_id: str, name_hint: str, guest_session_id: Optional[str],
+                         template_tag: str) -> Dict[str, Any]:
+    """
+    Creates a project (and, for guests, the 24h guest_projects record) with an empty main.tex
+    seeded on disk. Shared by the PDF importer ("PDF Import") and the ZIP importer ("ZIP Import").
+    Degrades to disk-only when Supabase is not configured (local/tests).
+    """
+    kind = template_tag[: -len(" Import")] if template_tag.endswith(" Import") else template_tag
+    fallback_name = f"Imported {kind}"
+    project_id = str(uuid.uuid4())
+    clean_name = re.sub(r"[^\w\s\-().]", "", name_hint or fallback_name).strip()[:80] or fallback_name
+    slug = re.sub(r"[^a-z0-9]+", "-", clean_name.lower()).strip("-") or fallback_name.lower().replace(" ", "-")
+
+    # Seed an empty main.tex on disk, mirroring trpc projects.createProject
+    main = get_project_disk_path(project_id, "main.tex")
+    main.parent.mkdir(parents=True, exist_ok=True)
+    main.write_text("", encoding="utf-8")
+
+    try:
+        sb = get_supabase_client()
+    except Exception as e:  # HTTPException when Supabase is not configured (local/tests)
+        logger.warning(f"Supabase unavailable; writing project files to disk only: {e}")
+        return {"project_id": project_id, "name": clean_name}
+
+    if owner_id.startswith("guest_"):
+        try:
+            from services.guest_identity import ensure_guest_user_row
+            ensure_guest_user_row(sb, owner_id)
+        except Exception as e:
+            logger.warning(f"Could not ensure guest user row for {owner_id}: {e}")
+    try:
+        sb.table("projects").insert({
+            "id": project_id,
+            "owner_id": owner_id,
+            "name": clean_name,
+            "description": f"Imported from {kind}",
+            "repository": f"prostack/{slug}",
+            "default_branch": "main.tex",
+            "language": "latex",
+            "status": "active",
+            "is_public": False,
+            "is_favorite": False,
+            "template": template_tag,
+            "stars_count": 0,
+        }).execute()
+        sb.table("project_members").insert({
+            "id": str(uuid.uuid4()), "project_id": project_id, "user_id": owner_id, "role": "Owner",
+        }).execute()
+    except Exception as e:
+        logger.warning(f"Project row creation failed: {e}")
+
+    if guest_session_id:
+        now = datetime.now(timezone.utc)
+        try:
+            sb.table("guest_projects").insert({
+                "id": str(uuid.uuid4()),
+                "guest_session_id": guest_session_id,
+                "project_id": project_id,
+                "migrated_to_user_id": None,
+                "migrated_at": None,
+                "expires_at": (now + timedelta(hours=24)).isoformat(),
+                "created_at": now.isoformat(),
+            }).execute()
+        except Exception as e:
+            logger.warning(f"guest_projects record failed: {e}")
+    return {"project_id": project_id, "name": clean_name}
 
 
 # ============================================================================
@@ -325,7 +597,8 @@ def get_project_file(
 ):
     """
     Retrieves project file content from local disk or Supabase latex_documents table.
-    Includes auto-creation fallback for main.tex when missing.
+    Includes auto-creation fallback for main.tex when missing and main.tex is the
+    project's main document.
     Returns FileResponse directly for binary assets or when raw/download is True.
     """
     supabase = get_supabase_client()
@@ -384,10 +657,13 @@ def get_project_file(
     except Exception as e:
         logger.warning(f"Error querying Supabase for file: {e}")
 
-    # 3. Auto-creation fallback for main.tex if missing from disk & DB
-    if file_path == "main.tex":
+    # 3. Auto-creation fallback for main.tex if missing from disk & DB — only when
+    # main.tex really is the project's main document. An imported project whose
+    # main document lives elsewhere (thesis/main.tex) must not grow a stray
+    # starter main.tex at the root just because something asked for it.
+    if file_path == DEFAULT_MAIN_DOCUMENT and get_main_document(project_id) == DEFAULT_MAIN_DOCUMENT:
         starter_code = r"""\documentclass[12pt]{article}
-\usepackage[utf8]{utf8}
+\usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
 \usepackage{lmodern}
 \usepackage{amsmath,amssymb}
@@ -460,7 +736,9 @@ def list_project_files(
     if project_dir.exists():
         for path in project_dir.rglob("*"):
             if path.is_file():
-                rel_path = str(path.relative_to(project_dir))
+                rel_path = path.relative_to(project_dir).as_posix()
+                if rel_path == MAIN_MARKER:
+                    continue
                 ext = path.suffix.lower()
                 is_img = ext in [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]
                 files_map[rel_path] = {
@@ -490,17 +768,21 @@ def list_project_files(
     except Exception as e:
         logger.warning(f"Error fetching files list from Supabase: {e}")
 
-    # Always ensure main.tex is present
-    if "main.tex" not in files_map:
-        files_map["main.tex"] = {
-            "path": "main.tex",
-            "name": "main.tex",
+    main_file = get_main_document(project_id, exists=lambda rel: rel in files_map)
+    # The main document is always listed (get-file seeds a starter main.tex), but
+    # a phantom main.tex is no longer added when the real main document is elsewhere.
+    if main_file not in files_map:
+        files_map[main_file] = {
+            "path": main_file,
+            "name": os.path.basename(main_file),
             "size": 0,
             "type": "document",
-            "ext": ".tex",
+            "ext": os.path.splitext(main_file)[1].lower(),
         }
+    for entry in files_map.values():
+        entry["is_main"] = entry["path"] == main_file
 
-    return {"project_id": project_id, "files": list(files_map.values())}
+    return {"project_id": project_id, "main_file": main_file, "files": list(files_map.values())}
 
 
 class RenameFileRequest(BaseModel):
@@ -521,21 +803,24 @@ def rename_project_file(
 ):
     """
     Renames a project file/asset on local disk and in Supabase DB.
-    main.tex cannot be renamed or replaced.
+    The project's main document cannot be renamed or replaced.
     """
     old_clean = req.old_path.strip()
     new_clean = req.new_path.strip()
 
-    if old_clean.lower() == "main.tex":
+    main_doc = get_main_document(req.project_id)
+    if old_clean.lower() == main_doc.lower():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Primary main.tex file cannot be renamed."
+            detail=f"Primary {main_doc} file cannot be renamed."
         )
-    if new_clean.lower() == "main.tex":
+    if new_clean.lower() == main_doc.lower():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot rename file to main.tex as main.tex is the primary document."
+            detail=f"Cannot rename file to {main_doc} as {main_doc} is the primary document."
         )
+    if old_clean == MAIN_MARKER or new_clean == MAIN_MARKER:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reserved file name.")
     if not new_clean:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -594,8 +879,11 @@ def delete_project_file(
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """Deletes a file from local disk and Supabase DB."""
-    if file_path.strip().lower() == "main.tex":
-        raise HTTPException(status_code=400, detail="Cannot delete primary main.tex document.")
+    main_doc = get_main_document(project_id)
+    if file_path.strip().lower() == main_doc.lower():
+        raise HTTPException(status_code=400, detail=f"Cannot delete primary {main_doc} document.")
+    if file_path.strip() == MAIN_MARKER:
+        raise HTTPException(status_code=400, detail="Reserved file name.")
 
     supabase = get_supabase_client()
     user_id = auth_info.get("user_id")

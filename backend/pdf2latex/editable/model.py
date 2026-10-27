@@ -108,6 +108,8 @@ class Block:
     polish: Optional[str] = None  # "math" | "table" | "list" | "titlepage" when flagged for the LLM
     confidence: float = 1.0
     cols: int = 1                 # 2 when the block sits in a two-column band (emitted in multicols)
+    anchor_bottom: Optional[float] = None   # set at the foot of its page: its last baseline in the PDF
+    column: int = -1              # page-locked two-column: 0 left / 1 right column, -1 full width
 
 
 @dataclass
@@ -119,6 +121,8 @@ class Para(Block):
     first_indent: float = 0.0
     leading: float = 0.0
     joins_prev: bool = False      # continues the paragraph that ended the previous page
+    ends_mid: bool = False        # breaks off at the page end, mid-paragraph (it goes on overleaf)
+    looseness: int = 0            # page fit: \\looseness for this paragraph (-1: a line shorter)
     left: float = 0.0             # left edge of the column it sits in
     right: float = 0.0            # right edge of the column it sits in (for right-aligned fields)
     keep_with_next: bool = False  # forbid a page break after this block (a signature/author group)
@@ -204,6 +208,10 @@ class Table(Block):
     spread: bool = False          # a signature group spanning the line edge to edge
     leaders: bool = False         # a contents / list-of page: rows joined by dot leaders (\dotfill)
     small: bool = False           # typeset the table a size down (a dense many-column booktabs table)
+    text_size: float = 0.0        # the size the table's text is set in, pt (0: unmeasured)
+    frac_base: float = 0.0        # the width (pt) col_frac are shares of (ruled / booktabs tables)
+    line_pitch: Optional[float] = None   # contents: baseline pitch inside a wrapped entry, pt
+    row_pitch: Optional[float] = None    # contents: baseline pitch from one entry to the next, pt
     # Vision-layout: wrap the table in a float environment (\begin{table}[spec]…\end{table}) when
     # Gemini verdicts the in-flow placement overflows the page. None keeps the deterministic
     # in-flow emission.
@@ -219,6 +227,12 @@ class Figure(Block):
     width_frac: List[float] = field(default_factory=list)  # one per image, fraction of \linewidth
     align: str = "center"
     caption: Optional["Para"] = None
+    boxes: List[BBox] = field(default_factory=list)        # each image's own box in the PDF (its ink)
+    px: List[Tuple[int, int]] = field(default_factory=list)  # each image file's pixel size
+    left: float = 0.0             # the column it sits in (its \\linewidth), pt
+    right: float = 0.0
+    beside: List["Block"] = field(default_factory=list)   # text set beside the picture (a minipage)
+    beside_side: str = ""         # "right" | "left": where that text sits
     # Vision-layout: wrap the figure in a float environment (\begin{figure}[spec]…\end{figure})
     # when Gemini verdicts the in-flow placement overflows the page. None keeps the deterministic
     # in-flow {\centering \includegraphics…\par} emission.
@@ -259,6 +273,10 @@ class Box(Block):
     title_runs: List[Run] = field(default_factory=list)   # a title bar's text (a Beamer block title)
     title_fill: Optional[RGB] = None
     width_frac: float = 1.0       # share of the text width
+    row_next: bool = False        # the next box stands beside this one (same row)
+    row_prev: bool = False        # this box stands beside the one before it
+    gap_after: float = 0.0        # the gap to the box beside it, pt
+    left: float = 0.0             # the column's left edge (to place a row of boxes), pt
 
     def __post_init__(self):
         self.kind = "box"
@@ -295,6 +313,9 @@ class PageMark(Block):
     numbering: Optional[Tuple[str, int]] = None  # ("arabic"|"roman"|"none", start value) at a reset
     chrome: bool = False          # running header/footer shown from here (with numbering)
     pagestyle: Optional[str] = None               # fancyhdr style id active from here
+    empty: bool = False           # the source page holds nothing the flow carries (kept by \\null)
+    fit: List[str] = field(default_factory=list)  # page-fit directives set at the top of this page
+    counter: Optional[int] = None  # page counter to set here (the printed number after a spill)
 
     def __post_init__(self):
         self.kind = "pagemark"
@@ -353,6 +374,7 @@ class EditProfile:
     columnsep: float = 0.0
     two_column: bool = False
     footskip: float = 0.0
+    text_bottom_src: float = 0.0  # the PDF's own text-area foot (pt from the top) before the lock widens it
     body_font: str = ""           # the body text's PDF font name, without subset prefix or style
     # the document's words and hyphenated compounds (from whole lines), to tell a compound broken
     # at its own hyphen ("high-" / "dimensional") from a hyphenated word
@@ -397,10 +419,14 @@ class EditDoc:
     # source from these so a two-column page is measured column by column, as it reads
     rows_by_page: Dict[int, List[TLine]] = field(default_factory=dict)
     backgrounds: Dict[int, str] = field(default_factory=dict)   # page → background picture
+    # each page's reading-order zones with their rows: ((column, of_columns), rows), for the
+    # page-start gate (the first row of each page and of each column)
+    zone_rows: Dict[int, List] = field(default_factory=dict)
     deck: bool = False            # a slide deck: one slide environment per page
     page_count: int = 0
     title: str = ""
     warnings: List[str] = field(default_factory=list)
+    page_fit: Dict[int, Dict] = field(default_factory=dict)   # source page → fit state (pagefit)
 
 
 # ---------------------------------------------------------------------------

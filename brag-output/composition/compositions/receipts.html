@@ -1,0 +1,103 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-poster, #00cc68);
+      color: var(--color-ink, #000000);
+    }
+    #rc-kick {
+      position: absolute;
+      left: 120px;
+      top: 150px;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 30px;
+      letter-spacing: 0.14em;
+    }
+    #rc-free {
+      position: absolute;
+      left: 110px;
+      top: 214px;
+      font-family: "Archivo Black", sans-serif;
+      font-size: 236px;
+      line-height: 0.85;
+      letter-spacing: -0.04em;
+      white-space: nowrap;
+    }
+    /* components/landing/FreeSection.tsx declaration cards */
+    #rc-cards {
+      position: absolute;
+      left: 120px;
+      top: 620px;
+      width: 1680px;
+      display: flex;
+      gap: 32px;
+    }
+    .rc-card {
+      flex: 1;
+      height: 220px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 26px;
+      background: #000000;
+      color: #ffffff;
+      border: 3px solid #000000;
+      box-shadow: 8px 8px 0 0 #ffffff;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 36px;
+      line-height: 1.25;
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+    #rc-dip {
+      position: absolute;
+      inset: 0;
+      background: #000000;
+      opacity: 0;
+    }
+  </style>
+  <div data-hf-id="hf-c6re" id="root" data-composition-id="receipts" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-d7bq" id="rc-kick">NO SUBSCRIPTION REQUIRED</div>
+    <div data-hf-id="hf-nlpx" id="rc-free">100% FREE.</div>
+    <div data-hf-id="hf-k53i" id="rc-cards">
+      <div data-hf-id="hf-02oq" class="rc-card" id="rc-c1">UNLIMITED<br data-hf-id="hf-x5px" />COMPILATION</div>
+      <div data-hf-id="hf-ur5d" class="rc-card" id="rc-c2">UNLIMITED<br data-hf-id="hf-rsrt" />CO-AUTHORS</div>
+      <div data-hf-id="hf-b2hn" class="rc-card" id="rc-c3">AGENTIC AI<br data-hf-id="hf-szow" />ASSISTANCE</div>
+      <div data-hf-id="hf-opm5" class="rc-card" id="rc-c4">FASTER THAN<br data-hf-id="hf-sldv" />OVERLEAF</div>
+    </div>
+    <div data-hf-id="hf-y0yt" id="rc-dip" data-layout-ignore></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+
+      // beat-locked: 15.28s — 100% FREE. slams as the iris finishes
+      tl.fromTo(
+        "#rc-free",
+        { opacity: 0, scale: 1.28, filter: "blur(12px)" },
+        { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out", transformOrigin: "0% 50%" },
+        0,
+      );
+      tl.fromTo("#rc-kick", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.16 }, 0.1);
+
+      // beat-locked: 15.82s (strong cue) for card 1; then half-beats, and the full set holds >= 1.4s
+      [0.54, 0.82, 1.1, 1.37].forEach((t, i) =>
+        tl.fromTo(
+          "#rc-c" + (i + 1),
+          { opacity: 0, y: -46, scale: 1.14 },
+          { opacity: 1, y: 0, scale: 1, duration: 0.22, ease: "expo.out" },
+          t,
+        ),
+      );
+
+      // Dip cut: darken ~40% for three frames before the hard cut on 18.55s
+      tl.set("#rc-dip", { opacity: 0.4 }, 3.17);
+
+      window.__timelines["receipts"] = tl;
+    })();
+  </script>
+</template>

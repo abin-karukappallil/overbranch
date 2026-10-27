@@ -1,0 +1,1 @@
+Stop re-typing papers by hand. OverBranch turns a PDF into real, compilable LaTeX, then you and your co-authors edit it live, with real-time cursors, instant compiles and an AI agent that edits the LaTeX for you. 100% free and open source. overbranch.app

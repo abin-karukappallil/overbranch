@@ -1,9 +1,9 @@
 """
 pages.py — Page breaks and title pages.
 
-Reflowed text flows freely; this module decides where to force a page break so the output keeps the
-source's page structure (chapters, pages that ended early, numbering resets, pinned pages) without
-locking every page 1:1.
+Page-locked: every source page boundary is a hard break (\\sourcepage), so each source page's
+content is set on the output page of the same number; the text flows freely inside its page.
+The numbering plan (roman then arabic, restarts) rides on those breaks.
 """
 
 from __future__ import annotations
@@ -76,45 +76,47 @@ def insert_page_marks(blocks: List[Block], pages: List[PageExtract],
         seen.add(b.page)
     page_levels = {lv for lv, firsts in first_on_page.items()
                    if len(firsts) >= 2 and sum(firsts) >= 0.6 * len(firsts)}
-    seen_pages: Set[int] = set()
-    cur_page = None
+    # Page-locked: every source page boundary is a hard mark (\\sourcepage), so each source page's
+    # content is set on the output page of the same number. The reasons the reflow mode used to
+    # tell a forced break from a soft one are kept for the report.
+    by_page: Dict[int, List[Block]] = {}
+    order: List[int] = []
     for b in blocks:
-        if isinstance(b, TitlePage):
-            out.append(b)
-            cur_page = b.page
-            seen_pages.add(b.page)
-            continue
-        if b.page != cur_page:
-            if cur_page is not None:
-                nid += 1
-                reasons = []
-                hard = False
-                # 1. new page starts with a chapter-level heading, or one in a style that opens
-                # pages (ABSTRACT, CONTENTS, REFERENCES … each on a page of its own)
-                if isinstance(b, Heading) and (b.level == 0 or b.level in page_levels):
-                    hard = True; reasons.append("chapter")
-                # … or with a centred display line in no heading style (a one-off "CERTIFICATE")
-                elif isinstance(b, Para) and b.align == "center" and 1 <= len(b.lines) <= 2 \
-                        and max(ln.size for ln in b.lines) >= profile.body_size + 2:
-                    hard = True; reasons.append("display_title")
-                # 2. previous page ended early
-                p_prev = next((p for p in pages if p.number == cur_page), None)
-                if p_prev is not None:
-                    text_bottom = p_prev.height - profile.margins["bottom"]
-                    text_h = p_prev.height - profile.margins["top"] - profile.margins["bottom"]
-                    early = (text_bottom - last_bottom.get(cur_page, text_bottom)) >= max(0.2 * text_h, 4 * leading)
-                    if early and not getattr(b, "joins_prev", False):
-                        hard = True; reasons.append("page_ended_early")
-                # 3. pinned pages
-                if cur_page in pinned or b.page in pinned:
-                    hard = True; reasons.append("pinned")
-                numbering = None     # set by apply_numbering()
-                pm = PageMark(page=b.page, bbox=b.bbox, id=nid, hard=hard, reasons=reasons,
-                              numbering=numbering)
-                out.append(pm)
-            cur_page = b.page
-            seen_pages.add(b.page)
-        out.append(b)
+        if b.page not in by_page:
+            order.append(b.page)
+        by_page.setdefault(b.page, []).append(b)
+    numbers = [p.number for p in pages]
+    for pno in sorted(set(order) - set(numbers)):
+        numbers.append(pno)          # blocks of a page the extraction did not list (defensive)
+    numbers = sorted(set(numbers))
+    prev = None
+    for pno in numbers:
+        page_blocks = by_page.get(pno, [])
+        if prev is not None:
+            nid += 1
+            reasons = ["source_page"]
+            b = page_blocks[0] if page_blocks else None
+            if isinstance(b, Heading) and (b.level == 0 or b.level in page_levels):
+                reasons.append("chapter")
+            elif isinstance(b, Para) and b.align == "center" and 1 <= len(b.lines) <= 2 \
+                    and max(ln.size for ln in b.lines) >= profile.body_size + 2:
+                reasons.append("display_title")
+            p_prev = next((p for p in pages if p.number == prev), None)
+            if p_prev is not None:
+                text_bottom = p_prev.height - profile.margins["bottom"]
+                text_h = p_prev.height - profile.margins["top"] - profile.margins["bottom"]
+                if (text_bottom - last_bottom.get(prev, text_bottom)) >= max(0.2 * text_h, 4 * leading):
+                    reasons.append("page_ended_early")
+            if prev in pinned or pno in pinned:
+                reasons.append("pinned")
+            out.append(PageMark(page=pno, bbox=(b.bbox if b is not None else (0.0, 0.0, 0.0, 0.0)), id=nid,
+                                hard=True, reasons=reasons, empty=not page_blocks))
+        elif not page_blocks:
+            # the document opens with an empty page: hold it with an empty box
+            nid += 1
+            out.append(PageMark(page=pno, id=nid, hard=False, reasons=["empty_first"], empty=True))
+        out.extend(page_blocks)
+        prev = pno
     return out
 
 

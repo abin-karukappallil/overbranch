@@ -1,0 +1,634 @@
+npm notice run npx
+npm notice run 'hyperframes' render --quality delivery --output ../brag.mp4
+
+◆  Rendering composition → /home/abin/overbranch/brag-output/brag.mp4
+   30fps · high · auto workers (4 cores detected)
+   GPU: browser GPU (auto-detect)
+
+[browser] Waiting for another hyperframes process to finish installing chrome-headless-shell (10s elapsed)...
+[browser] Waiting for another hyperframes process to finish installing chrome-headless-shell (20s elapsed)...
+[?25l│
+◒  Checking browser[1G[J◐  Checking browser[1G[J◓  Checking browser[1G[J◑  Checking browser[1G[J◇  Browser: cache
+[?25h[INFO] [Render] Pipeline started {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","platform":"linux","arch":"x64","nodeVersion":"v26.8.1","fps":{"num":30,"den":1},"format":"mp4","quality":"high","browserGpuMode":"auto","forceScreenshot":false,"protocolTimeout":300000,"browserTimeout":120000,"pageNavigationTimeout":60000,"playerReadyTimeout":45000}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"pipeline","status":"checkpoint","elapsedMs":7,"message":"started","format":"mp4","quality":"high","browserGpuMode":"auto","forceScreenshot":false,"protocolTimeoutMs":300000,"pageNavigationTimeoutMs":60000,"playerReadyTimeoutMs":45000,"requestedWorkers":"auto"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"compile","status":"start","elapsedMs":12,"needsAlpha":false}
+  █░░░░░░░░░░░░░░░░░░░░░░░░  5%  Compiling composition
+@hf-progress {"code":"compile","pct":5}
+[INFO] [Compiler] Fetched 4 font face(s) for "Space Mono" from Google Fonts (cached to /home/abin/.cache/hyperframes/fonts/space-mono)
+[INFO] [Compiler] Fetched 1 font face(s) for "Archivo Black" from Google Fonts (cached to /home/abin/.cache/hyperframes/fonts/archivo-black)
+[INFO] [Compiler] Fetched 11 font face(s) for "Inter" from Google Fonts (cached to /home/abin/.cache/hyperframes/fonts/inter)
+[INFO] [Compiler] Fetched 9 font face(s) for "IBM Plex Mono" from Google Fonts (cached to /home/abin/.cache/hyperframes/fonts/ibm-plex-mono)
+[INFO] [Compiler] Injected deterministic @font-face rules for 4 requested font families
+[INFO] Compiled composition metadata {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","entryFile":"index.html","staticDuration":21.8,"width":1920,"height":1080,"videoCount":0,"audioCount":34,"renderModeHints":{"recommendScreenshot":false,"reasons":[]}}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"compile","status":"end","elapsedMs":6611,"durationMs":6599,"needsAlpha":false}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"compile","status":"checkpoint","elapsedMs":6614,"message":"composition metadata resolved","width":1920,"height":1080,"videoCount":0,"audioCount":34,"imageCount":3,"deviceScaleFactor":1,"forceScreenshot":false,"compositionHash":"d69900c38ed3d3e4"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"browser_probe","status":"start","elapsedMs":6616,"forceScreenshot":false,"stagePhase":"calibrating"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"browser_probe","status":"end","elapsedMs":8740,"durationMs":2124,"forceScreenshot":false,"stagePhase":"calibrating"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"browser_probe","status":"checkpoint","elapsedMs":8742,"message":"duration resolved","durationSeconds":21.8,"totalFrames":654,"compositionHash":"d69900c38ed3d3e4","beginFrameStalled":false}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"video_extract","status":"start","elapsedMs":8743,"videoCount":0}
+  ██░░░░░░░░░░░░░░░░░░░░░░░  10%  Extracting video frames
+@hf-progress {"code":"extract_video","pct":10}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"video_extract","status":"end","elapsedMs":8746,"durationMs":3,"videoCount":0}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"video_extract","status":"checkpoint","elapsedMs":8754,"message":"frames resolved","videoCount":0,"extractedVideoCount":0,"totalFramesExtracted":0,"maxFramesPerVideo":0,"avgFramesPerExtractedVideo":null,"vfrPreflightCount":null,"vfrPreflightMs":null,"cacheHits":null,"cacheMisses":null,"transientRetries":null,"minVideoFrameCoverageRatio":null,"authoredTimedClipCount":41}
+[INFO] [Render] No HDR sources detected, rendering SDR {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"hdr_detection","status":"checkpoint","elapsedMs":8756,"message":"resolved","requestedHdrMode":"auto","effectiveHdr":"sdr","nativeHdrVideoCount":0,"nativeHdrImageCount":0}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"audio_process","status":"start","elapsedMs":8756,"audioCount":34}
+  █████░░░░░░░░░░░░░░░░░░░░  20%  Processing audio tracks
+@hf-progress {"code":"process_audio","pct":20}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"audio_process","status":"end","elapsedMs":14225,"durationMs":5469,"audioCount":34}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"file_server","status":"start","elapsedMs":14229,"reused":false}
+  ██████░░░░░░░░░░░░░░░░░░░  25%  Starting frame capture
+@hf-progress {"code":"start_browsers","pct":25}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"file_server","status":"end","elapsedMs":14251,"durationMs":22}
+  ██████░░░░░░░░░░░░░░░░░░░  25%  Checking browser GPU
+@hf-progress {"code":"start_browsers","pct":25}
+[hyperframes] browserGpuMode probe → hardware (WebGL renderer vendor="Google Inc. (AMD)" renderer="ANGLE (AMD, AMD Radeon Vega 3 Graphics (radeonsi raven2 ACO), OpenGL ES 3.2)")
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_calibration","status":"start","elapsedMs":15850,"stagePhase":"calibrating","forceScreenshot":false,"totalFrames":654,"framesCompleted":0,"captureMode":"beginframe","captureOperation":"beginFrame"}
+[INFO] [Render] Calibration config {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","protocolTimeout":30000,"parentProtocolTimeout":300000,"forceScreenshot":false,"totalFrames":654}
+[INFO] Launching browser for capture calibration... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+  ██████░░░░░░░░░░░░░░░░░░░  25%  Measuring capture speed
+@hf-progress {"code":"start_browsers","pct":25}
+[BrowserManager] Browser launched (HeadlessChrome/152.0.7977.30, beginframe, gl=--use-gl=angle --use-angle=gl-egl, headlessShell=true, platform=linux)
+[INFO] Initializing calibration session... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[initSession:beginframe] warmup loop started (0ms)
+[initSession:beginframe] page.goto start (3ms)
+[HyperFrames] render runtime fps {"canonicalFps":30,"source":"render-options","rawFpsSource":"render-options","rawFps":30}
+[initSession:beginframe] page.goto complete (1020ms)
+[initSession:beginframe] GSAP proxy flush complete (1117ms)
+[initSession:beginframe] pollHfReady complete (1143ms)
+[initSession:beginframe] pollSubCompositionTimelines complete (ready) (1155ms)
+[initSession:beginframe] applyVideoMetadataHints complete (1158ms)
+[initSession:beginframe] media + fonts + tailwind ready (1188ms)
+[initSession:beginframe] static-frame dedup: disabled (capture mode beginframe, not screenshot) (1216ms)
+[INFO] Calibration session ready, capturing test frames... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration: capturing test frame 1/5... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration: capturing test frame 2/5... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration: capturing test frame 3/5... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration: capturing test frame 4/5... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration: capturing test frame 5/5... {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] Calibration complete, estimated cost: 277ms/frame (p95) {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_calibration","status":"end","elapsedMs":20344,"durationMs":4493,"stagePhase":"calibrating","forceScreenshot":false,"totalFrames":654,"framesCompleted":0,"captureMode":"beginframe","captureOperation":"beginFrame"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_calibration","status":"checkpoint","elapsedMs":20352,"message":"resolved","forceScreenshot":false,"multiplier":1,"p95Ms":277}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"worker_resolution","status":"checkpoint","elapsedMs":20359,"message":"resolved","workerCount":1}
+[INFO] streaming-encode gate {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","enabled":true,"reason":"single_worker","configFlag":true,"durationCapEnabled":false,"outputFormat":"mp4","workerCount":1,"durationSeconds":21.8,"maxDurationSeconds":240}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_strategy","status":"checkpoint","elapsedMs":20361,"message":"resolved","workerCount":1,"forceScreenshot":false,"captureBeyondViewport":null,"useStreamingEncode":true,"useLayeredComposite":false,"usePageSideCompositing":false,"hasHdrContent":false,"hasShaderTransitions":false,"isPngSequence":false}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_streaming","status":"start","elapsedMs":20361,"stagePhase":"capturing","workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":0,"captureMode":"beginframe","captureOperation":"beginFrame"}
+[BrowserManager] Browser launched (HeadlessChrome/152.0.7977.30, beginframe, gl=--use-gl=angle --use-angle=gl-egl, headlessShell=true, platform=linux)
+[initSession:beginframe] warmup loop started (0ms)
+[initSession:beginframe] page.goto start (3ms)
+[HyperFrames] render runtime fps {"canonicalFps":30,"source":"render-options","rawFpsSource":"render-options","rawFps":30}
+[initSession:beginframe] page.goto complete (1675ms)
+[initSession:beginframe] GSAP proxy flush complete (1745ms)
+[initSession:beginframe] pollHfReady complete (1763ms)
+[initSession:beginframe] pollSubCompositionTimelines complete (ready) (1777ms)
+[initSession:beginframe] applyVideoMetadataHints complete (1777ms)
+[initSession:beginframe] media + fonts + tailwind ready (1786ms)
+[initSession:beginframe] static-frame dedup: disabled (capture mode beginframe, not screenshot) (1849ms)
+  ██████░░░░░░░░░░░░░░░░░░░  25%  Streaming frame 1/654
+@hf-progress {"code":"capture","done":1,"total":654,"pct":25}
+  ██████░░░░░░░░░░░░░░░░░░░  25%  Streaming frame 5/654
+@hf-progress {"code":"capture","done":5,"total":654,"pct":25}
+  ██████░░░░░░░░░░░░░░░░░░░  26%  Streaming frame 9/654
+@hf-progress {"code":"capture","done":9,"total":654,"pct":26}
+  ██████░░░░░░░░░░░░░░░░░░░  26%  Streaming frame 14/654
+@hf-progress {"code":"capture","done":14,"total":654,"pct":26}
+  ██████░░░░░░░░░░░░░░░░░░░  27%  Streaming frame 19/654
+@hf-progress {"code":"capture","done":19,"total":654,"pct":27}
+  ██████░░░░░░░░░░░░░░░░░░░  27%  Streaming frame 23/654
+@hf-progress {"code":"capture","done":23,"total":654,"pct":27}
+  ██████░░░░░░░░░░░░░░░░░░░  27%  Streaming frame 25/654
+@hf-progress {"code":"capture","done":25,"total":654,"pct":27}
+  ██████░░░░░░░░░░░░░░░░░░░  27%  Streaming frame 27/654
+@hf-progress {"code":"capture","done":27,"total":654,"pct":27}
+  ██████░░░░░░░░░░░░░░░░░░░  27%  Streaming frame 29/654
+@hf-progress {"code":"capture","done":29,"total":654,"pct":27}
+  ███████░░░░░░░░░░░░░░░░░░  28%  Streaming frame 32/654
+@hf-progress {"code":"capture","done":32,"total":654,"pct":28}
+  ███████░░░░░░░░░░░░░░░░░░  28%  Streaming frame 37/654
+@hf-progress {"code":"capture","done":37,"total":654,"pct":28}
+  ███████░░░░░░░░░░░░░░░░░░  29%  Streaming frame 42/654
+@hf-progress {"code":"capture","done":42,"total":654,"pct":29}
+  ███████░░░░░░░░░░░░░░░░░░  29%  Streaming frame 46/654
+@hf-progress {"code":"capture","done":46,"total":654,"pct":29}
+  ███████░░░░░░░░░░░░░░░░░░  29%  Streaming frame 50/654
+@hf-progress {"code":"capture","done":50,"total":654,"pct":29}
+  ███████░░░░░░░░░░░░░░░░░░  30%  Streaming frame 54/654
+@hf-progress {"code":"capture","done":54,"total":654,"pct":30}
+  ███████░░░░░░░░░░░░░░░░░░  30%  Streaming frame 58/654
+@hf-progress {"code":"capture","done":58,"total":654,"pct":30}
+  ███████░░░░░░░░░░░░░░░░░░  30%  Streaming frame 61/654
+@hf-progress {"code":"capture","done":61,"total":654,"pct":30}
+  ███████░░░░░░░░░░░░░░░░░░  30%  Streaming frame 65/654
+@hf-progress {"code":"capture","done":65,"total":654,"pct":30}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_streaming","status":"checkpoint","elapsedMs":80059,"message":"stage still running","stagePhase":"capturing","workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":67,"captureMode":"beginframe","captureOperation":"beginFrame","heartbeatIndex":1,"stageElapsedMs":59697}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 68/654
+@hf-progress {"code":"capture","done":68,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 69/654
+@hf-progress {"code":"capture","done":69,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 70/654
+@hf-progress {"code":"capture","done":70,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 71/654
+@hf-progress {"code":"capture","done":71,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 72/654
+@hf-progress {"code":"capture","done":72,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 73/654
+@hf-progress {"code":"capture","done":73,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 74/654
+@hf-progress {"code":"capture","done":74,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 75/654
+@hf-progress {"code":"capture","done":75,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 76/654
+@hf-progress {"code":"capture","done":76,"total":654,"pct":31}
+  ███████░░░░░░░░░░░░░░░░░░  31%  Streaming frame 77/654
+@hf-progress {"code":"capture","done":77,"total":654,"pct":31}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 78/654
+@hf-progress {"code":"capture","done":78,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 79/654
+@hf-progress {"code":"capture","done":79,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 80/654
+@hf-progress {"code":"capture","done":80,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 81/654
+@hf-progress {"code":"capture","done":81,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 83/654
+@hf-progress {"code":"capture","done":83,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 85/654
+@hf-progress {"code":"capture","done":85,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 87/654
+@hf-progress {"code":"capture","done":87,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  32%  Streaming frame 89/654
+@hf-progress {"code":"capture","done":89,"total":654,"pct":32}
+  ████████░░░░░░░░░░░░░░░░░  33%  Streaming frame 92/654
+@hf-progress {"code":"capture","done":92,"total":654,"pct":33}
+  ████████░░░░░░░░░░░░░░░░░  33%  Streaming frame 94/654
+@hf-progress {"code":"capture","done":94,"total":654,"pct":33}
+  ████████░░░░░░░░░░░░░░░░░  33%  Streaming frame 96/654
+@hf-progress {"code":"capture","done":96,"total":654,"pct":33}
+  ████████░░░░░░░░░░░░░░░░░  33%  Streaming frame 98/654
+@hf-progress {"code":"capture","done":98,"total":654,"pct":33}
+  ████████░░░░░░░░░░░░░░░░░  33%  Streaming frame 100/654
+@hf-progress {"code":"capture","done":100,"total":654,"pct":33}
+  ████████░░░░░░░░░░░░░░░░░  34%  Streaming frame 102/654
+@hf-progress {"code":"capture","done":102,"total":654,"pct":34}
+  ████████░░░░░░░░░░░░░░░░░  34%  Streaming frame 105/654
+@hf-progress {"code":"capture","done":105,"total":654,"pct":34}
+  ████████░░░░░░░░░░░░░░░░░  34%  Streaming frame 108/654
+@hf-progress {"code":"capture","done":108,"total":654,"pct":34}
+  ████████░░░░░░░░░░░░░░░░░  34%  Streaming frame 110/654
+@hf-progress {"code":"capture","done":110,"total":654,"pct":34}
+  ████████░░░░░░░░░░░░░░░░░  35%  Streaming frame 113/654
+@hf-progress {"code":"capture","done":113,"total":654,"pct":35}
+  ████████░░░░░░░░░░░░░░░░░  35%  Streaming frame 116/654
+@hf-progress {"code":"capture","done":116,"total":654,"pct":35}
+  ████████░░░░░░░░░░░░░░░░░  35%  Streaming frame 119/654
+@hf-progress {"code":"capture","done":119,"total":654,"pct":35}
+  ████████░░░░░░░░░░░░░░░░░  35%  Streaming frame 122/654
+@hf-progress {"code":"capture","done":122,"total":654,"pct":35}
+  ████████░░░░░░░░░░░░░░░░░  35%  Streaming frame 124/654
+@hf-progress {"code":"capture","done":124,"total":654,"pct":35}
+  █████████░░░░░░░░░░░░░░░░  36%  Streaming frame 127/654
+@hf-progress {"code":"capture","done":127,"total":654,"pct":36}
+  █████████░░░░░░░░░░░░░░░░  36%  Streaming frame 128/654
+@hf-progress {"code":"capture","done":128,"total":654,"pct":36}
+  █████████░░░░░░░░░░░░░░░░  36%  Streaming frame 131/654
+@hf-progress {"code":"capture","done":131,"total":654,"pct":36}
+  █████████░░░░░░░░░░░░░░░░  36%  Streaming frame 134/654
+@hf-progress {"code":"capture","done":134,"total":654,"pct":36}
+  █████████░░░░░░░░░░░░░░░░  37%  Streaming frame 137/654
+@hf-progress {"code":"capture","done":137,"total":654,"pct":37}
+  █████████░░░░░░░░░░░░░░░░  37%  Streaming frame 139/654
+@hf-progress {"code":"capture","done":139,"total":654,"pct":37}
+  █████████░░░░░░░░░░░░░░░░  37%  Streaming frame 142/654
+@hf-progress {"code":"capture","done":142,"total":654,"pct":37}
+  █████████░░░░░░░░░░░░░░░░  37%  Streaming frame 145/654
+@hf-progress {"code":"capture","done":145,"total":654,"pct":37}
+  █████████░░░░░░░░░░░░░░░░  37%  Streaming frame 148/654
+@hf-progress {"code":"capture","done":148,"total":654,"pct":37}
+  █████████░░░░░░░░░░░░░░░░  38%  Streaming frame 151/654
+@hf-progress {"code":"capture","done":151,"total":654,"pct":38}
+  █████████░░░░░░░░░░░░░░░░  38%  Streaming frame 153/654
+@hf-progress {"code":"capture","done":153,"total":654,"pct":38}
+  █████████░░░░░░░░░░░░░░░░  38%  Streaming frame 155/654
+@hf-progress {"code":"capture","done":155,"total":654,"pct":38}
+  █████████░░░░░░░░░░░░░░░░  38%  Streaming frame 157/654
+@hf-progress {"code":"capture","done":157,"total":654,"pct":38}
+  █████████░░░░░░░░░░░░░░░░  38%  Streaming frame 159/654
+@hf-progress {"code":"capture","done":159,"total":654,"pct":38}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 161/654
+@hf-progress {"code":"capture","done":161,"total":654,"pct":39}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 163/654
+@hf-progress {"code":"capture","done":163,"total":654,"pct":39}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 166/654
+@hf-progress {"code":"capture","done":166,"total":654,"pct":39}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 168/654
+@hf-progress {"code":"capture","done":168,"total":654,"pct":39}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 170/654
+@hf-progress {"code":"capture","done":170,"total":654,"pct":39}
+  █████████░░░░░░░░░░░░░░░░  39%  Streaming frame 172/654
+@hf-progress {"code":"capture","done":172,"total":654,"pct":39}
+  ██████████░░░░░░░░░░░░░░░  40%  Streaming frame 174/654
+@hf-progress {"code":"capture","done":174,"total":654,"pct":40}
+  ██████████░░░░░░░░░░░░░░░  40%  Streaming frame 176/654
+@hf-progress {"code":"capture","done":176,"total":654,"pct":40}
+  ██████████░░░░░░░░░░░░░░░  40%  Streaming frame 179/654
+@hf-progress {"code":"capture","done":179,"total":654,"pct":40}
+  ██████████░░░░░░░░░░░░░░░  40%  Streaming frame 181/654
+@hf-progress {"code":"capture","done":181,"total":654,"pct":40}
+  ██████████░░░░░░░░░░░░░░░  40%  Streaming frame 184/654
+@hf-progress {"code":"capture","done":184,"total":654,"pct":40}
+  ██████████░░░░░░░░░░░░░░░  41%  Streaming frame 187/654
+@hf-progress {"code":"capture","done":187,"total":654,"pct":41}
+  ██████████░░░░░░░░░░░░░░░  41%  Streaming frame 190/654
+@hf-progress {"code":"capture","done":190,"total":654,"pct":41}
+  ██████████░░░░░░░░░░░░░░░  41%  Streaming frame 192/654
+@hf-progress {"code":"capture","done":192,"total":654,"pct":41}
+  ██████████░░░░░░░░░░░░░░░  41%  Streaming frame 194/654
+@hf-progress {"code":"capture","done":194,"total":654,"pct":41}
+  ██████████░░░░░░░░░░░░░░░  42%  Streaming frame 197/654
+@hf-progress {"code":"capture","done":197,"total":654,"pct":42}
+  ██████████░░░░░░░░░░░░░░░  42%  Streaming frame 200/654
+@hf-progress {"code":"capture","done":200,"total":654,"pct":42}
+  ██████████░░░░░░░░░░░░░░░  42%  Streaming frame 202/654
+@hf-progress {"code":"capture","done":202,"total":654,"pct":42}
+  ██████████░░░░░░░░░░░░░░░  42%  Streaming frame 205/654
+@hf-progress {"code":"capture","done":205,"total":654,"pct":42}
+  ██████████░░░░░░░░░░░░░░░  42%  Streaming frame 208/654
+@hf-progress {"code":"capture","done":208,"total":654,"pct":42}
+  ██████████░░░░░░░░░░░░░░░  43%  Streaming frame 211/654
+@hf-progress {"code":"capture","done":211,"total":654,"pct":43}
+  ██████████░░░░░░░░░░░░░░░  43%  Streaming frame 214/654
+@hf-progress {"code":"capture","done":214,"total":654,"pct":43}
+  ██████████░░░░░░░░░░░░░░░  43%  Streaming frame 217/654
+@hf-progress {"code":"capture","done":217,"total":654,"pct":43}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_streaming","status":"checkpoint","elapsedMs":110083,"message":"stage still running","stagePhase":"capturing","workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":219,"captureMode":"beginframe","captureOperation":"beginFrame","heartbeatIndex":2,"stageElapsedMs":89721}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 220/654
+@hf-progress {"code":"capture","done":220,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 222/654
+@hf-progress {"code":"capture","done":222,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 223/654
+@hf-progress {"code":"capture","done":223,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 225/654
+@hf-progress {"code":"capture","done":225,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 228/654
+@hf-progress {"code":"capture","done":228,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  44%  Streaming frame 231/654
+@hf-progress {"code":"capture","done":231,"total":654,"pct":44}
+  ███████████░░░░░░░░░░░░░░  45%  Streaming frame 234/654
+@hf-progress {"code":"capture","done":234,"total":654,"pct":45}
+  ███████████░░░░░░░░░░░░░░  45%  Streaming frame 236/654
+@hf-progress {"code":"capture","done":236,"total":654,"pct":45}
+  ███████████░░░░░░░░░░░░░░  45%  Streaming frame 239/654
+@hf-progress {"code":"capture","done":239,"total":654,"pct":45}
+  ███████████░░░░░░░░░░░░░░  45%  Streaming frame 242/654
+@hf-progress {"code":"capture","done":242,"total":654,"pct":45}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 244/654
+@hf-progress {"code":"capture","done":244,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 246/654
+@hf-progress {"code":"capture","done":246,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 249/654
+@hf-progress {"code":"capture","done":249,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 251/654
+@hf-progress {"code":"capture","done":251,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 253/654
+@hf-progress {"code":"capture","done":253,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  46%  Streaming frame 255/654
+@hf-progress {"code":"capture","done":255,"total":654,"pct":46}
+  ███████████░░░░░░░░░░░░░░  47%  Streaming frame 257/654
+@hf-progress {"code":"capture","done":257,"total":654,"pct":47}
+  ███████████░░░░░░░░░░░░░░  47%  Streaming frame 260/654
+@hf-progress {"code":"capture","done":260,"total":654,"pct":47}
+  ███████████░░░░░░░░░░░░░░  47%  Streaming frame 263/654
+@hf-progress {"code":"capture","done":263,"total":654,"pct":47}
+  ███████████░░░░░░░░░░░░░░  47%  Streaming frame 266/654
+@hf-progress {"code":"capture","done":266,"total":654,"pct":47}
+  ████████████░░░░░░░░░░░░░  48%  Streaming frame 269/654
+@hf-progress {"code":"capture","done":269,"total":654,"pct":48}
+  ████████████░░░░░░░░░░░░░  48%  Streaming frame 272/654
+@hf-progress {"code":"capture","done":272,"total":654,"pct":48}
+  ████████████░░░░░░░░░░░░░  48%  Streaming frame 275/654
+@hf-progress {"code":"capture","done":275,"total":654,"pct":48}
+  ████████████░░░░░░░░░░░░░  48%  Streaming frame 277/654
+@hf-progress {"code":"capture","done":277,"total":654,"pct":48}
+  ████████████░░░░░░░░░░░░░  49%  Streaming frame 280/654
+@hf-progress {"code":"capture","done":280,"total":654,"pct":49}
+  ████████████░░░░░░░░░░░░░  49%  Streaming frame 283/654
+@hf-progress {"code":"capture","done":283,"total":654,"pct":49}
+  ████████████░░░░░░░░░░░░░  49%  Streaming frame 286/654
+@hf-progress {"code":"capture","done":286,"total":654,"pct":49}
+  ████████████░░░░░░░░░░░░░  49%  Streaming frame 289/654
+@hf-progress {"code":"capture","done":289,"total":654,"pct":49}
+  ████████████░░░░░░░░░░░░░  49%  Streaming frame 291/654
+@hf-progress {"code":"capture","done":291,"total":654,"pct":49}
+  ████████████░░░░░░░░░░░░░  50%  Streaming frame 294/654
+@hf-progress {"code":"capture","done":294,"total":654,"pct":50}
+  ████████████░░░░░░░░░░░░░  50%  Streaming frame 297/654
+@hf-progress {"code":"capture","done":297,"total":654,"pct":50}
+  ████████████░░░░░░░░░░░░░  50%  Streaming frame 299/654
+@hf-progress {"code":"capture","done":299,"total":654,"pct":50}
+  ████████████░░░░░░░░░░░░░  50%  Streaming frame 301/654
+@hf-progress {"code":"capture","done":301,"total":654,"pct":50}
+  ████████████░░░░░░░░░░░░░  51%  Streaming frame 304/654
+@hf-progress {"code":"capture","done":304,"total":654,"pct":51}
+  ████████████░░░░░░░░░░░░░  51%  Streaming frame 306/654
+@hf-progress {"code":"capture","done":306,"total":654,"pct":51}
+  ████████████░░░░░░░░░░░░░  51%  Streaming frame 309/654
+@hf-progress {"code":"capture","done":309,"total":654,"pct":51}
+  ████████████░░░░░░░░░░░░░  51%  Streaming frame 312/654
+@hf-progress {"code":"capture","done":312,"total":654,"pct":51}
+  ████████████░░░░░░░░░░░░░  51%  Streaming frame 315/654
+@hf-progress {"code":"capture","done":315,"total":654,"pct":51}
+  █████████████░░░░░░░░░░░░  52%  Streaming frame 318/654
+@hf-progress {"code":"capture","done":318,"total":654,"pct":52}
+  █████████████░░░░░░░░░░░░  52%  Streaming frame 321/654
+@hf-progress {"code":"capture","done":321,"total":654,"pct":52}
+  █████████████░░░░░░░░░░░░  52%  Streaming frame 324/654
+@hf-progress {"code":"capture","done":324,"total":654,"pct":52}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 327/654
+@hf-progress {"code":"capture","done":327,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 330/654
+@hf-progress {"code":"capture","done":330,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 332/654
+@hf-progress {"code":"capture","done":332,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 334/654
+@hf-progress {"code":"capture","done":334,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 336/654
+@hf-progress {"code":"capture","done":336,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  53%  Streaming frame 338/654
+@hf-progress {"code":"capture","done":338,"total":654,"pct":53}
+  █████████████░░░░░░░░░░░░  54%  Streaming frame 341/654
+@hf-progress {"code":"capture","done":341,"total":654,"pct":54}
+  █████████████░░░░░░░░░░░░  54%  Streaming frame 344/654
+@hf-progress {"code":"capture","done":344,"total":654,"pct":54}
+  █████████████░░░░░░░░░░░░  54%  Streaming frame 347/654
+@hf-progress {"code":"capture","done":347,"total":654,"pct":54}
+  █████████████░░░░░░░░░░░░  54%  Streaming frame 349/654
+@hf-progress {"code":"capture","done":349,"total":654,"pct":54}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 351/654
+@hf-progress {"code":"capture","done":351,"total":654,"pct":55}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 352/654
+@hf-progress {"code":"capture","done":352,"total":654,"pct":55}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 354/654
+@hf-progress {"code":"capture","done":354,"total":654,"pct":55}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 356/654
+@hf-progress {"code":"capture","done":356,"total":654,"pct":55}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 358/654
+@hf-progress {"code":"capture","done":358,"total":654,"pct":55}
+  █████████████░░░░░░░░░░░░  55%  Streaming frame 360/654
+@hf-progress {"code":"capture","done":360,"total":654,"pct":55}
+  ██████████████░░░░░░░░░░░  56%  Streaming frame 363/654
+@hf-progress {"code":"capture","done":363,"total":654,"pct":56}
+  ██████████████░░░░░░░░░░░  56%  Streaming frame 366/654
+@hf-progress {"code":"capture","done":366,"total":654,"pct":56}
+  ██████████████░░░░░░░░░░░  56%  Streaming frame 368/654
+@hf-progress {"code":"capture","done":368,"total":654,"pct":56}
+  ██████████████░░░░░░░░░░░  56%  Streaming frame 370/654
+@hf-progress {"code":"capture","done":370,"total":654,"pct":56}
+  ██████████████░░░░░░░░░░░  56%  Streaming frame 373/654
+@hf-progress {"code":"capture","done":373,"total":654,"pct":56}
+  ██████████████░░░░░░░░░░░  57%  Streaming frame 376/654
+@hf-progress {"code":"capture","done":376,"total":654,"pct":57}
+  ██████████████░░░░░░░░░░░  57%  Streaming frame 378/654
+@hf-progress {"code":"capture","done":378,"total":654,"pct":57}
+  ██████████████░░░░░░░░░░░  57%  Streaming frame 381/654
+@hf-progress {"code":"capture","done":381,"total":654,"pct":57}
+  ██████████████░░░░░░░░░░░  57%  Streaming frame 384/654
+@hf-progress {"code":"capture","done":384,"total":654,"pct":57}
+  ██████████████░░░░░░░░░░░  57%  Streaming frame 386/654
+@hf-progress {"code":"capture","done":386,"total":654,"pct":57}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 388/654
+@hf-progress {"code":"capture","done":388,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 390/654
+@hf-progress {"code":"capture","done":390,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 392/654
+@hf-progress {"code":"capture","done":392,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 394/654
+@hf-progress {"code":"capture","done":394,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 396/654
+@hf-progress {"code":"capture","done":396,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  58%  Streaming frame 398/654
+@hf-progress {"code":"capture","done":398,"total":654,"pct":58}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 400/654
+@hf-progress {"code":"capture","done":400,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 402/654
+@hf-progress {"code":"capture","done":402,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 404/654
+@hf-progress {"code":"capture","done":404,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 405/654
+@hf-progress {"code":"capture","done":405,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 407/654
+@hf-progress {"code":"capture","done":407,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 408/654
+@hf-progress {"code":"capture","done":408,"total":654,"pct":59}
+  ██████████████░░░░░░░░░░░  59%  Streaming frame 409/654
+@hf-progress {"code":"capture","done":409,"total":654,"pct":59}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 411/654
+@hf-progress {"code":"capture","done":411,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 414/654
+@hf-progress {"code":"capture","done":414,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 415/654
+@hf-progress {"code":"capture","done":415,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 418/654
+@hf-progress {"code":"capture","done":418,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 420/654
+@hf-progress {"code":"capture","done":420,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  60%  Streaming frame 422/654
+@hf-progress {"code":"capture","done":422,"total":654,"pct":60}
+  ███████████████░░░░░░░░░░  61%  Streaming frame 424/654
+@hf-progress {"code":"capture","done":424,"total":654,"pct":61}
+  ███████████████░░░░░░░░░░  61%  Streaming frame 427/654
+@hf-progress {"code":"capture","done":427,"total":654,"pct":61}
+  ███████████████░░░░░░░░░░  61%  Streaming frame 430/654
+@hf-progress {"code":"capture","done":430,"total":654,"pct":61}
+  ███████████████░░░░░░░░░░  61%  Streaming frame 432/654
+@hf-progress {"code":"capture","done":432,"total":654,"pct":61}
+  ███████████████░░░░░░░░░░  62%  Streaming frame 435/654
+@hf-progress {"code":"capture","done":435,"total":654,"pct":62}
+  ███████████████░░░░░░░░░░  62%  Streaming frame 438/654
+@hf-progress {"code":"capture","done":438,"total":654,"pct":62}
+  ███████████████░░░░░░░░░░  62%  Streaming frame 441/654
+@hf-progress {"code":"capture","done":441,"total":654,"pct":62}
+  ███████████████░░░░░░░░░░  62%  Streaming frame 444/654
+@hf-progress {"code":"capture","done":444,"total":654,"pct":62}
+  ███████████████░░░░░░░░░░  63%  Streaming frame 446/654
+@hf-progress {"code":"capture","done":446,"total":654,"pct":63}
+  ███████████████░░░░░░░░░░  63%  Streaming frame 449/654
+@hf-progress {"code":"capture","done":449,"total":654,"pct":63}
+  ███████████████░░░░░░░░░░  63%  Streaming frame 451/654
+@hf-progress {"code":"capture","done":451,"total":654,"pct":63}
+  ███████████████░░░░░░░░░░  63%  Streaming frame 454/654
+@hf-progress {"code":"capture","done":454,"total":654,"pct":63}
+  ███████████████░░░░░░░░░░  63%  Streaming frame 456/654
+@hf-progress {"code":"capture","done":456,"total":654,"pct":63}
+  ████████████████░░░░░░░░░  64%  Streaming frame 458/654
+@hf-progress {"code":"capture","done":458,"total":654,"pct":64}
+  ████████████████░░░░░░░░░  64%  Streaming frame 460/654
+@hf-progress {"code":"capture","done":460,"total":654,"pct":64}
+  ████████████████░░░░░░░░░  64%  Streaming frame 462/654
+@hf-progress {"code":"capture","done":462,"total":654,"pct":64}
+  ████████████████░░░░░░░░░  64%  Streaming frame 465/654
+@hf-progress {"code":"capture","done":465,"total":654,"pct":64}
+  ████████████████░░░░░░░░░  64%  Streaming frame 468/654
+@hf-progress {"code":"capture","done":468,"total":654,"pct":64}
+  ████████████████░░░░░░░░░  65%  Streaming frame 471/654
+@hf-progress {"code":"capture","done":471,"total":654,"pct":65}
+  ████████████████░░░░░░░░░  65%  Streaming frame 474/654
+@hf-progress {"code":"capture","done":474,"total":654,"pct":65}
+  ████████████████░░░░░░░░░  65%  Streaming frame 477/654
+@hf-progress {"code":"capture","done":477,"total":654,"pct":65}
+  ████████████████░░░░░░░░░  65%  Streaming frame 480/654
+@hf-progress {"code":"capture","done":480,"total":654,"pct":65}
+  ████████████████░░░░░░░░░  66%  Streaming frame 483/654
+@hf-progress {"code":"capture","done":483,"total":654,"pct":66}
+  ████████████████░░░░░░░░░  66%  Streaming frame 486/654
+@hf-progress {"code":"capture","done":486,"total":654,"pct":66}
+  ████████████████░░░░░░░░░  66%  Streaming frame 489/654
+@hf-progress {"code":"capture","done":489,"total":654,"pct":66}
+  ████████████████░░░░░░░░░  66%  Streaming frame 492/654
+@hf-progress {"code":"capture","done":492,"total":654,"pct":66}
+  ████████████████░░░░░░░░░  67%  Streaming frame 495/654
+@hf-progress {"code":"capture","done":495,"total":654,"pct":67}
+  ████████████████░░░░░░░░░  67%  Streaming frame 498/654
+@hf-progress {"code":"capture","done":498,"total":654,"pct":67}
+  ████████████████░░░░░░░░░  67%  Streaming frame 501/654
+@hf-progress {"code":"capture","done":501,"total":654,"pct":67}
+  ████████████████░░░░░░░░░  67%  Streaming frame 504/654
+@hf-progress {"code":"capture","done":504,"total":654,"pct":67}
+  █████████████████░░░░░░░░  68%  Streaming frame 507/654
+@hf-progress {"code":"capture","done":507,"total":654,"pct":68}
+  █████████████████░░░░░░░░  68%  Streaming frame 509/654
+@hf-progress {"code":"capture","done":509,"total":654,"pct":68}
+  █████████████████░░░░░░░░  68%  Streaming frame 511/654
+@hf-progress {"code":"capture","done":511,"total":654,"pct":68}
+  █████████████████░░░░░░░░  68%  Streaming frame 514/654
+@hf-progress {"code":"capture","done":514,"total":654,"pct":68}
+  █████████████████░░░░░░░░  68%  Streaming frame 517/654
+@hf-progress {"code":"capture","done":517,"total":654,"pct":68}
+  █████████████████░░░░░░░░  69%  Streaming frame 520/654
+@hf-progress {"code":"capture","done":520,"total":654,"pct":69}
+  █████████████████░░░░░░░░  69%  Streaming frame 523/654
+@hf-progress {"code":"capture","done":523,"total":654,"pct":69}
+  █████████████████░░░░░░░░  69%  Streaming frame 526/654
+@hf-progress {"code":"capture","done":526,"total":654,"pct":69}
+  █████████████████░░░░░░░░  69%  Streaming frame 529/654
+@hf-progress {"code":"capture","done":529,"total":654,"pct":69}
+  █████████████████░░░░░░░░  70%  Streaming frame 532/654
+@hf-progress {"code":"capture","done":532,"total":654,"pct":70}
+  █████████████████░░░░░░░░  70%  Streaming frame 535/654
+@hf-progress {"code":"capture","done":535,"total":654,"pct":70}
+  █████████████████░░░░░░░░  70%  Streaming frame 538/654
+@hf-progress {"code":"capture","done":538,"total":654,"pct":70}
+  █████████████████░░░░░░░░  70%  Streaming frame 541/654
+@hf-progress {"code":"capture","done":541,"total":654,"pct":70}
+  █████████████████░░░░░░░░  71%  Streaming frame 544/654
+@hf-progress {"code":"capture","done":544,"total":654,"pct":71}
+  █████████████████░░░░░░░░  71%  Streaming frame 547/654
+@hf-progress {"code":"capture","done":547,"total":654,"pct":71}
+  █████████████████░░░░░░░░  71%  Streaming frame 549/654
+@hf-progress {"code":"capture","done":549,"total":654,"pct":71}
+  █████████████████░░░░░░░░  71%  Streaming frame 551/654
+@hf-progress {"code":"capture","done":551,"total":654,"pct":71}
+  ██████████████████░░░░░░░  72%  Streaming frame 554/654
+@hf-progress {"code":"capture","done":554,"total":654,"pct":72}
+  ██████████████████░░░░░░░  72%  Streaming frame 557/654
+@hf-progress {"code":"capture","done":557,"total":654,"pct":72}
+  ██████████████████░░░░░░░  72%  Streaming frame 559/654
+@hf-progress {"code":"capture","done":559,"total":654,"pct":72}
+  ██████████████████░░░░░░░  72%  Streaming frame 562/654
+@hf-progress {"code":"capture","done":562,"total":654,"pct":72}
+  ██████████████████░░░░░░░  73%  Streaming frame 565/654
+@hf-progress {"code":"capture","done":565,"total":654,"pct":73}
+  ██████████████████░░░░░░░  73%  Streaming frame 568/654
+@hf-progress {"code":"capture","done":568,"total":654,"pct":73}
+  ██████████████████░░░░░░░  73%  Streaming frame 571/654
+@hf-progress {"code":"capture","done":571,"total":654,"pct":73}
+  ██████████████████░░░░░░░  73%  Streaming frame 574/654
+@hf-progress {"code":"capture","done":574,"total":654,"pct":73}
+  ██████████████████░░░░░░░  73%  Streaming frame 576/654
+@hf-progress {"code":"capture","done":576,"total":654,"pct":73}
+  ██████████████████░░░░░░░  74%  Streaming frame 578/654
+@hf-progress {"code":"capture","done":578,"total":654,"pct":74}
+  ██████████████████░░░░░░░  74%  Streaming frame 580/654
+@hf-progress {"code":"capture","done":580,"total":654,"pct":74}
+  ██████████████████░░░░░░░  74%  Streaming frame 583/654
+@hf-progress {"code":"capture","done":583,"total":654,"pct":74}
+  ██████████████████░░░░░░░  74%  Streaming frame 586/654
+@hf-progress {"code":"capture","done":586,"total":654,"pct":74}
+  ██████████████████░░░░░░░  75%  Streaming frame 589/654
+@hf-progress {"code":"capture","done":589,"total":654,"pct":75}
+  ██████████████████░░░░░░░  75%  Streaming frame 592/654
+@hf-progress {"code":"capture","done":592,"total":654,"pct":75}
+  ██████████████████░░░░░░░  75%  Streaming frame 595/654
+@hf-progress {"code":"capture","done":595,"total":654,"pct":75}
+  ██████████████████░░░░░░░  75%  Streaming frame 597/654
+@hf-progress {"code":"capture","done":597,"total":654,"pct":75}
+  ██████████████████░░░░░░░  75%  Streaming frame 599/654
+@hf-progress {"code":"capture","done":599,"total":654,"pct":75}
+  ███████████████████░░░░░░  76%  Streaming frame 602/654
+@hf-progress {"code":"capture","done":602,"total":654,"pct":76}
+  ███████████████████░░░░░░  76%  Streaming frame 605/654
+@hf-progress {"code":"capture","done":605,"total":654,"pct":76}
+  ███████████████████░░░░░░  76%  Streaming frame 608/654
+@hf-progress {"code":"capture","done":608,"total":654,"pct":76}
+  ███████████████████░░░░░░  76%  Streaming frame 611/654
+@hf-progress {"code":"capture","done":611,"total":654,"pct":76}
+  ███████████████████░░░░░░  77%  Streaming frame 613/654
+@hf-progress {"code":"capture","done":613,"total":654,"pct":77}
+  ███████████████████░░░░░░  77%  Streaming frame 615/654
+@hf-progress {"code":"capture","done":615,"total":654,"pct":77}
+  ███████████████████░░░░░░  77%  Streaming frame 617/654
+@hf-progress {"code":"capture","done":617,"total":654,"pct":77}
+  ███████████████████░░░░░░  77%  Streaming frame 619/654
+@hf-progress {"code":"capture","done":619,"total":654,"pct":77}
+  ███████████████████░░░░░░  77%  Streaming frame 621/654
+@hf-progress {"code":"capture","done":621,"total":654,"pct":77}
+  ███████████████████░░░░░░  77%  Streaming frame 624/654
+@hf-progress {"code":"capture","done":624,"total":654,"pct":77}
+  ███████████████████░░░░░░  78%  Streaming frame 627/654
+@hf-progress {"code":"capture","done":627,"total":654,"pct":78}
+  ███████████████████░░░░░░  78%  Streaming frame 630/654
+@hf-progress {"code":"capture","done":630,"total":654,"pct":78}
+  ███████████████████░░░░░░  78%  Streaming frame 633/654
+@hf-progress {"code":"capture","done":633,"total":654,"pct":78}
+  ███████████████████░░░░░░  78%  Streaming frame 636/654
+@hf-progress {"code":"capture","done":636,"total":654,"pct":78}
+  ███████████████████░░░░░░  79%  Streaming frame 638/654
+@hf-progress {"code":"capture","done":638,"total":654,"pct":79}
+  ███████████████████░░░░░░  79%  Streaming frame 640/654
+@hf-progress {"code":"capture","done":640,"total":654,"pct":79}
+  ███████████████████░░░░░░  79%  Streaming frame 642/654
+@hf-progress {"code":"capture","done":642,"total":654,"pct":79}
+  ███████████████████░░░░░░  79%  Streaming frame 645/654
+@hf-progress {"code":"capture","done":645,"total":654,"pct":79}
+  ███████████████████░░░░░░  79%  Streaming frame 647/654
+@hf-progress {"code":"capture","done":647,"total":654,"pct":79}
+  ████████████████████░░░░░  80%  Streaming frame 649/654
+@hf-progress {"code":"capture","done":649,"total":654,"pct":80}
+  ████████████████████░░░░░  80%  Streaming frame 651/654
+@hf-progress {"code":"capture","done":651,"total":654,"pct":80}
+  ████████████████████░░░░░  80%  Streaming frame 654/654
+@hf-progress {"code":"capture","done":654,"total":654,"pct":80}
+  ██████████████████████░░░  89%  Encoding frame 597/654
+@hf-progress {"code":"encode","done":597,"total":654,"pct":89}
+  ██████████████████████░░░  89%  Encoding frame 611/654
+@hf-progress {"code":"encode","done":611,"total":654,"pct":89}
+  ██████████████████████░░░  90%  Encoding frame 626/654
+@hf-progress {"code":"encode","done":626,"total":654,"pct":90}
+  ██████████████████████░░░  90%  Encoding frame 641/654
+@hf-progress {"code":"encode","done":641,"total":654,"pct":90}
+  ██████████████████████░░░  90%  Encoding frame 654/654
+@hf-progress {"code":"encode","done":654,"total":654,"pct":90}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"capture_streaming","status":"end","elapsedMs":167955,"durationMs":147593,"stagePhase":"capturing","workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":654,"captureMode":"beginframe","captureOperation":"encode"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"assemble","status":"start","elapsedMs":167958,"stagePhase":"capturing","hasAudio":true,"workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":654,"captureMode":"beginframe","captureOperation":"encode"}
+  ██████████████████████░░░  90%  Assembling final video
+@hf-progress {"code":"assemble","done":0,"total":21.8,"pct":90}
+  ████████████████████████░  99%  Assembling final video
+@hf-progress {"code":"assemble","done":21.8,"total":21.8,"pct":99}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"assemble","status":"end","elapsedMs":170719,"durationMs":2761,"stagePhase":"capturing","hasAudio":true,"workerCount":1,"forceScreenshot":false,"totalFrames":654,"framesCompleted":654,"captureMode":"beginframe","captureOperation":"encode"}
+[INFO] [Render:trace] {"renderJobId":"4ebfef64-e5b9-4e9d-bef0-94fb3df10d30","phase":"pipeline","status":"checkpoint","elapsedMs":170842,"message":"artifact validated","totalElapsedMs":170836}
+  █████████████████████████  100%  Render complete
+
+◇  /home/abin/overbranch/brag-output/brag.mp4
+   3.1 MB · 21.8s video · rendered in 2m 51.1s
+   beginframe capture · hardware gpu · compile 8.7s · extract 0.0s · audio 5.5s · probe 2.1s · setup 6.1s · capture 2m 27.6s · encode (during capture) 2m 27.6s · assemble 2.8s
+   Keep editing by chatting with Framey in the HyperFrames desktop app → https://hyperframes.dev/studio/download?os=linux
+  [hyperframes] Agent feedback: hyperframes feedback --rating <0-10> --comment "..."
+render exit 0

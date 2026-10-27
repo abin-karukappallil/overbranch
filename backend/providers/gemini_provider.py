@@ -14,7 +14,7 @@ from typing import List, Dict, Any, Optional
 from .base_provider import LLMProvider, LLMProviderError
 from .errors import FailureKind, classify
 from .multimodal import has_image_parts, strip_image_parts
-from .web2api_keys import get_web2api_base_url, load_web2api_keys
+from .web2api_keys import get_shared_keys, get_web2api_base_url, load_web2api_keys
 
 from cancellation import LLMOperationCancelled
 
@@ -43,31 +43,50 @@ class GeminiProvider(LLMProvider):
 
     supports_images = True  # with a text-only retry if the gateway rejects them (see chat)
 
-    def __init__(self, namespace: str = "GEMINI", label: str = "Gemini"):
+    def __init__(
+        self,
+        namespace: str = "GEMINI",
+        label: str = "Gemini",
+        base_url: Optional[str] = None,
+        shared_key: bool = False,
+    ):
         # A second Web2API deployment is the same provider against another host:
-        # namespace="GEMINI2" reads GEMINI2_WEB2API_BASE_URL / GEMINI2_WEB2API_API_KEY_1..5,
-        # so the chain can hand a timed-out primary endpoint to its twin.
+        # namespace="GEMINI2" reads GEMINI2_WEB2API_BASE_URL / GEMINI2_WEB2API_API_KEY_1..5.
+        # A gateway-chain entry (WEB2API_GATEWAYS) instead gets its own ``base_url`` and
+        # ``shared_key=True``: its key is the one WEB2API_API_KEY every gateway shares.
         self.namespace = (namespace or "GEMINI").rstrip("_")
         self.label = label
-        self.base_url = get_web2api_base_url(self.namespace)
-        self.default_timeout = float(
-            os.getenv(f"{self.namespace}_TIMEOUT") or os.getenv("GEMINI_TIMEOUT", "20.0")
-        )
+        self._fixed_base_url = (base_url or "").strip().rstrip("/") or None
+        self._shared_key = shared_key
+        self.base_url = self._fixed_base_url or get_web2api_base_url(self.namespace)
         self._active_key_index = 0
         self.candidates = self._load_server_keys()
         self._clients: Dict[str, Any] = {}
         # Endpoints (the server gateway / a user's own key) that have rejected image input.
         self._images_unsupported: set = set()
 
+    @staticmethod
+    def idle_timeout() -> float:
+        """Seconds a stream may go without a byte before the gateway counts as hung.
+
+        This is the HTTP *read* timeout, which httpx restarts on every chunk: a slow
+        answer that keeps streaming is never cut off, only a stalled connection is.
+        The overall per-attempt cap lives in the router (LLM_ATTEMPT_WALL_CAP)."""
+        try:
+            return max(1.0, float(os.getenv("LLM_IDLE_TIMEOUT", "45")))
+        except ValueError:
+            return 45.0
+
     def _load_server_keys(self) -> List[Dict[str, str]]:
-        """Loads up to 5 server-side Gemini Web2API keys via the shared loader."""
-        keys = [{"name": k.name, "key": k.key} for k in load_web2api_keys(self.namespace)]
+        """Loads up to 5 server-side Web2API keys (the shared gateway key, or this namespace's own)."""
+        loaded = get_shared_keys() if self._shared_key else load_web2api_keys(self.namespace)
+        keys = [{"name": k.name, "key": k.key} for k in loaded]
         logger.info(f"{self.label} Web2API provider initialized with {len(keys)} server-side key(s)")
         return keys
 
     def reload_keys(self) -> None:
         """Re-reads the endpoint's keys, so a chain entry configured after import is not dead."""
-        self.base_url = get_web2api_base_url(self.namespace) or self.base_url
+        self.base_url = self._fixed_base_url or get_web2api_base_url(self.namespace) or self.base_url
         self.candidates = self._load_server_keys()
 
     def _get_client_for_key(self, api_key: str, base_url: Optional[str] = None):
@@ -75,19 +94,24 @@ class GeminiProvider(LLMProvider):
         target_base = (base_url or self.base_url).rstrip("/")
         if not target_base:
             raise LLMProviderError(
-                "Gemini Web2API not configured. Set GEMINI_WEB2API_BASE_URL and "
-                "GEMINI_WEB2API_API_KEY_1..5 in .env.",
+                "Web2API gateway not configured. Set WEB2API_GATEWAYS and WEB2API_API_KEY "
+                "(or GEMINI_WEB2API_BASE_URL and GEMINI_WEB2API_API_KEY) in .env.",
                 provider="Gemini",
+                kind=FailureKind.UNAVAILABLE,
             )
-        cache_key = f"{api_key}::{target_base}"
+        idle = self.idle_timeout()
+        cache_key = f"{api_key}::{target_base}::{idle}"
         if cache_key not in self._clients:
             try:
+                import httpx
                 from openai import OpenAI
                 max_retries = int(os.getenv("GEMINI_MAX_RETRIES", "0"))
                 self._clients[cache_key] = OpenAI(
                     api_key=api_key,
                     base_url=target_base,
-                    timeout=self.default_timeout,
+                    # read = max silence between two chunks of a streamed answer; connect/write
+                    # are short so a dead host fails over quickly. No total deadline here.
+                    timeout=httpx.Timeout(connect=min(10.0, idle), read=idle, write=30.0, pool=30.0),
                     max_retries=max_retries,
                 )
             except ImportError:
@@ -168,9 +192,10 @@ class GeminiProvider(LLMProvider):
 
         if not all_candidates:
             raise LLMProviderError(
-                "Gemini Web2API not configured. Set GEMINI_WEB2API_BASE_URL and "
-                "GEMINI_WEB2API_API_KEY_1..5 in .env.",
+                "Web2API gateway not configured. Set WEB2API_GATEWAYS and WEB2API_API_KEY "
+                "(or GEMINI_WEB2API_BASE_URL and GEMINI_WEB2API_API_KEY) in .env.",
                 provider="Gemini",
+                kind=FailureKind.UNAVAILABLE,
             )
 
         target_model = self._validate_model(model)
@@ -344,7 +369,7 @@ class GeminiProvider(LLMProvider):
                     next_slot = (current_slot + 1) % total_keys
                     logger.warning(
                         f"Gemini Web2API {creds['name']} timed out ({error_msg[:120]}). "
-                        f"Trying next key slot {next_slot + 1} or triggering MiniMax M3 fallback..."
+                        f"Trying next key slot {next_slot + 1}, else the router moves to the next gateway..."
                     )
                     self._active_key_index = next_slot
                     continue
@@ -356,16 +381,16 @@ class GeminiProvider(LLMProvider):
                 next_slot = (current_slot + 1) % total_keys
                 self._active_key_index = next_slot
 
-        # Classified, so the router can tell a rate limit / outage / delay (fall back to
-        # OpenRouter MiniMax M3) from a malformed request.
+        # Classified, so the router can tell a rate limit / outage / delay (try the next
+        # gateway and keep cycling) from a malformed request (stop cycling after one pass).
         kind, retry_after = classify(last_status_code, str(last_error or ""))
         err_lower = str(last_error or "").lower()
         if "timeout" in err_lower or "timed out" in err_lower or "deadline" in err_lower:
             kind = FailureKind.TIMEOUT
         elif "rate limit" in err_lower or "quota" in err_lower or "429" in err_lower:
             kind = FailureKind.RATE_LIMIT
-        elif kind == FailureKind.BAD_REQUEST:
-            kind = FailureKind.UNAVAILABLE
+        # A genuine 4xx stays BAD_REQUEST: the router advances to the next gateway but
+        # stops cycling after one pass, since the same request will fail everywhere.
 
         raise LLMProviderError(
             f"All {total_keys} Gemini keys failed or delayed. Last error: {last_error}",

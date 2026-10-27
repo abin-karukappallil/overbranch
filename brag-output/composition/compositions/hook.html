@@ -1,0 +1,111 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: var(--color-ink, #000000);
+    }
+    #hook-typed {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 500px;
+      padding-left: 628px;
+      text-align: left;
+      font-family: "Space Mono", monospace;
+      font-weight: 700;
+      font-size: 46px;
+      line-height: 60px;
+      color: #9e9e9e;
+      white-space: pre;
+    }
+    .hk-ch {
+      display: none;
+    }
+    #hook-caret {
+      display: inline-block;
+      width: 24px;
+      height: 52px;
+      margin-left: 4px;
+      vertical-align: -10px;
+      background: var(--color-poster, #00cc68);
+    }
+    #hook-head {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 300px;
+      text-align: center;
+      font-family: "Archivo Black", sans-serif;
+      font-weight: 400;
+      font-size: 140px;
+      line-height: 0.92;
+      letter-spacing: -0.04em;
+      color: var(--color-paper, #ffffff);
+      text-transform: uppercase;
+    }
+    #hook-head span.line {
+      display: block;
+    }
+    #hook-head .g {
+      color: var(--color-poster, #00cc68);
+    }
+    #hook-flood {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      background: var(--color-poster, #00cc68);
+    }
+  </style>
+  <div data-hf-id="hf-ktv8" id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-rx2r" id="hook-typed"><span data-hf-id="hf-2hyl">\documentcl</span><span data-hf-id="hf-42qn" class="hk-ch" id="hk-c1">a</span><span data-hf-id="hf-wqyc" class="hk-ch" id="hk-c2">s</span><span data-hf-id="hf-zivr" class="hk-ch" id="hk-c3">s</span><span data-hf-id="hf-kxme" class="hk-ch" id="hk-c4">{</span><span data-hf-id="hf-anw3" class="hk-ch" id="hk-c5">a</span><span data-hf-id="hf-7r17" class="hk-ch" id="hk-c6">r</span><span data-hf-id="hf-czpm" class="hk-ch" id="hk-c7">t</span><span data-hf-id="hf-sbdw" class="hk-ch" id="hk-c8">i</span><span data-hf-id="hf-myul" class="hk-ch" id="hk-c9">c</span><span data-hf-id="hf-75c8" class="hk-ch" id="hk-c10">l</span><span data-hf-id="hf-o6a0" class="hk-ch" id="hk-c11">e</span><span data-hf-id="hf-tch5" class="hk-ch" id="hk-c12">}</span><span data-hf-id="hf-nonh" id="hook-caret"></span></div>
+    <h1 data-hf-id="hf-cjt9" id="hook-head">
+      <span data-hf-id="hf-0917" class="line" id="hook-l1">Stop re-typing</span>
+      <span data-hf-id="hf-w83c" class="line" id="hook-l2">papers <span data-hf-id="hf-uzxk" class="g">by hand.</span></span>
+    </h1>
+    <div data-hf-id="hf-7nd2" id="hook-flood" data-layout-ignore></div>
+  </div>
+  <script>
+    (function () {
+      const tl = gsap.timeline({ paused: true });
+
+      // Hand-typing: irregular keystrokes, each matched by a keypress SFX in index.html
+      const keys = [0.06, 0.16, 0.28, 0.37, 0.5, 0.59, 0.7];
+      keys.forEach((t, i) => tl.set("#hk-c" + (i + 1), { display: "inline" }, t));
+      // After the slam the struggle continues quietly behind the headline
+      [1.34, 1.71, 2.06, 2.38].forEach((t, i) => tl.set("#hk-c" + (i + 8), { display: "inline" }, t));
+      // Caret blinks only while the typist hesitates
+      [0.76, 1.03, 1.52, 1.88, 2.22, 2.55].forEach((t, i) =>
+        tl.set("#hook-caret", { opacity: i % 2 === 0 ? 0.25 : 1 }, t),
+      );
+
+      // beat-locked: 0.82s (music enters on the slam)
+      tl.fromTo(
+        "#hook-head",
+        { opacity: 0, scale: 1.32, filter: "blur(14px)" },
+        { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.2, ease: "power4.out" },
+        0.78,
+      );
+      // The typed line drops under the headline and dims to texture
+      tl.fromTo(
+        "#hook-typed",
+        { y: 0, opacity: 1 },
+        { y: 330, opacity: 0.55, duration: 0.32, ease: "power3.out" },
+        0.78,
+      );
+
+      // Colour flood: the poster green rises and becomes the next scene's ground
+      tl.fromTo(
+        "#hook-flood",
+        { y: 1080 },
+        { y: 0, duration: 0.31, ease: "power2.inOut" },
+        2.7,
+      );
+
+      window.__timelines["hook"] = tl;
+    })();
+  </script>
+</template>

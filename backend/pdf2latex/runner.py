@@ -18,6 +18,21 @@ logger = logging.getLogger("pdf2latex.runner")
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _tasks: Set[asyncio.Task] = set()
 _running_tasks: Dict[str, asyncio.Task] = {}
+_heartbeats: Dict[str, asyncio.Task] = {}
+
+
+async def _heartbeat(job_id: str, task: asyncio.Task) -> None:
+    """
+    Writes jobs `heartbeat_at` every HEARTBEAT_INTERVAL_S for as long as the job task is alive.
+    It is separate from the stage updates on purpose: a single LLM call can run for minutes
+    without writing any status, and that silence used to make the job look dead.
+    """
+    while not task.done():
+        try:
+            await asyncio.to_thread(jobs.touch_heartbeat, job_id)
+        except Exception:  # noqa: BLE001 — a missed beat must never take the job down
+            logger.warning(f"Could not write the heartbeat of conversion job {job_id}", exc_info=True)
+        await asyncio.sleep(jobs.HEARTBEAT_INTERVAL_S)
 
 
 def bind_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -53,10 +68,15 @@ def _spawn(job_id: str, data: bytes, project_id: str, overwrite: bool, resume: b
         run_conversion(job_id, data, project_id, overwrite, resume=resume, **extra))
     _tasks.add(task)
     _running_tasks[job_id] = task
+    beat = asyncio.get_running_loop().create_task(_heartbeat(job_id, task))
+    _heartbeats[job_id] = beat
 
     def _cleanup(done: asyncio.Task):
         _tasks.discard(task)
         _running_tasks.pop(job_id, None)
+        beat.cancel()
+        if _heartbeats.get(job_id) is beat:
+            _heartbeats.pop(job_id, None)
         # A pipeline that raised before it could record anything (a module that fails to import,
         # a bug outside its own error handling) must end the job. Left "running" with no task,
         # every poll would relaunch it into the same failure ("Resuming after an interruption…"
