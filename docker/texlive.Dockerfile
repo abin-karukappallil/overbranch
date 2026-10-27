@@ -221,7 +221,6 @@ RUN printf '%s\n' \
 # ============================================================
 # Fails the build if any font in the CORE set is missing, so a renamed or
 # dropped Debian package is caught here, not by a user document months later.
-COPY docker/overleaf-fonts.txt /usr/local/share/overbranch/overleaf-fonts.txt
 COPY docker/check-fonts.sh /usr/local/bin/ob-check-fonts
 RUN chmod +x /usr/local/bin/ob-check-fonts && ob-check-fonts
 
