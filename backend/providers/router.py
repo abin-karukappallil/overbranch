@@ -40,6 +40,28 @@ from .web2api_keys import GatewaySpec, get_chain_cycles, get_gateway_specs
 
 logger = logging.getLogger("provider_router")
 
+
+def _log_llm_response(resp: dict, attempt: dict) -> None:
+    """
+    Prints what the model answered, so a run can be followed in the console / `docker logs`.
+    LLM_LOG_RESPONSES=0 turns it off; LLM_LOG_MAX_CHARS (default 4000) bounds one entry.
+    """
+    if os.getenv("LLM_LOG_RESPONSES", "1").strip().lower() in ("0", "false", "no", "off"):
+        return
+    try:
+        limit = max(200, int(os.getenv("LLM_LOG_MAX_CHARS", "4000")))
+        content = str(resp.get("content") or "")
+        shown = content if len(content) <= limit else content[:limit] + f"... [+{len(content) - limit} chars]"
+        tool_calls = resp.get("tool_calls")
+        logger.info(
+            "[LLM_RESPONSE] provider=%s model=%s latency_ms=%s chars=%d%s\n%s",
+            attempt.get("provider"), attempt.get("model"), attempt.get("latency_ms"), len(content),
+            f" tool_calls={json.dumps(tool_calls, default=str)[:limit]}" if tool_calls else "",
+            shown,
+        )
+    except Exception:  # noqa: BLE001 - logging must never break a call
+        pass
+
 DEFAULT_MODEL = "gemini-3.7-flash"
 
 
@@ -503,6 +525,7 @@ class ProviderRouter:
                 attempts.append(attempt)
                 _notify(observer, attempt)
                 resp["attempts"] = attempts
+                _log_llm_response(resp, attempt)
                 return resp
 
             if pass_saw_bad_request:
