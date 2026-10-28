@@ -140,7 +140,7 @@ def test_subfolder_main_with_relative_input_figure_and_bib(uploads):
                                  active_file="thesis/chapters/one.tex", active_text="CHAPTERONE live\n")
     assert res["success"], res.get("error_log")
     assert res["main_file"] == "thesis/thesis.tex"
-    assert res["engine_used"].startswith("latexmk")
+    assert res["engine_used"].startswith(("latexmk", "pdflatex"))  # direct engine first; latexmk is the fallback
     text = pdf_text(res)
     assert "CHAPTERONE live" in text and "BIBTITLE" in text
     assert "SAMPLE IMAGE" not in text

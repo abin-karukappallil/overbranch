@@ -135,6 +135,18 @@ def _server_latexmkrc() -> Path:
     return path
 
 
+# Tools latexmk drives through the server rc but a direct engine run never invokes.
+_NEEDS_LATEXMK_RE = re.compile(
+    r"\\(?:makeindex|printindex|makeglossaries|printglossar(?:y|ies)|printacronyms|"
+    r"makenomenclature|printnomenclature|printbibliography\[[^\]]*bib2gls)\b|"
+    r"\\usepackage(?:\[[^\]]*\])?\{(?:glossaries(?:-extra)?|nomencl|imakeidx|splitidx)\}"
+)
+
+
+def _needs_latexmk(project_text: str) -> bool:
+    return bool(_NEEDS_LATEXMK_RE.search(_strip_tex_comments(project_text or "")))
+
+
 def _latexmk_command(engine_bin: str, main_rel: str, *, jobname: str, synctex: bool) -> List[str]:
     r"""
     ``latexmk -cd -f -interaction=nonstopmode -file-line-error -synctex=1 -pdf|-pdfxe|-pdflua``
@@ -2367,9 +2379,11 @@ def _compile_latex_impl(
             def _lmk(engine_bin: str) -> List[str]:
                 return _latexmk_command(engine_bin, main_rel, jobname=stem, synctex=persist_synctex)
 
-            # Candidates: latexmk first (run from the project root with -cd, so it works
-            # from the main file's directory like Overleaf), then a direct engine run of
-            # the same engine (the fallback that also drives the recovery cascade).
+            # Candidates: the direct engine run first (one pass, a second only when references,
+            # citations or a table of contents need it, biber/bibtex between) - several times
+            # faster than latexmk, which re-runs the engine until its aux files settle. latexmk
+            # (run from the project root with -cd, like Overleaf) is the fallback, and goes FIRST
+            # only for documents that need its extra tools (index, glossaries, nomenclature).
             if eng_clean in ["xelatex", "xe"]:
                 primary = "xelatex"
             elif eng_clean in ["lualatex", "lua"]:
@@ -2379,7 +2393,10 @@ def _compile_latex_impl(
             if eng_clean == "tectonic":
                 cmd_list = [["tectonic", main_name]]
             else:
-                cmd_list = [_lmk(primary), _direct(primary)]
+                if _needs_latexmk(project_text):
+                    cmd_list = [_lmk(primary), _direct(primary)]
+                else:
+                    cmd_list = [_direct(primary), _lmk(primary)]
                 if eng_clean not in ["pdflatex", "pdf", "latex", "xelatex", "xe", "lualatex", "lua", "latexmk", ""]:
                     # unknown engine name: try the other Unicode engine too, as before
                     cmd_list.append(_direct("lualatex" if primary == "xelatex" else "xelatex"))
