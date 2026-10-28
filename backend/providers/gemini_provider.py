@@ -73,9 +73,9 @@ class GeminiProvider(LLMProvider):
         answer that keeps streaming is never cut off, only a stalled connection is.
         The overall per-attempt cap lives in the router (LLM_ATTEMPT_WALL_CAP)."""
         try:
-            return max(1.0, float(os.getenv("LLM_IDLE_TIMEOUT", "45")))
+            return max(1.0, float(os.getenv("LLM_IDLE_TIMEOUT", "120")))
         except ValueError:
-            return 45.0
+            return 120.0
 
     def _load_server_keys(self) -> List[Dict[str, str]]:
         """Loads up to 5 server-side Web2API keys (the shared gateway key, or this namespace's own)."""

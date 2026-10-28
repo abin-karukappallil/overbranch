@@ -13,7 +13,7 @@ Rules
     (30s) — unless every gateway is cooling, in which case all are tried.
   - A 400 moves on to the next gateway, but no further cycle is started after the
     pass that saw it (the same request will fail everywhere).
-  - Timeouts are liveness-based: the HTTP read timeout (LLM_IDLE_TIMEOUT, ~45s) is
+  - Timeouts are liveness-based: the HTTP read timeout (LLM_IDLE_TIMEOUT, 120s) is
     the max silence between two streamed chunks, so a slow answer that keeps
     streaming is never cut off. One attempt is capped at LLM_ATTEMPT_WALL_CAP (300s).
   - Exhaustion raises LLMProviderError whose message is only "Model outage — please retry."
