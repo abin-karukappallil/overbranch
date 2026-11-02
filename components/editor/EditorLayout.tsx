@@ -127,6 +127,13 @@ const AGENT_IDLE_TIMEOUT_MS = 60_000;
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
+const AUXILIARY_EXT_REGEX = /\.(aux|lof|lot|toc|log|out|synctex(\.gz)?|fls|fdb_latexmk|nav|snm|vrb|bcf|run\.xml|blg|idx|ind|ilg|glo|gls|glg|acn|acr|alg|nlo|nls|nlg|ist|dvi|xdv)$/i;
+
+function isAuxiliaryFilePath(path: string | null | undefined): boolean {
+  if (!path) return false;
+  return AUXILIARY_EXT_REGEX.test(path.trim());
+}
+
 interface EditorLayoutProps {
   projectId?: string;
   isGuest?: boolean;
@@ -586,7 +593,7 @@ export function EditorLayout({
     }, 1000);
 
     const monaco = monacoRef.current;
-    if (file && file !== activeFilePath) {
+    if (file && !isAuxiliaryFilePath(file) && file !== activeFilePath) {
       setActiveFilePath(file);
     }
 
@@ -676,7 +683,7 @@ export function EditorLayout({
     const trimmed = selectedText.trim();
     if (!trimmed || trimmed.length < 2) return;
 
-    if (hintFile && hintFile !== activeFilePath) {
+    if (hintFile && !isAuxiliaryFilePath(hintFile) && hintFile !== activeFilePath) {
       setActiveFilePath(hintFile);
     }
 
@@ -2121,7 +2128,7 @@ export function EditorLayout({
               // Compile the PROJECT's main document, with the open tab's text
               // overlaid at its own path — so an imported multi-file project
               // builds the real main.tex, not whatever file happens to be open.
-              active_file: activeFilePath || "main.tex",
+              active_file: isAuxiliaryFilePath(activeFilePath) ? (projectMainFile || "main.tex") : (activeFilePath || "main.tex"),
               active_text: targetCode,
             }),
           });

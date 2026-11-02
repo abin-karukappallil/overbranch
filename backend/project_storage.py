@@ -314,6 +314,23 @@ def upsert_latex_document(supabase: Client, project_id: str, file_path: str, raw
 # gets a "[Binary Asset: ...]" placeholder row (the bytes live on disk only).
 TEXT_SUFFIXES = {".tex", ".sty", ".cls", ".bib", ".txt", ".md", ".bst", ".bbl", ".def", ".cfg", ".ltx", ".csv"}
 
+AUXILIARY_EXTENSIONS = frozenset({
+    ".aux", ".lof", ".lot", ".toc", ".log", ".out", ".synctex", ".synctex.gz",
+    ".fls", ".fdb_latexmk", ".nav", ".snm", ".vrb", ".bcf", ".run.xml",
+    ".blg", ".idx", ".ind", ".ilg", ".glo", ".gls", ".glg",
+    ".acn", ".acr", ".alg", ".nlo", ".nls", ".nlg", ".ist", ".dvi", ".xdv"
+})
+
+
+def is_auxiliary_file(file_path: Optional[str]) -> bool:
+    if not file_path:
+        return False
+    lower = str(file_path).strip().lower()
+    if lower.endswith(".synctex.gz"):
+        return True
+    ext = Path(lower).suffix
+    return ext in AUXILIARY_EXTENSIONS
+
 
 def create_empty_project(owner_id: str, name_hint: str, guest_session_id: Optional[str],
                          template_tag: str) -> Dict[str, Any]:
@@ -522,6 +539,12 @@ def save_project_file(
         is_guest = bool(auth_info.get("is_guest"))
         verify_project_access(supabase, req.project_id, user_id, is_guest=is_guest)
 
+        if is_auxiliary_file(req.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"'{req.file_path}' is an auxiliary TeX build artifact and cannot be saved as a source file."
+            )
+
         # 1 + 2. Local disk (primary) + Supabase latex_documents mirror.
         # Shared with the realtime collaboration persister so both write the
         # document exactly the same way.
@@ -605,6 +628,12 @@ def get_project_file(
     user_id = auth_info.get("user_id")
     is_guest = bool(auth_info.get("is_guest"))
     verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+
+    if is_auxiliary_file(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"'{file_path}' is an auxiliary TeX build artifact, not a project document."
+        )
 
     target_path = get_project_disk_path(project_id, file_path)
 
@@ -723,10 +752,14 @@ def list_project_files(
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
     """Lists all files and assets for a project from disk and Supabase DB."""
-    supabase = get_supabase_client()
-    user_id = auth_info.get("user_id")
-    is_guest = bool(auth_info.get("is_guest"))
-    verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+    supabase = None
+    try:
+        supabase = get_supabase_client()
+        user_id = auth_info.get("user_id")
+        is_guest = bool(auth_info.get("is_guest"))
+        verify_project_access(supabase, project_id, user_id, is_guest=is_guest)
+    except Exception as e:
+        logger.debug(f"Supabase access check in list_project_files skipped/unavailable: {e}")
 
     files_map: Dict[str, Dict[str, Any]] = {}
 
@@ -737,7 +770,13 @@ def list_project_files(
         for path in project_dir.rglob("*"):
             if path.is_file():
                 rel_path = path.relative_to(project_dir).as_posix()
-                if rel_path == MAIN_MARKER:
+                if rel_path == MAIN_MARKER or is_auxiliary_file(rel_path):
+                    # Proactively prune stray auxiliary build artifacts from project disk
+                    if is_auxiliary_file(rel_path):
+                        try:
+                            path.unlink()
+                        except OSError:
+                            pass
                     continue
                 ext = path.suffix.lower()
                 is_img = ext in [".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"]
@@ -754,6 +793,13 @@ def list_project_files(
         res = supabase.table("latex_documents").select("file_path").eq("project_id", project_id).execute()
         for row in res.data or []:
             f_path = row.get("file_path")
+            if f_path and is_auxiliary_file(f_path):
+                # Clean up legacy/accidental auxiliary records from Supabase
+                try:
+                    supabase.table("latex_documents").delete().eq("project_id", project_id).eq("file_path", f_path).execute()
+                except Exception:
+                    pass
+                continue
             if f_path and f_path not in files_map:
                 name = os.path.basename(f_path)
                 ext = os.path.splitext(name)[1].lower()
@@ -807,6 +853,12 @@ def rename_project_file(
     """
     old_clean = req.old_path.strip()
     new_clean = req.new_path.strip()
+
+    if is_auxiliary_file(old_clean) or is_auxiliary_file(new_clean):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Auxiliary TeX build artifacts cannot be renamed."
+        )
 
     main_doc = get_main_document(req.project_id)
     if old_clean.lower() == main_doc.lower():

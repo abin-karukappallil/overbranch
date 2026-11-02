@@ -27,9 +27,44 @@ export interface ConversionConfig {
   max_file_mb: number;
   max_pages: number;
   threshold: number;
+  /** AI-rebuild fields; absent on older backends. */
+  vision_available?: boolean;
+  ocr_available?: boolean;
+  engine?: ConversionEngine;
 }
 
 export type PageFallback = "layout" | "image" | null;
+
+/** Which editable engine ran: the LLM rebuild, or the deterministic engine used as a whole-job fallback. */
+export type ConversionEngine = "rebuild" | "deterministic";
+
+/** Live per-status page counts of a rebuild job (generating/compiling/verifying overlap in time). */
+export interface StageCounts {
+  pending?: number;
+  generating?: number;
+  compiling?: number;
+  verifying?: number;
+  done?: number;
+  fallback?: number;
+  failed?: number;
+}
+
+/** `report.rebuild`: what the AI rebuild did and how close it got. Every field is optional. */
+export interface RebuildReport {
+  engine?: ConversionEngine;
+  vision?: boolean;
+  vision_detail?: string;
+  doc_type?: string;
+  ocr?: { applied?: boolean; engine?: string | null; pages?: number[] } | null;
+  score_mean?: number | null;
+  coverage_mean?: number | null;
+  page_count_match?: boolean;
+  output_pages?: number | null;
+  low_confidence?: { page: number; reasons: string[] }[];
+  rounds_used?: number;
+  fallback_reason?: string | null;
+  seconds?: number | null;
+}
 
 export interface PageStatus {
   number: number;
@@ -37,7 +72,9 @@ export interface PageStatus {
   similarity: number | null;
   text_coverage?: number | null;
   attempts: number;
-  fallback?: PageFallback;
+  /** `true` on rebuild jobs when the page was kept as an image of the original. */
+  fallback?: PageFallback | boolean;
+  low_confidence?: string[];
   warnings?: string[];
 }
 
@@ -77,6 +114,8 @@ export interface ConversionReport {
   /** Editable mode only. */
   mode?: ConversionMode;
   editable?: EditableReport | null;
+  /** AI-rebuild engine summary (editable jobs on newer backends). */
+  rebuild?: RebuildReport | null;
 }
 
 export interface TemplateRules {
@@ -98,10 +137,24 @@ export interface ConversionJob {
   page_count: number;
   pages: PageStatus[];
   report: ConversionReport | null;
-  result: { tex_path: string; files: string[]; assets: string[] } | null;
+  result: ConversionResult | null;
   error: string | null;
   conflict_path?: string | null;
   mode?: ConversionMode;
+  engine?: ConversionEngine;
+  queue_position?: number | null;
+  stage_counts?: StageCounts | null;
+}
+
+export interface ConversionResult {
+  tex_path: string;
+  files: string[];
+  assets: string[];
+  project_id?: string;
+  /** True when `/package.zip` (main.tex, assets, output.pdf, report.md) can be downloaded. */
+  has_package?: boolean;
+  /** Source page (as a string key) -> output page numbers it became. */
+  page_map?: Record<string, number[]>;
 }
 
 /** Editable-mode report: gate results, per-attribute style scores, lint counts, structure. */
@@ -401,29 +454,4 @@ export function usePdfConversionJob() {
   useEffect(() => stopPolling, [stopPolling]);
 
   return { job, error, errorJobId, starting, start, cancel, attach, commit, reset };
-}
-
-/** Loads an authenticated preview PNG (original / converted / diff) as an object URL. */
-export function usePagePreview(jobId: string | null, page: number, which: "original" | "converted" | "diff") {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    if (!jobId) return;
-    let objectUrl: string | null = null;
-    let cancelled = false;
-    setUrl(null);
-    setFailed(false);
-    authFetch(`${BACKEND_URL}/api/convert/pdf/${jobId}/preview/${page}?which=${which}`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        objectUrl = URL.createObjectURL(await r.blob());
-        if (!cancelled) setUrl(objectUrl);
-      })
-      .catch(() => !cancelled && setFailed(true));
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [jobId, page, which]);
-  return { url, failed };
 }

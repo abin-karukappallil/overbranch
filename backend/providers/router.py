@@ -539,6 +539,14 @@ class ProviderRouter:
         setattr(err, "attempts", attempts)
         raise err
 
+    def reset_image_support(self) -> None:
+        """Lets every gateway that remembered an image rejection try images again (a TTL probe's retry)."""
+        self._sync_gateways()
+        for _name, provider in self._gateways:
+            reset = getattr(provider, "reset_image_support", None)
+            if callable(reset):
+                reset()
+
     def chat_fast_tier(
         self,
         messages: List[Dict[str, Any]],
@@ -628,3 +636,7 @@ def get_fast_model() -> str:
 
 def get_strong_model() -> str:
     return provider_router.get_strong_model()
+
+
+def reset_image_support() -> None:
+    provider_router.reset_image_support()

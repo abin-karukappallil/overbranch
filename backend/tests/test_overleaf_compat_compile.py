@@ -383,3 +383,81 @@ def test_compile_route_honours_active_file(uploads, monkeypatch):
     assert body["main_file"] == "main.tex"
     text = pdf_text(body)
     assert "ROUTEMAIN" in text and "NEWCH" in text and "OLDCH" not in text
+
+
+@needs_tex
+def test_corrupt_auxiliary_file_recovery(uploads):
+    """
+    If an auxiliary file (.lof, .toc, .aux) is corrupted on disk or in the project,
+    the compiler must clear it and re-render a valid PDF instead of failing.
+    """
+    pid = "p-corrupt-aux"
+    doc = (
+        B + "documentclass{article}\n"
+        + B + "begin{document}\n"
+        + B + "listoffigures\n"
+        + B + "section{First}\n"
+        + B + "begin{figure}[htbp]\n"
+        + B + "caption{Test Figure}\n"
+        + B + "end{figure}\n"
+        + B + "end{document}\n"
+    )
+    # Intentionally corrupt main.lof with invalid syntax
+    make_project(uploads, pid, {
+        "main.tex": doc,
+        "main.lof": B + "tableofcontents " + B + "chapter*{Corrupted Content Inside LOF}\n",
+    })
+    res = compiler.compile_latex(
+        doc,
+        project_id=pid,
+        active_file="main.tex",
+        active_text=doc,
+    )
+    assert res["success"] is True, res.get("error_log")
+    # Verify the corrupt auxiliary file was removed from project disk
+    assert not (uploads / pid / "main.lof").exists()
+
+
+def test_auxiliary_files_not_listed_or_saved_as_project_files(uploads):
+    pid = "p-aux-filter"
+    make_project(uploads, pid, {
+        "main.tex": B + "documentclass{article}" + B + "begin{document}Hello" + B + "end{document}\n",
+        "main.lof": "corrupt lof\n",
+        "main.toc": "corrupt toc\n",
+        "main.aux": "corrupt aux\n",
+    })
+    from fastapi import Request
+    req = Request({"type": "http"})
+    res = project_storage.list_project_files(req, pid, auth_info={})
+    file_paths = [f["path"] for f in res["files"]]
+    assert "main.tex" in file_paths
+    assert "main.lof" not in file_paths
+    assert "main.toc" not in file_paths
+    assert "main.aux" not in file_paths
+    # Disk should have pruned them
+    assert not (uploads / pid / "main.lof").exists()
+    assert not (uploads / pid / "main.toc").exists()
+    assert not (uploads / pid / "main.aux").exists()
+
+
+def test_synctex_resolves_auxiliary_files_to_source(tmp_path):
+    import synctex_service
+    main_tex = tmp_path / "main.tex"
+    main_tex.write_text(
+        "\\documentclass{article}\n\\begin{document}\n\\tableofcontents\n\\listoffigures\n\\section{Intro}\n\\end{document}\n",
+        encoding="utf-8"
+    )
+    # .lof maps to listoffigures (line 4)
+    file_res, line_res = synctex_service.resolve_synctex_source("/tmp/build/./main.lof", 388, tmp_path)
+    assert file_res == "main.tex"
+    assert line_res == 4
+
+    # .toc maps to tableofcontents (line 3)
+    file_res, line_res = synctex_service.resolve_synctex_source("/tmp/build/./main.toc", 12, tmp_path)
+    assert file_res == "main.tex"
+    assert line_res == 3
+
+    # system file maps to main.tex:1
+    file_res, line_res = synctex_service.resolve_synctex_source("/usr/share/texmf-dist/tex/latex/base/article.cls", 50, tmp_path)
+    assert file_res == "main.tex"
+    assert line_res == 1

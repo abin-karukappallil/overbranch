@@ -236,7 +236,7 @@ function DashboardContent() {
                 <span>PDF to LaTeX</span>
               </h3>
               <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
-                Upload any PDF document to automatically extract text, layout, and equations into an editable LaTeX project.
+                Upload a PDF and get an editable LaTeX project that follows its layout, text and equations as closely as possible. Closest match, not pixel-exact.
               </p>
             </div>
           </div>
