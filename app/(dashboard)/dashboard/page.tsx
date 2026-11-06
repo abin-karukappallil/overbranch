@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef, Suspense } from "react";
-import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -9,30 +8,109 @@ import {
   FileArchive,
   FileCode2,
   Search,
-  FileText,
-  Users,
-  CheckCircle2,
-  FolderPlus,
-  UserPlus,
-  XCircle,
-  Crown,
   Trash2,
   Download,
-  AlertTriangle,
   ArrowRight,
-  Sparkles,
   LogOut,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PaperSheet } from "@/components/dashboard/PaperSheet";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
 import { ImportPdfDialog } from "@/components/pdf-import/ImportPdfDialog";
 import { ImportZipDialog } from "@/components/project-import/ImportZipDialog";
 import { downloadAllProjectsZip, downloadProjectZip } from "@/components/project-import/useZipImport";
+
+const ACTION_ROW =
+  "group flex flex-1 cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-ob-raised/60";
+const ACTION_ARROW =
+  "size-4 shrink-0 text-ob-muted transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-ob-text";
+const PROJECT_GRID = "grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4";
+const DIALOG_OVERLAY = "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4";
+const DIALOG_PANEL =
+  "flex w-full flex-col gap-4 rounded-xl border border-ob-line bg-ob-card p-6 text-ob-text shadow-[0_16px_48px_rgba(0,0,0,0.32)]";
+const DIALOG_TITLE = "text-[15px] leading-6 font-medium text-ob-text";
+const DIALOG_BODY = "text-[13px] leading-5 text-ob-text-2";
+const DIALOG_FOOTER = "flex justify-end gap-2";
+
+function SectionLabel({ title, count }: { title: string; count?: number }) {
+  return (
+    <div className="flex items-baseline gap-2">
+      <h2 className="text-[15px] leading-6 font-medium text-ob-text">{title}</h2>
+      {count !== undefined && <span className="font-mono text-xs text-ob-muted tabular-nums">{count}</span>}
+    </div>
+  );
+}
+
+function IconAction({
+  label,
+  danger = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      title={label}
+      aria-label={label}
+      className={`flex size-8 cursor-pointer items-center justify-center rounded-lg text-ob-muted transition-colors hover:bg-ob-raised ${
+        danger ? "hover:text-ob-negative" : "hover:text-ob-text"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** A proof sheet on the desk, with the name under it. The whole card opens the editor. */
+function ProjectCard({ project, children }: { project: any; children: React.ReactNode }) {
+  const hasTemplate = project.template && project.template !== "None";
+  return (
+    <article className="group relative flex flex-row overflow-hidden rounded-xl border border-ob-line bg-ob-card transition-colors hover:border-ob-text/15 sm:flex-col">
+      <div className="flex w-28 shrink-0 items-center justify-center border-r border-ob-line bg-ob-deep py-3 sm:h-48 sm:w-auto sm:border-r-0 sm:border-b sm:py-0">
+        <PaperSheet
+          template={project.template}
+          seed={project.id}
+          className="max-sm:hidden transition-transform duration-200 group-hover:-translate-y-0.5"
+        />
+        <PaperSheet template={project.template} seed={project.id} size="sm" className="sm:hidden" />
+      </div>
+      <div className="flex min-w-0 flex-1 flex-col p-4">
+        <h3 className="line-clamp-2 text-[15px] leading-[22px] font-medium text-ob-text">
+          <Link
+            href={`/editor/${project.id}`}
+            title={project.name}
+            className="rounded-sm after:absolute after:inset-0 after:content-['']"
+          >
+            {project.name}
+          </Link>
+        </h3>
+        {project.description && (
+          <p className="mt-1 line-clamp-2 text-[13px] leading-5 text-ob-text-2">{project.description}</p>
+        )}
+        <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+          <span className="min-w-0 truncate font-mono text-xs text-ob-muted">
+            {hasTemplate ? `${project.template} · ` : ""}
+            {project.role}
+          </span>
+          <div className="relative z-10 -mr-2 flex shrink-0 items-center">{children}</div>
+        </div>
+      </div>
+    </article>
+  );
+}
 
 function DashboardContent() {
   const router = useRouter();
@@ -76,7 +154,7 @@ function DashboardContent() {
 
   const createMutation = trpc.projects.createProject.useMutation({
     onSuccess: (newProj) => {
-      toast.success("LaTeX Project initialized!");
+      toast.success("Project created");
       utils.projects.invalidate();
       setNewModalOpen(false);
       setNewProjName("");
@@ -89,7 +167,7 @@ function DashboardContent() {
 
   const deleteMutation = trpc.projects.deleteProject.useMutation({
     onSuccess: () => {
-      toast.success("Project deleted successfully.");
+      toast.success("Project deleted");
       setDeleteConfirmProj(null);
       utils.projects.invalidate();
     },
@@ -100,7 +178,7 @@ function DashboardContent() {
 
   const acceptInviteMutation = trpc.invitations.acceptInvite.useMutation({
     onSuccess: () => {
-      toast.success("Invitation accepted! Project added to Shared With Me.");
+      toast.success("Invitation accepted, project added to Shared with me");
       utils.invitations.invalidate();
       utils.projects.invalidate();
     },
@@ -111,7 +189,7 @@ function DashboardContent() {
 
   const declineInviteMutation = trpc.invitations.declineInvite.useMutation({
     onSuccess: () => {
-      toast.success("Invitation declined.");
+      toast.success("Invitation declined");
       utils.invitations.invalidate();
     },
   });
@@ -137,7 +215,7 @@ function DashboardContent() {
 
   const leaveMutation = trpc.projects.leaveProject.useMutation({
     onSuccess: () => {
-      toast.success("You have left the project.");
+      toast.success("You left the project");
       setLeaveConfirmProj(null);
       utils.projects.invalidate();
     },
@@ -152,546 +230,280 @@ function DashboardContent() {
     leaveMutation.mutate({ projectId: leaveConfirmProj.id });
   };
 
+  const projectCount = ownedProjects.length + sharedProjects.length;
+
   return (
-    <div className="space-y-8 animate-fade-in pb-16 text-slate-900 dark:text-[#E2E4E9]">
-      {/* Header Banner */}
-      <div className="relative p-6 sm:p-8 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shadow-sm dark:shadow-none overflow-hidden">
-        <div className="relative z-10 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-5">
-          <div className="space-y-1.5 min-w-0 max-w-2xl">
-            <h1 className="text-xl sm:text-2xl font-archivo font-bold tracking-tight text-slate-900 dark:text-[#E2E4E9]">
-              Document Projects
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-500 dark:text-[#9E9E9E] leading-relaxed">
-              Co-author seminar reports, assignments, project thesis, slides, and research papers with real-time compilation and SyncTeX.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 w-full xl:w-auto">
-            <Button
-              onClick={() => setPdfModalOpen(true)}
-              size="lg"
-              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium border border-slate-200 dark:border-[#282A30] rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all flex items-center gap-2"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-[#E2E4E9]" />
-              <span>PDF to LaTeX</span>
-              <span className="text-[9px] font-mono font-bold uppercase px-1.5 py-0.2 rounded bg-white dark:bg-[#141519] text-slate-500 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] tracking-wider">
-                BETA
+    <div className="ob-enter flex flex-col gap-10 pb-16">
+      {/* Header */}
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex items-baseline gap-3">
+            <h1 className="font-ob-title text-[32px] leading-[1.15] font-normal text-ob-text">Overview</h1>
+            {!isProjectsLoading && (
+              <span className="font-mono text-[13px] text-ob-muted tabular-nums">
+                {searchQuery
+                  ? `${projectCount} matching`
+                  : `${projectCount} ${projectCount === 1 ? "project" : "projects"}`}
               </span>
-            </Button>
-
-            <Button
-              onClick={() => setZipModalOpen(true)}
-              size="lg"
-              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium border border-slate-200 dark:border-[#282A30] rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all flex items-center gap-2"
-            >
-              <FileArchive className="w-3.5 h-3.5 text-emerald-600 dark:text-[#E2E4E9]" />
-              <span>Import ZIP</span>
-            </Button>
-
-            <Button
-              onClick={() => downloadAllProjectsZip()}
-              size="lg"
-              disabled={ownedProjects.length + sharedProjects.length === 0}
-              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-800 dark:text-[#E2E4E9] font-mono font-medium border border-slate-200 dark:border-[#282A30] rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all flex items-center gap-2 disabled:opacity-50"
-            >
-              <Download className="w-3.5 h-3.5 text-emerald-600 dark:text-[#E2E4E9]" />
-              <span>Export all projects</span>
-            </Button>
-
-            <Button
-              onClick={() => setNewModalOpen(true)}
-              size="lg"
-              className="h-9 sm:h-9 w-full sm:w-auto px-4 bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold rounded-lg shrink-0 text-xs justify-center cursor-pointer transition-all border border-emerald-600 dark:border-[#282A30] shadow-sm"
-            >
-              <Plus className="w-4 h-4 mr-1.5 text-white dark:text-[#E2E4E9] stroke-[2.5]" />
-              New Project
-            </Button>
+            )}
           </div>
+          <p className="max-w-2xl text-sm leading-[22px] text-ob-text-2">
+            Co-author seminar reports, assignments, theses, slides and research papers with live compilation and SyncTeX
+          </p>
         </div>
-      </div>
+        <Button
+          variant="ob-quiet"
+          size="sm"
+          onClick={() => downloadAllProjectsZip()}
+          disabled={projectCount === 0}
+          className="-ml-3 w-fit cursor-pointer text-[13px] sm:ml-0"
+        >
+          <Download className="size-4" />
+          Export all projects
+        </Button>
+      </header>
 
-      {/* Quick Action Creation Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* PDF to LaTeX Card */}
-        <div
+      {/* Import and create. PDF to LaTeX leads, the other three share a column. */}
+      <section aria-label="Import or create a project" className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
+        <button
           onClick={() => setPdfModalOpen(true)}
-          className="group relative p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:bg-slate-50 dark:hover:bg-[#1A1C22] hover:border-slate-300 dark:hover:border-[#383B46] transition-all cursor-pointer flex flex-col justify-between overflow-hidden shadow-sm dark:shadow-none"
+          className="group flex cursor-pointer flex-row overflow-hidden rounded-xl border border-ob-line bg-ob-card text-left transition-colors hover:border-ob-text/15"
         >
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] transition-all">
-                <FileText className="w-4 h-4 stroke-[2]" />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-100 dark:bg-[#1A1C22] text-slate-500 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase tracking-wider">
-                  BETA
-                </span>
-                <span className="px-2 py-0.5 rounded text-[10px] font-mono font-medium bg-slate-100 dark:bg-[#1E2026] text-slate-700 dark:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] uppercase">
-                  AI Convert
-                </span>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] transition-colors flex items-center gap-2">
-                <span>PDF to LaTeX</span>
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
-                Upload a PDF and get an editable LaTeX project that follows its layout, text and equations as closely as possible. Closest match, not pixel-exact.
-              </p>
-            </div>
-          </div>
-          <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-800 dark:text-[#E2E4E9]">
-            <span>Import PDF & Convert</span>
-            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-          </div>
-        </div>
+          <span className="flex min-w-0 flex-1 flex-col p-6">
+            <span className="flex items-baseline gap-2">
+              <span className="text-xl leading-7 font-medium text-ob-text">PDF to LaTeX</span>
+              <span className="font-mono text-xs text-ob-muted">Beta</span>
+            </span>
+            <span className="mt-2 max-w-md text-sm leading-[22px] text-ob-text-2">
+              Upload a PDF and get an editable LaTeX project that follows its layout, text and equations as closely as possible. Closest match, not pixel-exact.
+            </span>
+            <span className={buttonVariants({ variant: "ob-primary", size: "sm", className: "mt-6 w-fit" })}>
+              Import PDF and convert
+              <ArrowRight className="size-4" />
+            </span>
+          </span>
+          <span className="relative hidden w-56 shrink-0 items-start justify-center overflow-hidden border-l border-ob-line bg-ob-deep pt-5 sm:flex xl:w-64">
+            <PaperSheet variant="report" size="lg" seed="pdf" className="absolute top-5" />
+          </span>
+        </button>
 
-        {/* Import from ZIP Card */}
-        <div
-          onClick={() => setZipModalOpen(true)}
-          className="group relative p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:bg-slate-50 dark:hover:bg-[#1A1C22] hover:border-slate-300 dark:hover:border-[#383B46] transition-all cursor-pointer flex flex-col justify-between overflow-hidden shadow-sm dark:shadow-none"
-        >
-          <div className="space-y-3">
-            <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] transition-all w-fit">
-              <FileArchive className="w-4 h-4 stroke-[2]" />
-            </div>
-            <div>
-              <h3 className="text-sm font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] transition-colors">
-                Import from ZIP
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
-                Upload a .zip of your LaTeX sources and images to continue working on it as a new project.
-              </p>
-            </div>
-          </div>
-          <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-800 dark:text-[#E2E4E9]">
-            <span>Upload ZIP Archive</span>
-            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-          </div>
-        </div>
-
-        {/* Blank Project Card */}
-        <div
-          onClick={() => setNewModalOpen(true)}
-          className="group relative p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:bg-slate-50 dark:hover:bg-[#1A1C22] hover:border-slate-300 dark:hover:border-[#383B46] transition-all cursor-pointer flex flex-col justify-between overflow-hidden shadow-sm dark:shadow-none"
-        >
-          <div className="space-y-3">
-            <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] transition-all w-fit">
-              <Plus className="w-4 h-4 stroke-[2]" />
-            </div>
-            <div>
-              <h3 className="text-sm font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] transition-colors">
-                New Blank Document
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
-                Start from a minimal LaTeX article template with live PDF rendering.
-              </p>
-            </div>
-          </div>
-          <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-800 dark:text-[#E2E4E9]">
-            <span>Create Empty Project</span>
-            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-          </div>
-        </div>
-
-        {/* Browse Templates Card */}
-        <Link
-          href="/templates"
-          className="group relative p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:bg-slate-50 dark:hover:bg-[#1A1C22] hover:border-slate-300 dark:hover:border-[#383B46] transition-all cursor-pointer flex flex-col justify-between overflow-hidden shadow-sm dark:shadow-none"
-        >
-          <div className="space-y-3">
-            <div className="p-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] transition-all w-fit">
-              <FileCode2 className="w-4 h-4 stroke-[2]" />
-            </div>
-            <div>
-              <h3 className="text-sm font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] transition-colors">
-                Browse Templates
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-[#9E9E9E] leading-relaxed mt-1">
-                Pick from IEEE papers, resumes, slide presentations, and lab reports.
-              </p>
-            </div>
-          </div>
-          <div className="pt-4 mt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between text-xs font-mono font-medium text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] transition-colors">
-            <span>Browse Gallery</span>
-            <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-          </div>
-        </Link>
-      </div>
-
-      {/* Pending Invitations Section */}
-      {pendingInvites && pendingInvites.length > 0 && (
-        <div className="p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] space-y-4 shadow-sm dark:shadow-none">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <UserPlus className="w-4 h-4 text-slate-900 dark:text-[#E2E4E9]" />
-              <h2 className="font-archivo font-bold text-sm text-slate-900 dark:text-[#E2E4E9]">
-                Pending Team Invitations
-              </h2>
-              <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-[#1E2026] border border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] text-[11px] font-mono font-bold">
-                {pendingInvites.length}
+        <div className="flex flex-col divide-y divide-ob-line overflow-hidden rounded-xl border border-ob-line bg-ob-card">
+          <button onClick={() => setZipModalOpen(true)} className={ACTION_ROW}>
+            <FileArchive className="size-4 shrink-0 text-ob-muted" />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium text-ob-text">Import from ZIP</span>
+              <span className="text-[13px] leading-5 text-ob-text-2">
+                Upload a .zip of your LaTeX sources and images to continue as a new project
               </span>
-            </div>
-          </div>
+            </span>
+            <ArrowRight className={ACTION_ARROW} />
+          </button>
+          <button onClick={() => setNewModalOpen(true)} className={ACTION_ROW}>
+            <Plus className="size-4 shrink-0 text-ob-muted" />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium text-ob-text">New blank document</span>
+              <span className="text-[13px] leading-5 text-ob-text-2">
+                Start from a minimal LaTeX article with live PDF rendering
+              </span>
+            </span>
+            <ArrowRight className={ACTION_ARROW} />
+          </button>
+          <Link href="/templates" className={ACTION_ROW}>
+            <FileCode2 className="size-4 shrink-0 text-ob-muted" />
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span className="text-sm font-medium text-ob-text">Browse templates</span>
+              <span className="text-[13px] leading-5 text-ob-text-2">
+                IEEE papers, resumes, slide presentations and lab reports
+              </span>
+            </span>
+            <ArrowRight className={ACTION_ARROW} />
+          </Link>
+        </div>
+      </section>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Pending invitations */}
+      {pendingInvites && pendingInvites.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <SectionLabel title="Pending invitations" count={pendingInvites.length} />
+          <div className="flex flex-col divide-y divide-ob-line rounded-xl border border-ob-line bg-ob-card">
             {pendingInvites.map((invite) => (
-              <div
-                key={invite.id}
-                className="p-4 rounded-lg border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] space-y-3 flex flex-col justify-between"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between text-xs font-mono text-slate-500 dark:text-[#9E9E9E] font-semibold">
-                    <span>Role: {invite.role}</span>
-                    <span className="text-[10px] text-slate-400 dark:text-[#62666D]">
-                      {invite.createdAt ? new Date(invite.createdAt).toLocaleDateString() : "Recent"}
-                    </span>
-                  </div>
-                  <h3 className="font-archivo font-bold text-sm text-slate-900 dark:text-[#E2E4E9]">{invite.projectName}</h3>
-                  <p className="text-xs text-slate-500 dark:text-[#9E9E9E]">
-                    Invited by: <span className="text-slate-900 dark:text-[#E2E4E9] font-medium">{invite.senderName || invite.senderEmail}</span>
+              <div key={invite.id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <h3 className="truncate text-sm font-medium text-ob-text">{invite.projectName}</h3>
+                  <p className="text-[13px] leading-5 text-ob-text-2">
+                    {invite.senderName || invite.senderEmail} invited you as {String(invite.role).toLowerCase()}
+                    {invite.createdAt && (
+                      <span className="ml-2 font-mono text-xs text-ob-muted tabular-nums">
+                        {new Date(invite.createdAt).toLocaleDateString()}
+                      </span>
+                    )}
                   </p>
                 </div>
-
-                <div className="flex items-center gap-2 pt-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <Button
+                    variant="ob-quiet"
+                    size="sm"
+                    onClick={() => declineInviteMutation.mutate({ invitationId: invite.id })}
+                    disabled={declineInviteMutation.isPending}
+                    className="cursor-pointer text-[13px]"
+                  >
+                    Decline
+                  </Button>
+                  <Button
+                    variant="ob-secondary"
                     size="sm"
                     onClick={() => acceptInviteMutation.mutate({ invitationId: invite.id })}
                     disabled={acceptInviteMutation.isPending}
-                    className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-mono font-semibold rounded-lg flex-1 cursor-pointer border border-emerald-600 dark:border-[#282A30]"
+                    className="cursor-pointer text-[13px]"
                   >
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1.5 text-white dark:text-[#10B981]" />
-                    Accept & Join
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => declineInviteMutation.mutate({ invitationId: invite.id })}
-                    disabled={declineInviteMutation.isPending}
-                    className="h-8 text-xs border-slate-200 dark:border-[#282A30] bg-white dark:bg-transparent hover:bg-slate-100 dark:hover:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] rounded-lg flex-1 font-mono font-medium"
-                  >
-                    <XCircle className="w-3.5 h-3.5 mr-1.5" />
-                    Decline
+                    Accept and join
                   </Button>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
-        <div>
-          <h2 className="text-base sm:text-lg font-archivo font-bold tracking-tight text-slate-900 dark:text-[#E2E4E9] flex items-center gap-2">
-            Your Document Projects
-            <span className="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#1E2026] border border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] font-mono">
-              {(ownedProjects.length + sharedProjects.length)}
-            </span>
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-[#9E9E9E]">
-            Select a project to launch the live collaborative LaTeX workspace
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+      {/* Your projects, with the search that covers both lists */}
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <SectionLabel title="Your projects" count={isProjectsLoading ? undefined : ownedProjects.length} />
           <div className="relative w-full sm:w-64">
+            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-ob-muted" />
             <Input
-              placeholder="Search reports, slides & projects..."
+              placeholder="Search projects"
+              aria-label="Search projects"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-9 pl-8 pr-3 text-xs font-mono bg-white dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] rounded-lg focus-visible:ring-1 focus-visible:ring-emerald-500 dark:focus-visible:ring-[#383B46]"
+              className="h-9 rounded-lg border-ob-line bg-ob-raised pr-3 pl-9 text-sm text-ob-text shadow-none placeholder:text-ob-muted md:text-sm dark:bg-ob-raised"
             />
-            <Search className="w-3.5 h-3.5 text-slate-400 dark:text-[#62666D] absolute left-2.5 top-1/2 -translate-y-1/2" />
           </div>
         </div>
-      </div>
 
-      {isProjectsLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-          <ProjectCardSkeleton />
-          <ProjectCardSkeleton />
-          <ProjectCardSkeleton />
-        </div>
-      ) : ownedProjects.length === 0 && sharedProjects.length === 0 ? (
-        <EmptyState
-          icon={FolderPlus}
-          title="No LaTeX Projects Found"
-          description="Create your first LaTeX document or accept pending invitations to start co-authoring."
-          primaryActionLabel="Create New LaTeX Project"
-          onPrimaryAction={() => setNewModalOpen(true)}
-        />
-      ) : (
-        <div className="space-y-8">
-          {/* Owned Projects */}
-          {ownedProjects.length > 0 && (
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-slate-500 dark:text-[#9E9E9E] uppercase tracking-wider">
-                <Crown className="w-3.5 h-3.5 text-slate-700 dark:text-[#E2E4E9]" />
-                <span>Owned Projects ({ownedProjects.length})</span>
-              </div>
+        {isProjectsLoading ? (
+          <div className={PROJECT_GRID}>
+            <ProjectCardSkeleton />
+            <ProjectCardSkeleton />
+            <ProjectCardSkeleton />
+            <ProjectCardSkeleton />
+          </div>
+        ) : projectCount === 0 ? (
+          <EmptyState
+            title={searchQuery ? "No matching projects" : "No projects yet"}
+            description={
+              searchQuery
+                ? "Try another name, or create a new LaTeX document"
+                : "Create your first LaTeX document, or accept an invitation to start co-authoring"
+            }
+            primaryActionLabel="New project"
+            onPrimaryAction={() => setNewModalOpen(true)}
+          />
+        ) : ownedProjects.length > 0 ? (
+          <div className={PROJECT_GRID}>
+            {ownedProjects.map((project: any) => (
+              <ProjectCard key={project.id} project={project}>
+                <IconAction label={`Export ${project.name} (.zip)`} onClick={() => downloadProjectZip(project.id, project.name)}>
+                  <Download className="size-4" />
+                </IconAction>
+                <IconAction label={`Delete ${project.name}`} danger onClick={() => setDeleteConfirmProj(project)}>
+                  <Trash2 className="size-4" />
+                </IconAction>
+              </ProjectCard>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[13px] leading-5 text-ob-text-2">
+            {searchQuery ? "None of yours match" : "You have no projects of your own yet"}
+          </p>
+        )}
+      </section>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-                {ownedProjects.map((project) => (
-                  <motion.div key={project.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none overflow-hidden">
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2 min-w-0">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
-                            <h3 className="font-archivo font-bold text-sm text-slate-900 dark:text-[#E2E4E9] group-hover:text-emerald-600 dark:group-hover:text-white transition-colors flex items-center gap-2 min-w-0">
-                              <FileCode2 className="w-4 h-4 text-emerald-600 dark:text-[#E2E4E9] shrink-0" />
-                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
-                            </h3>
-                          </Link>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-medium font-mono bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase">
-                              Owner
-                            </span>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                downloadProjectZip(project.id, project.name);
-                              }}
-                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-emerald-600 dark:hover:text-[#10B981] transition-colors cursor-pointer"
-                              title="Export (.zip)"
-                              aria-label={`Export ${project.name} (.zip)`}
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setDeleteConfirmProj(project);
-                              }}
-                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors cursor-pointer"
-                              title="Delete Project"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-slate-500 dark:text-[#9E9E9E] line-clamp-2 leading-relaxed font-sans">
-                          {project.description}
-                        </p>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0 flex-wrap sm:flex-nowrap">
-                        <span
-                          className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] text-[11px] truncate max-w-[100px] sm:max-w-[130px] min-w-0 shrink"
-                          title={project.template || "None"}
-                        >
-                          {project.template || "None"}
-                        </span>
-
-                        <Link
-                          href={`/editor/${project.id}`}
-                          className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ml-auto group/btn"
-                        >
-                          <span>Open Workspace</span>
-                          <span className="group-hover/btn:translate-x-0.5 transition-transform inline-block">→</span>
-                        </Link>
-                      </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Shared With Me Projects */}
-          {sharedProjects.length > 0 && (
-            <div className="space-y-3 pt-2">
-              <div className="flex items-center gap-2 text-xs font-mono font-bold text-slate-500 dark:text-[#9E9E9E] uppercase tracking-wider">
-                <Users className="w-3.5 h-3.5 text-slate-700 dark:text-[#E2E4E9]" />
-                <span>Shared With Me ({sharedProjects.length})</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
-                {sharedProjects.map((project) => (
-                  <motion.div key={project.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-                    <Card className="group p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] hover:border-slate-300 dark:hover:border-[#383B46] hover:bg-slate-50 dark:hover:bg-[#1A1C22] transition-all space-y-4 flex flex-col justify-between h-full shadow-sm dark:shadow-none overflow-hidden">
-                      <div className="space-y-2">
-                        <div className="flex items-start justify-between gap-2 min-w-0">
-                          <Link href={`/editor/${project.id}`} className="space-y-1 block flex-1 min-w-0">
-                            <h3 className="font-archivo font-bold text-sm text-slate-900 dark:text-[#E2E4E9] group-hover:text-emerald-600 dark:group-hover:text-white transition-colors flex items-center gap-2 min-w-0">
-                              <FileCode2 className="w-4 h-4 text-emerald-600 dark:text-[#E2E4E9] shrink-0" />
-                              <span className="truncate min-w-0" title={project.name}>{project.name}</span>
-                            </h3>
-                          </Link>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="px-2 py-0.5 rounded text-[10px] font-medium font-mono bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] uppercase">
-                              {project.role}
-                            </span>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                downloadProjectZip(project.id, project.name);
-                              }}
-                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-emerald-600 dark:hover:text-[#10B981] transition-colors cursor-pointer"
-                              title="Export (.zip)"
-                              aria-label={`Export ${project.name} (.zip)`}
-                            >
-                              <Download className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setLeaveConfirmProj(project);
-                              }}
-                              className="p-1 text-slate-400 dark:text-[#62666D] hover:text-red-500 dark:hover:text-[#FF8585] transition-colors cursor-pointer"
-                              title="Leave Project"
-                            >
-                              <LogOut className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-slate-500 dark:text-[#9E9E9E] line-clamp-2 leading-relaxed font-sans">
-                          {project.description}
-                        </p>
-                      </div>
-
-                      <div className="pt-3 border-t border-slate-100 dark:border-[#282A30] flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-[#9E9E9E] font-mono min-w-0 flex-wrap sm:flex-nowrap">
-                        <span
-                          className="px-2.5 py-1 rounded-md bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] font-medium border border-slate-200 dark:border-[#282A30] text-[11px] truncate max-w-[100px] sm:max-w-[130px] min-w-0 shrink"
-                          title={project.template || "None"}
-                        >
-                          {project.template || "None"}
-                        </span>
-
-                        <Link
-                          href={`/editor/${project.id}`}
-                          className="px-2.5 sm:px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] hover:text-white border border-emerald-600 dark:border-[#282A30] font-mono font-medium text-[11px] transition-all flex items-center gap-1.5 shrink-0 whitespace-nowrap shadow-xs ml-auto group/btn"
-                        >
-                          <span>Open Workspace</span>
-                          <span className="group-hover/btn:translate-x-0.5 transition-transform inline-block">→</span>
-                        </Link>
-                      </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+      {/* Shared with me */}
+      {sharedProjects.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <SectionLabel title="Shared with me" count={sharedProjects.length} />
+          <div className={PROJECT_GRID}>
+            {sharedProjects.map((project: any) => (
+              <ProjectCard key={project.id} project={project}>
+                <IconAction label={`Export ${project.name} (.zip)`} onClick={() => downloadProjectZip(project.id, project.name)}>
+                  <Download className="size-4" />
+                </IconAction>
+                <IconAction label={`Leave ${project.name}`} danger onClick={() => setLeaveConfirmProj(project)}>
+                  <LogOut className="size-4" />
+                </IconAction>
+              </ProjectCard>
+            ))}
+          </div>
+        </section>
       )}
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete confirmation */}
       {deleteConfirmProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/80 animate-fade-in backdrop-blur-xs">
-          <div className="max-w-sm w-[calc(100vw-2rem)] p-5 rounded-xl border border-red-200 dark:border-[#FF8585]/30 bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] shadow-2xl space-y-4">
-            <div className="flex items-center gap-2.5 text-red-600 dark:text-[#FF8585]">
-              <div className="p-2 rounded-lg bg-red-50 dark:bg-[#FF8585]/10 border border-red-200 dark:border-[#FF8585]/20">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-              <h3 className="text-sm font-archivo font-bold uppercase text-slate-900 dark:text-[#E2E4E9]">Delete Project</h3>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-[#9E9E9E] leading-relaxed">
-              Are you sure you want to delete <strong className="text-slate-900 dark:text-[#E2E4E9]">{deleteConfirmProj.name}</strong>? This will permanently remove all files, documents, and co-author access.
+        <div className={DIALOG_OVERLAY}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="delete-project-title" className={`${DIALOG_PANEL} max-w-sm`}>
+            <h3 id="delete-project-title" className={DIALOG_TITLE}>Delete project</h3>
+            <p className={DIALOG_BODY}>
+              Delete <span className="font-medium text-ob-text">{deleteConfirmProj.name}</span>? This permanently removes its files, documents and co-author access.
             </p>
-
-            <form onSubmit={handleDeleteSubmit} className="flex justify-end gap-2 pt-2 text-xs font-mono font-medium">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setDeleteConfirmProj(null)}
-                className="h-8 text-xs rounded-lg border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
-              >
+            <form onSubmit={handleDeleteSubmit} className={DIALOG_FOOTER}>
+              <Button type="button" variant="ob-quiet" size="sm" onClick={() => setDeleteConfirmProj(null)} className="cursor-pointer">
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={deleteMutation.isPending}
-                className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-lg border border-red-600 dark:border-[#EB5757]/50"
-              >
-                {deleteMutation.isPending ? "Deleting..." : "Delete Permanently"}
+              <Button type="submit" variant="ob-danger" size="sm" disabled={deleteMutation.isPending} className="cursor-pointer">
+                {deleteMutation.isPending ? "Deleting" : "Delete permanently"}
               </Button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Leave Confirmation Modal */}
+      {/* Leave confirmation */}
       {leaveConfirmProj && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/80 animate-fade-in backdrop-blur-xs">
-          <div className="max-w-sm w-[calc(100vw-2rem)] p-5 rounded-xl border border-red-200 dark:border-[#FF8585]/30 bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] shadow-2xl space-y-4">
-            <div className="flex items-center gap-2.5 text-red-600 dark:text-[#FF8585]">
-              <div className="p-2 rounded-lg bg-red-50 dark:bg-[#FF8585]/10 border border-red-200 dark:border-[#FF8585]/20">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-              <h3 className="text-sm font-archivo font-bold uppercase text-slate-900 dark:text-[#E2E4E9]">Leave Project</h3>
-            </div>
-
-            <p className="text-xs text-slate-600 dark:text-[#9E9E9E] leading-relaxed">
-              Are you sure you want to leave <strong className="text-slate-900 dark:text-[#E2E4E9]">{leaveConfirmProj.name}</strong>? You will lose access to its files, real-time collaboration, and documents.
+        <div className={DIALOG_OVERLAY}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="leave-project-title" className={`${DIALOG_PANEL} max-w-sm`}>
+            <h3 id="leave-project-title" className={DIALOG_TITLE}>Leave project</h3>
+            <p className={DIALOG_BODY}>
+              Leave <span className="font-medium text-ob-text">{leaveConfirmProj.name}</span>? You will lose access to its files, real-time collaboration and documents.
             </p>
-
-            <form onSubmit={handleLeaveSubmit} className="flex justify-end gap-2 pt-2 text-xs font-mono font-medium">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setLeaveConfirmProj(null)}
-                className="h-8 text-xs rounded-lg border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
-              >
+            <form onSubmit={handleLeaveSubmit} className={DIALOG_FOOTER}>
+              <Button type="button" variant="ob-quiet" size="sm" onClick={() => setLeaveConfirmProj(null)} className="cursor-pointer">
                 Cancel
               </Button>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={leaveMutation.isPending}
-                className="h-8 text-xs bg-red-600 hover:bg-red-700 dark:bg-[#EB5757] dark:hover:bg-[#D64545] text-white font-mono font-semibold rounded-lg border border-red-600 dark:border-[#EB5757]/50"
-              >
-                {leaveMutation.isPending ? "Leaving..." : "Leave Project"}
+              <Button type="submit" variant="ob-danger" size="sm" disabled={leaveMutation.isPending} className="cursor-pointer">
+                {leaveMutation.isPending ? "Leaving" : "Leave project"}
               </Button>
             </form>
           </div>
         </div>
       )}
 
-      {/* New Project Modal */}
+      {/* New project */}
       {newModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 dark:bg-black/80 animate-fade-in backdrop-blur-xs">
-          <div className="max-w-md w-[calc(100vw-2rem)] p-6 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] text-slate-900 dark:text-[#E2E4E9] shadow-2xl space-y-4">
-            <div className="space-y-1">
-              <h3 className="text-base font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">Create LaTeX Project</h3>
-              <p className="text-xs text-slate-500 dark:text-[#9E9E9E]">Initialize a new LaTeX document workspace with real-time compilation.</p>
+        <div className={DIALOG_OVERLAY}>
+          <div role="dialog" aria-modal="true" aria-labelledby="new-project-title" className={`${DIALOG_PANEL} max-w-md`}>
+            <div className="flex flex-col gap-1">
+              <h3 id="new-project-title" className={DIALOG_TITLE}>New LaTeX project</h3>
+              <p className={DIALOG_BODY}>A new document workspace with real-time compilation</p>
             </div>
-            <form onSubmit={handleCreateSubmit} className="space-y-4 font-mono">
-              <div className="space-y-1.5">
-                <label className="text-xs text-slate-600 dark:text-[#9E9E9E] font-medium uppercase">Project Name</label>
+            <form onSubmit={handleCreateSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <label htmlFor="new-project-name" className="text-[13px] leading-5 text-ob-text-2">Project name</label>
                 <Input
+                  id="new-project-name"
                   autoFocus
-                  placeholder="e.g. Quantum Computing Seminar"
+                  placeholder="Quantum Computing Seminar"
                   value={newProjName}
                   onChange={(e) => setNewProjName(e.target.value)}
-                  className="h-10 text-xs font-mono border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] rounded-lg focus-visible:ring-1 focus-visible:ring-emerald-500 dark:focus-visible:ring-[#383B46]"
+                  className="h-9 rounded-lg border-ob-line bg-ob-raised text-sm text-ob-text shadow-none placeholder:text-ob-muted md:text-sm dark:bg-ob-raised"
                 />
               </div>
-
-              <div className="flex justify-end gap-2 pt-2 text-xs font-medium">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setNewModalOpen(false)}
-                  className="h-8 text-xs border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] rounded-lg"
-                >
+              <div className={DIALOG_FOOTER}>
+                <Button type="button" variant="ob-quiet" size="sm" onClick={() => setNewModalOpen(false)} className="cursor-pointer">
                   Cancel
                 </Button>
-                <Button
-                  type="submit"
-                  disabled={createMutation.isPending || !newProjName.trim()}
-                  className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold rounded-lg border border-emerald-600 dark:border-[#282A30] cursor-pointer"
-                >
-                  {createMutation.isPending ? "Creating..." : "Create Project →"}
+                <Button type="submit" variant="ob-primary" size="sm" disabled={createMutation.isPending || !newProjName.trim()} className="cursor-pointer">
+                  {createMutation.isPending ? "Creating" : "Create project"}
                 </Button>
               </div>
             </form>

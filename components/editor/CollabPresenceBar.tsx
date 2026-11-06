@@ -36,45 +36,41 @@ const MAX_VISIBLE = 4;
 function StatusDot({ status }: { status: CollabStatus }) {
   if (status === "connected") {
     return (
-      <span className="flex items-center gap-1 text-emerald-600 dark:text-[#10B981]" title="Live — changes sync instantly">
-        <Wifi className="w-3 h-3" />
-        <span className="hidden lg:inline">Live</span>
+      <span className="flex items-center gap-1 text-ob-positive" title="Live — changes sync instantly">
+        <Wifi className="size-3" />
+        <span className="hidden lg:inline font-mono text-xs">Live</span>
       </span>
     );
   }
   if (status === "standby") {
-    // Nobody else is here, so no realtime room is held. That is the normal,
-    // efficient state for a solo editing session — not a failure, and it must
-    // not be dressed as one: the previous fall-through showed a red "Offline"
-    // badge to someone whose document was saving perfectly well.
     return (
       <span
-        className="flex items-center gap-1 text-slate-500 dark:text-[#8A8F98]"
-        title="You are the only one here — realtime sync starts automatically when a collaborator opens this project"
+        className="flex items-center gap-1 text-ob-muted"
+        title="Solo editing session — realtime sync starts when a collaborator joins"
       >
-        <UserRound className="w-3 h-3" />
-        <span className="hidden lg:inline">Solo</span>
+        <UserRound className="size-3" />
+        <span className="hidden lg:inline font-mono text-xs">Solo</span>
       </span>
     );
   }
   if (status === "connecting" || status === "reconnecting") {
     return (
       <span
-        className="flex items-center gap-1 text-amber-600 dark:text-[#FF9900]"
-        title="Reconnecting — you can keep editing; changes sync when the link returns"
+        className="flex items-center gap-1 text-ob-warn"
+        title="Reconnecting — changes sync when link returns"
       >
-        <RotateCw className="w-3 h-3 animate-spin" />
-        <span className="hidden lg:inline">{status === "connecting" ? "Connecting" : "Reconnecting"}</span>
+        <RotateCw className="size-3 animate-spin" />
+        <span className="hidden lg:inline font-mono text-xs">{status === "connecting" ? "Connecting" : "Reconnecting"}</span>
       </span>
     );
   }
   return (
     <span
-      className="flex items-center gap-1 text-rose-600 dark:text-rose-400"
-      title="Offline — edits are kept locally and sync on reconnect"
+      className="flex items-center gap-1 text-ob-negative"
+      title="Offline — edits kept locally"
     >
-      <WifiOff className="w-3 h-3" />
-      <span className="hidden lg:inline">Offline</span>
+      <WifiOff className="size-3" />
+      <span className="hidden lg:inline font-mono text-xs">Offline</span>
     </span>
   );
 }
@@ -100,24 +96,24 @@ function PeerAvatar({
       onMouseLeave={() => setHovered(false)}
     >
       <div
-        className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-archivo font-bold text-white overflow-hidden ring-2 transition-opacity ${
+        className={`size-6 rounded-full flex items-center justify-center text-[10px] font-medium text-white overflow-hidden ring-1 ring-ob-line transition-opacity ${
           dimmed ? "opacity-50" : "opacity-100"
         }`}
-        style={{ backgroundColor: color.solid, boxShadow: `0 0 0 2px ${color.solid}33` }}
+        style={{ backgroundColor: color.solid }}
         aria-label={name}
       >
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={image} alt={name} className="w-full h-full object-cover" />
+          <img src={image} alt={name} className="size-full object-cover" />
         ) : (
           initialsForName(name)
         )}
       </div>
       {hovered && (
-        <div className="absolute right-0 top-8 z-50 whitespace-nowrap rounded-lg border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] px-2 py-1 shadow-xl">
-          <div className="text-[11px] font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">{name}</div>
+        <div className="absolute right-0 top-8 z-50 whitespace-nowrap rounded-lg border border-ob-line bg-ob-card px-2.5 py-1.5 shadow-xl text-ob-text">
+          <div className="text-xs font-medium text-ob-text">{name}</div>
           {subtitle && (
-            <div className="text-[10px] font-mono text-slate-500 dark:text-[#9E9E9E]">{subtitle}</div>
+            <div className="text-[10px] font-mono text-ob-muted">{subtitle}</div>
           )}
         </div>
       )}
@@ -149,12 +145,12 @@ function CollabPresenceBarImpl({
 
   return (
     <div
-      className="hidden xl:flex items-center gap-2 h-8 px-2.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0"
+      className="hidden xl:flex items-center gap-2 h-8 px-2.5 rounded-lg border border-ob-line bg-ob-card text-xs font-mono text-ob-muted shrink-0"
       data-testid="collab-presence-bar"
     >
       <StatusDot status={status} />
 
-      <span className="w-px h-4 bg-slate-200 dark:bg-[#282A30]" />
+      <span className="w-px h-4 bg-ob-line" />
 
       <div className="flex items-center -space-x-1.5">
         <PeerAvatar
@@ -180,8 +176,8 @@ function CollabPresenceBarImpl({
       </div>
 
       {overflow > 0 && (
-        <span className="flex items-center gap-0.5 text-slate-500 dark:text-[#9E9E9E]" title={`${overflow} more live`}>
-          <Users className="w-3 h-3" />+{overflow}
+        <span className="flex items-center gap-0.5 text-ob-muted" title={`${overflow} more live`}>
+          <Users className="size-3" />+{overflow}
         </span>
       )}
 
@@ -189,7 +185,7 @@ function CollabPresenceBarImpl({
         <button
           type="button"
           onClick={onRetry}
-          className="ml-1 px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors cursor-pointer"
+          className="ml-1 px-1.5 py-0.5 rounded border border-ob-negative/20 bg-ob-raised text-ob-negative transition-colors cursor-pointer text-[10px]"
           title={fatalError}
         >
           Retry

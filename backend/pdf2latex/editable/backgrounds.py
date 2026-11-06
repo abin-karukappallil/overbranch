@@ -22,7 +22,7 @@ BG_DPI = 150
 
 
 def page_backgrounds(doc, extract: DocExtract, furniture_ids: Set[Tuple[int, int]], out_dir: Path,
-                     deck: bool, boxes=None, markers=None) -> Dict[int, str]:
+                     deck: bool, boxes=None, markers=None, furniture_images=None) -> Dict[int, str]:
     """{page number: project-relative background image} for decorated pages. A deck's slides are
     always rendered here, so content boxes and emitted rules can be taken out of the picture;
     other pages reuse the extractor's rasterised vector art."""
@@ -32,7 +32,8 @@ def page_backgrounds(doc, extract: DocExtract, furniture_ids: Set[Tuple[int, int
     for p in extract.pages:
         if deck:
             rel = _render_without_content(doc, p, furniture_ids, out_dir, extract.asset_prefix,
-                                          boxes.get(p.number, []), markers.get(p.number, []))
+                                          boxes.get(p.number, []), markers.get(p.number, []),
+                                          furniture_images or set())
             if rel:
                 out[p.number] = rel
         elif p.background:
@@ -41,8 +42,9 @@ def page_backgrounds(doc, extract: DocExtract, furniture_ids: Set[Tuple[int, int
 
 
 def _render_without_content(doc, page, furniture_ids, out_dir: Path, prefix: str, boxes=(),
-                            markers=()):
-    """The page with its body text and content images redacted: decoration and furniture remain."""
+                            markers=(), furniture_images=frozenset()):
+    """The page with its body text and content images redacted: decoration and furniture (the
+    running text, the logo repeated on every slide) remain."""
     import pymupdf
     try:
         tmp = pymupdf.open()
@@ -79,7 +81,7 @@ def _render_without_content(doc, page, furniture_ids, out_dir: Path, prefix: str
             if r.y1 > r.y0:
                 pg.add_redact_annot(r)
         for img in page.images:
-            if img.kind in ("image", "figure"):
+            if img.kind in ("image", "figure") and (page.number, img.file) not in furniture_images:
                 pg.add_redact_annot(pymupdf.Rect(*img.bbox))
         for bb in markers:                       # picture bullets became bullet characters
             pg.add_redact_annot(pymupdf.Rect(*bb))

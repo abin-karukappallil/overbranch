@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import {
   Play,
-  Loader2,
   FileDown,
   RotateCw,
   ChevronDown,
@@ -53,14 +52,14 @@ export function CompileSplitButton({
   className,
 }: CompileSplitButtonProps) {
   return (
-    <div className={cn("flex items-stretch h-8 shrink-0 rounded-lg shadow-sm", className)}>
+    <div className={cn("flex items-stretch h-8 shrink-0 rounded-lg overflow-hidden border border-ob-line", className)}>
       <Button
         size="sm"
         onClick={onCompile}
         disabled={isCompiling}
         className={cn(
-          "h-8 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold text-xs border border-[#10B981]/30 border-r-0 flex items-center gap-1.5 cursor-pointer rounded-l-lg rounded-r-none shadow-none",
-          compact ? "px-2 sm:px-2.5" : "px-3.5"
+          "h-8 bg-ob-accent hover:bg-ob-accent-hover text-ob-on-accent font-medium text-xs flex items-center gap-1.5 cursor-pointer rounded-none border-0 shadow-none",
+          compact ? "px-2 sm:px-2.5" : "px-3"
         )}
         title={
           isCompiling && busy
@@ -70,11 +69,11 @@ export function CompileSplitButton({
         aria-busy={isCompiling || undefined}
       >
         {isCompiling ? (
-          <RotateCw className="w-3.5 h-3.5 animate-spin text-white" />
+          <RotateCw className="size-3.5 animate-spin" />
         ) : (
-          <Play className="w-3.5 h-3.5 fill-current text-white" />
+          <Play className="size-3.5 fill-current" />
         )}
-        <span className={compact ? "hidden xs:inline text-[11px]" : undefined}>
+        <span className={compact ? "hidden xs:inline text-xs" : undefined}>
           {isCompiling && busy ? "Queued\u2026" : "Compile"}
         </span>
       </Button>
@@ -85,22 +84,22 @@ export function CompileSplitButton({
             disabled={isCompiling}
             aria-label={`TeX engine: ${engine}. Change engine`}
             title={`TeX engine: ${engine}`}
-            className="h-8 w-6 flex items-center justify-center rounded-r-lg bg-[#10B981] hover:bg-[#059669] text-white border border-[#10B981]/30 border-l border-l-white/30 cursor-pointer disabled:opacity-50 disabled:pointer-events-none transition-colors"
+            className="flex h-8 w-6 cursor-pointer items-center justify-center border-l border-l-black/15 bg-ob-accent text-ob-on-accent transition-colors hover:bg-ob-accent-hover disabled:pointer-events-none disabled:opacity-50"
           >
-            <ChevronDown className="w-3.5 h-3.5" />
+            <ChevronDown className="size-3.5" />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-[10rem] font-mono">
-          <DropdownMenuLabel className="text-[11px] text-muted-foreground font-normal">
+        <DropdownMenuContent align="end" className="min-w-[10rem] border-ob-line bg-ob-card text-ob-text font-mono">
+          <DropdownMenuLabel className="text-[11px] font-normal text-ob-muted">
             TeX engine
           </DropdownMenuLabel>
-          <DropdownMenuSeparator />
+          <DropdownMenuSeparator className="bg-ob-line" />
           {TEX_ENGINES.map((name) => (
             <DropdownMenuCheckboxItem
               key={name}
               checked={engine === name}
               onCheckedChange={() => onEngineChange(name)}
-              className="text-xs cursor-pointer"
+              className="cursor-pointer text-xs focus:bg-ob-raised focus:text-ob-text"
             >
               {name}
             </DropdownMenuCheckboxItem>
@@ -131,22 +130,23 @@ export function CompileToolbar({
   };
 
   return (
-    <div className="h-11 px-3 sm:px-4 border-b border-[#282A30] bg-[#141519] flex items-center justify-between gap-2 text-xs font-mono text-[#E2E4E9] overflow-x-auto shrink-0 select-none">
-      <div className="flex items-center gap-2 shrink-0">
+    <div className="flex h-10 shrink-0 select-none items-center justify-between gap-2 overflow-x-auto border-b border-ob-line bg-ob-card px-3 text-xs text-ob-text sm:px-4">
+      <div className="flex shrink-0 items-center gap-2">
         <Button
           size="sm"
           onClick={onCompile}
           disabled={isCompiling}
-          className="h-7 px-3.5 bg-[#10B981] hover:bg-[#059669] text-white font-archivo font-bold rounded-lg border border-[#10B981]/30 shadow-sm text-xs cursor-pointer transition-all flex items-center gap-1.5"
+          variant="ob-primary"
+          className="h-7 cursor-pointer text-xs"
         >
           {isCompiling ? (
             <>
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-              <span>Compiling...</span>
+              <RotateCw className="size-3.5 animate-spin" />
+              <span>Compiling\u2026</span>
             </>
           ) : (
             <>
-              <Play className="w-3.5 h-3.5 fill-current text-white" />
+              <Play className="size-3.5 fill-current" />
               <span>Compile TeX</span>
             </>
           )}
@@ -156,43 +156,30 @@ export function CompileToolbar({
           onClick={() => {
             setAutoCompile(!autoCompile);
           }}
-          className={`hidden xs:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-colors shrink-0 cursor-pointer ${
+          className={`hidden cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors xs:flex shrink-0 ${
             autoCompile
-              ? "border-[#282A30] bg-[#22242C] text-[#10B981] font-semibold"
-              : "border-[#282A30] text-[#9E9E9E] hover:bg-[#1A1C22] hover:text-[#E2E4E9]"
+              ? "border-ob-line bg-ob-raised text-ob-text font-medium"
+              : "border-ob-line text-ob-muted hover:text-ob-text hover:bg-ob-raised"
           }`}
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${autoCompile ? "bg-[#10B981] animate-pulse" : "bg-[#62666D]"}`} />
-          <span className="hidden sm:inline">Auto-Compile</span>
+          <span className={`size-1.5 rounded-full ${autoCompile ? "bg-ob-accent" : "bg-ob-muted"}`} />
+          <span className="hidden sm:inline">Auto-compile</span>
           <span className="sm:hidden">Auto</span>
         </button>
-
       </div>
 
-      <div className="flex items-center gap-2 shrink-0">
-        <div className="hidden md:flex items-center gap-2">
-          <span className="px-2 py-0.5 rounded-md bg-[#1A1C22] text-[#10B981] border border-[#282A30] flex items-center gap-1 text-[11px] font-mono font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" />
-            <span>0 Errors</span>
-          </span>
-          <span className="px-2 py-0.5 rounded-md bg-[#1A1C22] text-[#FF9900] border border-[#282A30] flex items-center gap-1 text-[11px] font-mono font-medium">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900]" />
-            <span>1 Warning</span>
-          </span>
-        </div>
-
+      <div className="flex shrink-0 items-center gap-2">
         <Button
-          variant="outline"
+          variant="ob-quiet"
           size="sm"
           onClick={handleDownloadPdf}
-          className="h-7 px-2.5 border-[#282A30] bg-[#1A1C22] hover:bg-[#22242C] text-[#E2E4E9] font-mono font-medium text-xs rounded-lg cursor-pointer flex items-center gap-1"
+          className="h-7 cursor-pointer text-xs"
           title="Download PDF"
         >
-          <FileDown className="w-3.5 h-3.5 text-[#10B981]" />
+          <FileDown className="size-3.5 text-ob-muted" />
           <span>PDF</span>
         </Button>
       </div>
     </div>
   );
 }
-

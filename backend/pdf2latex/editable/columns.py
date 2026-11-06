@@ -14,7 +14,7 @@ import re
 from collections import Counter
 from typing import Dict, List, Optional, Set, Tuple
 
-from ..fontmap import editable_font
+from ..fontmap import editable_font as _fontmap_font
 from ..models import Line, PageExtract, Span
 from .model import RGB, Run, Segment, TLine, Zone
 
@@ -53,6 +53,25 @@ def rsz(v: float) -> float:
     return round(v * 2) / 2.0
 
 
+_CM_SUPER = re.compile(r"(?:^|[^A-Za-z])(SF[A-Z]{2})\d{3,4}", re.IGNORECASE)
+_CM_SUPER_SANS = {"sfss", "sfsx", "sfsi", "sfso", "sfsc", "sfbs"}
+_CM_SUPER_MONO = {"sftt", "sfit", "sfst", "sftc", "sfvt", "sfvi"}
+
+
+def editable_font(font_name: str, flags: int = 0) -> Tuple[str, str]:
+    """fontmap.editable_font (read-only: exact mode depends on that file), with cm-super read
+    right: its T1 Computer Modern fonts are SFRM/SFBX/SFTI (roman), SFSS/SFSX/SFSI (sans), SFTT
+    (typewriter). The shared table takes SFRM for sans, so every pdfLaTeX document in T1 came out
+    in Latin Modern Sans."""
+    cls, family = _fontmap_font(font_name, flags)
+    m = _CM_SUPER.search(font_name or "")
+    if m:
+        name = m.group(1).lower()
+        cls = "lmodern"
+        family = "mono" if name in _CM_SUPER_MONO else ("sans" if name in _CM_SUPER_SANS else "serif")
+    return cls, family
+
+
 def to_run(sp: Span, color_override: Optional[RGB] = None, script: int = 0) -> Run:
     cls, family = editable_font(sp.font, sp.flags)
     return Run(text=sp.text, size=rsz(sp.size), family=family, font_cls=cls,
@@ -80,6 +99,13 @@ def dominant_size(lines: List[Line]) -> float:
 
 
 def body_size(pages: List[PageExtract]) -> float:
+    """The body text's size. A slide deck has no running body: a few slides of dense 8pt tables
+    outweigh, by characters, the 11pt text most slides are set in, and everything above the table's
+    size would read as a heading; there each slide votes with its own dominant size."""
+    if len(pages) >= 2 and all(p.width > p.height * 1.15 for p in pages):
+        votes = Counter(dominant_size(p.lines) for p in pages if any(ln.text.strip() for ln in p.lines))
+        if votes:
+            return votes.most_common(1)[0][0]
     return dominant_size([ln for p in pages for ln in p.lines])
 
 

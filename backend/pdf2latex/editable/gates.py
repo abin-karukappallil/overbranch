@@ -17,6 +17,7 @@ from .model import EditDoc, LineMap
 logger = logging.getLogger("pdf2latex.editable.gates")
 
 MERGE_TIMEOUT_BASE = 90
+MAX_REPAIR_ROUNDS = 12
 
 # Body constructs that must never appear (editability lint).
 _FORBIDDEN = [r"\\begin\{tikzpicture\}", r"\\node", r"\\put\b", r"\\begin\{picture\}",
@@ -29,15 +30,15 @@ async def compile_with_repair(ctx, tex: str, doc: EditDoc, lm: LineMap,
                               compile_tex: Callable[..., Awaitable]) -> Tuple[str, Optional[bytes]]:
     """
     Compile; on failure, degrade the blocks the error points at (table→paras, list→paras,
-    math→image only, note→inline) and recompile. Never falls back to coordinates. Continues while
-    the error count strictly decreases.
+    math→image only, note→inline, styled text→plain text) and recompile. Never falls back to
+    coordinates. The compile stops at its first error, so each round finds one more bad block: it
+    goes on while there is a block left to degrade, up to MAX_REPAIR_ROUNDS.
     """
     timeout = MERGE_TIMEOUT_BASE + 6 * max(1, doc.page_count)
     pdf, log = await compile_tex(ctx, tex, timeout)
     if pdf is not None:
         return tex, pdf
-    prev_errors = None
-    for _ in range(4):
+    for _ in range(MAX_REPAIR_ROUNDS):
         lines = _error_lines(log)
         bad_ids = {lm.block_for_line(n) for n in lines if lm.block_for_line(n)}
         logger.info(f"editable compile failed; degrading blocks {bad_ids}")
@@ -52,10 +53,6 @@ async def compile_with_repair(ctx, tex: str, doc: EditDoc, lm: LineMap,
         pdf, log = await compile_tex(ctx, tex, timeout)
         if pdf is not None:
             return tex, pdf
-        n_err = len(_error_lines(log))
-        if prev_errors is not None and n_err >= prev_errors:
-            break
-        prev_errors = n_err
     return tex, None
 
 
@@ -107,6 +104,11 @@ def _degraded_level(b):
         return [b]
     if kind == "heading":
         return [_plain_para(b.page, b.text)]
+    if kind == "para" and getattr(b, "lines", None) and not getattr(b, "degraded", False):
+        # the bottom rung for ordinary text: its words without their inline styling
+        plain = _plain_para(b.page, " ".join(ln.text for ln in b.lines))
+        plain.bbox, plain.id, plain.degraded = b.bbox, b.id, True
+        return [plain]
     return None
 
 

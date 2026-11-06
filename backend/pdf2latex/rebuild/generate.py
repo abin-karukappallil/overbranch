@@ -546,7 +546,13 @@ def _contract_block(text: str) -> str:
         "\\providecommand{\\obfootnote}[2]{\\par{\\footnotesize\\textsuperscript{#1}\\,#2}\\par}",
         "\\providecommand{\\obbackground}[1]{\\AddToShipoutPictureBG*{\\AtPageLowerLeft{"
         "\\includegraphics[width=\\paperwidth,height=\\paperheight]{#1}}}}",
-        "\\def\\obpagestart#1{\\setcounter{page}{#1}\\obhead{}{}{}\\obfoot{}{}{}\\label{ob-src-#1}}",
+        # \label's page field is \thepage, which \setcounter has just set to the SOURCE page, so it can
+        # never show drift. ob-out-n records the physical page (\the is expanded by \write, at shipout).
+        "\\makeatletter",
+        "\\def\\ob@outpage#1{\\protected@write\\@auxout{}{\\string\\newlabel{ob-out-#1}"
+        "{{}{\\noexpand\\the\\ReadonlyShipoutCounter}{}{}{}}}}",
+        "\\def\\obpagestart#1{\\setcounter{page}{#1}\\obhead{}{}{}\\obfoot{}{}{}\\label{ob-src-#1}\\ob@outpage{#1}}",
+        "\\makeatother",
         CONTRACT_END,
     ]
     return "\n".join(lines)

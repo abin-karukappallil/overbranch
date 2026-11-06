@@ -285,27 +285,27 @@ export function EditorSearchBar({
   if (!open) return null;
 
   const toggleClass = (active: boolean) =>
-    `h-6 w-6 flex items-center justify-center rounded-md border text-[10px] transition-colors cursor-pointer shrink-0 ${
+    `size-6 flex items-center justify-center rounded-md border text-[10px] transition-colors cursor-pointer shrink-0 ${
       active
-        ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
-        : "bg-white border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:bg-[#1A1C22] dark:border-[#282A30] dark:text-[#9E9E9E] dark:hover:text-[#E2E4E9] dark:hover:bg-[#22242C]"
+        ? "border-ob-text/20 bg-ob-raised text-ob-text"
+        : "border-ob-line bg-ob-card text-ob-muted hover:bg-ob-raised hover:text-ob-text"
     }`;
 
   const inputClass =
-    "h-7 min-w-0 flex-1 px-2 rounded-md bg-slate-50 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#383B46]";
+    "h-7 min-w-0 flex-1 px-2 rounded-md bg-ob-raised border border-ob-line text-[11px] font-mono text-ob-text placeholder:text-ob-muted outline-none transition-colors focus:border-ob-text/20";
 
   const iconBtnClass =
-    "h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] transition-colors cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed";
+    "size-6 flex items-center justify-center rounded-md bg-ob-card hover:bg-ob-raised text-ob-muted hover:text-ob-text border border-ob-line transition-colors cursor-pointer shrink-0 disabled:opacity-40 disabled:cursor-not-allowed";
 
   return (
     <div
-      className={`absolute z-40 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white/95 dark:bg-[#141519]/95 backdrop-blur shadow-2xl p-2 space-y-1.5 font-mono ${
+      className={`absolute z-40 rounded-xl border border-ob-line bg-ob-card/95 backdrop-blur-md shadow-[0_12px_36px_rgba(0,0,0,0.24)] p-2 space-y-1.5 font-mono text-ob-text ${
         compact ? "top-1 left-1 right-1" : "top-2 right-3 w-[22rem] max-w-[calc(100%-1.5rem)]"
       } ${className}`}
       onKeyDown={handleKeyDown}
     >
       <div className="flex items-center gap-1.5">
-        <Search className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981] shrink-0" />
+        <Search className="size-3.5 text-ob-muted shrink-0" />
         <input
           ref={inputRef}
           type="text"
@@ -318,10 +318,10 @@ export function EditorSearchBar({
           className={inputClass}
         />
         <span
-          className={`text-[10px] tabular-nums shrink-0 min-w-[3.25rem] text-right ${
+          className={`text-[10px] tabular-nums shrink-0 min-w-[3.25rem] text-right font-mono ${
             invalidPattern
-              ? "text-red-600 dark:text-[#EB5757]"
-              : "text-slate-500 dark:text-[#9E9E9E]"
+              ? "text-ob-negative"
+              : "text-ob-muted"
           }`}
         >
           {counter}
@@ -397,7 +397,7 @@ export function EditorSearchBar({
 
       {showReplace && !readOnly && (
         <div className="flex items-center gap-1.5">
-          <Replace className="w-3.5 h-3.5 text-slate-400 dark:text-[#62666D] shrink-0" />
+          <Replace className="size-3.5 text-ob-muted shrink-0" />
           <input
             type="text"
             value={replacement}

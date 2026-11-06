@@ -61,7 +61,7 @@ from .prompts import (
     fill,
     page_user_prompt,
 )
-from .storage import FileConflictError, write_output_to_project
+from .storage import PACKAGE_EXTRAS, FileConflictError, write_output_to_project
 from .texutil import sanitize_unicode
 from .verify import (Region, WordBox, compare_pages, compare_words, describe_regions, displacement,
                      extract_words_from_pdf, render_pdf_pages, tokenize, words_with_boxes)
@@ -689,7 +689,13 @@ async def run_conversion(job_id: str, pdf_bytes: bytes, project_id: str,
 
     if mode == "editable":
         # The editable pipeline is document-level (reflow), not per-page, so it has its own entry
-        # point. Exact mode below is untouched.
+        # point. Exact mode below is untouched. PDF2LATEX_EDITABLE_ENGINE picks the engine.
+        from .rebuild.settings import editable_engine
+        if editable_engine(saved_state if resume else None) == "rebuild":
+            from .rebuild.run import run_rebuild
+            await run_rebuild(job_id, pdf_bytes, project_id, overwrite=overwrite,
+                              target_path=target_path, resume=resume, saved_state=saved_state)
+            return
         from .editable.run import run_editable
         await run_editable(job_id, pdf_bytes, project_id, overwrite=overwrite,
                            target_path=target_path, resume=resume, saved_state=saved_state)
@@ -791,8 +797,13 @@ async def commit_pending_output(job_id: str, overwrite: bool, target_path: str) 
     if not state or state.get("status") != "needs_confirmation":
         raise ConversionError("This conversion is not waiting for confirmation.")
     out_dir = jobs.job_dir(job_id) / "output"
+    # Only an AI-rebuild job carries result_extra (has_package, page_map); other jobs pass through as they were.
+    extra = state.get("result_extra") or {}
+    keep = {"keep_existing": PACKAGE_EXTRAS} if extra else {}
     written = await asyncio.to_thread(write_output_to_project, state["project_id"], out_dir, "main.tex",
-                                      target_path, overwrite)
+                                      target_path, overwrite, **keep)
+    if extra:
+        written = {**written, **extra}
     jobs.update_job(job_id, status="done", stage="done", message="Conversion complete.", result=written,
                     conflict_path=None)
     return written

@@ -114,7 +114,7 @@ def source_styled_words(extract: DocExtract, doc: EditDoc) -> List[StyledWord]:
                 for w in sp.text.split():
                     norm = _normalize_word(unicodedata.normalize("NFKC", w))
                     if len(norm) >= 2:
-                        from ..fontmap import editable_font
+                        from .columns import editable_font
                         _c, fam = editable_font(sp.font, sp.flags)
                         out.append(StyledWord(norm=norm, size=round(sp.size * 2) / 2, bold=sp.bold,
                                               italic=sp.italic, color=sp.color, family=fam, page=p.number))
@@ -541,7 +541,7 @@ def figure_position(doc: EditDoc, pdf: bytes, out_dir) -> Dict:
 def chrome_style(extract: DocExtract, doc: EditDoc, pdf: bytes) -> Dict:
     """The running header/footer's font family, source against output, word by word per page."""
     import pymupdf
-    from ..fontmap import editable_font
+    from .columns import editable_font
     furn = doc.furniture.furniture_line_ids if doc.furniture else set()
     src: Dict[int, List[Tuple[str, str]]] = {}
     for p in extract.pages:

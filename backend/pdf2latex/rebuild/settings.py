@@ -9,13 +9,19 @@ TEX_RUNNER_TOKEN.
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 from ..config import _env_bool, _env_float, _env_int, get_settings
 
 
+# The AI rebuild ships switched off: editable imports stay on the deterministic engine until ops set
+# PDF2LATEX_EDITABLE_ENGINE=rebuild. An unknown value also means this, so a typo cannot turn it on.
+DEFAULT_ENGINE = "deterministic"
+
+
 @dataclass(frozen=True)
 class RebuildSettings:
-    engine: str                 # "rebuild" | "deterministic" (ops switch; deterministic = old editable engine)
+    engine: str                 # "deterministic" (the default: the old editable engine) | "rebuild" (ops switch)
     raster_dpi: int             # page PNGs sent to the model / used as the visual reference
     refine_rounds: int          # measure-and-correct rounds per page (1..5)
     max_active_jobs: int        # rebuild jobs running at once in this process; the rest stay queued
@@ -43,10 +49,10 @@ class RebuildSettings:
 
 
 def get_rebuild_settings() -> RebuildSettings:
-    engine = (os.getenv("PDF2LATEX_EDITABLE_ENGINE") or "rebuild").strip().lower()
+    engine = (os.getenv("PDF2LATEX_EDITABLE_ENGINE") or DEFAULT_ENGINE).strip().lower()
     mode = (os.getenv("TEX_SANDBOX_MODE") or "local").strip().lower()
     return RebuildSettings(
-        engine=engine if engine in ("rebuild", "deterministic") else "rebuild",
+        engine=engine if engine in ("rebuild", "deterministic") else DEFAULT_ENGINE,
         raster_dpi=min(200, max(100, _env_int("PDF2LATEX_RASTER_DPI", 150))),
         refine_rounds=min(5, max(1, _env_int("PDF2LATEX_REFINE_ROUNDS", 3))),
         max_active_jobs=max(1, _env_int("PDF2LATEX_MAX_ACTIVE_JOBS", 2)),
@@ -67,3 +73,14 @@ def get_rebuild_settings() -> RebuildSettings:
         min_gain=max(0.0, _env_float("PDF2LATEX_MIN_GAIN", 0.005)),
         max_failed_page_share=min(1.0, max(0.0, _env_float("PDF2LATEX_MAX_FAILED_SHARE", 0.5))),
     )
+
+
+def editable_engine(saved_state: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Which engine runs an editable job. A new job (`saved_state` None) follows the ops switch. A resumed
+    job keeps the engine it started on: `run_rebuild` stores `engine` in the job state first thing, so a
+    state without it, or one that already fell back, is a deterministic job.
+    """
+    if saved_state is None:
+        return get_rebuild_settings().engine
+    return "rebuild" if saved_state.get("engine") == "rebuild" else "deterministic"

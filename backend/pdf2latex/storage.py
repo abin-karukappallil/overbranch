@@ -14,13 +14,16 @@ import shutil
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from project_storage import create_empty_project, get_project_disk_path, get_supabase_client, upsert_latex_document
 
 logger = logging.getLogger("pdf2latex.storage")
 
 TEXT_SUFFIXES = {".tex", ".sty", ".cls", ".bib", ".txt", ".md"}
+# What an AI-rebuild package adds to a project's root. Unlike assets (per-job folder) these names can
+# collide with the user's own files when importing into an existing project, so they never replace one.
+PACKAGE_EXTRAS = ("output.pdf", "report.md")
 
 
 class FileConflictError(Exception):
@@ -64,11 +67,13 @@ def project_file_has_content(project_id: str, file_path: str) -> bool:
 
 
 def write_output_to_project(project_id: str, out_dir: Path, tex_name: str = "main.tex",
-                            target_path: str = "main.tex", overwrite: bool = False) -> Dict[str, Any]:
+                            target_path: str = "main.tex", overwrite: bool = False,
+                            keep_existing: Sequence[str] = ()) -> Dict[str, Any]:
     """
     Copies out_dir/<tex_name> to <target_path> and every other file under out_dir (assets)
     to the same relative path in the project. Raises FileConflictError when the target
-    .tex has content and overwrite is False.
+    .tex has content and overwrite is False. A path in `keep_existing` is skipped when the
+    project already has a file with content there.
     """
     target_path = sanitize_target_path(target_path)
     if not overwrite and project_file_has_content(project_id, target_path):
@@ -82,6 +87,8 @@ def write_output_to_project(project_id: str, out_dir: Path, tex_name: str = "mai
         rel = src.relative_to(out_dir).as_posix()
         if src == tex_src:
             rel = target_path
+        elif rel in keep_existing and project_file_has_content(project_id, rel):
+            continue
         dest = get_project_disk_path(project_id, rel)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)

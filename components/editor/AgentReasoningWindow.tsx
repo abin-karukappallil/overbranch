@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Zap, Square, ArrowDown, Check, Loader2, AlertTriangle } from "lucide-react";
+import { Square, ArrowDown, Check, Loader2, AlertTriangle } from "lucide-react";
 
 export interface AgentProgressStep {
   step: string;
@@ -17,11 +17,11 @@ export interface AgentProgressStep {
 }
 
 const PHASE_LABELS: Record<string, string> = {
-  finding_target: "Finding target…",
-  applying: "Applying patch…",
-  compiling: "Compiling…",
-  checking_layout: "Checking layout…",
-  repairing: "Repairing…",
+  finding_target: "Finding target\u2026",
+  applying: "Applying patch\u2026",
+  compiling: "Compiling\u2026",
+  checking_layout: "Checking layout\u2026",
+  repairing: "Repairing\u2026",
   done: "Done",
   failed: "Not applied",
 };
@@ -97,7 +97,7 @@ export function AgentReasoningWindow({
       ) {
         return {
           ...s,
-          message: "Tool calling...",
+          message: "Tool calling\u2026",
         };
       }
       return s;
@@ -131,24 +131,24 @@ export function AgentReasoningWindow({
 
   return (
     <div
-      className={`p-3 rounded-2xl bg-white dark:bg-[#141519] border border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] font-mono space-y-2 shadow-xl animate-in fade-in slide-in-from-bottom-1 relative ${
+      className={`relative space-y-2 rounded-xl border border-ob-line bg-ob-card p-3 font-mono text-ob-text shadow-sm ${
         compact ? "text-[11px]" : "text-xs"
       } ${className}`}
     >
       {/* Header */}
-      <div className="flex items-center justify-between font-archivo font-bold border-b border-slate-200 dark:border-[#282A30] pb-2 text-slate-900 dark:text-[#E2E4E9]">
-        <div className="flex items-center gap-2 min-w-0">
-          <Zap className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981] animate-pulse shrink-0" />
-          <span className="truncate">Agent Reasoning</span>
-          <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-[#22242C] text-slate-500 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30] font-mono font-medium shrink-0">
+      <div className="flex items-center justify-between border-b border-ob-line pb-2 font-mono text-xs text-ob-text">
+        <div className="flex min-w-0 items-center gap-2">
+          <Loader2 className="size-3.5 animate-spin text-ob-accent shrink-0" />
+          <span className="truncate font-medium text-ob-text">Reasoning</span>
+          <span className="shrink-0 rounded border border-ob-line bg-ob-raised px-1.5 py-0.5 font-mono text-[10px] text-ob-muted tabular-nums">
             Step {activeStepNumber}
           </span>
           {currentPhase?.phase && (
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded-md border font-mono font-medium shrink-0 ${
+              className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] ${
                 phaseFailed
-                  ? "bg-red-50 dark:bg-[#EB5757]/10 text-red-600 dark:text-[#EB5757] border-red-200 dark:border-[#EB5757]/30"
-                  : "bg-emerald-50 dark:bg-[#10B981]/10 text-emerald-600 dark:text-[#10B981] border-emerald-200 dark:border-[#10B981]/30"
+                  ? "border-ob-negative/20 bg-ob-raised text-ob-negative"
+                  : "border-ob-line bg-ob-raised text-ob-text-2"
               }`}
               title={currentPhase.message}
             >
@@ -157,15 +157,15 @@ export function AgentReasoningWindow({
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex shrink-0 items-center gap-1.5">
           {userHasScrolledUp && (
             <button
               type="button"
               onClick={handleResumeAutoScroll}
-              className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] text-[10px] font-mono font-medium flex items-center gap-1 transition-all cursor-pointer shadow-xs animate-bounce"
-              title="Resume auto-scroll to latest step"
+              className="flex cursor-pointer items-center gap-1 rounded border border-ob-line bg-ob-raised px-2 py-0.5 font-mono text-[10px] text-ob-text transition-colors hover:bg-ob-deep"
+              title="Resume auto-scroll"
             >
-              <ArrowDown className="w-2.5 h-2.5 text-emerald-600 dark:text-[#10B981]" />
+              <ArrowDown className="size-2.5 text-ob-muted" />
               <span>Latest</span>
             </button>
           )}
@@ -173,12 +173,12 @@ export function AgentReasoningWindow({
           <button
             type="button"
             onClick={onStop}
-            className={`px-2 py-0.5 rounded-md bg-red-50 dark:bg-[#EB5757]/10 hover:bg-red-100 dark:hover:bg-[#EB5757]/20 text-red-600 dark:text-[#EB5757] border border-red-200 dark:border-[#EB5757]/30 font-mono font-semibold flex items-center gap-1 transition-colors shrink-0 cursor-pointer ${
+            className={`flex cursor-pointer items-center gap-1 rounded border border-ob-negative/20 bg-ob-raised px-2 py-0.5 font-mono text-ob-negative transition-colors hover:bg-ob-negative/10 ${
               compact ? "text-[10px]" : "text-xs"
             }`}
-            title="Stop AI agent thinking"
+            title="Stop AI reasoning"
           >
-            <Square className="w-2.5 h-2.5 fill-current text-red-600 dark:text-[#EB5757]" />
+            <Square className="size-2.5 fill-current text-ob-negative" />
             <span>Stop</span>
           </button>
         </div>
@@ -188,14 +188,14 @@ export function AgentReasoningWindow({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className={`ob-thin-scroll space-y-1.5 overflow-y-auto pr-1 scroll-smooth ${
+        className={`ob-thin-scroll space-y-1 overflow-y-auto pr-1 scroll-smooth ${
           compact ? "max-h-28" : "max-h-36"
         }`}
       >
         {visibleSteps.length === 0 ? (
-          <div className="flex items-center gap-2 text-slate-500 dark:text-[#9E9E9E] animate-pulse py-1 font-mono text-[11px]">
-            <Loader2 className="w-3 h-3 text-emerald-600 dark:text-[#10B981] animate-spin shrink-0" />
-            <span>Initializing LaTeX pipeline...</span>
+          <div className="flex items-center gap-2 py-1 font-mono text-[11px] text-ob-muted">
+            <Loader2 className="size-3 animate-spin text-ob-muted shrink-0" />
+            <span>Initializing pipeline\u2026</span>
           </div>
         ) : (
           visibleSteps.map((s, idx) => {
@@ -203,38 +203,35 @@ export function AgentReasoningWindow({
             return (
               <div
                 key={idx}
-                className={`flex items-start gap-2 py-1 px-2 rounded-lg transition-all font-mono ${
+                className={`flex items-start gap-2 rounded-lg px-2 py-1 font-mono transition-colors ${
                   compact ? "text-[10px]" : "text-[11px]"
                 } ${
                   isLatest
-                    ? "text-slate-900 dark:text-[#E2E4E9] bg-slate-100 dark:bg-[#22242C] border border-slate-200 dark:border-[#282A30] font-medium"
-                    : "text-slate-500 dark:text-[#9E9E9E] bg-slate-50 dark:bg-[#1A1C22] border border-slate-200/70 dark:border-[#282A30]/60 font-normal hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                    ? "border border-ob-line bg-ob-raised font-medium text-ob-text"
+                    : "border border-transparent text-ob-muted hover:text-ob-text"
                 }`}
               >
-                <div className="mt-0.5 shrink-0">
+                <div className="mt-1 shrink-0">
                   {s.step === "phase" && s.phase === "failed" ? (
-                    <AlertTriangle className="w-3 h-3 text-red-600 dark:text-[#EB5757]" />
+                    <AlertTriangle className="size-3 text-ob-negative" />
                   ) : isLatest ? (
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-600 dark:bg-[#10B981] opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600 dark:bg-[#10B981]" />
-                    </span>
+                    <span className="block size-1.5 rounded-full bg-ob-accent" />
                   ) : (
-                    <Check className="w-3 h-3 text-emerald-600 dark:text-[#10B981]" />
+                    <Check className="size-3 text-ob-muted" />
                   )}
                 </div>
-                <div className="flex-1 min-w-0 break-words leading-relaxed">
+                <div className="min-w-0 flex-1 break-words leading-relaxed">
                   <span title={s.message}>{s.message}</span>
                   {s.step === "page_snapshot" && s.image && s.image.startsWith("data:image/") && (
-                    // eslint-disable-next-line @next/next/no-img-element -- a data URL the agent just rendered
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={s.image}
                       alt={s.label ? `Rendered ${s.label}` : "Rendered page"}
-                      className="mt-1 block max-h-40 max-w-full rounded-md border border-slate-200 dark:border-[#282A30] bg-white"
+                      className="mt-1 block max-h-40 max-w-full rounded border border-ob-line bg-ob-card object-contain"
                     />
                   )}
                   {SHOW_DEBUG_DETAILS && s.details && (
-                    <pre className="mt-1 whitespace-pre-wrap text-[10px] text-slate-500 dark:text-[#9E9E9E]">
+                    <pre className="mt-1 whitespace-pre-wrap text-[10px] text-ob-muted">
                       {JSON.stringify(s.details, null, 1)}
                     </pre>
                   )}
@@ -248,4 +245,3 @@ export function AgentReasoningWindow({
     </div>
   );
 }
-

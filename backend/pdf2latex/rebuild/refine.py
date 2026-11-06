@@ -176,14 +176,15 @@ def _kill_procs_in(wd: Path) -> int:
     return killed
 
 
-async def _run_sandbox(wd: Path):
+async def _run_sandbox(wd: Path, timeout_s: Optional[int] = None):
     """
     `sandbox.compile_dir`, cancellation-safe: a local compile runs in a worker thread that task
     cancellation cannot stop, so on cancel the TeX processes in `wd` are killed and the thread is
     waited for (bounded) before the cancellation propagates — no orphaned engine keeps burning CPU.
     In runner mode the HTTP request is dropped; the sidecar's own timeout bounds its compile.
     """
-    task = asyncio.ensure_future(sandbox.compile_dir(wd))
+    task = asyncio.ensure_future(sandbox.compile_dir(wd) if timeout_s is None
+                                 else sandbox.compile_dir(wd, timeout_s=timeout_s))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -959,6 +960,11 @@ def fallback_body(rel: str) -> str:
             "\\null")
 
 
+def page_image_body(ctx: RebuildCtx, n: int) -> str:
+    """The body of page `n` as an image of the source page (renders the file; run off the event loop)."""
+    return fallback_body(_fallback_png(ctx, n))
+
+
 async def _image_fallback(ctx: RebuildCtx, n: int, pr: PageResult, allowed: Set[str]) -> Optional[_Attempt]:
     try:
         rel = await asyncio.to_thread(_fallback_png, ctx, n)
@@ -976,6 +982,26 @@ async def _image_fallback(ctx: RebuildCtx, n: int, pr: PageResult, allowed: Set[
     except Exception as e:  # noqa: BLE001 - the fallback stands without a score
         logger.warning(f"p{n}: measuring the image fallback failed: {e}")
     return att
+
+
+async def image_fallback_page(ctx: RebuildCtx, n: int, reason: str, *,
+                              warnings: Sequence[str] = ()) -> PageResult:
+    """The result for a page the model could not produce at all: its image, or status "failed"."""
+    pr = PageResult(number=n, warnings=[*warnings, reason])
+    fb = await _image_fallback(ctx, n, pr, set())
+    if fb is None:
+        pr.status = "failed"
+        return pr
+    _apply(pr, fb)
+    pr.fallback = "image"
+    pr.low_confidence = _reasons(ctx, n, pr, False)
+    pr.status = "fallback"
+    return pr
+
+
+def source_tokens(ctx: RebuildCtx, n: int) -> List[str]:
+    """The words of source page `n` that coverage is measured against."""
+    return _source(ctx, n).ref_tokens
 
 
 # ---------------------------------------------------------------------------

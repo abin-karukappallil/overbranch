@@ -5,19 +5,15 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { authClient } from "@/lib/auth-client";
 import { trpc } from "@/trpc/client";
-import { ShieldAlert, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { EditorSkeleton } from "@/components/ui/skeleton-loader";
 
 const EditorLayout = dynamic(
   () => import("@/components/editor/EditorLayout").then((mod) => mod.EditorLayout),
   {
     ssr: false,
-    loading: () => (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background text-muted-foreground gap-3 px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
-        <span className="text-xs font-mono">Initializing editor workspace...</span>
-      </div>
-    ),
+    loading: () => <EditorSkeleton label="Initializing editor workspace" />,
   }
 );
 
@@ -34,7 +30,6 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
     data: projectData,
     isLoading: isProjectLoading,
     isError,
-    error,
   } = trpc.projects.getById.useQuery(
     { projectId },
     {
@@ -47,51 +42,43 @@ export default function StandaloneProjectEditorPage({ params }: StandaloneProjec
 
   React.useEffect(() => {
     if (projectData?.name) {
-      document.title = `${projectData.name} — OverBranch | Editor`;
+      document.title = `${projectData.name} — OverBranch`;
     } else {
       document.title = "OverBranch | Editor";
     }
   }, [projectData?.name]);
 
   if (isSessionLoading || isProjectLoading) {
-    return (
-      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-[#F3F4F6] dark:bg-[#0E0F12] text-slate-500 dark:text-[#9E9E9E] gap-3 px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
-        <Loader2 className="w-8 h-8 animate-spin text-[#10B981]" />
-        <span className="text-xs font-mono">Verifying project access permissions...</span>
-      </div>
-    );
+    return <EditorSkeleton label="Verifying project access" />;
   }
 
-  const currentUserId = sessionData?.user?.id;
   const isOwner = projectData?.isOwner;
   const isCoAuthor = projectData?.role === "Editor" || projectData?.role === "Viewer" || projectData?.role === "Owner";
   const isGuest = (projectData as any)?.isGuest;
 
   if (isError || !projectData || (!isOwner && !isCoAuthor && !isGuest)) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-[#0E0F12] text-[#E2E4E9] p-6 text-center space-y-6 animate-fade-in">
-        <div className="p-4 rounded-2xl bg-[#1A1C22] border border-[#282A30] text-rose-400">
-          <ShieldAlert className="w-12 h-12" />
-        </div>
-        <div className="space-y-2 max-w-md">
-          <h1 className="text-2xl font-archivo font-bold tracking-tight text-[#E2E4E9]">Access Denied</h1>
-          <p className="text-sm text-[#9E9E9E]">
-            You do not have permission to view this project or the guest session has expired.
+      <div className="ob-app flex min-h-dvh flex-col items-center justify-center gap-4 bg-ob-bg p-6 text-center text-ob-text">
+        <div className="flex max-w-sm flex-col gap-2">
+          <h1 className="font-ob-title text-2xl font-normal text-ob-text">Access denied</h1>
+          <p className="text-[13px] leading-5 text-ob-text-2">
+            You do not have permission to view this project or the session has expired
           </p>
         </div>
-        <Button asChild size="lg" className="bg-[#22242C] hover:bg-[#2A2C36] text-[#E2E4E9] border border-[#282A30] rounded-xl font-archivo font-bold px-6">
-          <Link href="/dashboard">Return to Dashboard</Link>
+        <Button asChild variant="ob-secondary" size="sm" className="mt-2 text-[13px]">
+          <Link href="/dashboard">Return to dashboard</Link>
         </Button>
       </div>
     );
   }
 
   return (
-    <EditorLayout
-      projectId={projectId}
-      isGuest={isGuest}
-      expiresAt={(projectData as any)?.expiresAt}
-    />
+    <div className="ob-app">
+      <EditorLayout
+        projectId={projectId}
+        isGuest={isGuest}
+        expiresAt={(projectData as any)?.expiresAt}
+      />
+    </div>
   );
 }
-

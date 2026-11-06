@@ -3382,94 +3382,96 @@ export function EditorLayout({
   };
 
   return (
-    <div className="fixed inset-0 w-full max-w-full bg-[#F4F5F7] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] overflow-hidden selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-white flex flex-col z-0 transition-colors">
+    <div className="ob-app fixed inset-0 flex h-dvh w-full max-w-full flex-col overflow-hidden bg-ob-bg text-ob-text select-none">
       {/* Guest Session Notification Banner */}
       {isGuestMode && (
-        <div className="bg-amber-50 dark:bg-[#1A1C22] border-b border-amber-200 dark:border-[#282A30] px-3 sm:px-4 py-2 flex flex-wrap items-center justify-between gap-2.5 text-xs z-30 shrink-0 select-none">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-2 w-2 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+        <div className="flex shrink-0 select-none flex-wrap items-center justify-between gap-2 border-b border-ob-line bg-ob-raised px-3 py-2 text-xs sm:px-4">
+          <div className="flex items-center gap-2">
+            <span className="size-2 rounded-full bg-amber-500" />
+            <span className="font-mono text-[11px] text-amber-500">
+              Guest session
             </span>
-            <span className="font-mono font-medium text-amber-800 dark:text-amber-400 uppercase tracking-wider text-[10px] sm:text-[11px] bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-              Guest Session
+            <span className="font-mono text-xs text-ob-text-2">
+              Expires in: <strong className="font-medium text-ob-text">{guestTimeLeft || "24:00:00"}</strong>
             </span>
-            <span className="text-amber-900 dark:text-[#9E9E9E] text-xs font-mono">
-              Expires in: <strong className="text-amber-950 dark:text-amber-300 font-bold">{guestTimeLeft || "24:00:00"}</strong>
-            </span>
-            <span className="text-amber-700 dark:text-[#62666D] text-xs hidden md:inline">
+            <span className="hidden text-xs text-ob-muted md:inline">
               · Read-only preview. Sign up to save this project permanently.
             </span>
           </div>
 
-          <div className="flex items-center gap-2 font-mono">
+          <div className="flex items-center gap-2">
             <Link
               href={`/register?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
-              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 dark:bg-[#22242C] dark:hover:bg-[#2A2C36] text-white dark:text-[#E2E4E9] font-archivo font-bold text-xs border border-emerald-600 dark:border-[#282A30] transition-all flex items-center gap-1 cursor-pointer"
+              className="flex h-7 items-center rounded-md bg-ob-accent px-2.5 text-xs font-medium text-ob-on-accent transition-colors hover:bg-ob-accent-hover"
             >
-              <span>Save Permanently</span>
-              <span>→</span>
+              Save permanently
             </Link>
             <Link
               href={`/login?redirect=${encodeURIComponent(`/editor/${projectId || ""}`)}`}
-              className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-700 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] text-xs border border-slate-200 dark:border-[#282A30] transition-colors"
+              className="flex h-7 items-center rounded-md border border-ob-line bg-ob-card px-2.5 text-xs text-ob-text transition-colors hover:bg-ob-raised"
             >
-              Sign In
+              Sign in
             </Link>
           </div>
         </div>
       )}
 
       {/* Main Top Navigation Header */}
-      <header className="h-12 border-b border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] px-2.5 sm:px-4 flex items-center justify-between gap-1.5 sm:gap-3 shrink-0 z-10 select-none transition-colors">
-        {/* Left Column: Integrated Back to Dashboard Brand Block & Project Title */}
-        <div className="flex items-center gap-2 sm:gap-3 overflow-hidden min-w-0 max-w-[48%] md:max-w-none shrink">
+      <header className="flex h-12 shrink-0 select-none items-center justify-between gap-2 border-b border-ob-line bg-ob-deep px-3 sm:px-4 text-ob-text">
+        {/* Left Column: Return to Dashboard & Project Title */}
+        <div className="flex min-w-0 max-w-[48%] shrink items-center gap-2 sm:gap-3 md:max-w-none">
           <Link
             href="/dashboard"
-            className="flex items-center gap-1.5 sm:gap-2 group hover:opacity-90 transition-opacity cursor-pointer shrink-0"
-            title="Return to Dashboard"
+            className="group flex shrink-0 cursor-pointer items-center gap-2"
+            title="Return to dashboard"
           >
-            <div className="h-7 w-7 flex items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] group-hover:bg-slate-200 dark:group-hover:bg-[#22242C] border border-slate-200 dark:border-[#282A30] text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] transition-all">
-              <ArrowLeft className="w-3.5 h-3.5 text-slate-500 dark:text-[#9E9E9E] group-hover:text-slate-900 dark:group-hover:text-[#E2E4E9] group-hover:-translate-x-0.5 transition-transform" />
+            <div className="flex size-7 items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors group-hover:bg-ob-raised group-hover:text-ob-text">
+              <ArrowLeft className="size-3.5 transition-transform group-hover:-translate-x-0.5" />
             </div>
-            <OverBranchLogo size="sm" variant="icon" colored />
+            <OverBranchLogo
+              size="sm"
+              variant="icon"
+              colored={false}
+              animated={false}
+              iconClassName="[&_svg]:text-ob-accent!"
+            />
           </Link>
 
-          <div className="w-[1px] h-4 bg-slate-200 dark:bg-[#282A30] shrink-0 hidden sm:block" />
+          <div className="hidden h-4 w-px bg-ob-line sm:block" />
 
-          <div className="truncate min-w-0">
-            <h1 className="font-archivo font-bold text-xs sm:text-sm text-slate-900 dark:text-[#E2E4E9] tracking-tight truncate">
+          <div className="min-w-0 truncate">
+            <h1 className="truncate text-xs font-medium text-ob-text sm:text-sm">
               {projectDetail?.name || (projectId ? `${projectId}.tex` : "main.tex")}
             </h1>
-            <p className="text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono truncate hidden xs:block">
+            <p className="hidden font-mono text-[10px] text-ob-muted truncate xs:block">
               {activeFilePath} · {projectDetail?.template && projectDetail.template !== "None" ? projectDetail.template : "LaTeX"}
             </p>
           </div>
         </div>
 
-        {/* Center Column: Layout View Switcher & Primary Fast Compile Action (Desktop >= xl) */}
-        <div className="hidden xl:flex items-center gap-2 shrink-0">
+        {/* Center Column: Layout View Switcher & Compile Action (Desktop >= xl) */}
+        <div className="hidden items-center gap-2 xl:flex shrink-0">
           {/* View Toggle */}
-          <div className="flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
+          <div className="flex items-center rounded-lg border border-ob-line bg-ob-raised p-0.5 font-mono text-xs">
             <button
               onClick={() => setPdfOpen(false)}
-              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`flex h-7 cursor-pointer items-center justify-center rounded-md px-2.5 transition-colors ${
                 !pdfOpen
-                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
-                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                  ? "bg-ob-card font-medium text-ob-text"
+                  : "text-ob-muted hover:text-ob-text"
               }`}
-              title="Code Editor View"
+              title="Code editor"
             >
               Code
             </button>
             <button
               onClick={() => setPdfOpen(true)}
-              className={`h-7 px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`flex h-7 cursor-pointer items-center justify-center rounded-md px-2.5 transition-colors ${
                 pdfOpen
-                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
-                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                  ? "bg-ob-card font-medium text-ob-text"
+                  : "text-ob-muted hover:text-ob-text"
               }`}
-              title="Split View (Code + PDF)"
+              title="Split view (Code + PDF)"
             >
               Split
             </button>
@@ -3486,28 +3488,27 @@ export function EditorLayout({
         </div>
 
         {/* Compact & Mobile Header Actions (< xl) */}
-        <div className="flex xl:hidden items-center gap-1.5 sm:gap-2 shrink-0">
-          {/* On tablet/congested screens (>= 600px), show Code / Split switcher */}
-          <div className="hidden sm:flex items-center p-0.5 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-xs font-mono">
+        <div className="flex items-center gap-1.5 sm:gap-2 xl:hidden shrink-0">
+          <div className="hidden items-center rounded-lg border border-ob-line bg-ob-raised p-0.5 font-mono text-xs sm:flex">
             <button
               onClick={() => setActiveMobileTab("code")}
-              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`flex h-7 cursor-pointer items-center justify-center rounded-md px-2 transition-colors lg:px-2.5 ${
                 activeMobileTab === "code"
-                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
-                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                  ? "bg-ob-card font-medium text-ob-text"
+                  : "text-ob-muted hover:text-ob-text"
               }`}
-              title="Code Editor View"
+              title="Code editor"
             >
               Code
             </button>
             <button
               onClick={() => setActiveMobileTab("split")}
-              className={`h-7 px-2 lg:px-2.5 flex items-center justify-center rounded-md transition-all cursor-pointer ${
+              className={`flex h-7 cursor-pointer items-center justify-center rounded-md px-2 transition-colors lg:px-2.5 ${
                 activeMobileTab === "split"
-                  ? "bg-white dark:bg-[#22242C] text-slate-900 dark:text-[#E2E4E9] font-semibold shadow-xs"
-                  : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                  ? "bg-ob-card font-medium text-ob-text"
+                  : "text-ob-muted hover:text-ob-text"
               }`}
-              title="Split View (Code + PDF)"
+              title="Split view (Code + PDF)"
             >
               Split
             </button>
@@ -3524,21 +3525,19 @@ export function EditorLayout({
         </div>
 
         {/* Right Column: Status & Action Toggles */}
-        <div className="flex items-center gap-1 sm:gap-1.5 lg:gap-2 shrink-0">
-          {/* Save Status — while a collaboration room is bound this reflects
-              the room's server-side persistence (collab.savedAt), because the
-              client no longer POSTs the document itself. */}
-          <span className="hidden xl:flex items-center gap-1.5 px-2 lg:px-2.5 h-8 rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-[11px] font-mono shrink-0">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5 lg:gap-2">
+          {/* Save Status */}
+          <span className="hidden h-8 shrink-0 items-center gap-1.5 rounded-lg border border-ob-line bg-ob-card px-2.5 font-mono text-xs text-ob-muted xl:flex">
             {collabBound ? (
               <>
                 <span
-                  className={`w-1.5 h-1.5 rounded-full ${
+                  className={`size-1.5 rounded-full ${
                     collab.status === "connected"
-                      ? "bg-emerald-600 dark:bg-[#10B981]"
-                      : "bg-[#FF9900] animate-pulse"
+                      ? "bg-ob-positive"
+                      : "bg-ob-warn animate-pulse"
                   }`}
                 />
-                <span className="hidden lg:inline text-slate-500 dark:text-[#9E9E9E]">
+                <span className="hidden lg:inline text-ob-muted">
                   {collab.status === "connected"
                     ? collab.savedAt
                       ? "Synced"
@@ -3549,20 +3548,20 @@ export function EditorLayout({
             ) : null}
             {!collabBound && saveStatus === "saved" && (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 dark:bg-[#10B981]" />
-                <span className="hidden lg:inline text-slate-500 dark:text-[#9E9E9E]">Saved</span>
+                <span className="size-1.5 rounded-full bg-ob-positive" />
+                <span className="hidden lg:inline text-ob-muted">Saved</span>
               </>
             )}
             {!collabBound && saveStatus === "saving" && (
               <>
-                <RotateCw className="w-3 h-3 text-amber-600 dark:text-[#FF9900] animate-spin" />
-                <span className="hidden lg:inline text-amber-600 dark:text-[#FF9900]">Saving...</span>
+                <RotateCw className="size-3 animate-spin text-ob-warn" />
+                <span className="hidden lg:inline text-ob-warn">Saving\u2026</span>
               </>
             )}
             {!collabBound && saveStatus === "unsaved" && (
               <>
-                <span className="w-1.5 h-1.5 rounded-full bg-[#FF9900] animate-pulse" />
-                <span className="hidden lg:inline text-amber-600 dark:text-[#FF9900]">Unsaved</span>
+                <span className="size-1.5 rounded-full bg-ob-warn animate-pulse" />
+                <span className="hidden lg:inline text-ob-warn">Unsaved</span>
               </>
             )}
           </span>
@@ -3570,71 +3569,70 @@ export function EditorLayout({
           {/* Files Panel Toggle */}
           <button
             onClick={handleToggleFiles}
-            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden xl:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+            className={`hidden h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 font-mono text-xs transition-colors xl:flex shrink-0 ${
               filesOpen
-                ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
-                : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                ? "border-ob-text/15 bg-ob-raised font-medium text-ob-text"
+                : "border-ob-line bg-ob-card text-ob-text-2 hover:bg-ob-raised hover:text-ob-text"
             }`}
-            title={filesOpen ? "Hide Project Files" : "Show Project Files"}
+            title={filesOpen ? "Hide files" : "Show files"}
           >
-            <FolderGit2 className="w-3.5 h-3.5" />
+            <FolderGit2 className="size-3.5" />
             <span className="hidden xl:inline">Files</span>
           </button>
 
           {/* AI Agent Toggle Button */}
           <button
             onClick={toggleAi}
-            className={`h-8 px-2 xl:px-2.5 text-xs font-mono hidden xl:flex items-center gap-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
+            className={`hidden h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 font-mono text-xs transition-colors xl:flex shrink-0 ${
               aiOpen
-                ? "bg-slate-200 dark:bg-[#22242C] border-slate-300 dark:border-[#383B46] text-slate-900 dark:text-[#E2E4E9] font-semibold"
-                : "bg-slate-100 dark:bg-[#1A1C22] hover:bg-slate-200 dark:hover:bg-[#22242C] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9]"
+                ? "border-ob-text/15 bg-ob-raised font-medium text-ob-text"
+                : "border-ob-line bg-ob-card text-ob-text-2 hover:bg-ob-raised hover:text-ob-text"
             }`}
             title="Toggle AI Agent (Cmd+L / Ctrl+L)"
           >
-            <Bot className="w-3.5 h-3.5" />
+            <Bot className="size-3.5" />
             <span className="hidden xl:inline">Agent</span>
           </button>
 
-
-          {/* Find & replace — mobile only; desktop has it in the editor tab bar */}
+          {/* Find & replace — mobile only */}
           <button
             onClick={() => setSearchOpen((v) => !v)}
-            className={`xl:hidden h-8 w-8 items-center justify-center rounded-lg border transition-colors cursor-pointer flex shrink-0 ${
+            className={`flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors xl:hidden ${
               searchOpen
-                ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
-                : "bg-slate-100 dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:bg-slate-200 dark:hover:bg-[#22242C]"
+                ? "border-ob-text/15 bg-ob-raised text-ob-text"
+                : "border-ob-line bg-ob-card text-ob-muted hover:bg-ob-raised hover:text-ob-text"
             }`}
             title="Find & replace"
             aria-label="Find and replace"
           >
-            <Search className="w-3.5 h-3.5" />
+            <Search className="size-3.5" />
           </button>
 
           {/* Theme Toggle Button */}
           <button
             onClick={handleToggleTheme}
-            className="h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-700 dark:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] transition-colors cursor-pointer flex shrink-0"
-            title={isDark ? "Switch to Light Theme" : "Switch to Dark Theme"}
-            aria-label="Toggle Theme"
+            className="flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text"
+            title={isDark ? "Switch to Light theme" : "Switch to Dark theme"}
+            aria-label="Toggle theme"
           >
             {themeMounted ? (
               isDark ? (
-                <Sun className="w-3.5 h-3.5 text-amber-400" />
+                <Sun className="size-3.5 text-amber-500" />
               ) : (
-                <Moon className="w-3.5 h-3.5 text-slate-700" />
+                <Moon className="size-3.5 text-ob-text" />
               )
             ) : (
-              <div className="w-3.5 h-3.5 rounded-full border border-current opacity-30" />
+              <div className="size-3.5 rounded-full border border-current opacity-30" />
             )}
           </button>
 
           {/* Settings Button */}
           <button
             onClick={() => setIsApiSettingsOpen(true)}
-            className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-[#1A1C22] border border-slate-200 dark:border-[#282A30] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] hover:bg-slate-200 dark:hover:bg-[#22242C] transition-colors cursor-pointer"
-            title="API Keys & Settings"
+            className="hidden size-8 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text sm:flex"
+            title="API keys and settings"
           >
-            <Settings2 className="w-3.5 h-3.5" />
+            <Settings2 className="size-3.5" />
           </button>
 
           {collab.enabled && (
@@ -3673,45 +3671,45 @@ export function EditorLayout({
           />
 
           {/* Panel 2 (Middle Left): Monaco Code Editor */}
-          <div className="flex-1 min-w-0 bg-[#F8F9FA] dark:bg-[#0E0F12] flex flex-col h-full border-r border-slate-200 dark:border-[#282A30] relative overflow-hidden">
-            {/* Minimalist Editor Tab Bar */}
-            <div className="px-3 h-9 border-b border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#141519] flex items-center justify-between font-mono text-xs shrink-0 select-none">
+          <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden border-r border-ob-line bg-ob-bg">
+            {/* Editor Tab Bar */}
+            <div className="flex h-9 shrink-0 select-none items-center justify-between border-b border-ob-line bg-ob-deep px-3 font-mono text-xs text-ob-text">
               <div className="flex items-center gap-2">
-                <span className="flex items-center gap-1.5 text-xs text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold">
-                  <FileCode2 className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
+                <span className="flex items-center gap-1.5 font-mono text-xs text-ob-text">
+                  <FileCode2 className="size-3.5 text-ob-accent" />
                   <span>{activeFilePath}</span>
                 </span>
               </div>
 
-              {/* Subtle Search / Undo / Redo Actions inside Code Editor Tab Bar */}
-              <div className="flex items-center gap-1">
+              {/* Search / Undo / Redo Actions */}
+              <div className="flex items-center gap-0.5">
                 <button
                   type="button"
                   onClick={() => setSearchOpen((v) => !v)}
-                  className={`h-6 w-6 flex items-center justify-center rounded-md border transition-colors cursor-pointer shadow-xs ${
+                  className={`flex size-6 cursor-pointer items-center justify-center rounded transition-colors ${
                     searchOpen
-                      ? "bg-emerald-50 border-emerald-300 text-emerald-700 dark:bg-[#22242C] dark:border-[#383B46] dark:text-[#10B981]"
-                      : "bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border-slate-200 dark:border-[#282A30]"
+                      ? "bg-ob-raised text-ob-text"
+                      : "text-ob-muted hover:bg-ob-raised hover:text-ob-text"
                   }`}
                   title="Find & replace (Ctrl+F / Cmd+F)"
                 >
-                  <Search className="w-3 h-3" />
+                  <Search className="size-3" />
                 </button>
                 <button
                   type="button"
                   onClick={handleUndo}
-                  className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] transition-colors cursor-pointer shadow-xs"
+                  className="flex size-6 cursor-pointer items-center justify-center rounded text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text"
                   title="Undo (Ctrl+Z / Cmd+Z)"
                 >
-                  <Undo2 className="w-3 h-3" />
+                  <Undo2 className="size-3" />
                 </button>
                 <button
                   type="button"
                   onClick={handleRedo}
-                  className="h-6 w-6 flex items-center justify-center rounded-md bg-white dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-[#E2E4E9] border border-slate-200 dark:border-[#282A30] transition-colors cursor-pointer shadow-xs"
+                  className="flex size-6 cursor-pointer items-center justify-center rounded text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text"
                   title="Redo (Ctrl+Y / Cmd+Shift+Z)"
                 >
-                  <Redo2 className="w-3 h-3" />
+                  <Redo2 className="size-3" />
                 </button>
               </div>
             </div>
@@ -3822,42 +3820,43 @@ export function EditorLayout({
 
           {/* Panel 4 (Far Right): AI Assistant Sidebar */}
           <div
-            className={`h-full border-l border-slate-200 dark:border-[#282A30] bg-[#FAFAFC] dark:bg-[#141519] transition-all duration-300 ease-in-out overflow-hidden flex flex-col shrink-0 text-slate-900 dark:text-[#E2E4E9] ${aiOpen ? "w-[300px] lg:w-[320px] xl:w-[350px] opacity-100" : "w-0 opacity-0 pointer-events-none border-l-0"
-              }`}
+            className={`flex h-full shrink-0 flex-col overflow-hidden border-l border-ob-line bg-ob-deep text-ob-text transition-all duration-200 ${
+              aiOpen ? "w-[300px] opacity-100 lg:w-[320px] xl:w-[350px]" : "pointer-events-none w-0 border-l-0 opacity-0"
+            }`}
           >
-            <div className="flex flex-col h-full justify-between p-2.5 sm:p-3 text-xs w-full min-w-0 overflow-hidden">
-              <div className="space-y-3 flex-1 flex flex-col overflow-hidden">
-                <div className="border-b border-slate-200 dark:border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
+            <div className="flex h-full w-full min-w-0 flex-col justify-between overflow-hidden p-2.5 text-xs sm:p-3">
+              <div className="flex flex-1 flex-col gap-3 overflow-hidden">
+                <div className="flex shrink-0 select-none flex-col gap-2 border-b border-ob-line pb-2.5">
                   <div className="flex items-center justify-between gap-1.5">
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex shrink-0 items-center gap-1.5">
                       {/* Chat Options Dropdown */}
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
                             type="button"
                             disabled={isAgentThinking}
-                            className="p-1 rounded-lg bg-slate-50 dark:bg-[#1A1C22] hover:bg-slate-100 dark:hover:bg-[#22242C] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                            className="flex size-7 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text disabled:opacity-50"
                             title="Chat options"
                           >
-                            <Bot className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
+                            <Bot className="size-4" />
                           </button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="bg-white dark:bg-[#141519] border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
+                        <DropdownMenuContent align="start" className="min-w-[140px] border-ob-line bg-ob-card p-1 font-mono text-xs text-ob-text z-[99999]">
                           <DropdownMenuItem
                             onClick={handleNewChat}
                             disabled={isAgentThinking}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-slate-700 dark:text-[#E2E4E9] hover:bg-slate-100 dark:hover:bg-[#1A1C22] hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-md focus:bg-slate-100 dark:focus:bg-[#1A1C22]"
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-ob-text transition-colors hover:bg-ob-raised"
                           >
-                            <PlusCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
-                            <span>New Chat</span>
+                            <PlusCircle className="size-3.5 text-ob-accent" />
+                            <span>New chat</span>
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={handleClearChat}
                             disabled={isAgentThinking || (messages.length === 0 && chatAttachments.attachments.length === 0)}
-                            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
+                            className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-ob-negative transition-colors hover:bg-ob-raised"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Clear Chat</span>
+                            <Trash2 className="size-3.5" />
+                            <span>Clear chat</span>
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -3865,7 +3864,7 @@ export function EditorLayout({
                       <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
                     </div>
 
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex min-w-0 items-center gap-1.5">
                       <ModelSelector
                         activeModelName={activeModelName}
                         onSelectModel={setActiveModelName}
@@ -3874,24 +3873,24 @@ export function EditorLayout({
                       />
                     </div>
                   </div>
-
                 </div>
 
                 {/* Chat Message Stream */}
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1 font-mono">
+                <div className="flex-1 space-y-3 overflow-y-auto pr-1 font-mono">
                   {messages.map((m) => (
                     <div
                       key={m.id}
-                      className={`group p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                        ? "bg-emerald-50/80 dark:bg-[#18191B] border-emerald-200/80 dark:border-[#23252A] text-slate-900 dark:text-[#F7F8F8] ml-4 font-mono font-semibold shadow-2xs"
-                        : "bg-slate-100/90 dark:bg-[#141517] border-slate-200/90 dark:border-[#23252A] text-slate-800 dark:text-[#F7F8F8] mr-4 font-sans"
-                        }`}
+                      className={`group flex flex-col gap-1.5 rounded-xl border border-ob-line p-3 ${
+                        m.sender === "user"
+                          ? "ml-4 bg-ob-card text-ob-text font-medium"
+                          : "mr-4 bg-ob-raised text-ob-text"
+                      }`}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#8A8F98] font-mono">
+                      <div className="flex items-center justify-between font-mono text-[10px] text-ob-muted">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-semibold text-slate-900 dark:text-[#F7F8F8]">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                          <span className="font-medium text-ob-text">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                           {m.mode && (
-                            <span className="text-[9px] px-1.5 py-0.2 rounded font-mono uppercase text-slate-600 dark:text-[#8A8F98] bg-slate-200/70 dark:bg-[#0F1011] border border-slate-300 dark:border-[#23252A]">
+                            <span className="rounded border border-ob-line bg-ob-deep px-1.5 py-0.2 font-mono text-[9px] text-ob-muted">
                               {m.mode}
                             </span>
                           )}
@@ -3899,7 +3898,7 @@ export function EditorLayout({
                         <div className="flex items-center gap-0.5">
                           <CopyButton
                             text={m.text}
-                            title={m.sender === "user" ? "Copy this prompt" : "Copy this reply"}
+                            title={m.sender === "user" ? "Copy prompt" : "Copy reply"}
                             className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                           />
                           <span>{m.time}</span>
@@ -3908,7 +3907,7 @@ export function EditorLayout({
                       {m.sender === "assistant" ? (
                         <ChatMessageContent text={m.text} />
                       ) : (
-                        <p className="leading-relaxed whitespace-pre-wrap break-words text-xs text-slate-900 dark:text-[#F7F8F8]">{m.text}</p>
+                        <p className="break-words whitespace-pre-wrap text-xs leading-relaxed text-ob-text">{m.text}</p>
                       )}
                       {renderMessageEditsCard(m)}
                     </div>
@@ -3946,15 +3945,15 @@ export function EditorLayout({
                 <MentionChips mentions={mentions} onRemove={removeMentionById} disabled={isAgentThinking} />
 
                 {/* Chat Input Form */}
-                <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
+                <form onSubmit={handleSendPrompt} className="relative flex shrink-0 items-end gap-2 border-t border-ob-line pt-2.5 font-mono">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={isAgentThinking}
-                    className="p-2.5 h-[38px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] transition-colors disabled:opacity-50 shrink-0 cursor-pointer flex items-center justify-center"
-                    title={`Attach files — PDFs, images or text (up to ${chatAttachments.maxFiles})`}
+                    className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text disabled:opacity-50"
+                    title={`Attach files (up to ${chatAttachments.maxFiles})`}
                   >
-                    <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
+                    <Paperclip className="size-4" />
                   </button>
 
                   <div className="relative flex-1 font-mono">
@@ -3962,7 +3961,7 @@ export function EditorLayout({
                       ref={setDesktopChatTextarea}
                       id="ai-chat-input"
                       rows={1}
-                      placeholder={chatMode === "ask" ? "Ask a question about LaTeX or your document..." : "Ask agent to edit LaTeX..."}
+                      placeholder={chatMode === "ask" ? "Ask about LaTeX or your document" : "Ask agent to edit LaTeX"}
                       value={chatInput}
                       disabled={isAgentThinking}
                       onChange={(e) => {
@@ -3971,7 +3970,7 @@ export function EditorLayout({
                         e.target.style.height = `${Math.min(e.target.scrollHeight, 180)}px`;
                       }}
                       onKeyDown={handleChatKeyDown}
-                      className="w-full min-h-[38px] max-h-44 py-2 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 focus:bg-white dark:bg-[#1A1C22] dark:focus:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono scrollbar-thin"
+                      className="max-h-44 min-h-[36px] w-full resize-none overflow-y-auto rounded-lg border border-ob-line bg-ob-raised px-3 py-2 font-mono text-xs leading-relaxed text-ob-text placeholder:text-ob-muted outline-none transition-colors focus:border-ob-text/20 disabled:opacity-50"
                     />
                     <FileMentionPopover
                       textarea={desktopChatTextarea}
@@ -3987,10 +3986,10 @@ export function EditorLayout({
                       type="button"
                       onClick={handleStopAgentResponse}
                       size="sm"
-                      variant="destructive"
-                      className="h-9 px-3 rounded-xl bg-[#EB5757] hover:bg-[#D64545] text-white font-mono font-semibold shrink-0 flex items-center gap-1 text-xs shadow-md cursor-pointer border border-[#EB5757]/50"
+                      variant="ob-danger"
+                      className="h-9 shrink-0 cursor-pointer text-xs"
                     >
-                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <Square className="size-3.5 fill-current" />
                       <span>Stop</span>
                     </Button>
                   ) : (
@@ -3998,9 +3997,10 @@ export function EditorLayout({
                       type="submit"
                       disabled={(!chatInput.trim() && !hasAttachments) || isAgentThinking}
                       size="sm"
-                      className="h-9 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center text-xs disabled:opacity-40 cursor-pointer"
+                      variant="ob-primary"
+                      className="size-9 shrink-0 cursor-pointer p-0"
                     >
-                      <Send className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
+                      <Send className="size-3.5" />
                     </Button>
                   )}
                 </form>
@@ -4137,44 +4137,44 @@ export function EditorLayout({
           />
         </div>
 
-        <div className={`flex-1 flex flex-col bg-[#FAFAFC] dark:bg-[#141519] overflow-hidden relative min-h-0 p-3 space-y-3 text-slate-900 dark:text-[#E2E4E9] font-sans ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
-          <div className="border-b border-slate-200 dark:border-[#282A30] pb-2.5 shrink-0 space-y-2 select-none">
+        <div className={`flex-1 flex-col overflow-hidden relative min-h-0 p-3 space-y-3 bg-ob-deep text-ob-text ${activeMobileTab === "ai" ? "flex" : "hidden"}`}>
+          <div className="flex shrink-0 select-none flex-col gap-2 border-b border-ob-line pb-2.5">
             <div className="flex items-center justify-between gap-1.5">
-              <div className="flex items-center gap-1.5 shrink-0">
+              <div className="flex shrink-0 items-center gap-1.5">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button
                       type="button"
                       disabled={isAgentThinking}
-                      className="p-1 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-emerald-600 dark:text-[#10B981] border border-slate-200 dark:border-[#282A30] transition-all cursor-pointer flex items-center justify-center shrink-0 disabled:opacity-50"
+                      className="flex size-7 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text disabled:opacity-50"
                       title="Chat options"
                     >
-                      <Bot className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
+                      <Bot className="size-4" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="bg-white dark:bg-[#141519] border-slate-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] min-w-[140px] p-1 font-mono z-[99999]">
+                  <DropdownMenuContent align="start" className="min-w-[140px] border-ob-line bg-ob-card p-1 font-mono text-xs text-ob-text z-[99999]">
                     <DropdownMenuItem
                       onClick={handleNewChat}
                       disabled={isAgentThinking}
-                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs hover:bg-slate-100 dark:hover:bg-[#1A1C22] text-slate-700 dark:text-[#E2E4E9] hover:text-slate-900 dark:hover:text-white cursor-pointer rounded-md focus:bg-slate-100 dark:focus:bg-[#1A1C22]"
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-ob-text transition-colors hover:bg-ob-raised"
                     >
-                      <PlusCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-[#10B981]" />
-                      <span>New Chat</span>
+                      <PlusCircle className="size-3.5 text-ob-accent" />
+                      <span>New chat</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={handleClearChat}
                       disabled={isAgentThinking || (messages.length === 0 && chatAttachments.attachments.length === 0)}
-                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-red-600 dark:text-[#EB5757] hover:bg-red-50 dark:hover:bg-[#EB5757]/10 cursor-pointer rounded-md focus:bg-red-50 dark:focus:bg-[#EB5757]/10"
+                      className="flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs text-ob-negative transition-colors hover:bg-ob-raised"
                     >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Clear Chat</span>
+                      <Trash2 className="size-3.5" />
+                      <span>Clear chat</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
 
                 <ChatModeToggle mode={chatMode} onModeChange={setChatMode} disabled={isAgentThinking} />
               </div>
-              <div className="flex items-center gap-1.5 min-w-0">
+              <div className="flex min-w-0 items-center gap-1.5">
                 <ModelSelector
                   activeModelName={activeModelName}
                   onSelectModel={setActiveModelName}
@@ -4185,21 +4185,22 @@ export function EditorLayout({
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto space-y-3 text-xs font-mono min-h-0 pr-1">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1 font-mono text-xs">
             {messages.map((m) => (
               <div
                 key={m.id}
-                className={`p-3 rounded-2xl border space-y-1.5 ${m.sender === "user"
-                  ? "bg-emerald-50 dark:bg-[#22242C] border-emerald-200 dark:border-[#282A30] text-slate-900 dark:text-[#E2E4E9] ml-4 font-mono font-semibold"
-                  : "bg-slate-100 dark:bg-[#1A1C22] border-slate-200 dark:border-[#282A30] text-slate-800 dark:text-[#E2E4E9] mr-4 font-sans"
-                  }`}
+                className={`flex flex-col gap-1.5 rounded-xl border border-ob-line p-3 ${
+                  m.sender === "user"
+                    ? "ml-4 bg-ob-card text-ob-text font-medium"
+                    : "mr-4 bg-ob-raised text-ob-text"
+                }`}
               >
-                <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-[#9E9E9E] font-mono">
-                  <span className="font-archivo font-bold text-slate-900 dark:text-[#E2E4E9]">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
+                <div className="flex items-center justify-between font-mono text-[10px] text-ob-muted">
+                  <span className="font-medium text-ob-text">{m.sender === "user" ? "You" : "OverBranch AI"}</span>
                   <div className="flex items-center gap-0.5">
                     <CopyButton
                       text={m.text}
-                      title={m.sender === "user" ? "Copy this prompt" : "Copy this reply"}
+                      title={m.sender === "user" ? "Copy prompt" : "Copy reply"}
                     />
                     <span>{m.time}</span>
                   </div>
@@ -4207,7 +4208,7 @@ export function EditorLayout({
                 {m.sender === "assistant" ? (
                   <ChatMessageContent text={m.text} />
                 ) : (
-                  <p className="leading-relaxed text-xs whitespace-pre-wrap break-words text-slate-900 dark:text-[#E2E4E9]">{m.text}</p>
+                  <p className="break-words whitespace-pre-wrap text-xs leading-relaxed text-ob-text">{m.text}</p>
                 )}
                 {renderMessageEditsCard(m)}
               </div>
@@ -4230,42 +4231,42 @@ export function EditorLayout({
 
           <MentionChips mentions={mentions} onRemove={removeMentionById} disabled={isAgentThinking} />
 
-          <form onSubmit={handleSendPrompt} className="relative pt-2.5 border-t border-slate-200 dark:border-[#282A30] shrink-0 flex items-end gap-2 font-mono">
+          <form onSubmit={handleSendPrompt} className="relative flex shrink-0 items-end gap-2 border-t border-ob-line pt-2.5 font-mono">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isAgentThinking}
-              className="p-2.5 h-[40px] rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-[#1A1C22] dark:hover:bg-[#22242C] text-slate-600 dark:text-[#9E9E9E] hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#282A30] shrink-0 cursor-pointer disabled:opacity-50 flex items-center justify-center"
-              title={`Attach files — PDFs, images or text (up to ${chatAttachments.maxFiles})`}
+              className="flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-ob-line bg-ob-card text-ob-muted transition-colors hover:bg-ob-raised hover:text-ob-text disabled:opacity-50"
+              title={`Attach files (up to ${chatAttachments.maxFiles})`}
             >
-              <Paperclip className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
+              <Paperclip className="size-4" />
             </button>
 
-            <div className="relative flex-1 min-w-0">
-            <textarea
-              ref={setMobileChatTextarea}
-              id="ai-chat-input-2"
-              rows={1}
-              placeholder={chatMode === "ask"
-                ? (softKeyboardOnly ? "Ask a question" : "Ask a question...")
-                : (softKeyboardOnly ? "Ask agent to edit LaTeX" : "Ask agent to edit LaTeX...")}
-              value={chatInput}
-              disabled={isAgentThinking}
-              onChange={(e) => {
-                setChatInput(e.target.value);
-                e.target.style.height = "auto";
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
-              }}
-              onKeyDown={handleChatKeyDown}
-              className="w-full min-h-[40px] max-h-40 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] placeholder:text-slate-400 dark:placeholder:text-[#62666D] text-xs leading-relaxed outline-none focus:ring-1 focus:ring-emerald-500 dark:focus:ring-[#282A30] transition-all disabled:opacity-50 resize-none overflow-y-auto font-mono"
-            />
-            <FileMentionPopover
-              textarea={mobileChatTextarea}
-              projectId={projectId || "proj-1"}
-              chatInput={chatInput}
-              onInsertMention={handleInsertMention}
-              onOpenChange={setMobileMentionOpen}
-            />
+            <div className="relative min-w-0 flex-1">
+              <textarea
+                ref={setMobileChatTextarea}
+                id="ai-chat-input-2"
+                rows={1}
+                placeholder={chatMode === "ask"
+                  ? (softKeyboardOnly ? "Ask a question" : "Ask a question")
+                  : (softKeyboardOnly ? "Ask agent to edit LaTeX" : "Ask agent to edit LaTeX")}
+                value={chatInput}
+                disabled={isAgentThinking}
+                onChange={(e) => {
+                  setChatInput(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={handleChatKeyDown}
+                className="max-h-40 min-h-[36px] w-full resize-none overflow-y-auto rounded-lg border border-ob-line bg-ob-raised px-3 py-2 font-mono text-xs leading-relaxed text-ob-text placeholder:text-ob-muted outline-none transition-colors focus:border-ob-text/20 disabled:opacity-50"
+              />
+              <FileMentionPopover
+                textarea={mobileChatTextarea}
+                projectId={projectId || "proj-1"}
+                chatInput={chatInput}
+                onInsertMention={handleInsertMention}
+                onOpenChange={setMobileMentionOpen}
+              />
             </div>
 
             {isAgentThinking ? (
@@ -4273,10 +4274,10 @@ export function EditorLayout({
                 type="button"
                 onClick={handleStopAgentResponse}
                 size="sm"
-                variant="destructive"
-                className="h-10 px-3 rounded-xl bg-[#EB5757] hover:bg-[#D64545] text-white font-mono font-semibold shrink-0 flex items-center gap-1 text-xs cursor-pointer border border-[#EB5757]/50"
+                variant="ob-danger"
+                className="h-9 shrink-0 cursor-pointer text-xs"
               >
-                <Square className="w-4 h-4 fill-current" />
+                <Square className="size-3.5 fill-current" />
                 <span>Stop</span>
               </Button>
             ) : (
@@ -4284,9 +4285,10 @@ export function EditorLayout({
                 type="submit"
                 disabled={(!chatInput.trim() && !hasAttachments) || isAgentThinking}
                 size="sm"
-                className="h-10 px-3.5 bg-slate-100 dark:bg-[#22242C] hover:bg-slate-200 dark:hover:bg-[#2A2C36] text-slate-900 dark:text-[#E2E4E9] font-archivo font-bold rounded-xl border border-slate-200 dark:border-[#282A30] shrink-0 flex items-center justify-center disabled:opacity-40 cursor-pointer"
+                variant="ob-primary"
+                className="size-9 shrink-0 cursor-pointer p-0"
               >
-                <Send className="w-4 h-4 text-emerald-600 dark:text-[#10B981]" />
+                <Send className="size-3.5" />
               </Button>
             )}
           </form>
@@ -4294,56 +4296,56 @@ export function EditorLayout({
       </div>
 
       {/* Bottom Navigation for Compact & Mobile View */}
-      <nav className="xl:hidden border-t border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shrink-0 z-30 select-none pb-[env(safe-area-inset-bottom,0px)]">
-        <div className="flex items-center justify-around w-full h-12 font-mono">
+      <nav className="shrink-0 select-none border-t border-ob-line bg-ob-deep pb-[env(safe-area-inset-bottom,0px)] xl:hidden">
+        <div className="flex h-12 w-full items-center justify-around font-mono">
           <button
             onClick={() => setActiveMobileTab("files")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
-              activeMobileTab === "files" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            className={`flex h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs transition-colors ${
+              activeMobileTab === "files" ? "font-medium text-ob-accent" : "text-ob-muted hover:text-ob-text"
             }`}
           >
-            <FolderGit2 className="w-4 h-4" />
+            <FolderGit2 className="size-4" />
             <span className="text-[10px]">Files</span>
           </button>
 
           <button
             onClick={() => setActiveMobileTab("code")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
-              activeMobileTab === "code" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            className={`flex h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs transition-colors ${
+              activeMobileTab === "code" ? "font-medium text-ob-accent" : "text-ob-muted hover:text-ob-text"
             }`}
           >
-            <FileCode2 className="w-4 h-4" />
+            <FileCode2 className="size-4" />
             <span className="text-[10px]">Code</span>
           </button>
 
           {/* Split view tab: enabled on screens >= 540px */}
           <button
             onClick={() => setActiveMobileTab("split")}
-            className={`hidden sm:flex flex-1 h-full flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
-              activeMobileTab === "split" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            className={`hidden h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs transition-colors sm:flex ${
+              activeMobileTab === "split" ? "font-medium text-ob-accent" : "text-ob-muted hover:text-ob-text"
             }`}
           >
-            <Columns2 className="w-4 h-4" />
+            <Columns2 className="size-4" />
             <span className="text-[10px]">Split</span>
           </button>
 
           <button
             onClick={() => setActiveMobileTab("pdf")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
-              activeMobileTab === "pdf" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            className={`flex h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs transition-colors ${
+              activeMobileTab === "pdf" ? "font-medium text-ob-accent" : "text-ob-muted hover:text-ob-text"
             }`}
           >
-            <Eye className="w-4 h-4" />
+            <Eye className="size-4" />
             <span className="text-[10px]">PDF</span>
           </button>
 
           <button
             onClick={() => setActiveMobileTab("ai")}
-            className={`flex-1 h-full flex flex-col items-center justify-center gap-0.5 text-xs transition-colors cursor-pointer ${
-              activeMobileTab === "ai" ? "text-emerald-600 dark:text-[#10B981] font-bold font-archivo" : "text-slate-500 dark:text-[#9E9E9E] hover:text-slate-700 dark:hover:text-[#C5C8D0]"
+            className={`flex h-full flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 text-xs transition-colors ${
+              activeMobileTab === "ai" ? "font-medium text-ob-accent" : "text-ob-muted hover:text-ob-text"
             }`}
           >
-            <Bot className="w-4 h-4" />
+            <Bot className="size-4" />
             <span className="text-[10px]">Agent</span>
           </button>
         </div>

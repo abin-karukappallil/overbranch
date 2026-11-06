@@ -347,7 +347,7 @@ def _cell_style(tb, page: PageExtract, ri: int, cj: int):
 def _dominant_face(page: PageExtract, bbox: tuple):
     """(colour, family, font class) most of the table's text is set in."""
     from collections import Counter
-    from ..fontmap import editable_font
+    from .columns import editable_font
     x0, y0, x1, y1 = bbox
     cc: Counter = Counter()
     fc: Counter = Counter()
