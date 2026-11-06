@@ -153,7 +153,7 @@ class GeminiProvider(LLMProvider):
         # a user's own key, which goes to a different service.
         endpoint = "user" if (api_keys or {}).get("gemini") else "server"
         if endpoint in self._images_unsupported:
-            return self._chat_once(strip_image_parts(messages), *args)
+            return self._images_dropped(self._chat_once(strip_image_parts(messages), *args))
         try:
             return self._chat_once(messages, *args)
         except LLMProviderError as e:
@@ -163,7 +163,16 @@ class GeminiProvider(LLMProvider):
                 raise
             logger.warning(f"Gemini endpoint rejected image input ({str(e)[:120]}); retrying text-only.")
             self._images_unsupported.add(endpoint)
-            return self._chat_once(strip_image_parts(messages), *args)
+            return self._images_dropped(self._chat_once(strip_image_parts(messages), *args))
+
+    @staticmethod
+    def _images_dropped(resp: Dict[str, Any]) -> Dict[str, Any]:
+        """Marks a reply that was produced from the text-only version of an image call."""
+        return {**resp, "images_dropped": True}
+
+    def reset_image_support(self) -> None:
+        """Forgets that this provider's endpoints rejected images, so the next image call tries them again."""
+        self._images_unsupported.clear()
 
     def _chat_once(
         self,

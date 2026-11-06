@@ -277,8 +277,13 @@ def active_job_for(owner: str) -> Optional[Dict[str, Any]]:
 
 def public_view(state: Dict[str, Any]) -> Dict[str, Any]:
     """Job state as returned to clients (internal fields removed)."""
-    view = {k: v for k, v in state.items() if k not in ("owner",)}
+    view = {k: v for k, v in state.items() if k not in ("owner", "rebuild_fallback", "result_extra")}
     view["mode"] = job_mode(state)   # always present, so older job directories read as "exact"
+    # A rebuild job that fell back: the deterministic engine writes its own report and knows nothing of
+    # the rebuild, so the reason is added on every read and is there from its first report on.
+    fallback = state.get("rebuild_fallback")
+    if fallback and isinstance(view.get("report"), dict):
+        view["report"] = {**view["report"], "rebuild": fallback}
     return view
 
 

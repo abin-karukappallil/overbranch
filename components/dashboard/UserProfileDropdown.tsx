@@ -7,7 +7,10 @@ import { User, Settings, LogOut, ChevronDown, Sun, Moon } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { authClient } from "@/lib/auth-client";
-import { toast } from "sonner";
+import { initialsOf } from "@/lib/initials";
+
+const ROW =
+  "flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-left text-[13px] text-ob-text-2 transition-colors hover:bg-ob-raised hover:text-ob-text";
 
 export function UserProfileDropdown() {
   const [open, setOpen] = useState(false);
@@ -35,73 +38,56 @@ export function UserProfileDropdown() {
   };
 
   return (
-    <div className="relative font-sans">
+    <div className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-[#141517] transition-colors cursor-pointer"
+        aria-label="Account menu"
+        className="flex h-8 cursor-pointer items-center gap-2 rounded-lg pr-2 pl-1 transition-colors hover:bg-ob-raised"
       >
-        <Avatar className="w-7 h-7 rounded-md border border-slate-200 dark:border-[#23252A]">
+        <Avatar className="size-6 rounded-md">
           <AvatarImage src={userImage} />
-          <AvatarFallback className="bg-emerald-600 dark:bg-[#5E6AD2] text-white font-medium text-xs">
-            {userName.slice(0, 2).toUpperCase()}
+          <AvatarFallback className="rounded-md bg-ob-raised text-[11px] font-medium text-ob-text-2">
+            {initialsOf(userName)}
           </AvatarFallback>
         </Avatar>
-        <div className="hidden sm:flex flex-col text-left max-w-[100px] sm:max-w-[120px]">
-          <span className="text-xs font-medium text-slate-800 dark:text-[#F7F8F8] tracking-tight truncate">{userName}</span>
-          <span className="text-[10px] text-slate-500 dark:text-[#8A8F98] font-mono">Workspace</span>
-        </div>
-        <ChevronDown className="w-3.5 h-3.5 text-slate-500 dark:text-[#8A8F98] hidden sm:block" />
+        <span className="hidden max-w-[120px] truncate text-[13px] text-ob-text sm:block">{userName}</span>
+        <ChevronDown className="hidden size-4 text-ob-muted sm:block" />
       </button>
 
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-10 z-50 w-56 rounded-xl border border-slate-200 dark:border-[#23252A] bg-white dark:bg-[#0F1011] text-slate-900 dark:text-[#F7F8F8] shadow-2xl p-1.5 space-y-0.5 text-xs font-sans">
-            <div className="p-2 border-b border-slate-100 dark:border-[#23252A] space-y-0.5">
-              <p className="font-medium text-slate-900 dark:text-[#F7F8F8]">{userName}</p>
-              <p className="text-slate-500 dark:text-[#8A8F98] font-mono text-[11px] truncate">{userEmail}</p>
+          <div className="absolute top-10 right-0 z-50 w-60 rounded-xl border border-ob-line bg-ob-card p-1 text-ob-text shadow-[0_8px_24px_rgba(0,0,0,0.16)]">
+            <div className="flex flex-col gap-0.5 px-2 py-2">
+              <p className="truncate text-[13px] font-medium text-ob-text">{userName}</p>
+              <p className="truncate font-mono text-xs text-ob-muted">{userEmail}</p>
             </div>
+            <div className="my-1 h-px bg-ob-line" />
 
-            <Link
-              href="/profile"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] hover:bg-slate-100 dark:hover:bg-[#141517] transition-colors"
-            >
-              <User className="w-3.5 h-3.5 text-emerald-600 dark:text-[#5E6AD2]" />
-              <span>User Profile</span>
+            <Link href="/profile" onClick={() => setOpen(false)} className={ROW}>
+              <User className="size-4 text-ob-muted" />
+              <span>User profile</span>
             </Link>
 
-            <Link
-              href="/profile"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] hover:bg-slate-100 dark:hover:bg-[#141517] transition-colors"
-            >
-              <Settings className="w-3.5 h-3.5 text-emerald-600 dark:text-[#5E6AD2]" />
-              <span>Workspace Settings</span>
+            <Link href="/profile" onClick={() => setOpen(false)} className={ROW}>
+              <Settings className="size-4 text-ob-muted" />
+              <span>Workspace settings</span>
             </Link>
 
-            <button
-              onClick={() => setTheme(isDark ? "light" : "dark")}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-slate-600 dark:text-[#8A8F98] hover:text-slate-900 dark:hover:text-[#F7F8F8] hover:bg-slate-100 dark:hover:bg-[#141517] transition-colors text-left"
-            >
-              <div className="flex items-center gap-2">
-                {isDark ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-slate-700" />}
-                <span>Theme</span>
-              </div>
-              <span className="text-[10px] font-mono capitalize px-1.5 py-0.5 rounded bg-slate-100 dark:bg-[#1E2026] text-slate-600 dark:text-[#9E9E9E] border border-slate-200 dark:border-[#282A30]">
-                {isDark ? "Dark" : "Light"}
-              </span>
+            <button onClick={() => setTheme(isDark ? "light" : "dark")} className={ROW}>
+              {isDark ? <Sun className="size-4 text-ob-muted" /> : <Moon className="size-4 text-ob-muted" />}
+              <span className="flex-1">Theme</span>
+              <span className="font-mono text-xs text-ob-muted">{isDark ? "Dark" : "Light"}</span>
             </button>
 
-            <div className="border-t border-slate-100 dark:border-[#23252A] pt-1">
-              <button
-                onClick={handleSignOut}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-[#EB5757] hover:bg-[#EB5757]/10 transition-colors text-left font-medium cursor-pointer"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
-              </button>
-            </div>
+            <div className="my-1 h-px bg-ob-line" />
+            <button
+              onClick={handleSignOut}
+              className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-md px-2 text-left text-[13px] text-ob-text-2 transition-colors hover:bg-ob-negative/10 hover:text-ob-negative"
+            >
+              <LogOut className="size-4" />
+              <span>Sign out</span>
+            </button>
           </div>
         </>
       )}

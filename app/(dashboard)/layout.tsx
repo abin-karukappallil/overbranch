@@ -23,9 +23,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (isPending) {
     return (
-      <div className="fixed inset-0 z-50 bg-[#F3F4F6] dark:bg-[#0E0F12] flex flex-col items-center justify-center gap-3 px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-slate-500 dark:text-[#9E9E9E] font-sans">
-        <Loader2 className="w-6 h-6 animate-spin text-emerald-500 dark:text-[#E2E4E9]" />
-        <span className="text-xs font-mono font-medium tracking-wider uppercase text-slate-500 dark:text-[#9E9E9E]">Loading workspace...</span>
+      <div className="ob-app fixed inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-ob-bg px-4 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]">
+        <Loader2 className="size-4 animate-spin text-ob-muted" />
+        <span className="text-[13px] leading-5 text-ob-text-2">Loading workspace</span>
       </div>
     );
   }
@@ -35,7 +35,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-dvh bg-[#F3F4F6] dark:bg-[#0E0F12] text-slate-900 dark:text-[#E2E4E9] relative font-sans selection:bg-emerald-500/20 selection:text-emerald-900 dark:selection:bg-[#22242C] dark:selection:text-[#E2E4E9]">
+    <div className="ob-app relative min-h-dvh bg-ob-bg text-ob-text">
       <DashboardSidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}
@@ -44,17 +44,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         onOpenCommandPalette={() => setCommandOpen(true)}
       />
 
-      <div
-        className={`transition-all duration-300 flex flex-col min-h-dvh pl-0 ${
-          collapsed ? "md:pl-20" : "md:pl-64"
-        }`}
-      >
-        <DashboardTopNav
-          collapsed={collapsed}
-          onOpenCommandPalette={() => setCommandOpen(true)}
-          onToggleMobileSidebar={() => setMobileOpen(!mobileOpen)}
-        />
-        <main className="flex-1 px-4 py-6 md:px-6 lg:px-8 sm:py-8 max-w-7xl mx-auto w-full min-w-0">
+      <div className={`flex min-h-dvh flex-col pl-0 ${collapsed ? "md:pl-16" : "md:pl-64"}`}>
+        <DashboardTopNav onToggleMobileSidebar={() => setMobileOpen(!mobileOpen)} />
+        <main className="mx-auto w-full max-w-[1440px] min-w-0 flex-1 px-4 py-8 md:px-8">
           {children}
         </main>
       </div>

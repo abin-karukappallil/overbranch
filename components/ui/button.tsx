@@ -19,6 +19,15 @@ const buttonVariants = cva(
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
         link: "text-primary underline-offset-4 hover:underline",
+        // Signed-in app. Base styles above stay as they are for the landing and auth pages.
+        "ob-primary":
+          "rounded-lg bg-ob-accent text-ob-on-accent transition-colors hover:bg-ob-accent-hover active:scale-[0.98]",
+        "ob-secondary":
+          "rounded-lg border border-ob-line bg-ob-raised text-ob-text transition-colors hover:border-ob-text/15 active:scale-[0.98]",
+        "ob-quiet":
+          "rounded-lg text-ob-text-2 transition-colors hover:bg-ob-raised hover:text-ob-text active:scale-[0.98]",
+        "ob-danger":
+          "rounded-lg bg-ob-negative text-white transition-colors hover:bg-ob-negative/90 active:scale-[0.98]",
       },
       size: {
         default: "h-9 px-4 py-2 has-[>svg]:px-3",

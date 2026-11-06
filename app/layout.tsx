@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Archivo_Black, Space_Mono, Inter } from "next/font/google";
+import { Archivo_Black, Space_Mono, Inter, IBM_Plex_Sans, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import "./globals.css";
 import { TRPCProvider } from "@/trpc/client";
 import { ThemeProvider } from "@/providers/ThemeProvider";
@@ -20,6 +20,29 @@ const spaceMono = Space_Mono({
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+});
+
+// Signed-in app type ("proof desk"). The variables are wired up by body:has(.ob-app) in globals.css.
+// preload is off so the landing and auth pages, which never paint these faces, do not download them.
+const plexSans = IBM_Plex_Sans({
+  weight: ["400", "500", "600"],
+  subsets: ["latin"],
+  variable: "--font-plex-sans",
+  preload: false,
+});
+
+const plexMono = IBM_Plex_Mono({
+  weight: ["400", "500"],
+  subsets: ["latin"],
+  variable: "--font-plex-mono",
+  preload: false,
+});
+
+const newsreader = Newsreader({
+  weight: ["400", "500"],
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+  preload: false,
 });
 
 export const viewport = {
@@ -112,7 +135,7 @@ export default function RootLayout({
         <GoogleAnalytics />
       </head>
       <body
-        className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
+        className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} ${plexSans.variable} ${plexMono.variable} ${newsreader.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
         <ThemeProvider
           attribute="class"

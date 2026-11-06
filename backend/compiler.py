@@ -62,6 +62,23 @@ _MAGIC_PROGRAM_RE = re.compile(
 )
 _DEFAULT_ENGINES = {"", "latexmk", "pdflatex", "pdf", "latex"}
 
+AUXILIARY_EXTENSIONS = frozenset({
+    ".aux", ".lof", ".lot", ".toc", ".log", ".out", ".synctex", ".synctex.gz",
+    ".fls", ".fdb_latexmk", ".nav", ".snm", ".vrb", ".bcf", ".run.xml",
+    ".blg", ".idx", ".ind", ".ilg", ".glo", ".gls", ".glg",
+    ".acn", ".acr", ".alg", ".nlo", ".nls", ".nlg", ".ist", ".dvi", ".xdv"
+})
+
+
+def is_auxiliary_file(file_path: Optional[str]) -> bool:
+    if not file_path:
+        return False
+    lower = str(file_path).strip().lower()
+    if lower.endswith(".synctex.gz"):
+        return True
+    ext = Path(lower).suffix
+    return ext in AUXILIARY_EXTENSIONS
+
 
 def detect_magic_engine(latex_code: str) -> Optional[str]:
     """Returns the engine named by a `% !TEX program = ...` magic comment in the file header, if any."""
@@ -2168,6 +2185,13 @@ def _compile_latex_impl(
                             rel_path = item.relative_to(project_dir)
                             if str(rel_path) == _MAIN_MARKER:
                                 continue
+                            if is_auxiliary_file(str(rel_path)):
+                                # Prune any accidental auxiliary files on disk so they don't persist
+                                try:
+                                    item.unlink()
+                                except OSError:
+                                    pass
+                                continue
                             if str(rel_path) == "main.tex" and not project_mode:
                                 continue
                             dest = tmpdir / rel_path
@@ -2188,7 +2212,7 @@ def _compile_latex_impl(
                                 for doc in docs_res.data:
                                     f_path = doc.get("file_path")
                                     r_code = doc.get("raw_code")
-                                    if not f_path or (f_path == "main.tex" and not project_mode):
+                                    if not f_path or is_auxiliary_file(f_path) or (f_path == "main.tex" and not project_mode):
                                         continue
                                     dest = (tmpdir / f_path).resolve()
                                     if tmpdir.resolve() not in dest.parents or dest.exists():
@@ -2203,6 +2227,8 @@ def _compile_latex_impl(
             # project's main document. That file — not the active one — is compiled.
             if project_mode:
                 active_rel = _safe_project_rel(active_file)
+                if active_rel and is_auxiliary_file(active_rel):
+                    active_rel = None
                 overlay = active_text if active_text is not None else latex_code
                 if active_rel is not None and overlay is not None:
                     dest = tmpdir / active_rel
@@ -2240,9 +2266,16 @@ def _compile_latex_impl(
             tex_path.write_text(latex_code, encoding="utf-8")
             # Build outputs that came with the project (an uploaded main.pdf) must never
             # be mistaken for this compile's output.
-            for _ext in (".pdf", ".synctex.gz", ".synctex", ".fdb_latexmk", ".fls"):
+            for _ext in (
+                ".pdf", ".synctex.gz", ".synctex", ".fdb_latexmk", ".fls",
+                ".lof", ".lot", ".toc", ".aux", ".out", ".log", ".nav", ".snm", ".vrb"
+            ):
                 try:
                     (workdir / f"{stem}{_ext}").unlink()
+                except OSError:
+                    pass
+                try:
+                    (tmpdir / f"{stem}{_ext}").unlink()
                 except OSError:
                     pass
 
@@ -2596,6 +2629,66 @@ def _compile_latex_impl(
                     except Exception:
                         pass
                 return res
+
+            # 0. Corrupt auxiliary file (.lof, .toc, .aux, .lot) auto-recovery patch
+            aux_error_patterns = [
+                r"\.(?:lof|lot|toc|aux|out):\d+:\s*(?:==>\s*)?Fatal error",
+                r"Fatal error occurred, no output PDF file produced!.*?\.(?:lof|lot|toc|aux|out)",
+                r"\.(?:lof|lot|toc|aux|out).*?Fatal error occurred, no output PDF file produced",
+                r"File ended while scanning use of \\@writefile",
+                r"Argument of \\@dottedtocline has an extra \}",
+                r"Argument of \\@contentsline has an extra \}",
+                r"Emergency stop.*?main\.(?:lof|toc|aux|lot)",
+            ]
+            if any(re.search(pat, last_output, re.DOTALL | re.IGNORECASE) for pat in aux_error_patterns):
+                logger.warning("⚠️ [COMPILER RECOVERY] corrupt auxiliary file detected; purging aux/lof/toc/lot files and retrying")
+                for ext in (".aux", ".lof", ".lot", ".toc", ".out", ".log", ".fls", ".fdb_latexmk"):
+                    for p in list(tmpdir.rglob(f"*{ext}")):
+                        try:
+                            p.unlink()
+                        except OSError:
+                            pass
+                if project_id and project_id.strip():
+                    try:
+                        safe_p = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
+                        base_up = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
+                        pdir = base_up / safe_p
+                        if pdir.exists():
+                            for ext in (".aux", ".lof", ".lot", ".toc", ".out", ".log"):
+                                for p in list(pdir.rglob(f"*{ext}")):
+                                    try:
+                                        p.unlink()
+                                    except OSError:
+                                        pass
+                    except Exception as e:
+                        logger.debug(f"Aux purge disk note: {e}")
+                    try:
+                        from project_storage import get_supabase_client
+                        sb = get_supabase_client()
+                        if sb:
+                            for ext in (".aux", ".lof", ".lot", ".toc", ".out", ".log"):
+                                sb.table("latex_documents").delete().eq("project_id", project_id.strip()).ilike("file_path", f"%{ext}").execute()
+                    except Exception:
+                        pass
+                try:
+                    result = _run_tex(_direct(recovery_engine), cwd=workdir, timeout=extra_pass_timeout, env=comp_env)
+                    out = (result.stdout or "") + "\n" + (result.stderr or "")
+                    if pdf_out.exists() and pdf_out.stat().st_size > 0 and "Emergency stop" not in out:
+                        if any(kw in out for kw in ("Rerun", "undefined references", "tableofcontents", "listoffigures")):
+                            try:
+                                rb = _run_tex(_direct(recovery_engine), cwd=workdir, timeout=extra_pass_timeout, env=comp_env)
+                                out += "\n" + (rb.stdout or "") + "\n" + (rb.stderr or "")
+                            except Exception:
+                                pass
+                        notice = "Corrupted auxiliary files (.lof/.toc/.aux) were automatically cleared and rebuilt."
+                        logger.info("✅ [COMPILER RECOVERY] corrupt auxiliary files cleared and compile succeeded")
+                        return _recovery_success(
+                            f"Compiled after clearing corrupt auxiliary files\n\n[AUX NOTICE]\n{notice}",
+                            out,
+                            latex_code,
+                        )
+                except Exception as aux_err:
+                    logger.debug(f"Auxiliary recovery pass error: {aux_err}")
 
             # 1. Missing LaTeX package iterative auto-recovery patch
             patched_code = latex_code

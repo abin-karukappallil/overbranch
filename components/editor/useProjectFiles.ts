@@ -44,8 +44,11 @@ function loadFiles(projectId: string, force: boolean): Promise<void> {
         if (data.files && Array.isArray(data.files) && requestSeq.get(projectId) === seq) {
           // list-files reports the project's MAIN document (it can live in a sub-folder).
           const mainFile = typeof data.main_file === "string" && data.main_file ? data.main_file : null;
-          fileListCache.set(projectId, { files: data.files, mainFile, timestamp: Date.now() });
-          publish(projectId, data.files, mainFile);
+const AUXILIARY_EXT_REGEX = /\.(aux|lof|lot|toc|log|out|synctex(\.gz)?|fls|fdb_latexmk|nav|snm|vrb|bcf|run\.xml|blg|idx|ind|ilg|glo|gls|glg|acn|acr|alg|nlo|nls|nlg|ist|dvi|xdv)$/i;
+
+          const cleanFiles = data.files.filter((f: ProjectFile) => !AUXILIARY_EXT_REGEX.test(f.path || f.name));
+          fileListCache.set(projectId, { files: cleanFiles, mainFile, timestamp: Date.now() });
+          publish(projectId, cleanFiles, mainFile);
         }
       }
     } catch (err) {

@@ -75,6 +75,7 @@
     "drizzle-kit": "latest",
     "eslint": "^9",
     "eslint-config-next": "15.1.4",
+    "playwright": "^1.64.1",
     "shadcn": "latest",
     "tailwindcss": "latest",
     "typescript": "^5"

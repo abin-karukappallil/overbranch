@@ -354,6 +354,13 @@ class Emitter:
                     body_lines.append(("\\end{slide}", b.id))
                     body_lines.append(("", b.id))
                     in_slide = False
+                if getattr(b, "empty", False):
+                    # a slide with no text of its own still is a page
+                    if b.page in self.backgrounds and b.page not in bg_done:
+                        from ..preamble import background_command
+                        bg_done.add(b.page)
+                        body_lines.append((background_command(self.backgrounds[b.page]), b.id))
+                    body_lines.append(("\\begin{slide}\\null\\end{slide}", b.id))
                 continue        # the slide environment already ends the page
             if b.kind != "pagemark" and b.page in self.backgrounds and b.page not in bg_done:
                 from ..preamble import background_command
@@ -385,6 +392,12 @@ class Emitter:
                 body_lines.append(("\\begin{multicols}{2}", b.id))
                 col_now = 0
             self._emit(b, body_lines, top=True)
+            if b.kind == "pagemark" and getattr(b, "empty", False) and b.page in self.backgrounds \
+                    and b.page not in bg_done:
+                # a page with no block of its own: only its picture (a scan)
+                from ..preamble import background_command
+                bg_done.add(b.page)
+                body_lines.append((background_command(self.backgrounds[b.page]), b.id))
         if self.two_column:
             self._two_column_body(blocks, body_lines)
         if self.lock and not self.deck:
@@ -830,6 +843,7 @@ class Emitter:
 
     # -- heading -----------------------------------------------------------
     def _heading(self, h: Heading) -> str:
+        h.runs = _clean_breaks(h.runs)
         level = h.level
         lv = None
         if level == 0 and not h.starts_page:
@@ -1332,20 +1346,71 @@ _EXTRA_SYMBOLS = {
     "\u03f1": "\\varrho", "\u03d2": "\\Upsilon", "\u2225": "\\parallel", "\u27e8": "\\langle",
     "\u27e9": "\\rangle",
 }
-_EXTRA_RE = re.compile("[" + "".join(_EXTRA_SYMBOLS) + "]")
+# texutil spells a Greek letter from its Unicode name: "LAMDA" is no TeX command (a single \u03bb in a
+# document stopped the whole compile), and the archaic letters (digamma's relatives, yot, san) have
+# none. Every Greek letter is decided here; one LaTeX cannot set is dropped like an unknown symbol.
+_GREEK_TEX = {
+    "\u03b1": "\\alpha", "\u03b2": "\\beta", "\u03b3": "\\gamma", "\u03b4": "\\delta",
+    "\u03b5": "\\varepsilon", "\u03b6": "\\zeta", "\u03b7": "\\eta", "\u03b8": "\\theta",
+    "\u03b9": "\\iota", "\u03ba": "\\kappa", "\u03bb": "\\lambda", "\u03bc": "\\mu",
+    "\u03bd": "\\nu", "\u03be": "\\xi", "\u03c0": "\\pi", "\u03c1": "\\rho",
+    "\u03c2": "\\varsigma", "\u03c3": "\\sigma", "\u03c4": "\\tau", "\u03c5": "\\upsilon",
+    "\u03c6": "\\varphi", "\u03c7": "\\chi", "\u03c8": "\\psi", "\u03c9": "\\omega",
+    "\u0393": "\\Gamma", "\u0394": "\\Delta", "\u0398": "\\Theta", "\u039b": "\\Lambda",
+    "\u039e": "\\Xi", "\u03a0": "\\Pi", "\u03a3": "\\Sigma", "\u03a5": "\\Upsilon",
+    "\u03a6": "\\Phi", "\u03a8": "\\Psi", "\u03a9": "\\Omega",
+}
+_GREEK_PLAIN = {"\u03bf": "o", "\u0391": "A", "\u0392": "B", "\u0395": "E", "\u0396": "Z", "\u0397": "H",
+                "\u0399": "I", "\u039a": "K", "\u039c": "M", "\u039d": "N", "\u039f": "O", "\u03a1": "P",
+                "\u03a4": "T", "\u03a7": "X"}
+_MATH_SHAPES = {
+    "\u25c0": "\\blacktriangleleft", "\u25c4": "\\blacktriangleleft", "\u25b2": "\\blacktriangle",
+    "\u25bc": "\\blacktriangledown", "\u25b3": "\\vartriangle", "\u25bd": "\\triangledown",
+    "\u22a1": "\\boxdot", "\u229e": "\\boxplus", "\u22a0": "\\boxtimes", "\u229f": "\\boxminus",
+    "\u25ca": "\\lozenge", "\u2020": "\\dagger", "\u2720": "\\maltese",
+}
+_EXTRA_RE = re.compile("[\u0370-\u03ff" + "".join(_EXTRA_SYMBOLS) + "".join(_MATH_SHAPES) + "]")
+
+
+def _extra_symbol(ch: str) -> str:
+    cmd = _EXTRA_SYMBOLS.get(ch) or _GREEK_TEX.get(ch) or _MATH_SHAPES.get(ch)
+    if cmd:
+        return f"\\ensuremath{{{cmd}}}"
+    return _GREEK_PLAIN.get(ch, "")
 
 
 def _tex(text: str) -> str:
-    """latex_text, plus the symbols it would drop."""
+    """latex_text, plus the symbols it would drop or misspell."""
     if not _EXTRA_RE.search(text or ""):
         return latex_text(text)
     out, pos = [], 0
     for m in _EXTRA_RE.finditer(text):
         out.append(latex_text(text[pos:m.start()]))
-        out.append(f"\\ensuremath{{{_EXTRA_SYMBOLS[m.group(0)]}}}")
+        out.append(_extra_symbol(m.group(0)))
         pos = m.end()
     out.append(latex_text(text[pos:]))
     return "".join(out)
+
+
+def _clean_breaks(runs: List[Run]) -> List[Run]:
+    """A title's line breaks with something to end: a line whose glyphs were all dropped left two
+    breaks in a row (or one at an end), and \\\\ on an empty line stops the compile ("There's no line
+    here to end")."""
+    out: List[Run] = []
+    empty = True            # nothing visible on the current line yet
+    for r in runs:
+        if r.text == LINEBREAK:
+            if empty:
+                continue
+            out.append(r)
+            empty = True
+        else:
+            out.append(r)
+            if _tex(r.text).strip():
+                empty = False
+    while out and (out[-1].text == LINEBREAK or not out[-1].text.strip()):
+        out.pop()
+    return out
 
 
 def _pitch_cmd(pitch: Optional[float]) -> str:

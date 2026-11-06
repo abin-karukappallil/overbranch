@@ -20,6 +20,7 @@ def assemble_with_enrichment(extract: DocExtract, doc, out_dir, source_name: str
     """Recover private-use glyphs, enrich (tables/math), stash the results, then assemble."""
     try:
         from . import glyphs
+        glyphs.recode_symbol_fonts(extract)
         glyphs.recover(doc, extract)
     except Exception as e:  # noqa: BLE001 — recovery is an improvement, never a failure
         logger.warning(f"Glyph recovery failed, continuing without it: {e}")
@@ -45,13 +46,14 @@ def assemble_with_enrichment(extract: DocExtract, doc, out_dir, source_name: str
         from . import backgrounds, furniture
         pages = extract.pages
         deck = len(pages) >= 2 and all(p.width > p.height * 1.15 for p in pages)
-        furn_ids = furniture.detect(pages).furniture_line_ids
+        furn = furniture.detect(pages)
         extract.metadata["_editable_backgrounds"] = backgrounds.page_backgrounds(
-            doc, extract, furn_ids, out_dir, deck, extract.metadata["_editable_boxes"],
-            extract.metadata.get("_editable_markers", {}))
+            doc, extract, furn.furniture_line_ids, out_dir, deck, extract.metadata["_editable_boxes"],
+            extract.metadata.get("_editable_markers", {}), furn.image_keys)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"Page backgrounds failed, continuing without them: {e}")
         extract.metadata["_editable_backgrounds"] = {}
+    _scans_as_backgrounds(extract)
     try:
         from . import figures
         extract.metadata["_editable_trims"] = figures.trim_images(extract, out_dir)
@@ -59,6 +61,18 @@ def assemble_with_enrichment(extract: DocExtract, doc, out_dir, source_name: str
         logger.warning(f"Figure trimming failed, continuing with the full pictures: {e}")
         extract.metadata["_editable_trims"] = {}
     return assemble_fn(extract, doc, source_name)
+
+
+def _scans_as_backgrounds(extract: DocExtract) -> None:
+    """A scanned page is one picture the size of the page, wider and taller than any text area, so
+    set in the flow it left page N blank and went on to the next page. It goes behind its page."""
+    bgs = extract.metadata.setdefault("_editable_backgrounds", {})
+    for p in extract.pages:
+        if not p.is_scanned or p.ocr_text or not p.images:
+            continue
+        big = max(p.images, key=lambda i: (i.bbox[2] - i.bbox[0]) * (i.bbox[3] - i.bbox[1]))
+        bgs[p.number] = big.file
+        p.images = [i for i in p.images if i is not big]
 
 
 def _detect(extract: DocExtract, doc, out_dir) -> Tuple[Dict[int, List[Block]], Dict[int, List[Block]]]:

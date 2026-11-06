@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  ChevronLeft,
-  ChevronRight,
   FileCheck2,
   FileText,
   Info,
@@ -25,9 +23,14 @@ import {
   ConversionMode,
   TemplateRules,
   useConversionConfig,
-  usePagePreview,
   usePdfConversionJob,
 } from "./usePdfConversionJob";
+import { ComparePreview } from "./ComparePreview";
+import { DownloadPackageButton } from "./DownloadPackageButton";
+import { PageGrid } from "./PageGrid";
+import { RebuildProgress } from "./RebuildProgress";
+import { RebuildReportView } from "./RebuildReportView";
+import { Stat, pct } from "./shared";
 
 export interface ImportPdfDialogProps {
   open: boolean;
@@ -41,21 +44,7 @@ export interface ImportPdfDialogProps {
   inline?: boolean;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  pending: "Waiting",
-  generating: "Generating",
-  compiling: "Compiling",
-  repairing: "Repairing",
-  verifying: "Verifying",
-  rerunning: "Refining",
-  done: "Done",
-  below_threshold: "Needs a look",
-  failed: "Failed",
-};
-
-function pct(v: number | null | undefined, digits = 1) {
-  return v == null ? "—" : `${(v * 100).toFixed(digits)}%`;
-}
+const CLOSEST_MATCH = "Closest match, not pixel-exact.";
 
 export function ImportPdfDialog(props: ImportPdfDialogProps) {
   const { open, onOpenChange, inline, attachJobId, onCompleted } = props;
@@ -98,6 +87,10 @@ function ImportPdfPanel({
   const config = useConversionConfig();
   const maxMb = config?.max_file_mb ?? 50;
   const maxPages = config?.max_pages ?? 50;
+  // The AI-rebuild wording is only true on a backend that reports that engine; any other backend
+  // runs the deterministic engine, so the copy has to describe that one.
+  const rebuildLive = config?.engine === "rebuild";
+  const copilotModel = config?.model ? ` (${config.model})` : "";
   const { job, error, starting, start, cancel, commit, reset } = conversion;
 
   const [file, setFile] = useState<File | null>(null);
@@ -146,7 +139,7 @@ function ImportPdfPanel({
             <DialogDescriptionOrText inline={inline}>
               {projectId
                 ? "Convert a PDF into LaTeX inside this project."
-                : "Convert a PDF into a new LaTeX project with its fonts, images and layout."}
+                : "Convert a PDF into a new, editable LaTeX project that follows its layout as closely as possible."}
             </DialogDescriptionOrText>
           </div>
         </div>
@@ -241,8 +234,14 @@ function ImportPdfPanel({
               <span className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider">Output</span>
               <div className="grid grid-cols-2 gap-2">
                 {([
-                  { id: "editable", title: "Editable", desc: "Normal LaTeX you can edit — sections, lists, tables. Same fonts, colours and sizes." },
-                  { id: "exact", title: "Exact layout", desc: "Pixel-faithful placement. Hard to edit (coordinate-positioned)." },
+                  {
+                    id: "editable",
+                    title: "Editable",
+                    desc: rebuildLive
+                      ? `AI rebuild — editable LaTeX that follows the original layout as closely as possible. ${CLOSEST_MATCH}`
+                      : `Normal LaTeX you can edit — sections, lists, tables. Same fonts, colours and sizes. ${CLOSEST_MATCH}`,
+                  },
+                  { id: "exact", title: "Exact layout", desc: "Every text run placed at its PDF coordinates. Close visually, but hard to edit." },
                 ] as { id: ConversionMode; title: string; desc: string }[]).map((opt) => (
                   <button
                     key={opt.id}
@@ -266,15 +265,30 @@ function ImportPdfPanel({
                   </button>
                 ))}
               </div>
+              {rebuildLive && (
+                <p className="text-[10px] text-[#62666D]">Both modes are measured against the original page by page. {CLOSEST_MATCH}</p>
+              )}
             </div>
 
             {config && !config.llm_available && (
               <div className="p-3 rounded-lg border border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300 flex items-start gap-2">
                 <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>
-                  {mode === "editable"
-                    ? "The AI copilot's LLM is not configured on this server, so the optional polish step is skipped. The editable LaTeX is still built from the PDF's structure, fonts and colours."
-                    : "The AI copilot's LLM is not configured on this server, so pages are reproduced with the positioned-layout fallback (accurate placement, less editable LaTeX)."}
+                  {mode !== "editable"
+                    ? "The AI copilot's LLM is not configured on this server, so pages are reproduced with the positioned-layout fallback (accurate placement, less editable LaTeX)."
+                    : rebuildLive
+                    ? "The LLM is not configured on this server, so the AI rebuild cannot run. The editable LaTeX is built by the deterministic engine from the PDF's structure, fonts and colours, and will follow the layout less closely."
+                    : "The AI copilot's LLM is not configured on this server, so the optional polish step is skipped. The editable LaTeX is still built from the PDF's structure, fonts and colours."}
+                </span>
+              </div>
+            )}
+
+            {config && config.llm_available && mode === "editable" && config.vision_available === false && (
+              <div className="p-3 rounded-lg border border-[#23252A] bg-[#191A1B]/60 text-[11px] text-[#8A8F98] flex items-start gap-2">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>
+                  Visual review is off on this server: the model cannot see page images, so layout is corrected from
+                  measurements only.
                 </span>
               </div>
             )}
@@ -295,9 +309,11 @@ function ImportPdfPanel({
             )}
 
             <p className="text-[11px] text-[#62666D] leading-relaxed">
-              {mode === "editable"
-                ? "The PDF is rebuilt as an ordinary, editable LaTeX document — headings, paragraphs, lists, tables and images in reading order — keeping the fonts, colours, sizes and assets. It is compiled and checked for text coverage and style fidelity. Best-effort, not a guaranteed identical copy."
-                : `Every page is reproduced as coordinate-placed LaTeX by the same model as the AI copilot${config?.model ? ` (${config.model})` : ""}, compiled and compared with the original. Pixel-faithful but hard to edit. Best-effort, not a guaranteed identical copy.`}
+              {mode !== "editable"
+                ? `Every page is reproduced as coordinate-placed LaTeX by the same model as the AI copilot${copilotModel}, compiled and compared with the original. Close visually but hard to edit. ${CLOSEST_MATCH}`
+                : rebuildLive
+                ? `The PDF is rebuilt as editable LaTeX — headings, paragraphs, lists, tables, math and images — by the same model as the AI copilot${copilotModel}. Every page is compiled and compared with the original, and the report shows a match score per page and which pages need a look. ${CLOSEST_MATCH}`
+                : `The PDF is rebuilt as an ordinary, editable LaTeX document — headings, paragraphs, lists, tables and images in reading order — keeping the fonts, colours, sizes and assets. It is compiled and checked for text coverage and style fidelity. ${CLOSEST_MATCH}`}
             </p>
 
             {shownError && (
@@ -341,6 +357,7 @@ function ImportPdfPanel({
           </form>
         ) : (
           <JobView
+            key={job.job_id}
             job={job}
             error={error}
             onCommit={commit}
@@ -397,6 +414,17 @@ function JobView({
   const threshold = job.report?.threshold ?? 0.85;
   const running = !["done", "error", "needs_confirmation", "cancelled"].includes(job.status);
   const progress = Math.round((job.progress || 0) * 100);
+  const isEditable = job.mode === "editable" || job.report?.mode === "editable";
+  // Backends without the AI rebuild never set this, and a whole-job fallback flips it back.
+  const isRebuild = job.engine === "rebuild";
+  const canCompare = !running && !!job.report?.compiled;
+
+  // Source page in the side-by-side. It lives here because the page tiles and the report both move it.
+  const [comparePage, setComparePage] = useState(1);
+  const focusPage = useCallback((page: number) => {
+    setComparePage(page);
+    document.getElementById("pdf-import-compare")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -427,36 +455,20 @@ function JobView({
         </div>
       </div>
 
-      {/* Progress view: pipeline steps for editable mode, per-page grid for exact mode */}
-      {job.mode === "editable" ? (
-        <EditablePipelineProgress currentStage={job.stage} isRunning={running} />
-      ) : (
-        job.pages.length > 0 && (
-          <div>
-            <div className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider mb-2 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5" /> Pages
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-h-40 overflow-y-auto pr-1">
-              {job.pages.map((p) => {
-                const ok = p.status === "done";
-                const active = ["generating", "compiling", "repairing", "verifying", "rerunning"].includes(p.status);
-                return (
-                  <div key={p.number}
-                    className={`px-2.5 py-1.5 rounded-md border text-[11px] flex items-center justify-between gap-2 ${
-                      active ? "border-[#5E6AD2]/40 bg-[#5E6AD2]/8" : "border-[#23252A] bg-[#191A1B]/60"
-                    }`}
-                    title={(p.warnings || []).join("\n")}
-                  >
-                    <span className="text-[#8A8F98]">p.{p.number}{p.fallback ? " ·" : ""}</span>
-                    <span className={`font-mono tabular-nums ${p.similarity == null ? "text-[#62666D]" : ok ? "text-emerald-400" : "text-amber-400"}`}>
-                      {p.similarity != null ? pct(p.text_coverage ?? p.similarity) : STATUS_LABEL[p.status] || p.status}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )
+      {/* Stage cards for editable mode; per-page tiles wherever pages are processed independently */}
+      {isEditable &&
+        (isRebuild ? (
+          <RebuildProgress job={job} isRunning={running} />
+        ) : (
+          <EditablePipelineProgress currentStage={job.stage} isRunning={running} />
+        ))}
+      {(!isEditable || isRebuild) && (
+        <PageGrid
+          pages={job.pages}
+          variant={isEditable ? "editable" : "exact"}
+          focused={canCompare ? comparePage : null}
+          onFocus={canCompare ? focusPage : undefined}
+        />
       )}
 
       {job.status === "needs_confirmation" && (
@@ -491,10 +503,13 @@ function JobView({
         </div>
       )}
 
-      {job.report && !running && <ReportView job={job} threshold={threshold} />}
+      {job.report && !running && (
+        <ReportView job={job} threshold={threshold} page={comparePage} onPageChange={setComparePage} onFocusPage={focusPage} />
+      )}
 
       {job.status === "done" && (
         <div className="flex justify-end gap-2">
+          {job.result?.has_package && <DownloadPackageButton jobId={job.job_id} filename={job.filename} />}
           <Button onClick={onClose} className="h-8 px-4 text-xs bg-[#5E6AD2] hover:bg-[#4F5BBE] text-white flex items-center gap-1.5">
             {doneLabel} <ArrowRight className="w-3.5 h-3.5" />
           </Button>
@@ -618,14 +633,52 @@ function EditableReportView({ job }: { job: ConversionJob }) {
   );
 }
 
-function ReportView({ job, threshold }: { job: ConversionJob; threshold: number }) {
+function ReportView({
+  job,
+  threshold,
+  page,
+  onPageChange,
+  onFocusPage,
+}: {
+  job: ConversionJob;
+  threshold: number;
+  page: number;
+  onPageChange: (page: number) => void;
+  onFocusPage: (page: number) => void;
+}) {
   const report = job.report!;
-  const [page, setPage] = useState(1);
-  const [showDiff, setShowDiff] = useState(false);
-  const canPreview = report.compiled;
-  if (job.mode === "editable" || report.mode === "editable") {
-    return <EditableReportView job={job} />;
+  const compare = report.compiled ? (
+    <ComparePreview
+      jobId={job.job_id}
+      pageCount={report.page_count || job.page_count}
+      page={page}
+      onPageChange={onPageChange}
+      scoreFor={(n) => report.pages?.find((p) => p.number === n)?.similarity ?? job.pages.find((p) => p.number === n)?.similarity}
+      pageMap={job.result?.page_map}
+    />
+  ) : null;
+
+  if (report.rebuild) {
+    return (
+      <div className="space-y-4">
+        <RebuildReportView job={job} onFocusPage={onFocusPage} />
+        {compare}
+      </div>
+    );
   }
+  if (job.mode === "editable" || report.mode === "editable") {
+    return (
+      <div className="space-y-4">
+        <EditableReportView job={job} />
+        {compare}
+      </div>
+    );
+  }
+  return <ExactReportView job={job} threshold={threshold} compare={compare} />;
+}
+
+function ExactReportView({ job, threshold, compare }: { job: ConversionJob; threshold: number; compare: React.ReactNode }) {
+  const report = job.report!;
   const below = useMemo(() => report.pages.filter((p) => p.status === "below_threshold").length, [report]);
   const fallbacks = report.pages.filter((p) => p.fallback).length;
   const coverageTarget = report.coverage_target ?? 0.995;
@@ -653,29 +706,7 @@ function ReportView({ job, threshold }: { job: ConversionJob; threshold: number 
 
       <TemplateRulesPanel rules={report.template_rules} />
 
-      {canPreview && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-xs text-[#8A8F98] font-medium uppercase tracking-wider">Original vs converted</div>
-            <div className="flex items-center gap-1.5">
-              <label className="flex items-center gap-1.5 text-[11px] text-[#8A8F98] mr-2 cursor-pointer">
-                <input type="checkbox" checked={showDiff} onChange={(e) => setShowDiff(e.target.checked)} />
-                Highlight differences
-              </label>
-              <Button variant="outline" size="icon" aria-label="Previous page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}
-                className="h-7 w-7 border-[#23252A] bg-[#191A1B]"><ChevronLeft className="w-3.5 h-3.5" /></Button>
-              <span className="text-[11px] font-mono tabular-nums w-14 text-center">{page} / {report.page_count}</span>
-              <Button variant="outline" size="icon" aria-label="Next page" disabled={page >= report.page_count} onClick={() => setPage((p) => p + 1)}
-                className="h-7 w-7 border-[#23252A] bg-[#191A1B]"><ChevronRight className="w-3.5 h-3.5" /></Button>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <PreviewPane jobId={job.job_id} page={page} which="original" label="Original" />
-            <PreviewPane jobId={job.job_id} page={page} which={showDiff ? "diff" : "converted"}
-              label={`Converted · ${pct(report.pages[page - 1]?.similarity)}`} />
-          </div>
-        </div>
-      )}
+      {compare}
 
       <details className="text-xs">
         <summary className="cursor-pointer text-[#8A8F98] font-medium uppercase tracking-wider">Per-page detail</summary>
@@ -791,31 +822,3 @@ function TemplateRulesPanel({ rules }: { rules?: TemplateRules | null }) {
   );
 }
 
-function Stat({ label, value, tone }: { label: string; value: string; tone: "good" | "warn" | "neutral" }) {
-  const colour = tone === "good" ? "text-emerald-400" : tone === "warn" ? "text-amber-400" : "text-[#C7CAD1]";
-  return (
-    <div className="p-2.5 rounded-lg border border-[#23252A] bg-[#191A1B]/60">
-      <div className={`text-base font-semibold font-mono tabular-nums ${colour}`}>{value}</div>
-      <div className="text-[10px] uppercase tracking-wider text-[#8A8F98]">{label}</div>
-    </div>
-  );
-}
-
-function PreviewPane({ jobId, page, which, label }: { jobId: string; page: number; which: "original" | "converted" | "diff"; label: string }) {
-  const { url, failed } = usePagePreview(jobId, page, which);
-  return (
-    <figure className="rounded-lg border border-[#23252A] bg-white/95 overflow-hidden">
-      <figcaption className="px-2 py-1 text-[10px] uppercase tracking-wider bg-[#191A1B] text-[#8A8F98]">{label}</figcaption>
-      <div className="aspect-[1/1.3] flex items-center justify-center">
-        {url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt={`${label} page ${page}`} className="w-full h-full object-contain" />
-        ) : failed ? (
-          <span className="text-[11px] text-[#62666D]">Preview unavailable</span>
-        ) : (
-          <Loader2 className="w-4 h-4 animate-spin text-[#8A8F98]" />
-        )}
-      </div>
-    </figure>
-  );
-}

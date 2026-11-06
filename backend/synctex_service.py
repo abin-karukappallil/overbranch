@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 logger = logging.getLogger("synctex_service")
 
@@ -15,6 +15,23 @@ SYNCTEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # In-memory LRU cache for forward and backward lookup results
 _LOOKUP_CACHE: Dict[str, Any] = {}
 MAX_CACHE_ENTRIES = 500
+
+AUXILIARY_EXTENSIONS = frozenset({
+    ".aux", ".lof", ".lot", ".toc", ".log", ".out", ".synctex", ".synctex.gz",
+    ".fls", ".fdb_latexmk", ".nav", ".snm", ".vrb", ".bcf", ".run.xml",
+    ".blg", ".bbl", ".idx", ".ind", ".ilg", ".glo", ".gls", ".glg",
+    ".acn", ".acr", ".alg", ".nlo", ".nls", ".nlg", ".ist", ".dvi", ".xdv"
+})
+
+
+def is_auxiliary_file(file_path: str) -> bool:
+    if not file_path:
+        return False
+    lower = file_path.strip().lower()
+    if lower.endswith(".synctex.gz"):
+        return True
+    ext = Path(lower).suffix
+    return ext in AUXILIARY_EXTENSIONS
 
 
 def get_project_build_dir(project_id: Optional[str]) -> Path:
@@ -44,6 +61,56 @@ def normalize_tex_file_path(raw_path: str, build_dir: Path) -> str:
     cleaned = re.sub(r"^(\./|/|\\)+", "", cleaned)
 
     return cleaned or "main.tex"
+
+
+def resolve_synctex_source(raw_path: str, line_num: int, build_dir: Path) -> Tuple[str, int]:
+    """
+    Translates raw SyncTeX output into an editable project source file and line.
+    
+    1. System-wide TeX distribution files (/usr/..., /texmf...) and absolute paths outside
+       the project are never returned to the editor; they fall back to main.tex.
+    2. Generated auxiliary files (.lof, .toc, .lot) are translated back to the line in
+       main.tex where \\listoffigures, \\tableofcontents, or \\listoftables was declared.
+    3. Any other auxiliary file (.aux, .out, .bbl, etc.) falls back to main.tex:1.
+    """
+    raw_clean = raw_path.strip()
+
+    # TeX distribution or system paths (e.g. /usr/share/texmf-dist/.../something.sty)
+    if raw_clean.startswith(("/usr/", "/opt/", "/etc/", "/var/")) or "/texmf" in raw_clean.lower():
+        return "main.tex", 1
+
+    rel_norm = normalize_tex_file_path(raw_clean, build_dir)
+
+    if not is_auxiliary_file(rel_norm):
+        return rel_norm, line_num
+
+    # It is an auxiliary file: map to the originating declaration in main.tex
+    main_tex = build_dir / "main.tex"
+    if main_tex.is_file():
+        try:
+            lines = main_tex.read_text(encoding="utf-8", errors="replace").splitlines()
+            lower_name = Path(rel_norm).name.lower()
+            target_pattern = None
+            if lower_name.endswith(".lof"):
+                target_pattern = re.compile(r"\\listoffigures\b")
+            elif lower_name.endswith(".toc"):
+                target_pattern = re.compile(r"\\tableofcontents\b")
+            elif lower_name.endswith(".lot"):
+                target_pattern = re.compile(r"\\listoftables\b")
+            elif lower_name.endswith(".bbl"):
+                target_pattern = re.compile(r"\\(?:printbibliography|bibliography)\b|\\begin\{thebibliography\}")
+
+            if target_pattern:
+                for idx, line in enumerate(lines, 1):
+                    stripped = line.strip()
+                    if stripped.startswith("%"):
+                        continue
+                    if target_pattern.search(line):
+                        return "main.tex", idx
+        except Exception as e:
+            logger.debug(f"Error mapping aux file to main.tex line: {e}")
+
+    return "main.tex", 1
 
 
 def backward_lookup(
@@ -111,8 +178,8 @@ def backward_lookup(
 
             if line_match:
                 raw_file = input_match.group(1) if input_match else "main.tex"
-                rel_file = normalize_tex_file_path(raw_file, build_dir)
-                line_num = int(line_match.group(1))
+                line_raw = int(line_match.group(1))
+                rel_file, line_num = resolve_synctex_source(raw_file, line_raw, build_dir)
                 col_num = int(col_match.group(1)) if col_match else 1
                 if col_num < 1:
                     col_num = 1
@@ -144,6 +211,9 @@ def forward_lookup(
     """
     Perform forward SyncTeX lookup (LaTeX source line & column -> PDF page & coords).
     """
+    if is_auxiliary_file(file_path):
+        return None
+
     build_dir = get_project_build_dir(project_id)
     pdf_path = build_dir / "main.pdf"
 

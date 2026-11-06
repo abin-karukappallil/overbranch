@@ -1,16 +1,15 @@
 "use client";
 
 import React, { useEffect } from "react";
-import { User, Mail } from "lucide-react";
-import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { authClient } from "@/lib/auth-client";
+import { initialsOf } from "@/lib/initials";
 
 export default function ProfilePage() {
   const { data: session } = authClient.useSession();
 
   const user = session?.user;
-  const name = user?.name || "User";
+  const name = user?.name || user?.email?.split("@")[0] || "User";
   const email = user?.email || "";
   const avatarUrl = user?.image || "";
 
@@ -19,65 +18,49 @@ export default function ProfilePage() {
   }, []);
 
   return (
-    <div className="space-y-6 sm:space-y-8 animate-fade-in pb-16 max-w-2xl text-slate-900 dark:text-[#E2E4E9]">
-      <div className="space-y-1">
-        <h1 className="text-xl sm:text-2xl font-archivo font-bold tracking-tight text-slate-900 dark:text-[#E2E4E9]">
-          User Profile
-        </h1>
-        <p className="text-xs sm:text-sm text-slate-500 dark:text-[#9E9E9E]">
-          Your account details in OverBranch.
+    <div className="ob-enter flex max-w-2xl flex-col gap-8 pb-16">
+      <header className="flex flex-col gap-2">
+        <h1 className="font-ob-title text-[32px] leading-[1.15] font-normal text-ob-text">Profile</h1>
+        <p className="text-sm leading-[22px] text-ob-text-2">
+          Your account identity and workspace credentials
         </p>
-      </div>
+      </header>
 
-      <Card className="p-6 sm:p-8 rounded-xl border border-slate-200 dark:border-[#282A30] bg-white dark:bg-[#141519] shadow-sm dark:shadow-none space-y-6">
-        {/* Profile Avatar & Header */}
-        <div className="flex items-center gap-4 sm:gap-5">
-          <Avatar className="w-16 h-16 sm:w-20 sm:h-20 border border-slate-200 dark:border-[#282A30] bg-slate-100 dark:bg-[#1A1C22] shrink-0">
+      <section className="flex flex-col gap-6 rounded-xl border border-ob-line bg-ob-card p-6">
+        {/* User identifier row */}
+        <div className="flex items-center gap-4">
+          <Avatar className="size-14 rounded-xl border border-ob-line">
             {avatarUrl && (
-              <AvatarImage
-                src={avatarUrl}
-                referrerPolicy="no-referrer"
-                alt={name}
-              />
+              <AvatarImage src={avatarUrl} referrerPolicy="no-referrer" alt={name} />
             )}
-            <AvatarFallback className="bg-emerald-600 dark:bg-[#22242C] text-white dark:text-[#E2E4E9] font-archivo font-bold text-lg sm:text-xl">
-              {(name || "U").slice(0, 2).toUpperCase()}
+            <AvatarFallback className="rounded-xl bg-ob-raised text-base font-medium text-ob-text-2">
+              {initialsOf(name)}
             </AvatarFallback>
           </Avatar>
 
-          <div className="min-w-0 flex-1 space-y-1">
-            <h2 className="text-lg sm:text-xl font-archivo font-bold text-slate-900 dark:text-[#E2E4E9] truncate">
-              {name}
-            </h2>
-            <p className="text-xs sm:text-sm text-slate-500 dark:text-[#9E9E9E] font-mono truncate">
-              {email}
-            </p>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <h2 className="truncate text-base font-medium text-ob-text">{name}</h2>
+            <p className="truncate font-mono text-xs text-ob-muted">{email}</p>
           </div>
         </div>
 
-        {/* Read-only info fields */}
-        <div className="space-y-4 pt-2 border-t border-slate-100 dark:border-[#202228] font-mono">
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-500 dark:text-[#8A8F98] uppercase tracking-wider flex items-center gap-1.5">
-              <User className="w-3.5 h-3.5 text-slate-400 dark:text-[#6A707E]" />
-              <span>Full Name</span>
-            </label>
-            <div className="h-10 px-3 flex items-center text-xs border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] rounded-lg">
+        {/* Read-only account fields */}
+        <div className="flex flex-col gap-4 border-t border-ob-line pt-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-ob-text-2">Full name</label>
+            <div className="flex h-9 items-center rounded-lg border border-ob-line bg-ob-raised px-3 text-sm text-ob-text select-text">
               {name}
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-slate-500 dark:text-[#8A8F98] uppercase tracking-wider flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5 text-slate-400 dark:text-[#6A707E]" />
-              <span>Email Address</span>
-            </label>
-            <div className="h-10 px-3 flex items-center text-xs border border-slate-200 dark:border-[#282A30] bg-slate-50 dark:bg-[#1A1C22] text-slate-900 dark:text-[#E2E4E9] rounded-lg">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs text-ob-text-2">Email address</label>
+            <div className="flex h-9 items-center rounded-lg border border-ob-line bg-ob-raised px-3 font-mono text-sm text-ob-text select-text">
               {email}
             </div>
           </div>
         </div>
-      </Card>
+      </section>
     </div>
   );
 }

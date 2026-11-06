@@ -60,10 +60,52 @@ def _page_pictures(doc, page) -> List[Tuple[float, float, float, float]]:
     return out
 
 
+def _vector_bullets(doc, page, size: float) -> List[Tuple[Tuple[float, float, float, float], Tuple[int, int, int]]]:
+    """Small filled shapes (Beamer's square bullet is a rule, not a glyph): (box, colour)."""
+    out = []
+    try:
+        paths = doc[page.number - 1].get_drawings()
+    except Exception:  # noqa: BLE001
+        return out
+    for d in paths:
+        fill = d.get("fill")
+        if not fill or d.get("type") != "f":
+            continue
+        r = d["rect"]
+        w, h = r.x1 - r.x0, r.y1 - r.y0
+        if not (2.0 <= w <= 1.1 * size and 2.0 <= h <= 1.1 * size) or not 0.6 <= w / h <= 1.67:
+            continue
+        rgb = tuple(int(round(c * 255)) for c in fill[:3])
+        if min(rgb) >= 245:
+            continue
+        out.append(((r.x0, r.y0, r.x1, r.y1), rgb))
+    return out
+
+
+def _add_bullet(page, bb, text: str, color, size: float) -> bool:
+    """A bullet character at the start of the row just right of ``bb``; False if there is no row."""
+    x0, y0, x1, y1 = bb
+    cy = (y0 + y1) / 2
+    row = [ln for ln in page.lines if ln.text.strip() and ln.bbox[1] - 2 <= cy <= ln.bbox[3] + 2
+           and 0 <= ln.bbox[0] - x1 <= 2.5 * size]
+    if not row:
+        return False
+    ln = min(row, key=lambda l: l.bbox[0])
+    first = ln.spans[0]
+    span = Span(text=text, font=first.font, size=first.size, color=color, flags=first.flags & ~16,
+                bbox=(x0, ln.bbox[1], x1, ln.bbox[3]), origin=(x0, ln.baseline))
+    page.lines.append(Line(spans=[span], bbox=(x0, ln.bbox[1], x1, ln.bbox[3]), block=ln.block,
+                           column=ln.column))
+    return True
+
+
 def convert_image_bullets(doc, extract: DocExtract) -> Dict[int, List[Tuple[float, float, float, float]]]:
     """Rewrite each page in place; returns {page: [marker bboxes]} for the background redaction."""
     markers: Dict[int, List[Tuple[float, float, float, float]]] = {}
     for page in extract.pages:
+        for bb, rgb in _vector_bullets(doc, page, _dominant_size(page)):
+            if _add_bullet(page, bb, "\u25a0", rgb, _dominant_size(page)):
+                markers.setdefault(page.number, []).append(bb)
         pics = _page_pictures(doc, page)
         if not pics:
             continue

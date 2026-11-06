@@ -167,6 +167,9 @@ def is_upper(text: str) -> bool:
     return len(letters) >= 4 and sum(c.isupper() for c in letters) / len(letters) >= 0.8
 
 
+_BULLET_START = re.compile(r"[\u2022\u25cf\u25cb\u25e6\u25aa\u25a0\u25a1\u25b6\u25ba\u27a2\u27a4\u2726\u2727\u2713\u2714\u2756\u25c6\u25c7\u2023\u2043]\s")
+
+
 def heading_candidate(row: TLine, body: float) -> bool:
     """
     Whether a row may be a heading. A heading is genuinely larger than the body, an uppercase banner
@@ -178,6 +181,8 @@ def heading_candidate(row: TLine, body: float) -> bool:
     words = len(text.split())
     if words == 0 or words > 20 or len(text) > 120:
         return False
+    if _BULLET_START.match(text) or text.endswith("-"):
+        return False          # a list item, or a line that runs on: text, however large it is set
     big = row.size >= body + 1
     if big:
         return True

@@ -115,6 +115,9 @@ def analyze_archive(zf: zipfile.ZipFile) -> List[Tuple[zipfile.ZipInfo, str]]:
         if any(x in _NOISE_PARTS or x.startswith("._") for x in parts):
             logger.info("zip import: skipping VCS/OS junk member %r", zi.filename)
             continue
+        if project_storage.is_auxiliary_file(p.name):
+            logger.info("zip import: skipping auxiliary build artifact member %r", zi.filename)
+            continue
         candidates.append((zi, PurePosixPath(*parts)))
 
     if not candidates:

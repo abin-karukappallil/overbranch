@@ -203,6 +203,30 @@ def _match(vec: np.ndarray, ar: float) -> Optional[str]:
     return ch if ch and best >= ACCEPT and best - second >= MARGIN else None
 
 
+# The AMS symbol font msam10 has no Unicode names: pdfLaTeX's glyphs read back as the ASCII of their
+# slot, so Beamer's \\blacktriangleright bullet reads as a capital "I" and the list it marks is lost.
+_MSAM = {
+    "\x03": "\u25a1", "\x04": "\u25a0", "\x06": "\u25ca", "\x07": "\u25c6",
+    "F": "\u2605", "H": "\u25bc", "I": "\u25b6", "J": "\u25c0", "M": "\u25b3", "N": "\u25b2", "O": "\u25bd",
+    "X": "\u2713", "z": "\u2720",
+}
+
+
+def recode_symbol_fonts(extract: DocExtract) -> int:
+    """Spell a symbol font's glyphs by their meaning where the text layer gives their slot."""
+    n = 0
+    for page in extract.pages:
+        for ln in page.lines:
+            for sp in ln.spans:
+                if not re.search(r"msam\d", sp.font or "", re.IGNORECASE):
+                    continue
+                new = "".join(_MSAM.get(c, c) for c in sp.text)
+                if new != sp.text:
+                    sp.text = new
+                    n += 1
+    return n
+
+
 def recover(doc, extract: DocExtract) -> Dict[Tuple[str, int], str]:
     """
     Find every distinct (font, private-use code) on the pages, identify it by shape, and rewrite the

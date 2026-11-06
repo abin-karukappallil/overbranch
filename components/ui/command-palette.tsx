@@ -9,13 +9,14 @@ import {
   FolderGit2,
   User,
   LayoutDashboard,
-  Zap,
   LogOut,
-  Moon,
-  Sun,
   FileCode2,
 } from "lucide-react";
-import { useTheme } from "next-themes";
+
+const GROUP =
+  "px-1 pb-1 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:text-ob-muted";
+const ROW =
+  "flex h-9 items-center gap-2.5 rounded-sm px-2 text-[13px] cursor-pointer text-ob-text-2 transition-colors data-[selected=true]:bg-ob-raised data-[selected=true]:text-ob-text";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -24,7 +25,6 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const router = useRouter();
-  const { theme, setTheme } = useTheme();
 
   React.useEffect(() => {
     const down = (e: KeyboardEvent) => {
@@ -45,93 +45,85 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4 bg-black/75 backdrop-blur-sm animate-fade-in font-sans">
+    <div className="fixed inset-0 z-50 flex animate-in items-start justify-center bg-black/60 px-4 pt-20 duration-150 fade-in">
       <div
         className="fixed inset-0"
         onClick={() => onOpenChange(false)}
       />
-      <div className="relative w-full max-w-xl rounded-xl border border-[#23252A] bg-[#0F1011] text-[#F7F8F8] shadow-2xl overflow-hidden z-10 font-sans">
+      <div className="relative z-10 w-full max-w-xl overflow-hidden rounded-xl border border-ob-line bg-ob-card text-ob-text shadow-[0_16px_48px_rgba(0,0,0,0.32)]">
         <Command className="w-full">
-          <div className="flex items-center px-4 border-b border-[#23252A] bg-[#141517]">
-            <Search className="w-4 h-4 text-[#5E6AD2] mr-3 shrink-0" />
+          <div className="flex items-center border-b border-ob-line px-4">
+            <Search className="mr-2.5 size-4 shrink-0 text-ob-muted" />
             <Command.Input
               autoFocus
-              placeholder="Search actions, projects, templates, settings..."
-              className="w-full h-11 bg-transparent text-[#F7F8F8] placeholder:text-[#62666D] text-xs outline-none font-sans"
+              placeholder="Search"
+              className="h-11 w-full bg-transparent text-sm text-ob-text outline-none placeholder:text-ob-muted"
             />
-            <kbd className="hidden sm:inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono text-[#8A8F98] bg-[#08090A] rounded border border-[#23252A]">
-              ESC
+            <kbd className="hidden items-center rounded-sm border border-ob-line px-1 font-mono text-xs leading-[18px] text-ob-muted sm:inline-flex">
+              Esc
             </kbd>
           </div>
 
-          <Command.List className="max-h-[300px] overflow-y-auto p-2 space-y-1">
-            <Command.Empty className="p-6 text-center text-xs text-[#62666D] font-sans">
-              No matching commands or projects found.
+          <Command.List className="max-h-[320px] overflow-y-auto p-1">
+            <Command.Empty className="p-6 text-center text-[13px] text-ob-muted">
+              Nothing matches that
             </Command.Empty>
 
-            <Command.Group heading="Navigation" className="px-2 py-1 text-[10px] font-medium text-[#8A8F98] uppercase tracking-wider">
+            <Command.Group heading="Navigation" className={GROUP}>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/dashboard"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] transition-colors"
+                className={ROW}
               >
-                <LayoutDashboard className="w-3.5 h-3.5 text-[#5E6AD2]" />
-                <span>Overview Dashboard</span>
+                <LayoutDashboard className="size-4 text-ob-muted" />
+                <span>Overview</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/projects"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] transition-colors"
+                className={ROW}
               >
-                <FileCode2 className="w-3.5 h-3.5 text-[#5E6AD2]" />
-                <span>Projects List</span>
+                <FileCode2 className="size-4 text-ob-muted" />
+                <span>Projects</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/profile"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] transition-colors"
+                className={ROW}
               >
-                <User className="w-3.5 h-3.5 text-[#5E6AD2]" />
-                <span>User Profile & Settings</span>
+                <User className="size-4 text-ob-muted" />
+                <span>Profile and settings</span>
               </Command.Item>
             </Command.Group>
 
-            <Command.Group heading="Actions" className="px-2 py-1 text-[10px] font-medium text-[#8A8F98] uppercase tracking-wider mt-1.5">
+            <Command.Group heading="Actions" className={GROUP}>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/projects"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] transition-colors"
+                className={ROW}
               >
-                <Plus className="w-3.5 h-3.5 text-[#5E6AD2]" />
-                <span>Create New LaTeX Project</span>
-                <span className="ml-auto text-[10px] text-[#5E6AD2] font-mono font-medium">New</span>
+                <Plus className="size-4 text-ob-muted" />
+                <span>New LaTeX project</span>
               </Command.Item>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/projects"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#8A8F98] hover:text-[#F7F8F8] transition-colors"
+                className={ROW}
               >
-                <FolderGit2 className="w-3.5 h-3.5 text-[#5E6AD2]" />
-                <span>Manage Workspace Projects</span>
-                <span className="ml-auto text-[10px] text-[#8A8F98] font-mono">View All</span>
+                <FolderGit2 className="size-4 text-ob-muted" />
+                <span>Manage projects</span>
               </Command.Item>
             </Command.Group>
 
-            <Command.Group heading="Account" className="px-2 py-1 text-[10px] font-medium text-[#8A8F98] uppercase tracking-wider mt-1.5">
+            <Command.Group heading="Account" className={GROUP}>
               <Command.Item
                 onSelect={() => handleSelect(() => router.push("/login"))}
-                className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs cursor-pointer hover:bg-[#141517] text-[#EB5757] transition-colors"
+                className={ROW}
               >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Sign Out</span>
+                <LogOut className="size-4 text-ob-muted" />
+                <span>Sign out</span>
               </Command.Item>
             </Command.Group>
           </Command.List>
 
-          <div className="px-3.5 py-2 border-t border-[#23252A] bg-[#08090A] flex items-center justify-between text-xs text-[#8A8F98]">
-            <div className="flex items-center gap-1.5">
-              <Zap className="w-3 h-3 text-[#5E6AD2]" />
-              <span className="text-[11px]">Command Palette</span>
-            </div>
-            <div className="flex items-center gap-2.5 font-mono text-[10px] text-[#62666D]">
-              <span>↑↓ Navigate</span>
-              <span>↵ Select</span>
-            </div>
+          <div className="flex items-center justify-end gap-3 border-t border-ob-line px-4 py-2 font-mono text-xs text-ob-muted">
+            <span>↑↓ Navigate</span>
+            <span>↵ Select</span>
           </div>
         </Command>
       </div>

@@ -18,7 +18,7 @@ const features: FeatureRow[] = [
   {
     index: "02",
     title: "AI PDF TO LATEX CONVERTER",
-    tags: ["STATIC PDF TO CODE", "EQUATION OCR", "EMBEDDED FIGURES", "AUTO-STRUCTURE"],
+    tags: ["STATIC PDF TO CODE", "EQUATION OCR", "EMBEDDED FIGURES", "CLOSEST-MATCH LAYOUT"],
   },
   {
     index: "03",

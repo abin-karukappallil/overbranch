@@ -18,7 +18,8 @@ import os
 import random
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence
 
 from cancellation import CancellationToken
 from providers.multimodal import image_part, text_part
@@ -35,6 +36,15 @@ _pool: Optional[ThreadPoolExecutor] = None
 
 class LLMCallFailed(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class LLMReply:
+    """A completion plus what the gateway actually did with the images (see complete_ex)."""
+    text: str
+    images_sent: int        # images that went out on the attempt that answered (0 on a text-only attempt)
+    images_dropped: bool    # the provider answered from a text-only copy of an image call
+    model: str
 
 
 def model_name() -> str:
@@ -88,6 +98,18 @@ def _chat(messages: List[Dict[str, Any]], max_tokens: int, token: CancellationTo
     return str(resp.get("content") or "")
 
 
+def _chat_ex(messages: List[Dict[str, Any]], max_tokens: int, token: CancellationToken) -> Dict[str, Any]:
+    token.check_cancelled()
+    return provider_router.chat(
+        messages=messages,
+        model=DEFAULT_MODEL,
+        temperature=0.0,
+        max_tokens=max_tokens,
+        cancel_token=token,
+        allow_fallback=True,
+    )
+
+
 async def complete(system: str, user: str, image_png: Optional[bytes] = None, *, timeout: float,
                    retries: int, concurrency: int, max_tokens: int = 16384, label: str = "") -> str:
     """
@@ -137,3 +159,56 @@ async def complete(system: str, user: str, image_png: Optional[bytes] = None, *,
         return ""  # the caller decides whether an empty page is worth another try
     raise LLMCallFailed(last_error)
 
+
+
+async def complete_ex(system: str, user: str, images: Sequence[bytes] = (), *, timeout: float,
+                      retries: int, concurrency: int, max_tokens: int = 16384, label: str = "") -> LLMReply:
+    """
+    `complete` for any number of images (sent in order, after the text) that also reports what the
+    gateway did with them: `images_dropped` is True when the provider silently answered from a
+    text-only copy because the endpoint rejects image input, so the caller can tell a reply that
+    saw the page from one that did not. Chain, timeout, concurrency and cancellation behave as in
+    `complete`; an empty final answer comes back as an empty `text`.
+    """
+    slots = _slots_for(concurrency)
+    if provider_router.chain_active():
+        retries = 0  # the router retries across gateways itself (see complete)
+        try:
+            timeout = max(timeout, float(os.getenv("PDF2LATEX_CHAIN_TIMEOUT", "1800")))
+        except ValueError:
+            timeout = max(timeout, 1800.0)
+    attempts = retries + 1
+    last_error = "no attempt made"
+    for attempt in range(attempts):
+        with_images = bool(images) and (attempts == 1 or attempt < attempts - 1)
+        user_content: Any = [text_part(user), *(image_part(img) for img in images)] if with_images else user
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
+        token = CancellationToken(f"pdf2latex:{label}:{attempt}")
+        while not slots.acquire(blocking=False):  # polling keeps task cancellation safe
+            await asyncio.sleep(0.2)
+        try:
+            fut = asyncio.get_running_loop().run_in_executor(
+                _pool_for(concurrency), _chat_ex, messages, max_tokens, token)
+            resp = await asyncio.wait_for(fut, timeout)
+            text = str(resp.get("content") or "")
+            if text.strip():
+                return LLMReply(text=text, images_sent=len(images) if with_images else 0,
+                                images_dropped=bool(with_images and resp.get("images_dropped")),
+                                model=str(resp.get("model_used") or DEFAULT_MODEL))
+            last_error = "empty response"
+        except asyncio.TimeoutError:
+            token.cancel("page timeout")
+            last_error = f"timed out after {timeout:.0f}s"
+        except asyncio.CancelledError:
+            token.cancel("conversion cancelled")
+            raise
+        except Exception as e:  # noqa: BLE001 — provider errors vary by gateway
+            last_error = str(e)[:300]
+        finally:
+            slots.release()
+        logger.warning(f"LLM call {label} attempt {attempt + 1}/{attempts} failed: {last_error}")
+        if attempt < attempts - 1:
+            await asyncio.sleep(min(20.0, 2.0 ** attempt + random.uniform(0, 1)))
+    if last_error == "empty response":
+        return LLMReply(text="", images_sent=0, images_dropped=False, model=DEFAULT_MODEL)
+    raise LLMCallFailed(last_error)

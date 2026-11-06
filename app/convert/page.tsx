@@ -135,7 +135,7 @@ export default function ConvertPage() {
           </h1>
 
           <p className="text-xs sm:text-sm text-zinc-400 max-w-xl mx-auto font-sans leading-relaxed">
-            Your PDF becomes an ordinary, editable LaTeX document — headings, paragraphs, lists, tables and images in reading order — keeping the fonts, colours, sizes and assets. It is compiled and checked for text coverage and style fidelity. (An exact, pixel-faithful layout mode is also available.)
+            Your PDF is rebuilt as editable LaTeX that follows the original layout as closely as possible — headings, paragraphs, lists, tables, math and images, with the fonts, colours and sizes kept where they can be. Every page is compiled and compared with the original, and the report shows the match score per page. Closest match, not pixel-exact. (A coordinate-positioned layout mode, harder to edit, is also available.)
           </p>
 
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-[11px] font-mono text-zinc-400">
@@ -247,7 +247,7 @@ export default function ConvertPage() {
               <span>Measured Fidelity</span>
             </div>
             <p className="text-[11px] text-zinc-400 font-sans leading-relaxed">
-              The output is checked against the source for text coverage and for font, size and colour fidelity — not prompt promises. The report shows what matched; results are best-effort, not guaranteed identical.
+              Each page is compiled and measured against the source (visual match and text coverage) — not prompt promises. The report shows the score per page and flags low-confidence pages; the result is the closest match, not a pixel-exact copy.
             </p>
           </div>
 

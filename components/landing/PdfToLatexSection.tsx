@@ -48,7 +48,7 @@ export function LandingPdfToLatex({ initialIsAuthenticated }: LandingPdfToLatexP
               </span>
             </h2>
             <p className="font-sans text-base sm:text-xl text-zinc-300 leading-relaxed pt-2">
-              Stop re-typing papers by hand. Upload any paper, thesis, or problem set and get a clean, compilable project directory with native math environments and extracted assets.
+              Stop re-typing papers by hand. Upload any paper, thesis, or problem set and get a compilable, editable project directory with native math environments and extracted assets. The layout follows the original as closely as possible: closest match, not pixel-exact.
             </p>
             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-xs font-mono text-zinc-400 flex items-center gap-2 flex-wrap">
               <span className="text-[#00CC68] font-bold">ℹ️ Beta Notice:</span>
@@ -107,7 +107,7 @@ export function LandingPdfToLatex({ initialIsAuthenticated }: LandingPdfToLatexP
                   <div className="text-[#00CC68]">[✓] Extracted 6 raw figure streams to assets/</div>
                   <div className="text-[#00CC68]">[✓] Synthesized LaTeX equations (align* / equation)</div>
                   <div className="text-[#00CC68]">[✓] Extracted BibTeX bibliography keys</div>
-                  <div className="text-white font-bold">[✓] Verified zero-error compilation with pdflatex</div>
+                  <div className="text-white font-bold">[✓] Compiled and compared page-by-page with the original</div>
                 </div>
               </div>
             </div>
@@ -243,13 +243,13 @@ export function LandingPdfToLatex({ initialIsAuthenticated }: LandingPdfToLatexP
           <div className="p-6 bg-zinc-950 border-2 border-white/20 rounded-2xl space-y-3">
             <div className="font-mono text-xs font-bold text-[#00CC68] uppercase flex items-center gap-2">
               <HardDrive className="w-4 h-4" />
-              <span>LOSSLESS FIGURE EXTRACTION</span>
+              <span>FIGURE EXTRACTION</span>
             </div>
             <h3 className="font-archivo font-bold uppercase text-lg text-white">
               Raw Figure Streams to assets/
             </h3>
             <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
-              Charts, plots, and diagrams are uncompressed directly from the PDF stream into your project folder. Every <code className="text-zinc-200">\includegraphics</code> call resolves out of the box.
+              Embedded images are copied out of the PDF into your project folder, and vector figures are cropped as PDF snippets. Every <code className="text-zinc-200">\includegraphics</code> call points at a file in assets/.
             </p>
           </div>
 
