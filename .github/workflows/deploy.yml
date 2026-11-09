@@ -9,6 +9,7 @@ on:
 jobs:
   deploy:
     name: Deploy OverBranch on AWS EC2
+    if: github.repository == 'overbranch/overbranch'
     runs-on: ubuntu-latest
 
     steps:

@@ -32,7 +32,7 @@
 
 <div align="center">
 
-[![OverBranch Walkthrough](./public/demo.gif)](./public/demo.mp4)
+[![OverBranch Walkthrough](./public/demo.gif)](./public/demo.md)
 
 <p align="center"><sub>Click preview to open the high-definition video with audio (<code>public/demo.mp4</code>).</sub></p>
 
