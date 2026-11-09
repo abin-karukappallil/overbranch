@@ -1,88 +1,54 @@
-<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="obFaviconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#10b981" />
-      <stop offset="60%" stop-color="#059669" />
-      <stop offset="100%" stop-color="#d97706" />
-    </linearGradient>
-  </defs>
+<div align="center">
 
-  <!-- Dark rounded container background for high contrast across browser themes -->
-  <rect width="36" height="36" rx="8" fill="#090d16" />
+<img width="80" height="80" alt="OverBranch Logo" src="https://github.com/user-attachments/assets/f59b468a-5687-4778-b7a0-94a956b18e28" />
 
-  <!-- Main Document Body Contour -->
-  <path
-    d="M10 6C10 4.89543 10.8954 4 12 4H22L27 9V30C27 31.1046 26.1046 32 25 32H12C10.8954 32 10 31.1046 10 30V6Z"
-    stroke="url(#obFaviconGrad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+# OverBranch
 
-  <!-- Folded Corner -->
-  <path
-    d="M22 4V9H27"
-    stroke="url(#obFaviconGrad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-  />
+**The Open-Source, Self-Hosted Agentic LaTeX Studio**
 
-  <!-- Central Branching Nodes (OverBranch) -->
-  <path
-    d="M18 27V15"
-    stroke="url(#obFaviconGrad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-  />
-  <path
-    d="M18 22L13 17"
-    stroke="url(#obFaviconGrad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-  />
-  <path
-    d="M18 22L23 17"
-    stroke="url(#obFaviconGrad)"
-    stroke-width="2.2"
-    stroke-linecap="round"
-  />
+*Lightning-fast local TeX compilation, autonomous AI reasoning & edits, reverse PDF-to-LaTeX engineering, and real-time multi-user collaboration.*
 
-  <!-- Node Dots -->
-  <circle cx="18" cy="27" r="2" fill="url(#obFaviconGrad)" />
-  <circle cx="13" cy="17" r="2" fill="url(#obFaviconGrad)" />
-  <circle cx="23" cy="17" r="2" fill="url(#obFaviconGrad)" />
-  <circle cx="18" cy="15" r="2" fill="url(#obFaviconGrad)" />
-</svg>
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-10b981.svg" alt="MIT License" /></a>
+  <a href="https://nextjs.org/"><img src="https://img.shields.io/badge/Next.js-15-090d16?logo=nextdotjs&logoColor=white" alt="Next.js 15" /></a>
+  <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" /></a>
+  <a href="docker-compose.yml"><img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker Ready" /></a>
+  <a href="https://github.com/abin-karukappallil/overbranch/pulls"><img src="https://img.shields.io/badge/PRs-welcome-10b981.svg" alt="PRs Welcome" /></a>
+</p>
 
-<img width="36" height="36" alt="icon" src="https://github.com/user-attachments/assets/f59b468a-5687-4778-b7a0-94a956b18e28" />
+<p align="center">
+  <a href="#-demo-walkthrough"><strong>Watch Demo</strong></a> •
+  <a href="#-features"><strong>Features</strong></a> •
+  <a href="#-1-command-docker-deployment"><strong>Quick Start</strong></a> •
+  <a href="#-local-development-setup"><strong>Local Dev</strong></a> •
+  <a href="#-license"><strong>License</strong></a>
+</p>
 
+</div>
 
-# OverBranch — Agentic Latex code editor 
+---
 
-OverBranch is a 100% free and open-source agentic LaTeX code editor — like Antigravity for LaTeX. Built for students and scientific authors, it delivers unlimited, lightning-fast compilation compared to Overleaf, agentic AI assistance to prepare LaTeX documents, and real-time collaboration with unlimited co-authors per project.
-
-
+## 🎬 Demo Walkthrough
 
 https://github.com/user-attachments/assets/a6e810dc-1a75-4633-a287-b356854843de
 
-
-
----
-
-##  Features
-
-- **Instant TeX & Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
-- **Built-in AI Copilot Router**: Instant Agentic LaTeX edits powered by groq free models(can use own api key or default).
-- **Real-time Collaborative Editing**: Seamless multi-user co-authoring with cursor presence and automatic document saving.
-- **PDF → LaTeX Import**: Upload a PDF (dashboard, editor, `/convert` or the AI copilot) and get compilable LaTeX. Text, sizes, exact colors, positions, images and rules are extracted from the PDF itself; each page is then written by the same model as the AI copilot, compiled, repaired if needed and compared with the original. The report shows per-page similarity and which pages fell back to a positioned layout. Results are best-effort, not guaranteed identical.
-- **Asset Manager & Inline Preview**: Upload images and assets with one-click LaTeX code copying and instant image preview modal.
-- **Fully Responsive**: Custom layout collapsed drawers for mobile & tablet authoring.
-- **100% Self-Contained Docker Container**: Zero external cloud dependency. Runs on any Azure VM, Linux server, Windows, or Mac.
+> **38s Overview**: Zero-delay PDF compilation • Agentic AI copilot editing & auto-repair • Live multi-cursor collaboration • Instant asset management and inline previews.
 
 ---
 
-## 1-Command Universal Docker Deployment
+## ✨ Features
+
+- **⚡ Instant TeX & Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
+- **🤖 Built-in AI Copilot Router**: Autonomous LaTeX edits, document generation, and syntax repairs powered by Groq and custom model endpoints.
+- **👥 Real-time Collaborative Editing**: Seamless multi-user co-authoring with live cursor presence and automatic document saving.
+- **📄 PDF → LaTeX Reverse Importer**: Upload an existing PDF to extract text, fonts, colors, layouts, and figures into compilable LaTeX with per-page fidelity scoring.
+- **🖼️ Asset Manager & Inline Preview**: Upload images and figures with one-click LaTeX snippet insertion and instant modal previews.
+- **📱 Fully Responsive Design**: Collapsible drawer workspace designed for seamless authoring across desktop, tablet, and mobile.
+- **🐳 100% Self-Contained Docker Container**: Zero external cloud dependency. Deploy locally or on any cloud VM in seconds.
+
+---
+
+## 🚀 1-Command Docker Deployment
 
 Deploy OverBranch anywhere in seconds with Docker:
 
@@ -93,8 +59,10 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-- **Web Workspace**: `http://localhost:3000`
-- **FastAPI Engine**: `http://localhost:8000`
+| Service | URL |
+| :--- | :--- |
+| **Web Workspace** | `http://localhost:3000` |
+| **FastAPI Engine** | `http://localhost:8000` |
 
 ---
 
@@ -115,8 +83,12 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The PDF importer needs pdfLaTeX (TeX Live with `texlive-latex-extra`, `texlive-pictures`, `texlive-fonts-recommended`) and `pdftoppm` (poppler). Debian/Ubuntu: `texlive-latex-extra texlive-pictures texlive-fonts-recommended poppler-utils`; Arch: `texlive-latexextra texlive-pictures poppler`. It uses the AI copilot's LLM (`GEMINI_WEB2API_*`); there are no separate LLM settings.
+The PDF importer requires pdfLaTeX (TeX Live with `texlive-latex-extra`, `texlive-pictures`, `texlive-fonts-recommended`) and `pdftoppm` (poppler).
 
+- **Debian / Ubuntu**: `sudo apt install texlive-latex-extra texlive-pictures texlive-fonts-recommended poppler-utils`
+- **Arch Linux**: `sudo pacman -S texlive-latexextra texlive-pictures poppler`
+
+To run backend tests:
 ```bash
 cd backend && pytest tests/test_pdf2latex_*.py -v   # integration test is skipped without a TeX engine
 ```
@@ -125,7 +97,6 @@ cd backend && pytest tests/test_pdf2latex_*.py -v   # integration test is skippe
 
 ## 📜 License
 
-Licensed under the [MIT License](LICENSE).
+Distributed under the [MIT License](LICENSE).
 
----
 
