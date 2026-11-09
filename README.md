@@ -17,40 +17,46 @@
 </p>
 
 <p align="center">
-  <a href="#-demo-walkthrough"><strong>Watch Demo</strong></a> •
-  <a href="#-features"><strong>Features</strong></a> •
-  <a href="#-1-command-docker-deployment"><strong>Quick Start</strong></a> •
-  <a href="#-local-development-setup"><strong>Local Dev</strong></a> •
-  <a href="#-license"><strong>License</strong></a>
+  <a href="#overview">Overview</a> &bull;
+  <a href="#features">Features</a> &bull;
+  <a href="#docker-deployment">Docker Deployment</a> &bull;
+  <a href="#local-development">Local Development</a> &bull;
+  <a href="#license">License</a>
 </p>
 
 </div>
 
 ---
 
-## 🎬 Demo Walkthrough
+## Overview
 
-https://github.com/user-attachments/assets/a6e810dc-1a75-4633-a287-b356854843de
+<div align="center">
 
-> **38s Overview**: Zero-delay PDF compilation • Agentic AI copilot editing & auto-repair • Live multi-cursor collaboration • Instant asset management and inline previews.
+[![OverBranch Walkthrough](./public/demo.gif)](./public/demo.mp4)
 
----
+<p align="center"><sub>Click preview to open the high-definition video with audio (<code>public/demo.mp4</code>).</sub></p>
 
-## ✨ Features
+</div>
 
-- **⚡ Instant TeX & Compilation**: Real-time PDF compilation via `pdflatex` & `latexmk` with instant fallback renderer.
-- **🤖 Built-in AI Copilot Router**: Autonomous LaTeX edits, document generation, and syntax repairs powered by Groq and custom model endpoints.
-- **👥 Real-time Collaborative Editing**: Seamless multi-user co-authoring with live cursor presence and automatic document saving.
-- **📄 PDF → LaTeX Reverse Importer**: Upload an existing PDF to extract text, fonts, colors, layouts, and figures into compilable LaTeX with per-page fidelity scoring.
-- **🖼️ Asset Manager & Inline Preview**: Upload images and figures with one-click LaTeX snippet insertion and instant modal previews.
-- **📱 Fully Responsive Design**: Collapsible drawer workspace designed for seamless authoring across desktop, tablet, and mobile.
-- **🐳 100% Self-Contained Docker Container**: Zero external cloud dependency. Deploy locally or on any cloud VM in seconds.
+OverBranch provides unlimited local TeX compilation without cloud queue restrictions, an integrated agentic AI copilot for document generation and syntax repair, and collaborative real-time editing with live multi-cursor presence.
 
 ---
 
-## 🚀 1-Command Docker Deployment
+## Features
 
-Deploy OverBranch anywhere in seconds with Docker:
+- **Instant TeX Compilation**: Real-time PDF compilation via `pdflatex` and `latexmk` with an instant fallback renderer.
+- **Built-in AI Copilot**: Autonomous LaTeX edits, document generation, and syntax repairs powered by Groq and custom model endpoints.
+- **Real-Time Collaboration**: Seamless multi-user co-authoring with live cursor presence and automatic document synchronization.
+- **PDF to LaTeX Reverse Importer**: Decompiles existing PDFs into clean, compilable LaTeX—extracting text, fonts, colors, layout structures, and figures with per-page fidelity scoring.
+- **Asset Manager**: Asset uploads and management with an inline preview modal and copyable LaTeX snippets.
+- **Responsive Workspace**: Adaptive collapsible layout optimized for desktop, tablet, and mobile authoring.
+- **Self-Contained Container**: Zero external cloud dependency. Fully containerized and deployable to standard Linux, macOS, or Windows environments.
+
+---
+
+## Docker Deployment
+
+Deploy OverBranch locally or on a server using Docker Compose:
 
 ```bash
 git clone https://github.com/abin-karukappallil/overbranch.git
@@ -59,14 +65,14 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-| Service | URL |
+| Service | Endpoint |
 | :--- | :--- |
 | **Web Workspace** | `http://localhost:3000` |
 | **FastAPI Engine** | `http://localhost:8000` |
 
 ---
 
-## 💻 Local Development Setup
+## Local Development
 
 ### 1. Frontend (Next.js)
 ```bash
@@ -83,20 +89,18 @@ pip install -r requirements.txt
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The PDF importer requires pdfLaTeX (TeX Live with `texlive-latex-extra`, `texlive-pictures`, `texlive-fonts-recommended`) and `pdftoppm` (poppler).
+The PDF importer requires TeX Live with `pdflatex` and `pdftoppm` (`poppler-utils`):
 
 - **Debian / Ubuntu**: `sudo apt install texlive-latex-extra texlive-pictures texlive-fonts-recommended poppler-utils`
 - **Arch Linux**: `sudo pacman -S texlive-latexextra texlive-pictures poppler`
 
 To run backend tests:
 ```bash
-cd backend && pytest tests/test_pdf2latex_*.py -v   # integration test is skipped without a TeX engine
+cd backend && pytest tests/test_pdf2latex_*.py -v
 ```
 
 ---
 
-## 📜 License
+## License
 
 Distributed under the [MIT License](LICENSE).
-
-
