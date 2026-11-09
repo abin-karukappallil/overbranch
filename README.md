@@ -62,6 +62,12 @@
 
 OverBranch is a 100% free and open-source agentic LaTeX code editor — like Antigravity for LaTeX. Built for students and scientific authors, it delivers unlimited, lightning-fast compilation compared to Overleaf, agentic AI assistance to prepare LaTeX documents, and real-time collaboration with unlimited co-authors per project.
 
+
+
+https://github.com/user-attachments/assets/a6e810dc-1a75-4633-a287-b356854843de
+
+
+
 ---
 
 ##  Features
@@ -123,8 +129,3 @@ Licensed under the [MIT License](LICENSE).
 
 ---
 
-## 🎥 Demo Video
-
-[![OverBranch Demo](https://img.youtube.com/vi/9-loT5Uqw-M/maxresdefault.jpg)](https://youtu.be/9-loT5Uqw-M)
-
-**▶ Watch the full demo:** https://youtu.be/9-loT5Uqw-M
