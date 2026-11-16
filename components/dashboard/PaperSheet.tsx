@@ -250,12 +250,43 @@ const CORNERS = [
   { className: "bottom-0 right-0", d: "M1.5 12V5M12 1.5H5" },
 ];
 
+const PREVIEW_CACHE_NAME = "ob-paper-previews-v1";
+// In-memory instant cache (0ms lookup, survives in-app route transitions)
+const previewMemoryCache = new Map<string, string>();
+const previewLandscapeCache = new Map<string, boolean>();
+
+/** Speculatively pre-warm a project preview into the browser & memory cache */
+export function preloadPaperPreview(
+  projectId?: string,
+  updatedAt?: string | number | Date | null,
+  template?: string | null
+) {
+  if (typeof window === "undefined" || !projectId) return;
+  const targetUrl = `/api/projects/preview?projectId=${encodeURIComponent(projectId)}${
+    updatedAt ? `&v=${encodeURIComponent(String(updatedAt))}` : ""
+  }${template ? `&template=${encodeURIComponent(template)}` : ""}`;
+  const key = `${projectId}:${updatedAt || ""}`;
+  if (previewMemoryCache.has(key)) return;
+
+  const img = new Image();
+  img.src = targetUrl;
+  img.onload = () => {
+    previewMemoryCache.set(key, targetUrl);
+    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > img.naturalHeight * 1.15) {
+      previewLandscapeCache.set(key, true);
+    }
+  };
+}
+
 export function PaperSheet({
   template,
   variant,
   seed = "",
   size = "md",
   className = "",
+  projectId,
+  previewUrl,
+  updatedAt,
 }: {
   template?: string | null;
   /** Overrides `template`, for places with no project behind them. */
@@ -264,17 +295,141 @@ export function PaperSheet({
   seed?: string;
   size?: PaperSize;
   className?: string;
+  projectId?: string;
+  previewUrl?: string;
+  updatedAt?: string | number | Date | null;
 }) {
+  const pid = projectId || (seed && seed.length > 8 && seed !== "pdf" ? seed : undefined);
   const kind = variant ?? paperVariantFor(template);
   const n = hash(seed);
-  const landscape = kind === "beamer";
+  const cacheKey = pid ? `${pid}:${updatedAt || ""}` : "";
+
+  const cachedInMemory = cacheKey ? previewMemoryCache.get(cacheKey) : null;
+  const cachedLandscape = cacheKey ? previewLandscapeCache.get(cacheKey) || false : false;
+
+  const [imageLandscape, setImageLandscape] = React.useState<boolean>(cachedLandscape);
+  const landscape = kind === "beamer" || imageLandscape;
   const width = landscape ? LANDSCAPE_WIDTH[size] : PORTRAIT_WIDTH[size];
   const viewBox = landscape ? "0 0 210 132" : "0 0 148 210";
 
+  const targetUrl =
+    previewUrl ||
+    (pid
+      ? `/api/projects/preview?projectId=${encodeURIComponent(pid)}${
+          updatedAt ? `&v=${encodeURIComponent(String(updatedAt))}` : ""
+        }${template ? `&template=${encodeURIComponent(template)}` : ""}`
+      : null);
+
+  const [imageSrc, setImageSrc] = React.useState<string | null>(cachedInMemory || targetUrl);
+  const [imageState, setImageState] = React.useState<"loading" | "loaded" | "error">(() => {
+    if (cachedInMemory) return "loaded";
+    return targetUrl ? "loading" : "error";
+  });
+
+  // User-side CacheStorage check & background revalidation
+  React.useEffect(() => {
+    if (!targetUrl || !cacheKey) {
+      if (!targetUrl) setImageState("error");
+      return;
+    }
+
+    if (previewMemoryCache.has(cacheKey)) {
+      setImageSrc(previewMemoryCache.get(cacheKey)!);
+      setImageState("loaded");
+      return;
+    }
+
+    let isMounted = true;
+
+    // Check persistent CacheStorage first (~1-2ms from local browser storage)
+    if (typeof window !== "undefined" && "caches" in window) {
+      caches.open(PREVIEW_CACHE_NAME).then(async (cache) => {
+        try {
+          const match = await cache.match(targetUrl);
+          if (match && match.ok && isMounted) {
+            const blob = await match.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            previewMemoryCache.set(cacheKey, blobUrl);
+            setImageSrc(blobUrl);
+            setImageState("loaded");
+            return;
+          }
+        } catch {}
+
+        // Fetch from network and store in user-side cache
+        try {
+          const res = await fetch(targetUrl, { cache: "default" });
+          if (!res.ok) {
+            if (isMounted) setImageState("error");
+            return;
+          }
+          const isFallback = res.headers.get("x-preview-fallback") === "true";
+          const blob = await res.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          if (isMounted) {
+            previewMemoryCache.set(cacheKey, blobUrl);
+            setImageSrc(blobUrl);
+            setImageState("loaded");
+          }
+          if (!isFallback) {
+            const cacheCopy = new Response(blob, {
+              headers: { "Content-Type": res.headers.get("Content-Type") || "image/webp" },
+            });
+            await cache.put(targetUrl, cacheCopy);
+          } else {
+            // Re-check in background once TeX compiler finishes
+            setTimeout(async () => {
+              if (!isMounted) return;
+              try {
+                const refreshed = await fetch(targetUrl, { cache: "reload" });
+                if (refreshed.ok && refreshed.headers.get("x-preview-fallback") !== "true") {
+                  const rBlob = await refreshed.blob();
+                  const rUrl = URL.createObjectURL(rBlob);
+                  previewMemoryCache.set(cacheKey, rUrl);
+                  if (isMounted) {
+                    setImageSrc(rUrl);
+                  }
+                  await cache.put(targetUrl, new Response(rBlob, { headers: refreshed.headers }));
+                }
+              } catch {}
+            }, 3500);
+          }
+        } catch {
+          if (isMounted) setImageState("error");
+        }
+      });
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [targetUrl, cacheKey]);
+
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    setImageState("loaded");
+    if (cacheKey && imageSrc) {
+      previewMemoryCache.set(cacheKey, imageSrc);
+    }
+    const img = e.currentTarget;
+    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > img.naturalHeight * 1.15) {
+      setImageLandscape(true);
+      if (cacheKey) previewLandscapeCache.set(cacheKey, true);
+    }
+  };
+
   return (
-    <div aria-hidden="true" className={`relative shrink-0 p-3 text-ob-muted ${className}`} style={{ width: width + 24 }}>
+    <div
+      aria-hidden="true"
+      className={`relative shrink-0 p-3 text-ob-muted transition-all duration-300 ${className}`}
+      style={{ width: width + 24 }}
+    >
       {CORNERS.map((c) => (
-        <svg key={c.className} viewBox="0 0 12 12" className={`absolute size-3 opacity-70 ${c.className}`} fill="none">
+        <svg
+          key={c.className}
+          viewBox="0 0 12 12"
+          className={`absolute size-3 opacity-70 ${c.className}`}
+          fill="none"
+        >
           <path d={c.d} stroke="currentColor" strokeWidth={1} shapeRendering="crispEdges" />
         </svg>
       ))}
@@ -285,14 +440,41 @@ export function PaperSheet({
             <div className="ob-paper-under absolute inset-0 translate-x-0.5 translate-y-0.5" />
           </>
         )}
-        <svg viewBox={viewBox} className="ob-paper relative block h-auto w-full">
-          {kind === "article" && <Article n={n} />}
-          {kind === "ieee" && <Ieee n={n} />}
-          {kind === "beamer" && <Beamer n={n} />}
-          {kind === "thesis" && <Thesis n={n} />}
-          {kind === "assignment" && <Assignment n={n} />}
-          {kind === "report" && <Report n={n} />}
-        </svg>
+        <div
+          className="ob-paper relative block w-full overflow-hidden border border-ob-line/30 shadow-sm"
+          style={{ aspectRatio: landscape ? "210 / 132" : "148 / 210" }}
+        >
+          {imageSrc && imageState !== "error" && (
+            <img
+              src={imageSrc}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              className={`absolute inset-0 h-full w-full object-contain bg-white transition-opacity duration-200 ${
+                imageState === "loaded" ? "opacity-100" : "opacity-0"
+              }`}
+              onLoad={handleImageLoad}
+              onError={() => setImageState("error")}
+            />
+          )}
+
+          {/* Skeleton sketch: displayed underneath while loading, or as fallback if error / no project */}
+          {imageState !== "loaded" && (
+            <svg
+              viewBox={viewBox}
+              className={`relative block h-auto w-full transition-opacity duration-200 ${
+                imageState === "loading" ? "opacity-40 animate-pulse" : "opacity-100"
+              }`}
+            >
+              {kind === "article" && <Article n={n} />}
+              {kind === "ieee" && <Ieee n={n} />}
+              {kind === "beamer" && <Beamer n={n} />}
+              {kind === "thesis" && <Thesis n={n} />}
+              {kind === "assignment" && <Assignment n={n} />}
+              {kind === "report" && <Report n={n} />}
+            </svg>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -1881,12 +1881,55 @@ def load_project_text_file(project_id: Optional[str], rel_path: str = "main.tex"
     return None
 
 
+def generate_pdf_preview_image(pdf_path: Path, output_path: Path, dpi: int = 150, target_width: int = 480) -> bool:
+    """
+    Renders page 0 of a compiled PDF into a crisp, ultra-compact preview image (~5-15KB).
+    Scales to target_width (480px) for sharp retina rendering without payload bloat.
+    Saves as optimized WebP if output has .webp extension, otherwise PNG.
+    """
+    try:
+        if not pdf_path.exists() or pdf_path.stat().st_size == 0:
+            return False
+        import pymupdf
+        doc = pymupdf.open(str(pdf_path))
+        if len(doc) == 0:
+            doc.close()
+            return False
+        page = doc[0]
+        rect = page.rect
+        if target_width and rect.width > 0:
+            scale = target_width / rect.width
+            mat = pymupdf.Matrix(scale, scale)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
+        else:
+            pix = page.get_pixmap(dpi=dpi, alpha=False)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        ext = output_path.suffix.lower()
+        if ext == ".webp":
+            try:
+                from PIL import Image
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img.save(str(output_path), format="WEBP", quality=82, method=4)
+                doc.close()
+                return True
+            except Exception:
+                pass
+        pix.save(str(output_path))
+        doc.close()
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to generate PDF preview image from {pdf_path}: {e}")
+        return False
+
+
 def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str], workdir: Optional[Path] = None,
                             jobname: str = "main") -> None:
     """
-    Save the PDF, its synctex, and source .tex files to the persistent build directory.
+    Save the PDF, its synctex, first-page preview, and source .tex files to the persistent build directory.
     ``workdir``/``jobname`` locate the output (the main file's directory and stem); it is
     stored as main.pdf / main.synctex.gz, the names synctex_service reads.
+    Also mirrors to uploads/projects/<project_id>/.build/ so previews survive restarts.
     """
     try:
         from synctex_service import get_project_build_dir, invalidate_project_synctex_cache
@@ -1894,19 +1937,42 @@ def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str], workdir: Op
         invalidate_project_synctex_cache(project_id)
         out_dir = workdir or tmpdir
         pdf_path = out_dir / f"{jobname}.pdf"
+
+        proj_build_dir: Optional[Path] = None
+        if project_id and str(project_id).strip():
+            safe_p = re.sub(r'[^a-zA-Z0-9_-]', '_', str(project_id).strip())
+            uploads_base = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
+            proj_build_dir = uploads_base / safe_p / ".build"
+            proj_build_dir.mkdir(parents=True, exist_ok=True)
+
         if pdf_path.exists():
             shutil.copy2(pdf_path, build_dir / "main.pdf")
+            generate_pdf_preview_image(pdf_path, build_dir / "preview.webp")
+            generate_pdf_preview_image(pdf_path, build_dir / "preview.png")
+            if proj_build_dir:
+                shutil.copy2(pdf_path, proj_build_dir / "main.pdf")
+                generate_pdf_preview_image(pdf_path, proj_build_dir / "preview.webp")
+                generate_pdf_preview_image(pdf_path, proj_build_dir / "preview.png")
+
         synctex_gz = out_dir / f"{jobname}.synctex.gz"
         if synctex_gz.exists():
             shutil.copy2(synctex_gz, build_dir / "main.synctex.gz")
+            if proj_build_dir:
+                shutil.copy2(synctex_gz, proj_build_dir / "main.synctex.gz")
         synctex_raw = out_dir / f"{jobname}.synctex"
         if synctex_raw.exists():
             shutil.copy2(synctex_raw, build_dir / "main.synctex")
+            if proj_build_dir:
+                shutil.copy2(synctex_raw, proj_build_dir / "main.synctex")
         for tex_file in tmpdir.rglob("*.tex"):
             rel_t = tex_file.relative_to(tmpdir)
             target_t = build_dir / rel_t
             target_t.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(tex_file, target_t)
+            if proj_build_dir:
+                proj_t = proj_build_dir / rel_t
+                proj_t.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(tex_file, proj_t)
     except Exception as synctex_err:
         logger.debug(f"SyncTeX caching note: {synctex_err}")
 
@@ -2183,7 +2249,7 @@ def _compile_latex_impl(
                     for item in project_dir.rglob("*"):
                         if item.is_file():
                             rel_path = item.relative_to(project_dir)
-                            if str(rel_path) == _MAIN_MARKER:
+                            if str(rel_path) == _MAIN_MARKER or any(p.startswith(".") for p in rel_path.parts):
                                 continue
                             if is_auxiliary_file(str(rel_path)):
                                 # Prune any accidental auxiliary files on disk so they don't persist

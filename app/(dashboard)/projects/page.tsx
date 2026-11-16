@@ -18,7 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PaperSheet } from "@/components/dashboard/PaperSheet";
+import { PaperSheet, preloadPaperPreview } from "@/components/dashboard/PaperSheet";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -74,11 +74,20 @@ function ProjectCard({ project, children }: { project: any; children: React.Reac
     <article className="group relative flex flex-row overflow-hidden rounded-xl border border-ob-line bg-ob-card transition-colors hover:border-ob-text/15 sm:flex-col">
       <div className="flex w-28 shrink-0 items-center justify-center border-r border-ob-line bg-ob-deep py-3 sm:h-48 sm:w-auto sm:border-r-0 sm:border-b sm:py-0">
         <PaperSheet
+          projectId={project.id}
+          updatedAt={project.updatedAt}
           template={project.template}
           seed={project.id}
           className="max-sm:hidden transition-transform duration-200 group-hover:-translate-y-0.5"
         />
-        <PaperSheet template={project.template} seed={project.id} size="sm" className="sm:hidden" />
+        <PaperSheet
+          projectId={project.id}
+          updatedAt={project.updatedAt}
+          template={project.template}
+          seed={project.id}
+          size="sm"
+          className="sm:hidden"
+        />
       </div>
       <div className="flex min-w-0 flex-1 flex-col p-4">
         <h3 className="line-clamp-2 text-[15px] leading-[22px] font-medium text-ob-text">
@@ -136,6 +145,14 @@ export default function ProjectsPage() {
       staleTime: 60 * 1000,
     }
   );
+
+  useEffect(() => {
+    if (Array.isArray(dbProjects)) {
+      for (const p of dbProjects.slice(0, 16)) {
+        preloadPaperPreview(p.id, p.updatedAt, p.template);
+      }
+    }
+  }, [dbProjects]);
 
   const toggleFavMutation = trpc.projects.toggleFavorite.useMutation({
     onSuccess: () => refetch(),
