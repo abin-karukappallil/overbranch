@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ============================================================
 # OverBranch TeX base image  —  overbranch-texlive:2026.<n>
 # ============================================================
@@ -44,7 +45,6 @@ ARG TEXLIVE_YEAR=2026
 RUN sed -i 's/ main$/ main contrib/' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
     sed -i 's/ main$/ main contrib/' /etc/apt/sources.list 2>/dev/null || true && \
     apt-get update && \
-    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
     \
     # ---- Python (backend + minted's latexminted) ----
