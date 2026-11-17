@@ -42,18 +42,18 @@ jobs:
             export DOCKER_BUILDKIT=1
             export COMPOSE_DOCKER_CLI_BUILD=1
 
-            # Ensure TeX Live base image is built and tagged once so CI/CD does not re-download fonts and TeX packages (~5.5GB)
+            # Ensure TeX Live base image is built and tagged once so CI/CD does not re-download fonts and TeX packages
             TEX_IMAGE="${TEX_BASE:-overbranch-texlive:2026.1}"
             if [ -f .env ]; then
-              ENV_TEX_BASE=$(grep -E '^TEX_BASE=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"' | tr -d '[:space:]')
+              ENV_TEX_BASE=$(grep -E "^TEX_BASE=" .env 2>/dev/null | head -1 | cut -d= -f2- | sed "s/[^a-zA-Z0-9._/:-]//g")
               if [ -n "$ENV_TEX_BASE" ]; then
                 TEX_IMAGE="$ENV_TEX_BASE"
               fi
             fi
 
-            echo "[Deploy] Checking for TeX Live base image ($TEX_IMAGE)..."
+            echo "[Deploy] Checking for TeX Live base image: $TEX_IMAGE"
             if ! docker image inspect "$TEX_IMAGE" >/dev/null 2>&1; then
-              echo "[Deploy] $TEX_IMAGE not found locally. Building TeX Live base image (one-time setup for TeX Live + all font packages)..."
+              echo "[Deploy] $TEX_IMAGE not found locally. Building TeX Live base image..."
               docker build -f docker/texlive.Dockerfile -t "$TEX_IMAGE" .
             else
               echo "[Deploy] Found cached TeX base image: $TEX_IMAGE. Skipping TeX Live and font downloads."
@@ -63,7 +63,7 @@ jobs:
 
             # Persist TEX_BASE in .env so manual docker compose runs also reuse the cached base
             if [ -f .env ]; then
-              if grep -q '^TEX_BASE=' .env; then
+              if grep -q "^TEX_BASE=" .env; then
                 sed -i "s|^TEX_BASE=.*|TEX_BASE=${TEX_IMAGE}|" .env
               else
                 echo "TEX_BASE=${TEX_IMAGE}" >> .env
@@ -73,7 +73,7 @@ jobs:
             echo "[Deploy] Rebuilding and launching containers..."
             docker compose up --build -d
 
-            echo "[Deploy] Pruning old dangling Docker images (tagged TeX base is preserved)..."
+            echo "[Deploy] Pruning old dangling Docker images..."
             docker image prune -f
 
             echo "[Deploy] Verifying health check..."
