@@ -65,7 +65,9 @@ cp .env.example .env
 bash docker/deploy-server.sh
 ```
 
-GitHub Actions runs the same script over SSH on the deployment VM. The first run builds the TeX Live and font image. Later runs reuse the local `overbranch-texlive:2026.1` tag and rebuild the application. No Docker Hub repository or login is required for the OverBranch images.
+Production deploys run in `overbranch/overbranch` on pushes to `main` or when manually dispatched from `main`. Enable GitHub Actions on the organization repository and configure its `EC2_HOST`, `EC2_SSH_KEY`, optional `EC2_USER` and `EC2_PORT`, and `ENV_FILE` if the VM does not already have a `.env`. Keep GitHub Actions disabled on `abin-karukappallil/overbranch` in **Settings → Actions → General**.
+
+The workflow fetches the organization repository's `main` branch on the VM and runs the same script over SSH. The first run builds the TeX Live and font image. Later runs reuse the local `overbranch-texlive:2026.1` tag and rebuild the application. No Docker Hub repository or login is required for the OverBranch images.
 
 | Service | Endpoint |
 | :--- | :--- |

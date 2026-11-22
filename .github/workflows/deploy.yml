@@ -13,7 +13,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy OverBranch on AWS EC2
-    if: github.repository == 'abin-karukappallil/overbranch' || github.repository == 'overbranch/overbranch'
+    if: github.repository == 'overbranch/overbranch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -32,8 +32,15 @@ jobs:
             set -e
             cd ~/overbranch || cd /home/ubuntu/overbranch
 
-            echo "[Deploy] Pulling latest changes from main..."
-            git pull --ff-only origin main
+            echo "[Deploy] Fetching overbranch/overbranch main..."
+            git fetch --no-tags https://github.com/overbranch/overbranch.git refs/heads/main
+            deploy_commit=$(git rev-parse FETCH_HEAD)
+            git merge --ff-only "$deploy_commit"
+            if [ "$(git rev-parse HEAD)" != "$deploy_commit" ]; then
+              echo "[Deploy] The server checkout is ahead of overbranch/overbranch main." >&2
+              exit 1
+            fi
+
             bash docker/deploy-server.sh
 
             echo "[Deploy] Pruning old dangling Docker images..."
