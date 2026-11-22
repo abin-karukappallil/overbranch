@@ -1,6 +1,8 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
+import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 
 export function LandingFooter() {
   return (
@@ -83,6 +85,14 @@ export function LandingFooter() {
             >
               COMMUNITY
             </a>
+          </div>
+          <div>
+            <Link href="/terms" className="px-2 py-1 transition-colors hover:bg-black hover:text-white">
+              Terms and Conditions
+            </Link>
+          </div>
+          <div>
+            <CookieSettingsButton className="cursor-pointer px-2 py-1 uppercase transition-colors hover:bg-black hover:text-white" />
           </div>
         </div>
       </div>

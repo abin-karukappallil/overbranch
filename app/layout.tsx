@@ -129,11 +129,9 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const analyticsId = process.env.NEXT_PUBLIC_GA_ID?.trim() ?? "";
   return (
     <html lang="en" suppressHydrationWarning className="scroll-smooth">
-      <head>
-        <GoogleAnalytics />
-      </head>
       <body
         className={`${archivoBlack.variable} ${spaceMono.variable} ${inter.variable} ${plexSans.variable} ${plexMono.variable} ${newsreader.variable} font-sans antialiased min-h-screen bg-background text-foreground`}
       >
@@ -146,10 +144,11 @@ export default function RootLayout({
           <TRPCProvider>
             <GuestMigrationListener />
             {children}
-            <CookieConsentBanner />
+            <CookieConsentBanner analyticsAvailable={Boolean(analyticsId)} />
             <Toaster position="top-right" richColors />
           </TRPCProvider>
         </ThemeProvider>
+        {analyticsId && <GoogleAnalytics id={analyticsId} />}
       </body>
     </html>
   );

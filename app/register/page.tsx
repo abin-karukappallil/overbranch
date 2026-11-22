@@ -212,6 +212,10 @@ function RegisterContent() {
             </p>
           </div>
 
+          <p className="text-xs leading-5 text-zinc-600">
+            By creating an account, you agree to the <Link href="/terms" target="_blank" className="font-medium text-zinc-900 underline underline-offset-2">Terms and Conditions</Link>.
+          </p>
+
           <Button
             variant="outline"
             onClick={handleGoogleSignIn}

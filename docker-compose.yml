@@ -8,6 +8,7 @@ services:
       # deploy-server.sh overrides TEX_BASE with the host's cached image.
       args:
         TEX_BASE: ${TEX_BASE:-texlive-base}
+        NEXT_PUBLIC_GA_ID: ${NEXT_PUBLIC_GA_ID:-}
     container_name: overbranch
     restart: always
     ports:

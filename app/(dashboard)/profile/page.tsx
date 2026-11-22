@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useEffect } from "react";
+import Link from "next/link";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { CookieSettingsButton } from "@/components/CookieSettingsButton";
 import { authClient } from "@/lib/auth-client";
 import { initialsOf } from "@/lib/initials";
 
@@ -61,6 +63,10 @@ export default function ProfilePage() {
           </div>
         </div>
       </section>
+      <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-ob-text-2">
+        <Link href="/terms" className="hover:text-ob-text hover:underline">Terms and Conditions</Link>
+        <CookieSettingsButton className="cursor-pointer hover:text-ob-text hover:underline" />
+      </div>
     </div>
   );
 }

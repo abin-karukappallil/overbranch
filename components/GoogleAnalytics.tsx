@@ -1,89 +1,95 @@
 "use client";
 
-import { useEffect, Suspense } from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import Script from "next/script";
+import {
+  COOKIE_PREFERENCES_CHANGED,
+  COOKIE_PREFERENCES_KEY,
+  readCookiePreferences,
+} from "@/lib/cookie-preferences";
 
-function GoogleAnalyticsTracker({ id }: { id: string }) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-
-  useEffect(() => {
-    if (!pathname || typeof window === "undefined") return;
-
-    // Check consent preference before sending analytics events
-    try {
-      const consentRaw = localStorage.getItem("overbranch_cookie_consent");
-      if (consentRaw) {
-        const consent = JSON.parse(consentRaw);
-        if (consent.analytics === false || consent.status === "essential") {
-          return; // User opted out of analytics
-        }
-      }
-    } catch {}
-
-    const url = pathname + (searchParams?.toString() ? `?${searchParams.toString()}` : "");
-
-    // Allow Next.js route metadata or page effect to update document.title
-    const timer = setTimeout(() => {
-      if (typeof (window as any).gtag === "function") {
-        (window as any).gtag("event", "page_view", {
-          page_title: document.title,
-          page_location: window.location.href,
-          page_path: url,
-          send_to: id,
-        });
-      }
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [pathname, searchParams, id]);
-
-  return null;
+declare global {
+  interface Window {
+    dataLayer?: unknown[];
+    gtag?: (...args: unknown[]) => void;
+    [key: `ga-disable-${string}`]: boolean | undefined;
+  }
 }
 
-export function GoogleAnalytics({ gaId }: { gaId?: string }) {
-  const id = gaId || process.env.NEXT_PUBLIC_GA_ID || "";
+function pageData(pathname: string) {
+  // Keep project ids, document titles, and query strings out of page views.
+  const path = pathname.startsWith("/editor/") ? "/editor" : pathname;
+  return {
+    page_location: window.location.origin + path,
+    page_path: path,
+    page_title: path === "/" ? "Home" : path,
+    page_referrer: "",
+    ignore_referrer: true,
+  };
+}
 
-  if (!id) return null;
+export function GoogleAnalytics({ id }: { id: string }) {
+  const pathname = usePathname();
+  const [enabled, setEnabled] = useState(false);
+  const configuredId = useRef<string | null>(null);
+  const lastPath = useRef<string | null>(null);
 
-  return (
-    <>
-      <Script
-        strategy="afterInteractive"
-        src={`https://www.googletagmanager.com/gtag/js?id=${id}`}
-      />
-      <Script
-        id="google-analytics"
-        strategy="afterInteractive"
-        dangerouslySetInnerHTML={{
-          __html: `
-            window.dataLayer = window.dataLayer || [];
-            function gtag(){dataLayer.push(arguments);}
-            try {
-              var consentRaw = localStorage.getItem("overbranch_cookie_consent");
-              var isGranted = false;
-              if (consentRaw) {
-                var c = JSON.parse(consentRaw);
-                isGranted = (c.analytics === true || c.status === "accepted");
-              }
-              gtag("consent", "default", {
-                analytics_storage: isGranted ? "granted" : "denied"
-              });
-            } catch(e) {
-              gtag("consent", "default", { analytics_storage: "denied" });
-            }
-            gtag("js", new Date());
-            gtag("config", "${id}", {
-              page_path: window.location.pathname,
-              send_page_view: true,
-            });
-          `,
-        }}
-      />
-      <Suspense fallback={null}>
-        <GoogleAnalyticsTracker id={id} />
-      </Suspense>
-    </>
-  );
+  useEffect(() => {
+    if (!id) return;
+    const browser = window;
+
+    function syncPreference() {
+      const active = readCookiePreferences()?.analytics !== false;
+      browser[`ga-disable-${id}`] = !active;
+      if (active && configuredId.current !== id) {
+        browser.dataLayer ??= [];
+        browser.gtag ??= function () {
+          browser.dataLayer?.push(arguments);
+        };
+        browser.gtag("consent", "default", {
+          analytics_storage: "denied",
+          ad_storage: "denied",
+          ad_user_data: "denied",
+          ad_personalization: "denied",
+        });
+        browser.gtag("set", pageData(browser.location.pathname));
+        browser.gtag("js", new Date());
+        browser.gtag("config", id, {
+          send_page_view: false,
+          allow_google_signals: false,
+          allow_ad_personalization_signals: false,
+        });
+        configuredId.current = id;
+      }
+      if (!active) lastPath.current = null;
+      setEnabled(active);
+    }
+
+    function syncAcrossTabs(event: StorageEvent) {
+      if (event.key === COOKIE_PREFERENCES_KEY || event.key === null) syncPreference();
+    }
+
+    syncPreference();
+    window.addEventListener(COOKIE_PREFERENCES_CHANGED, syncPreference);
+    window.addEventListener("storage", syncAcrossTabs);
+    return () => {
+      window.removeEventListener(COOKIE_PREFERENCES_CHANGED, syncPreference);
+      window.removeEventListener("storage", syncAcrossTabs);
+    };
+  }, [id]);
+
+  useEffect(() => {
+    if (!enabled || !pathname || lastPath.current === pathname) return;
+    const browser = window;
+    if (browser[`ga-disable-${id}`]) return;
+    lastPath.current = pathname;
+
+    const page = pageData(pathname);
+    browser.gtag?.("set", page);
+    browser.gtag?.("event", "page_view", { ...page, send_to: id });
+  }, [enabled, id, pathname]);
+
+  if (!id || !enabled) return null;
+  return <Script strategy="afterInteractive" src={"https://www.googletagmanager.com/gtag/js?id=" + encodeURIComponent(id)} />;
 }
