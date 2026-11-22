@@ -36,6 +36,44 @@ export function DashboardStatsSkeleton() {
   );
 }
 
+const codeLines = [
+  [0, 53], [0, 38], [0, 49], [0, 0], [0, 28], [1, 71], [1, 58],
+  [1, 35], [0, 24], [0, 0], [0, 42], [1, 63], [2, 49], [2, 79],
+  [1, 36], [0, 24],
+];
+
+export function CodeEditorSkeleton({
+  className,
+  label = "Loading code",
+}: { className?: string; label?: string }) {
+  return (
+    <div className={cn("h-full w-full overflow-hidden bg-[#f8f9fa] dark:bg-[#121b17]", className)} role="status">
+      <span className="sr-only">{label}</span>
+      <div aria-hidden="true" className="grid grid-cols-[2.75rem_minmax(0,1fr)] pt-1">
+        <div className="space-y-0.5 border-r border-ob-line/50 px-3.5">
+          {codeLines.map((_, index) => (
+            <div key={index} className="flex h-[18px] items-center justify-end font-mono text-[11px] text-ob-muted/55">
+              {index + 1}
+            </div>
+          ))}
+        </div>
+        <div className="space-y-0.5 px-3.5 motion-safe:animate-pulse">
+          {codeLines.map(([indent, width], index) => (
+            <div key={index} className="flex h-[18px] items-center" style={{ paddingInlineStart: `${indent}rem` }}>
+              {width > 0 && (
+                <Skeleton
+                  className={cn("h-2 rounded-sm bg-ob-muted/15", indent === 0 && "bg-ob-accent/20")}
+                  style={{ width: `${width}%` }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Full editor workbench skeleton: header, files panel, code editor, PDF sheet and chat panel. */
 export function EditorSkeleton({ label = "Verifying project access" }: { label?: string }) {
   return (
@@ -96,26 +134,8 @@ export function EditorSkeleton({ label = "Verifying project access" }: { label?:
               <Skeleton className="size-5 rounded" />
             </div>
           </div>
-          {/* Editor lines */}
-          <div className="flex flex-1 overflow-hidden p-4 font-mono">
-            <div className="flex flex-col gap-2.5 pr-4 border-r border-ob-line/40 shrink-0 select-none">
-              {Array.from({ length: 18 }).map((_, i) => (
-                <span key={i} className="text-[11px] text-ob-muted/30 tabular-nums">
-                  {i + 1}
-                </span>
-              ))}
-            </div>
-            <div className="flex flex-1 flex-col gap-2.5 pl-4">
-              {[35, 60, 48, 20, 75, 52, 40, 65, 30, 85, 45, 25, 70, 50, 40, 60, 30, 20].map(
-                (w, i) => (
-                  <Skeleton
-                    key={i}
-                    className="h-3 rounded"
-                    style={{ width: `${w}%`, opacity: 0.35 + (w % 40) / 100 }}
-                  />
-                )
-              )}
-            </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <CodeEditorSkeleton label={label} />
           </div>
         </section>
 
@@ -158,12 +178,6 @@ export function EditorSkeleton({ label = "Verifying project access" }: { label?:
           </div>
           <Skeleton className="h-9 w-full rounded-lg" />
         </aside>
-      </div>
-
-      {/* Quiet bottom status tag */}
-      <div className="fixed bottom-3 left-3 z-50 flex items-center gap-2 rounded-lg border border-ob-line bg-ob-card/90 px-2.5 py-1 text-xs text-ob-muted shadow-sm backdrop-blur-sm">
-        <span className="size-1.5 rounded-full bg-ob-accent animate-pulse" />
-        <span className="font-mono text-[11px] text-ob-text-2">{label}</span>
       </div>
     </div>
   );

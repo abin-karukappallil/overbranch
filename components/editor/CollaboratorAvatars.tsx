@@ -79,6 +79,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
       setTransferConfirmMember(null);
       utils.projects.getMembers.invalidate({ projectId: projectId! });
       utils.projects.getById.invalidate({ projectId: projectId! });
+      void utils.projects.listProjects.invalidate();
     },
     onError: (err) => {
       toast.error(err.message || "Failed to transfer ownership");
@@ -88,6 +89,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const deleteProjectMutation = trpc.projects.deleteProject.useMutation({
     onSuccess: () => {
       toast.success("Project deleted");
+      void utils.projects.listProjects.invalidate();
       router.push("/dashboard");
     },
     onError: (err) => {
@@ -98,6 +100,7 @@ export function CollaboratorAvatars({ projectId }: CollaboratorAvatarsProps) {
   const leaveProjectMutation = trpc.projects.leaveProject.useMutation({
     onSuccess: () => {
       toast.success("You left the project");
+      void utils.projects.listProjects.invalidate();
       router.push("/dashboard");
     },
     onError: (err) => {

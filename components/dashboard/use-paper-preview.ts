@@ -7,6 +7,7 @@ import { authClient } from "@/lib/auth-client";
 type Preview = { image: Blob; etag: string | null };
 type DecodedPreview = { src: string; landscape: boolean; objectUrl: string | null };
 const CACHE_NAME = "ob-paper-previews-v2";
+const PREVIEW_STALE_TIME = 60 * 1000;
 const MAX_WAIT_REQUESTS = 10;
 
 export function paperPreviewQueryKey(viewerId: string | undefined, projectId: string | undefined) {
@@ -54,10 +55,10 @@ export function usePaperPreview(
   const { data, isFetching } = useQuery<Preview | null>({
     queryKey,
     enabled: enabled && visible,
-    // Always validate on return from the editor, even if the project list is cached.
-    refetchOnMount: "always",
+    // Editor saves and compiles invalidate the preview before this window expires.
+    staleTime: (query) => query.state.data?.etag ? PREVIEW_STALE_TIME : 0,
+    gcTime: 15 * 60 * 1000,
     refetchOnWindowFocus: true,
-    staleTime: 0,
     retry: false,
     queryFn: async ({ signal }) => {
       if (!projectId || !viewerId) return null;
@@ -75,7 +76,7 @@ export function usePaperPreview(
           if (cached && etag) {
             current = { image: await cached.blob(), etag };
             signal.throwIfAborted();
-            queryClient.setQueryData(queryKey, current);
+            queryClient.setQueryData(queryKey, current, { updatedAt: 1 });
           }
         } catch {
           // A storage error should not block revalidation.

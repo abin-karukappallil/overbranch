@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PaperSheet } from "@/components/dashboard/PaperSheet";
+import { useProjectList } from "@/components/dashboard/use-project-list";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -126,25 +127,19 @@ export default function ProjectsPage() {
 
   const utils = trpc.useUtils();
 
-  const { data: dbProjects, isLoading, refetch } = trpc.projects.listProjects.useQuery(
-    {
-      search,
-      template: templateFilter,
-      favoritesOnly: showFavoritesOnly,
-    },
-    {
-      placeholderData: (previousData) => previousData,
-      staleTime: 60 * 1000,
-    }
-  );
+  const { data: dbProjects, isLoading } = useProjectList({
+    search,
+    template: templateFilter,
+    favoritesOnly: showFavoritesOnly,
+  });
 
   const toggleFavMutation = trpc.projects.toggleFavorite.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => utils.projects.listProjects.invalidate(),
   });
 
   const createMutation = trpc.projects.createProject.useMutation({
     onSuccess: (newProj) => {
-      refetch();
+      void utils.projects.listProjects.invalidate();
       setNewModalOpen(false);
       setNewProjName("");
       toast.success("Project created");
@@ -159,7 +154,7 @@ export default function ProjectsPage() {
     onSuccess: () => {
       toast.success("Project deleted");
       setDeleteConfirmProj(null);
-      refetch();
+      void utils.projects.listProjects.invalidate();
     },
     onError: (err) => {
       toast.error(err.message || "Failed to delete project");
@@ -187,7 +182,7 @@ export default function ProjectsPage() {
       setInviteModalProj(null);
       setInviteEmail("");
       setInviteRole("Editor");
-      refetch();
+      void utils.projects.listProjects.invalidate();
     },
     onError: (err) => {
       toast.error(err.message || "Failed to transfer ownership");
@@ -198,7 +193,7 @@ export default function ProjectsPage() {
     onSuccess: () => {
       toast.success("You left the project");
       setLeaveConfirmProj(null);
-      refetch();
+      void utils.projects.listProjects.invalidate();
     },
     onError: (err) => {
       toast.error(err.message || "Failed to leave project");
@@ -631,8 +626,11 @@ export default function ProjectsPage() {
       <ImportZipDialog
         open={zipModalOpen}
         onOpenChange={setZipModalOpen}
-        onSuccess={(id) => router.push(`/editor/${id}`)}
-        onMultipleImported={() => refetch()}
+        onSuccess={(id) => {
+          void utils.projects.listProjects.invalidate();
+          router.push(`/editor/${id}`);
+        }}
+        onMultipleImported={() => utils.projects.listProjects.invalidate()}
       />
     </div>
   );

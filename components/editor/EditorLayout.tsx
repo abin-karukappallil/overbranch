@@ -82,6 +82,7 @@ import { CopyButton } from "@/components/editor/CopyButton";
 import { FileAnalyzerModal } from "@/components/editor/FileAnalyzerModal";
 import { ApiSettingsModal } from "@/components/editor/ApiSettingsModal";
 import { Button } from "@/components/ui/button";
+import { CodeEditorSkeleton } from "@/components/ui/skeleton-loader";
 import {
   Select,
   SelectContent,
@@ -517,6 +518,7 @@ export function EditorLayout({
   const [pdfImportOpen, setPdfImportOpen] = useState(false);
   const [pdfImportJobId, setPdfImportJobId] = useState<string | null>(null);
   const [fileReloadNonce, setFileReloadNonce] = useState(0);
+  const [fileLoad, setFileLoad] = useState<{ key: string; status: "ready" | "error" } | null>(null);
   const [chatMode, setChatMode] = useState<ChatMode>("edit");
   const editHistoryStoreRef = useRef<EditHistoryStore | null>(null);
 
@@ -1040,9 +1042,15 @@ export function EditorLayout({
       if (collabMirrorTimerRef.current) clearTimeout(collabMirrorTimerRef.current);
       collabMirrorTimerRef.current = setTimeout(() => {
         collabMirrorTimerRef.current = null;
-        if (file === activeFilePathRef.current) setCode(value);
+        const key = `overbranch_code_${projectId || "default"}_${file}`;
+        if (file === activeFilePathRef.current) {
+          setCode(value);
+          setFileLoad((current) => current?.key === key && current.status === "ready"
+            ? current
+            : { key, status: "ready" });
+        }
         try {
-          localStorage.setItem(`overbranch_code_${projectId || "default"}_${file}`, value);
+          localStorage.setItem(key, value);
         } catch (_) {
           // Quota or private mode: the room is still the source of truth.
         }
@@ -1077,6 +1085,16 @@ export function EditorLayout({
   const collabBound = collab.bound;
   const collabBoundRef = useRef(false);
   collabBoundRef.current = collabBound;
+
+  useEffect(() => {
+    if (!collabUser?.id || !projectId || !collab.savedAt) return;
+    const queryKey = paperPreviewQueryKey(collabUser.id, projectId);
+    const preview = queryClient.getQueryState(queryKey);
+    if (preview && collab.savedAt > preview.dataUpdatedAt) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  }, [collab.savedAt, collabUser?.id, projectId, queryClient]);
+
   const guestExpiresAt = propExpiresAt || (projectDetail as any)?.expiresAt;
   const [guestTimeLeft, setGuestTimeLeft] = useState<string>("");
 
@@ -1562,19 +1580,21 @@ export function EditorLayout({
     if (!autoOpeningMainRef.current) userPickedFileRef.current = true;
     setActiveFilePath(filePath);
     // Instant cache lookup for 0ms transition
+    const savedKey = `overbranch_code_${projectId || 'default'}_${filePath}`;
     const cached = fileContentCacheRef.current.get(filePath);
     if (cached) {
       loadedFilePathRef.current = filePath;
       setCode(cached.content);
       setSaveStatus("saved");
+      setFileLoad({ key: savedKey, status: "ready" });
     } else {
-      const savedKey = `overbranch_code_${projectId || 'default'}_${filePath}`;
       try {
         const saved = localStorage.getItem(savedKey);
         if (saved !== null) {
           loadedFilePathRef.current = filePath;
           setCode(saved);
           setSaveStatus("saved");
+          setFileLoad({ key: savedKey, status: "ready" });
           fileContentCacheRef.current.set(filePath, { content: saved, timestamp: Date.now() });
         }
       } catch (_) {}
@@ -1612,27 +1632,33 @@ export function EditorLayout({
 
   // 1. Load saved code from backend API (Supabase DB + Disk) or LocalStorage when activeFilePath or projectId changes
   useEffect(() => {
-    let isCancelled = false;
-
-    // Fast synchronous cache hit
-    const cached = fileContentCacheRef.current.get(activeFilePath);
-    if (cached) {
+    const controller = new AbortController();
+    const { signal } = controller;
+    const showDocument = (content: string) => {
       loadedFilePathRef.current = activeFilePath;
-      setCode(cached.content);
+      setCode(content);
       setSaveStatus("saved");
-    } else {
-      // Nothing local for this file yet: until the server copy lands the editor still shows
-      // the previous file, so no change may be saved under this path.
-      loadedFilePathRef.current = null;
+      setFileLoad({ key: storageKey, status: "ready" });
+      fileContentCacheRef.current.set(activeFilePath, { content, timestamp: Date.now() });
+    };
+    const restoreLocalDocument = () => {
       try {
         const savedCode = localStorage.getItem(storageKey);
-        if (savedCode !== null) {
-          loadedFilePathRef.current = activeFilePath;
-          setCode(savedCode);
-          setSaveStatus("saved");
-          fileContentCacheRef.current.set(activeFilePath, { content: savedCode, timestamp: Date.now() });
-        }
-      } catch (e) {}
+        if (savedCode === null) return false;
+        showDocument(savedCode);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const cached = fileContentCacheRef.current.get(activeFilePath);
+    if (cached) {
+      showDocument(cached.content);
+    } else {
+      // Block saves until the active file's content is available.
+      loadedFilePathRef.current = null;
+      if (!restoreLocalDocument()) setFileLoad(null);
     }
 
     const loadSavedDocument = async () => {
@@ -1642,8 +1668,11 @@ export function EditorLayout({
         // race, and the backend URL stays hidden. See app/api/projects/get-file.
         const res = await fetch(
           `/api/projects/get-file?project_id=${encodeURIComponent(activeProj)}&file_path=${encodeURIComponent(activeFilePath)}`,
-          { credentials: "same-origin", cache: "no-store" }
+          { credentials: "same-origin", cache: "no-store", signal }
         );
+        if (!res.ok) throw new Error(`Project file request failed (${res.status})`);
+        const data = await res.json();
+        if (signal.aborted || activeFilePathRef.current !== activeFilePath) return;
         // A late-arriving REST snapshot must never win over the live
         // collaborative document: the room already seeded itself from the same
         // storage and may be many keystrokes ahead of it. This is the "late
@@ -1652,43 +1681,24 @@ export function EditorLayout({
           collabLog("COLLAB_SYNC", { stage: "rest_snapshot_ignored", file: activeFilePath });
           return;
         }
-        if (res.ok && !isCancelled) {
-          const data = await res.json();
-          if (data.raw_code !== undefined) {
-            loadedFilePathRef.current = activeFilePath;
-            setCode(data.raw_code);
-            setSaveStatus("saved");
-            fileContentCacheRef.current.set(activeFilePath, { content: data.raw_code, timestamp: Date.now() });
-            localStorage.setItem(storageKey, data.raw_code);
-            return;
-          }
-          // The server answered but holds no text for this file: it is genuinely empty.
-          loadedFilePathRef.current = activeFilePath;
-          setCode("");
-          setSaveStatus("saved");
-          return;
+        const content = typeof data.raw_code === "string" ? data.raw_code : "";
+        showDocument(content);
+        try {
+          localStorage.setItem(storageKey, content);
+        } catch {
+          // The editor can still use the in-memory copy if browser storage is blocked.
         }
       } catch (err) {
+        if (signal.aborted || activeFilePathRef.current !== activeFilePath || collabBoundRef.current) return;
         console.warn("Backend load failed, falling back to LocalStorage:", err);
-      }
-
-      // Fallback to LocalStorage
-      if (!isCancelled) {
-        try {
-          const savedCode = localStorage.getItem(storageKey);
-          if (savedCode !== null) {
-            loadedFilePathRef.current = activeFilePath;
-            setCode(savedCode);
-            setSaveStatus("saved");
-          }
-        } catch (e) {}
+        if (loadedFilePathRef.current !== activeFilePath && !restoreLocalDocument()) {
+          setFileLoad({ key: storageKey, status: "error" });
+        }
       }
     };
 
     loadSavedDocument();
-    return () => {
-      isCancelled = true;
-    };
+    return () => controller.abort();
   }, [projectId, activeFilePath, storageKey, fileReloadNonce]);
 
   // 2. Save Document function (Saves to Supabase latex_documents DB, Local Disk, and syncs Qdrant vectors)
@@ -3391,6 +3401,24 @@ export function EditorLayout({
     }
   };
 
+  const fileLoading = !collabBound && fileLoad?.key !== storageKey;
+  const fileLoadFailed = !collabBound && fileLoad?.key === storageKey && fileLoad.status === "error";
+  const editorReadOnly = isViewer || fileLoading || fileLoadFailed;
+  const filePlaceholder = fileLoading ? (
+    <CodeEditorSkeleton label="Loading project file" className="absolute inset-0 z-20" />
+  ) : fileLoadFailed ? (
+    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-[#f8f9fa] p-4 text-center dark:bg-[#121b17]" role="status">
+      <p className="text-sm text-ob-text-2">Couldn’t open this file.</p>
+      <Button variant="ob-secondary" size="sm" onClick={() => {
+        setFileLoad(null);
+        setFileReloadNonce((nonce) => nonce + 1);
+      }}>
+        Retry
+      </Button>
+    </div>
+  ) : null;
+  const monacoLoading = filePlaceholder ? null : <CodeEditorSkeleton />;
+
   return (
     <div className="ob-app fixed inset-0 flex h-dvh w-full max-w-full flex-col overflow-hidden bg-ob-bg text-ob-text select-none">
       {/* Guest Session Notification Banner */}
@@ -3728,6 +3756,7 @@ export function EditorLayout({
             <div className="flex-1 overflow-hidden relative">
               <Editor
                 height="100%"
+                loading={monacoLoading}
                 defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                 theme={monacoTheme}
                 // Once the Yjs binding owns the model, React must stop setting
@@ -3755,7 +3784,7 @@ export function EditorLayout({
                   cursorWidth: 2,
                   roundedSelection: true,
                   copyWithSyntaxHighlighting: false,
-                  readOnly: isViewer,
+                  readOnly: editorReadOnly,
                 }}
               />
 
@@ -3764,12 +3793,13 @@ export function EditorLayout({
                 monaco={monacoRef.current}
                 open={searchOpen}
                 onClose={() => setSearchOpen(false)}
-                readOnly={isViewer}
+                readOnly={editorReadOnly}
                 onDocumentChange={handleCodeChange}
               />
 
               {/* Review bar for the pending AI proposal (changes are drawn inline in the editor) */}
               {renderReviewBar("editor")}
+              {filePlaceholder}
             </div>
 
             {/* Bottom Status Bar */}
@@ -4049,6 +4079,7 @@ export function EditorLayout({
               <EditorErrorBoundary>
                 <Editor
                   height="100%"
+                  loading={monacoLoading}
                   defaultLanguage={activeFilePath.endsWith(".bib") ? "bibtex" : "latex"}
                   theme={monacoTheme}
                   value={collabBound ? undefined : code}
@@ -4070,7 +4101,7 @@ export function EditorLayout({
                     cursorWidth: 2,
                     roundedSelection: true,
                     copyWithSyntaxHighlighting: false,
-                    readOnly: isViewer,
+                    readOnly: editorReadOnly,
                   }}
                 />
               </EditorErrorBoundary>
@@ -4078,7 +4109,7 @@ export function EditorLayout({
               <MobileEditorAssist
                 editor={mobileEditorRef.current}
                 monaco={monacoRef.current}
-                readOnly={isViewer}
+                readOnly={editorReadOnly}
                 active={activeMobileTab === "code" || activeMobileTab === "split"}
                 onOpenSearch={() => setSearchOpen(true)}
                 onDocumentChange={handleCodeChange}
@@ -4092,11 +4123,12 @@ export function EditorLayout({
                 monaco={monacoRef.current}
                 open={searchOpen}
                 onClose={() => setSearchOpen(false)}
-                readOnly={isViewer}
+                readOnly={editorReadOnly}
                 onDocumentChange={handleCodeChange}
                 compact
               />
               {renderReviewBar("mobile")}
+              {filePlaceholder}
             </div>
           </div>
 

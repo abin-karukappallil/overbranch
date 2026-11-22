@@ -2,36 +2,33 @@ import { router, publicProcedure, protectedProcedure, projectProcedure, ownerPro
 import { z } from 'zod';
 import { db } from '@/db';
 import { projects, projectMembers, user, notifications, guestProjects, projectInvitations } from '@/db/schema';
-import { eq, and, or, ilike, desc, sql } from 'drizzle-orm';
+import { eq, and, or, ilike, sql } from 'drizzle-orm';
 import { TRPCError } from '@trpc/server';
+import { filterProjects } from '@/lib/project-filters';
 import fs from 'fs';
 import path from 'path';
 
 export const projectsRouter = router({
   listProjects: protectedProcedure
     .input(z.object({
+      viewerId: z.string().optional(),
       search: z.string().optional(),
       template: z.string().optional(),
       favoritesOnly: z.boolean().optional(),
     }).optional())
     .query(async ({ ctx, input }) => {
       const userId = ctx.user.id;
+      if (input?.viewerId !== undefined && input.viewerId !== userId) {
+        throw new TRPCError({ code: 'UNAUTHORIZED' });
+      }
 
-      const owned = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.ownerId, userId))
-        .orderBy(desc(projects.createdAt));
-
-      const sharedRecords = await db
-        .select({
-          project: projects,
-          role: projectMembers.role,
-        })
-        .from(projectMembers)
-        .innerJoin(projects, eq(projectMembers.projectId, projects.id))
-        .where(eq(projectMembers.userId, userId))
-        .orderBy(desc(projects.createdAt));
+      const [owned, sharedRecords] = await Promise.all([
+        db.select().from(projects).where(eq(projects.ownerId, userId)),
+        db.select({ project: projects, role: projectMembers.role })
+          .from(projectMembers)
+          .innerJoin(projects, eq(projectMembers.projectId, projects.id))
+          .where(eq(projectMembers.userId, userId)),
+      ]);
 
       const ownedList = owned.map((p) => ({
         id: p.id,
@@ -79,7 +76,7 @@ export const projectsRouter = router({
         }
       });
 
-      let allProjects = Array.from(combinedMap.values());
+      const allProjects = Array.from(combinedMap.values());
 
       // Sort all projects by recently created first (newest createdAt in first place)
       allProjects.sort((a, b) => {
@@ -88,22 +85,7 @@ export const projectsRouter = router({
         return timeB - timeA;
       });
 
-      if (input?.search) {
-        const q = input.search.toLowerCase();
-        allProjects = allProjects.filter(
-          (p) => p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
-        );
-      }
-
-      if (input?.template && input.template !== "all") {
-        allProjects = allProjects.filter((p) => p.template === input.template);
-      }
-
-      if (input?.favoritesOnly) {
-        allProjects = allProjects.filter((p) => p.isFavorite);
-      }
-
-      return allProjects;
+      return filterProjects(allProjects, input);
     }),
 
   getById: publicProcedure

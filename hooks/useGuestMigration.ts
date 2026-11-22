@@ -5,6 +5,7 @@ import { authClient } from "@/lib/auth-client";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { authFetch } from "@/lib/api-client";
+import { trpc } from "@/trpc/client";
 
 const BACKEND_URL = (process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -26,6 +27,7 @@ export function useGuestMigration() {
   const { data: session, isPending } = authClient.useSession();
   const hasAttemptedRef = useRef(false);
   const router = useRouter();
+  const utils = trpc.useUtils();
 
   useEffect(() => {
     if (isPending || !session?.user?.id || hasAttemptedRef.current) return;
@@ -93,6 +95,7 @@ export function useGuestMigration() {
           );
 
           // Trigger page refresh so projects and editor permissions update
+          void utils.projects.listProjects.invalidate();
           router.refresh();
         }
       } catch (err) {
@@ -101,5 +104,5 @@ export function useGuestMigration() {
     };
 
     performMigration();
-  }, [session, isPending, router]);
+  }, [session, isPending, router, utils]);
 }

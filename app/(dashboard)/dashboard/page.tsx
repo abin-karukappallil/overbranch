@@ -17,6 +17,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PaperSheet } from "@/components/dashboard/PaperSheet";
+import { useProjectList } from "@/components/dashboard/use-project-list";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -138,16 +139,10 @@ function DashboardContent() {
 
   const utils = trpc.useUtils();
 
-  const { data: projectsData, isLoading: isProjectsLoading } = trpc.projects.listProjects.useQuery(
-    {
-      search: searchQuery,
-      template: filterTemplate,
-    },
-    {
-      placeholderData: (previousData) => previousData,
-      staleTime: 60 * 1000,
-    }
-  );
+  const { data: projectsData, isLoading: isProjectsLoading } = useProjectList({
+    search: searchQuery,
+    template: filterTemplate,
+  });
 
   const { data: pendingInvites } = trpc.invitations.listPending.useQuery(undefined, {
     refetchInterval: 5000,
