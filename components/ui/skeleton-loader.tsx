@@ -47,8 +47,7 @@ export function CodeEditorSkeleton({
   label = "Loading code",
 }: { className?: string; label?: string }) {
   return (
-    <div className={cn("h-full w-full overflow-hidden bg-[#f8f9fa] dark:bg-[#121b17]", className)} role="status">
-      <span className="sr-only">{label}</span>
+    <div className={cn("h-full w-full overflow-hidden bg-[#f8f9fa] dark:bg-[#121b17]", className)} role="status" aria-label={label}>
       <div aria-hidden="true" className="grid grid-cols-[2.75rem_minmax(0,1fr)] pt-1">
         <div className="space-y-0.5 border-r border-ob-line/50 px-3.5">
           {codeLines.map((_, index) => (
@@ -69,6 +68,21 @@ export function CodeEditorSkeleton({
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+export function ProjectFilesSkeleton() {
+  return (
+    <div role="status" aria-label="Loading project files">
+      <div aria-hidden="true" className="space-y-0.5 motion-safe:animate-pulse">
+        {[76, 52, 64, 45, 70].map((width) => (
+          <div key={width} className="flex h-7 items-center gap-2 px-2">
+            <Skeleton className="size-3.5 shrink-0 rounded-sm" />
+            <Skeleton className="h-2.5 rounded-sm" style={{ width: `${width}%` }} />
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -108,20 +122,13 @@ export function EditorSkeleton({ label = "Verifying project access" }: { label?:
       {/* Main workspace */}
       <div className="flex flex-1 overflow-hidden min-h-0">
         {/* Files panel */}
-        <aside className="hidden w-52 flex-col gap-2 border-r border-ob-line bg-ob-deep p-3 lg:flex xl:w-60">
+        <aside aria-hidden="true" className="hidden w-52 flex-col gap-2 border-r border-ob-line bg-ob-deep p-3 lg:flex xl:w-60">
           <div className="flex items-center justify-between pb-2 border-b border-ob-line">
             <Skeleton className="h-3 w-16 rounded" />
             <Skeleton className="h-3 w-6 rounded" />
           </div>
           <Skeleton className="h-7 w-full rounded-md" />
-          <div className="flex flex-col gap-1.5 pt-2">
-            {[80, 60, 75, 45, 90, 55, 70].map((width, idx) => (
-              <div key={idx} className="flex items-center gap-2 py-1 px-1.5">
-                <Skeleton className="size-3.5 rounded shrink-0 opacity-70" />
-                <Skeleton className="h-3 rounded" style={{ width: `${width}%` }} />
-              </div>
-            ))}
-          </div>
+          <ProjectFilesSkeleton />
         </aside>
 
         {/* Monaco code editor area */}

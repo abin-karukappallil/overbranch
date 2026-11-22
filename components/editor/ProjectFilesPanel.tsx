@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ProjectFilesSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
 import { useProjectFiles, type ProjectFile } from "@/components/editor/useProjectFiles";
@@ -382,10 +383,7 @@ export function ProjectFilesPanel({
         {/* File Tree List */}
         <div className="flex-1 space-y-0.5 overflow-y-auto pr-0.5 font-mono">
           {isLoading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-xs text-ob-muted">
-              <Loader2 className="size-3.5 animate-spin" />
-              <span>Loading files</span>
-            </div>
+            <ProjectFilesSkeleton />
           ) : filteredFiles.length === 0 ? (
             <div className="py-8 text-center text-xs text-ob-muted">
               No files found

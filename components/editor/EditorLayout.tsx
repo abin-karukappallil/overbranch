@@ -3417,7 +3417,7 @@ export function EditorLayout({
       </Button>
     </div>
   ) : null;
-  const monacoLoading = filePlaceholder ? null : <CodeEditorSkeleton />;
+  const monacoLoading = filePlaceholder ? null : <CodeEditorSkeleton className="absolute inset-0" />;
 
   return (
     <div className="ob-app fixed inset-0 flex h-dvh w-full max-w-full flex-col overflow-hidden bg-ob-bg text-ob-text select-none">
