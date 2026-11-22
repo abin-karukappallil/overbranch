@@ -6,83 +6,35 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: overbranch-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     name: Deploy OverBranch on AWS EC2
-    if: github.repository == 'overbranch/overbranch'
+    if: github.repository == 'abin-karukappallil/overbranch' || github.repository == 'overbranch/overbranch'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
       - name: Execute Remote SSH Deployment
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_ENV_FILE: ${{ secrets.ENV_FILE }}
         with:
           host: ${{ secrets.EC2_HOST || secrets.AZURE_VM_IP }}
           username: ${{ secrets.EC2_USER || secrets.AZURE_VM_USERNAME || 'ubuntu' }}
           key: ${{ secrets.EC2_SSH_KEY || secrets.AZURE_VM_SSH_KEY }}
           port: ${{ secrets.EC2_PORT || secrets.AZURE_VM_PORT || 22 }}
-          script_stop: true
+          command_timeout: 60m
+          envs: DEPLOY_ENV_FILE
           script: |
-            echo "[Deploy] Starting automated deployment..."
+            set -e
             cd ~/overbranch || cd /home/ubuntu/overbranch
 
             echo "[Deploy] Pulling latest changes from main..."
-            git reset --hard
-            git pull origin main
-
-            # Update .env if ENV_FILE secret is provided
-            if [ -n "${{ secrets.ENV_FILE }}" ]; then
-              echo "[Deploy] Updating .env from GitHub Secrets..."
-              echo "${{ secrets.ENV_FILE }}" > .env
-            fi
-
-            # Enable Docker BuildKit for parallel execution and layer caching
-            export DOCKER_BUILDKIT=1
-            export COMPOSE_DOCKER_CLI_BUILD=1
-
-            # Ensure TeX Live base image is built and tagged once so CI/CD does not re-download fonts and TeX packages
-            TEX_IMAGE="${TEX_BASE:-overbranch-texlive:2026.1}"
-            if [ -f .env ]; then
-              ENV_TEX_BASE=$(grep -E "^TEX_BASE=" .env 2>/dev/null | head -1 | cut -d= -f2- | sed "s/[^a-zA-Z0-9._/:-]//g")
-              if [ -n "$ENV_TEX_BASE" ]; then
-                TEX_IMAGE="$ENV_TEX_BASE"
-              fi
-            fi
-
-            echo "[Deploy] Checking for TeX Live base image: $TEX_IMAGE"
-            if ! docker image inspect "$TEX_IMAGE" >/dev/null 2>&1; then
-              echo "[Deploy] $TEX_IMAGE not found locally. Building TeX Live base image..."
-              docker build -f docker/texlive.Dockerfile -t "$TEX_IMAGE" .
-            else
-              echo "[Deploy] Found cached TeX base image: $TEX_IMAGE. Skipping TeX Live and font downloads."
-            fi
-
-            export TEX_BASE="$TEX_IMAGE"
-
-            # Persist TEX_BASE in .env so manual docker compose runs also reuse the cached base
-            if [ -f .env ]; then
-              if grep -q "^TEX_BASE=" .env; then
-                sed -i "s|^TEX_BASE=.*|TEX_BASE=${TEX_IMAGE}|" .env
-              else
-                echo "TEX_BASE=${TEX_IMAGE}" >> .env
-              fi
-            fi
-
-            echo "[Deploy] Rebuilding and launching containers..."
-            docker compose up --build -d
+            git pull --ff-only origin main
+            bash docker/deploy-server.sh
 
             echo "[Deploy] Pruning old dangling Docker images..."
             docker image prune -f
-
-            echo "[Deploy] Verifying health check..."
-            sleep 10
-            curl -f http://localhost:8000/api/health || {
-              echo "[Deploy] Health check failed! Showing container logs:"
-              docker compose logs --tail=50
-              exit 1
-            }
-
-            echo "[Deploy] Deployment successful! OverBranch is live."
-            docker compose ps

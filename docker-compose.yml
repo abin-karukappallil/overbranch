@@ -1,14 +1,11 @@
 services:
   overbranch:
-    image: ${DOCKER_IMAGE:-abinthomasdotdev/overbranch:latest}
+    image: ${DOCKER_IMAGE:-overbranch:latest}
+    pull_policy: never
     build:
       context: .
       dockerfile: Dockerfile
-      # The app image is built with a multi-stage Dockerfile. By default, it builds
-      # the TeX base stage locally (TEX_BASE=texlive-base) so builds never fail if
-      # an external registry image is missing.
-      # In CI/CD or production with cached TeX base, set:
-      #   TEX_BASE=overbranch-texlive:2026.1
+      # deploy-server.sh overrides TEX_BASE with the host's cached image.
       args:
         TEX_BASE: ${TEX_BASE:-texlive-base}
     container_name: overbranch

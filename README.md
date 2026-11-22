@@ -62,8 +62,10 @@ Deploy OverBranch locally or on a server using Docker Compose:
 git clone https://github.com/abin-karukappallil/overbranch.git
 cd overbranch
 cp .env.example .env
-docker compose up --build -d
+bash docker/deploy-server.sh
 ```
+
+GitHub Actions runs the same script over SSH on the deployment VM. The first run builds the TeX Live and font image. Later runs reuse the local `overbranch-texlive:2026.1` tag and rebuild the application. No Docker Hub repository or login is required for the OverBranch images.
 
 | Service | Endpoint |
 | :--- | :--- |
