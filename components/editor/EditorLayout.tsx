@@ -3,8 +3,10 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 
 import Editor, { OnMount } from "@monaco-editor/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Drawer } from "vaul";
 import Link from "next/link";
+import { paperPreviewQueryKey } from "@/components/dashboard/use-paper-preview";
 import {
   ArrowLeft,
   FolderGit2,
@@ -1012,6 +1014,12 @@ export function EditorLayout({
   // about the user is hardcoded or supplied by the collaboration layer itself.
   const { data: authSession } = authClient.useSession();
   const collabUser = authSession?.user;
+  const queryClient = useQueryClient();
+  const refreshPaperPreview = () => {
+    if (collabUser && projectId) {
+      void queryClient.invalidateQueries({ queryKey: paperPreviewQueryKey(collabUser.id, projectId) });
+    }
+  };
 
   const collabMirrorTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -1719,6 +1727,7 @@ export function EditorLayout({
 
       if (res.ok) {
         setSaveStatus("saved");
+        refreshPaperPreview();
       } else {
         setSaveStatus("unsaved");
       }
@@ -2146,6 +2155,7 @@ export function EditorLayout({
           // complaints in nonstopmode are not surfaced as a warning band.
           toast.dismiss(busyToastId);
           setPdfBase64(outcome.body.pdf_base64);
+          refreshPaperPreview();
           // Server-side font substitution is information, never an error: the PDF is already
           // showing; this only says which fonts were swapped (and how to keep the originals).
           const compileNotices = collectCompileNotices(outcome.body);

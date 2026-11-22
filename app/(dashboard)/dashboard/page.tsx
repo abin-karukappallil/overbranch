@@ -16,7 +16,7 @@ import {
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PaperSheet, preloadPaperPreview } from "@/components/dashboard/PaperSheet";
+import { PaperSheet } from "@/components/dashboard/PaperSheet";
 import { ProjectCardSkeleton } from "@/components/ui/skeleton-loader";
 import { toast } from "sonner";
 import { trpc } from "@/trpc/client";
@@ -82,18 +82,10 @@ function ProjectCard({ project, children }: { project: any; children: React.Reac
       <div className="flex w-28 shrink-0 items-center justify-center border-r border-ob-line bg-ob-deep py-3 sm:h-48 sm:w-auto sm:border-r-0 sm:border-b sm:py-0">
         <PaperSheet
           projectId={project.id}
-          updatedAt={project.updatedAt}
           template={project.template}
           seed={project.id}
-          className="max-sm:hidden transition-transform duration-200 group-hover:-translate-y-0.5"
-        />
-        <PaperSheet
-          projectId={project.id}
-          updatedAt={project.updatedAt}
-          template={project.template}
-          seed={project.id}
-          size="sm"
-          className="sm:hidden"
+          size="responsive"
+          className="sm:group-hover:-translate-y-0.5"
         />
       </div>
       <div className="flex min-w-0 flex-1 flex-col p-4">
@@ -156,14 +148,6 @@ function DashboardContent() {
       staleTime: 60 * 1000,
     }
   );
-
-  useEffect(() => {
-    if (Array.isArray(projectsData)) {
-      for (const p of projectsData.slice(0, 16)) {
-        preloadPaperPreview(p.id, p.updatedAt, p.template);
-      }
-    }
-  }, [projectsData]);
 
   const { data: pendingInvites } = trpc.invitations.listPending.useQuery(undefined, {
     refetchInterval: 5000,

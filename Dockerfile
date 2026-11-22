@@ -3,14 +3,15 @@
 # OverBranch application image (Multi-stage)
 # ============================================================
 # Supports two build workflows:
-# 1. Fast app-only build using cached TeX base image (default):
+# 1. Standard build from scratch (default):
 #      docker compose up --build -d
-#    Reuses overbranch-texlive:2026.1, skipping TeX Live and font downloads.
-# 2. Build from scratch:
-#      docker build --build-arg TEX_BASE=texlive-base -t overbranch:latest .
+#    Builds the TeX Live base stage automatically, then layers the application.
+# 2. Fast app-only build (using a pre-built TeX base image):
+#      docker build --build-arg TEX_BASE=overbranch-texlive:2026.1 -t overbranch:latest .
+#    (or set TEX_BASE=overbranch-texlive:2026.1 in .env to skip rebuilding TeX Live)
 # ============================================================
 
-ARG TEX_BASE=overbranch-texlive:2026.1
+ARG TEX_BASE=texlive-base
 
 # ============================================================
 # Stage 1: TeX Live & Fonts Base Image

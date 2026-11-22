@@ -5,7 +5,7 @@
  * 1. Checks user or guest session from cookies.
  * 2. Verifies project ownership / membership via Drizzle.
  * 3. Proxies the request to the Python backend with the session token attached.
- * 4. Streams the rendered first-page PNG back with proper caching headers.
+ * 4. Streams the first-page image or forwards its revalidation status.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { headers as nextHeaders } from "next/headers";
@@ -84,6 +84,7 @@ export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const projectId = url.searchParams.get("projectId") || url.searchParams.get("project_id") || "";
   const refresh = url.searchParams.get("refresh") === "true";
+  const wait = url.searchParams.get("wait") === "true";
   const template = url.searchParams.get("template") || "";
 
   if (!projectId) {
@@ -125,9 +126,12 @@ export async function GET(req: NextRequest) {
   if (guestTok) forwardHeaders["X-Guest-Token"] = guestTok;
   const rawCookie = req.headers.get("cookie");
   if (rawCookie) forwardHeaders["Cookie"] = rawCookie;
+  const validator = req.headers.get("if-none-match");
+  if (validator) forwardHeaders["If-None-Match"] = validator;
 
   const backendQs = new URLSearchParams({ project_id: projectId });
   if (refresh) backendQs.set("refresh", "true");
+  if (wait) backendQs.set("wait", "true");
   if (template) backendQs.set("template", template);
   const backendUrl = `${BACKEND_URL}/api/projects/preview?${backendQs.toString()}`;
 
@@ -136,6 +140,7 @@ export async function GET(req: NextRequest) {
     upstream = await fetch(backendUrl, {
       headers: forwardHeaders,
       cache: "no-store",
+      signal: req.signal,
     });
   } catch (err: any) {
     return NextResponse.json(
@@ -144,32 +149,26 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!upstream.ok) {
+  if (!upstream.ok && upstream.status !== 304) {
     const text = await upstream.text().catch(() => "");
     try {
       const parsed = JSON.parse(text);
-      return NextResponse.json(parsed, { status: upstream.status });
+      return NextResponse.json(parsed, { status: upstream.status, headers: { "Cache-Control": "no-store" } });
     } catch {
-      return new NextResponse(text || upstream.statusText, { status: upstream.status });
+      return new NextResponse(text || upstream.statusText, { status: upstream.status, headers: { "Cache-Control": "no-store" } });
     }
   }
 
-  const upstreamCT = upstream.headers.get("content-type") || "image/webp";
-  const headers = new Headers();
-  headers.set("content-type", upstreamCT);
-
-  const isFallback = upstream.headers.get("x-preview-fallback");
-  if (isFallback) {
-    headers.set("x-preview-fallback", isFallback);
-    headers.set("cache-control", "private, max-age=10, stale-while-revalidate=30");
-  } else {
-    // Exact compiled PDF preview: cache long-term on user side (browser disk cache)
-    headers.set("cache-control", "public, max-age=86400, stale-while-revalidate=604800, immutable");
+  const headers = new Headers({
+    "Cache-Control": "no-store",
+    "Vary": "Cookie",
+    "X-Content-Type-Options": "nosniff",
+  });
+  for (const name of ["cache-control", "content-type", "etag", "x-preview-fallback", "x-preview-pending"]) {
+    const value = upstream.headers.get(name);
+    if (value) headers.set(name, value);
   }
-  headers.set("x-content-type-options", "nosniff");
-  const etag = upstream.headers.get("etag");
-  if (etag) headers.set("etag", etag);
 
-  return new NextResponse(upstream.body, { status: 200, headers });
+  return new NextResponse(upstream.body, { status: upstream.status, headers });
 }
 

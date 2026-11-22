@@ -1,9 +1,11 @@
+"use client";
+
 import React from "react";
+import { useDecodedPaperPreview, usePaperPreview } from "./use-paper-preview";
 
 /**
  * A small sheet of proof paper, drawn in code, whose layout follows the project's template type.
- * It sketches the kind of document, it is not a preview of this document. Off-white on both themes,
- * and the only place in the app with crop marks.
+ * Project sheets show the first page, with a template sketch while the image loads.
  *
  *   <PaperSheet template={project.template} seed={project.id} />
  *   <PaperSheet variant="beamer" size="sm" />
@@ -250,34 +252,6 @@ const CORNERS = [
   { className: "bottom-0 right-0", d: "M1.5 12V5M12 1.5H5" },
 ];
 
-const PREVIEW_CACHE_NAME = "ob-paper-previews-v1";
-// In-memory instant cache (0ms lookup, survives in-app route transitions)
-const previewMemoryCache = new Map<string, string>();
-const previewLandscapeCache = new Map<string, boolean>();
-
-/** Speculatively pre-warm a project preview into the browser & memory cache */
-export function preloadPaperPreview(
-  projectId?: string,
-  updatedAt?: string | number | Date | null,
-  template?: string | null
-) {
-  if (typeof window === "undefined" || !projectId) return;
-  const targetUrl = `/api/projects/preview?projectId=${encodeURIComponent(projectId)}${
-    updatedAt ? `&v=${encodeURIComponent(String(updatedAt))}` : ""
-  }${template ? `&template=${encodeURIComponent(template)}` : ""}`;
-  const key = `${projectId}:${updatedAt || ""}`;
-  if (previewMemoryCache.has(key)) return;
-
-  const img = new Image();
-  img.src = targetUrl;
-  img.onload = () => {
-    previewMemoryCache.set(key, targetUrl);
-    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > img.naturalHeight * 1.15) {
-      previewLandscapeCache.set(key, true);
-    }
-  };
-}
-
 export function PaperSheet({
   template,
   variant,
@@ -286,142 +260,38 @@ export function PaperSheet({
   className = "",
   projectId,
   previewUrl,
-  updatedAt,
 }: {
   template?: string | null;
   /** Overrides `template`, for places with no project behind them. */
   variant?: PaperVariant;
   /** Project id, so sheets of the same type differ slightly. */
   seed?: string;
-  size?: PaperSize;
+  size?: PaperSize | "responsive";
   className?: string;
   projectId?: string;
   previewUrl?: string;
-  updatedAt?: string | number | Date | null;
 }) {
   const pid = projectId || (seed && seed.length > 8 && seed !== "pdf" ? seed : undefined);
   const kind = variant ?? paperVariantFor(template);
   const n = hash(seed);
-  const cacheKey = pid ? `${pid}:${updatedAt || ""}` : "";
-
-  const cachedInMemory = cacheKey ? previewMemoryCache.get(cacheKey) : null;
-  const cachedLandscape = cacheKey ? previewLandscapeCache.get(cacheKey) || false : false;
-
-  const [imageLandscape, setImageLandscape] = React.useState<boolean>(cachedLandscape);
-  const landscape = kind === "beamer" || imageLandscape;
-  const width = landscape ? LANDSCAPE_WIDTH[size] : PORTRAIT_WIDTH[size];
+  const element = React.useRef<HTMLDivElement>(null);
+  const { blob, isFetching } = usePaperPreview(element, previewUrl ? undefined : pid, template);
+  const preview = useDecodedPaperPreview(blob, previewUrl);
+  const landscape = preview?.landscape ?? kind === "beamer";
+  const sizes = landscape ? LANDSCAPE_WIDTH : PORTRAIT_WIDTH;
+  const responsive = size === "responsive";
+  const width = sizes[responsive ? "sm" : size] + 24;
   const viewBox = landscape ? "0 0 210 132" : "0 0 148 210";
-
-  const targetUrl =
-    previewUrl ||
-    (pid
-      ? `/api/projects/preview?projectId=${encodeURIComponent(pid)}${
-          updatedAt ? `&v=${encodeURIComponent(String(updatedAt))}` : ""
-        }${template ? `&template=${encodeURIComponent(template)}` : ""}`
-      : null);
-
-  const [imageSrc, setImageSrc] = React.useState<string | null>(cachedInMemory || targetUrl);
-  const [imageState, setImageState] = React.useState<"loading" | "loaded" | "error">(() => {
-    if (cachedInMemory) return "loaded";
-    return targetUrl ? "loading" : "error";
-  });
-
-  // User-side CacheStorage check & background revalidation
-  React.useEffect(() => {
-    if (!targetUrl || !cacheKey) {
-      if (!targetUrl) setImageState("error");
-      return;
-    }
-
-    if (previewMemoryCache.has(cacheKey)) {
-      setImageSrc(previewMemoryCache.get(cacheKey)!);
-      setImageState("loaded");
-      return;
-    }
-
-    let isMounted = true;
-
-    // Check persistent CacheStorage first (~1-2ms from local browser storage)
-    if (typeof window !== "undefined" && "caches" in window) {
-      caches.open(PREVIEW_CACHE_NAME).then(async (cache) => {
-        try {
-          const match = await cache.match(targetUrl);
-          if (match && match.ok && isMounted) {
-            const blob = await match.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            previewMemoryCache.set(cacheKey, blobUrl);
-            setImageSrc(blobUrl);
-            setImageState("loaded");
-            return;
-          }
-        } catch {}
-
-        // Fetch from network and store in user-side cache
-        try {
-          const res = await fetch(targetUrl, { cache: "default" });
-          if (!res.ok) {
-            if (isMounted) setImageState("error");
-            return;
-          }
-          const isFallback = res.headers.get("x-preview-fallback") === "true";
-          const blob = await res.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          if (isMounted) {
-            previewMemoryCache.set(cacheKey, blobUrl);
-            setImageSrc(blobUrl);
-            setImageState("loaded");
-          }
-          if (!isFallback) {
-            const cacheCopy = new Response(blob, {
-              headers: { "Content-Type": res.headers.get("Content-Type") || "image/webp" },
-            });
-            await cache.put(targetUrl, cacheCopy);
-          } else {
-            // Re-check in background once TeX compiler finishes
-            setTimeout(async () => {
-              if (!isMounted) return;
-              try {
-                const refreshed = await fetch(targetUrl, { cache: "reload" });
-                if (refreshed.ok && refreshed.headers.get("x-preview-fallback") !== "true") {
-                  const rBlob = await refreshed.blob();
-                  const rUrl = URL.createObjectURL(rBlob);
-                  previewMemoryCache.set(cacheKey, rUrl);
-                  if (isMounted) {
-                    setImageSrc(rUrl);
-                  }
-                  await cache.put(targetUrl, new Response(rBlob, { headers: refreshed.headers }));
-                }
-              } catch {}
-            }, 3500);
-          }
-        } catch {
-          if (isMounted) setImageState("error");
-        }
-      });
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [targetUrl, cacheKey]);
-
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    setImageState("loaded");
-    if (cacheKey && imageSrc) {
-      previewMemoryCache.set(cacheKey, imageSrc);
-    }
-    const img = e.currentTarget;
-    if (img.naturalWidth && img.naturalHeight && img.naturalWidth > img.naturalHeight * 1.15) {
-      setImageLandscape(true);
-      if (cacheKey) previewLandscapeCache.set(cacheKey, true);
-    }
-  };
 
   return (
     <div
+      ref={element}
       aria-hidden="true"
-      className={`relative shrink-0 p-3 text-ob-muted transition-all duration-300 ${className}`}
-      style={{ width: width + 24 }}
+      className={`relative shrink-0 p-3 text-ob-muted transition-all duration-300 ${responsive ? "w-[var(--paper-width)] sm:w-[var(--paper-desktop-width)]" : ""} ${className}`}
+      style={responsive ? {
+        "--paper-width": `${width}px`,
+        "--paper-desktop-width": `${sizes.md + 24}px`,
+      } as React.CSSProperties : { width }}
     >
       {CORNERS.map((c) => (
         <svg
@@ -444,27 +314,14 @@ export function PaperSheet({
           className="ob-paper relative block w-full overflow-hidden border border-ob-line/30 shadow-sm"
           style={{ aspectRatio: landscape ? "210 / 132" : "148 / 210" }}
         >
-          {imageSrc && imageState !== "error" && (
-            <img
-              src={imageSrc}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              className={`absolute inset-0 h-full w-full object-contain bg-white transition-opacity duration-200 ${
-                imageState === "loaded" ? "opacity-100" : "opacity-0"
-              }`}
-              onLoad={handleImageLoad}
-              onError={() => setImageState("error")}
-            />
-          )}
-
-          {/* Skeleton sketch: displayed underneath while loading, or as fallback if error / no project */}
-          {imageState !== "loaded" && (
+          {preview ? (
+            // The thumbnail is already encoded and decoded before it replaces the cached image.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={preview.src} alt="" className="absolute inset-0 h-full w-full bg-white object-contain" />
+          ) : (
             <svg
               viewBox={viewBox}
-              className={`relative block h-auto w-full transition-opacity duration-200 ${
-                imageState === "loading" ? "opacity-40 animate-pulse" : "opacity-100"
-              }`}
+              className={`relative block h-auto w-full transition-opacity duration-200 ${isFetching ? "animate-pulse opacity-40" : ""}`}
             >
               {kind === "article" && <Article n={n} />}
               {kind === "ieee" && <Ieee n={n} />}

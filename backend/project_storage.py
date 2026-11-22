@@ -3,6 +3,9 @@ import re
 import uuid
 import asyncio
 import logging
+import time
+from collections import OrderedDict
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -744,78 +747,107 @@ E = mc^2
 
 
 _preview_compile_tasks: Dict[str, asyncio.Task] = {}
+_preview_retry_after: OrderedDict[str, tuple[int, float]] = OrderedDict()
 
 
-def _find_template_thumbnail(p_dir: Path, template_hint: Optional[str] = None) -> Optional[Path]:
-    """Finds an instant visual thumbnail for a project before compilation completes."""
-    # 1. Project local thumbnail
-    local_thumb = p_dir / "thumbnail.png"
-    if local_thumb.exists() and local_thumb.stat().st_size > 0:
-        return local_thumb
-
-    # 2. Search backend/templates for matching template
+@lru_cache(maxsize=64)
+def _template_thumbnail(template_hint: str) -> Optional[Path]:
     templates_root = Path(__file__).resolve().parent / "templates"
-    if template_hint and templates_root.exists():
-        hint_clean = template_hint.strip().lower()
-        for cand in templates_root.rglob("thumbnail.png"):
-            if hint_clean in cand.parent.name.lower() or any(hint_clean in p.lower() for p in cand.parts):
-                return cand
-
-    # 3. Global starter document preview
+    if template_hint and template_hint != "none":
+        for candidate in templates_root.rglob("thumbnail.png"):
+            if any(template_hint in part.lower() for part in candidate.relative_to(templates_root).parts[:-1]):
+                return candidate
     starter = templates_root / "starter_preview.webp"
-    if starter.exists() and starter.stat().st_size > 0:
-        return starter
-
-    return None
+    return starter if starter.is_file() else None
 
 
-async def _compile_project_for_preview(project_id: str, p_dir: Path, supabase: Optional[Client]) -> bool:
+def _newest_project_input(p_dir: Path) -> int:
+    """Include assets and directory changes so deleting inputs or switching main files invalidates builds."""
+    newest = 0
+    for root, dirs, files in os.walk(p_dir):
+        dirs[:] = [name for name in dirs if not name.startswith(".")]
+        directory = Path(root)
+        for name in [".", *files]:
+            if name not in (".", MAIN_MARKER) and (name.startswith(".") or is_auxiliary_file(name)):
+                continue
+            try:
+                info = (directory / name).stat()
+                newest = max(newest, info.st_mtime_ns, info.st_ctime_ns)
+            except FileNotFoundError:
+                continue
+    return newest
+
+
+def _newest_preview_artifact(paths: list[Path]) -> tuple[Optional[Path], int]:
+    best, modified = None, 0
+    for path in paths:
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            continue
+        if info.st_size and info.st_mtime_ns > modified:
+            best, modified = path, info.st_mtime_ns
+    return best, modified
+
+
+def _compiled_preview(
+    p_dir: Path, build_dirs: list[Path], validator: str, force: bool = False,
+) -> tuple[Optional[Response], Optional[Path], int]:
+    preview, preview_time = _newest_preview_artifact(
+        [directory / name for name in ("preview.webp", "preview.png") for directory in build_dirs]
+    )
+    pdf, pdf_time = _newest_preview_artifact([directory / "main.pdf" for directory in build_dirs])
+    revision = _newest_project_input(p_dir)
+    if force:
+        return None, preview, revision
+
+    if pdf is not None and pdf_time >= revision and pdf_time > preview_time:
+        from compiler import generate_pdf_preview_image
+
+        for name in ("preview.webp", "preview.png"):
+            target = build_dirs[0] / name
+            if generate_pdf_preview_image(pdf, target, build_time_ns=pdf_time):
+                preview, preview_time = target, pdf_time
+                break
+
+    if preview is not None and preview_time >= max(revision, pdf_time):
+        try:
+            with preview.open("rb") as image:
+                info = os.fstat(image.fileno())
+                if info.st_size and info.st_mtime_ns >= max(revision, pdf_time):
+                    etag = f'"{info.st_mtime_ns:x}-{info.st_ctime_ns:x}-{info.st_size:x}"'
+                    headers = {"Cache-Control": "private, no-cache", "ETag": etag, "Vary": "Cookie"}
+                    validators = (tag.strip().removeprefix("W/") for tag in validator.split(","))
+                    if etag in validators:
+                        return Response(status_code=304, headers=headers), preview, revision
+                    media_type = "image/webp" if preview.suffix == ".webp" else "image/png"
+                    return Response(image.read(), media_type=media_type, headers=headers), preview, revision
+        except FileNotFoundError:
+            pass
+    return None, preview, revision
+
+
+async def _compile_project_for_preview(project_id: str, revision: int) -> None:
     try:
         from compiler import compile_latex
         from compile_queue import compile_queue
 
-        main_doc = get_main_document(project_id, exists=lambda rel: (p_dir / rel).is_file()) or "main.tex"
-        main_path = p_dir / main_doc
-        code = ""
-        if main_path.exists():
-            try:
-                code = main_path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                code = main_path.read_text(encoding="latin-1", errors="ignore")
-        elif supabase:
-            try:
-                res = supabase.table("latex_documents").select("raw_code").eq("project_id", project_id).eq("file_path", main_doc).execute()
-                if res.data:
-                    code = res.data[0].get("raw_code", "")
-            except Exception as se:
-                logger.debug(f"Supabase latex_documents lookup for preview compile note: {se}")
-
-        if not code.strip():
-            code = r"""\documentclass[12pt]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[T1]{fontenc}
-\usepackage{lmodern}
-\usepackage{amsmath,amssymb}
-\title{LaTeX Document}
-\author{OverBranch}
-\date{\today}
-\begin{document}
-\maketitle
-\section{Document Preview}
-This document is ready for editing in OverBranch.
-\end{document}"""
-
-        res = await compile_queue.submit(
-            compile_latex,
-            latex_code=code,
-            project_id=project_id,
-            active_file=main_doc,
-            active_text=code,
+        # Project mode resolves the saved main file from the snapshot taken by the compiler.
+        result = await compile_queue.submit(
+            compile_latex, latex_code="", project_id=project_id, active_file=DEFAULT_MAIN_DOCUMENT,
         )
-        return bool(res and res.get("success"))
-    except Exception as e:
-        logger.warning(f"Error compiling project '{project_id}' for preview: {e}")
-        return False
+        if result and result.get("success"):
+            _preview_retry_after.pop(project_id, None)
+            return
+    except Exception as exc:
+        logger.warning("Error compiling project %r for preview: %s", project_id, exc)
+    finally:
+        _preview_compile_tasks.pop(project_id, None)
+
+    _preview_retry_after[project_id] = (revision, time.monotonic() + 30)
+    _preview_retry_after.move_to_end(project_id)
+    if len(_preview_retry_after) > 256:
+        _preview_retry_after.popitem(last=False)
 
 
 @router.get(
@@ -827,134 +859,61 @@ async def get_project_preview(
     project_id: str,
     refresh: bool = False,
     template: Optional[str] = None,
+    wait: bool = False,
     auth_info: Dict[str, Any] = Depends(get_current_user_or_guest),
 ):
-    """
-    Returns the exact compiled PDF preview image (WebP/PNG of first page) for a project.
-    Optimized for ultra-fast initial loading (<10ms) and client-side caching:
-    - Serves cached WebP/PNG immediately if fresh.
-    - If compiling is needed, immediately returns an instant template/starter thumbnail while compiling in background.
-    - Uses immutable cache headers for instantaneous user-side loading.
-    """
-    if not project_id or not project_id.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="project_id is required")
-
+    """Return the last preview immediately and let a follow-up wait for a fresh first page."""
     pid = project_id.strip()
-    supabase = None
-    try:
-        supabase = get_supabase_client()
-        user_id = auth_info.get("user_id")
-        is_guest = bool(auth_info.get("is_guest"))
-        verify_project_access(supabase, pid, user_id, is_guest=is_guest)
-    except HTTPException:
-        raise
-    except Exception as auth_err:
-        logger.debug(f"Preview access verification note: {auth_err}")
+    if not pid:
+        raise HTTPException(status_code=400, detail="project_id is required")
 
-    safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', pid)
-    base_dir = Path(os.getenv("UPLOADS_BASE_DIR", str(UPLOADS_BASE_DIR))).resolve()
-    p_dir = base_dir / safe_project
-    proj_build_dir = p_dir / ".build"
+    supabase = get_supabase_client()
+    await asyncio.to_thread(
+        verify_project_access, supabase, pid, auth_info.get("user_id"), bool(auth_info.get("is_guest"))
+    )
+
+    safe_project = re.sub(r"[^a-zA-Z0-9_-]", "_", pid)
+    p_dir = Path(os.getenv("UPLOADS_BASE_DIR", str(UPLOADS_BASE_DIR))).resolve() / safe_project
     from synctex_service import get_project_build_dir
-    synctex_build_dir = get_project_build_dir(pid)
 
-    preview_candidates = [
-        proj_build_dir / "preview.webp",
-        synctex_build_dir / "preview.webp",
-        proj_build_dir / "preview.png",
-        synctex_build_dir / "preview.png",
-    ]
+    build_dirs = [p_dir / ".build", get_project_build_dir(pid)]
+    validator = request.headers.get("if-none-match", "")
+    current, previous, revision = await asyncio.to_thread(_compiled_preview, p_dir, build_dirs, validator, refresh)
+    if current is not None:
+        return current
 
-    # Find the newest modification time among source .tex files
-    newest_src_mtime = 0.0
-    if p_dir.exists():
-        for p in p_dir.rglob("*.tex"):
-            if not any(part.startswith(".") for part in p.relative_to(p_dir).parts):
-                try:
-                    m = p.stat().st_mtime
-                    if m > newest_src_mtime:
-                        newest_src_mtime = m
-                except OSError:
-                    pass
-
-    # 1. Ultra-fast path: If an existing preview image is fresh, serve it immediately (<2ms)
-    if not refresh:
-        for cand in preview_candidates:
-            if cand.exists() and cand.stat().st_size > 0:
-                if not newest_src_mtime or cand.stat().st_mtime >= newest_src_mtime:
-                    media_type = "image/webp" if cand.suffix.lower() == ".webp" else "image/png"
-                    return FileResponse(
-                        cand,
-                        media_type=media_type,
-                        headers={
-                            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
-                            "ETag": f'"{pid}-{int(cand.stat().st_mtime)}"',
-                        },
-                    )
-
-    # 2. Fast PDF render: If compiled PDF exists and is fresh, render preview.webp (<5ms) and serve!
-    from compiler import generate_pdf_preview_image
-    pdf_candidates = [
-        proj_build_dir / "main.pdf",
-        synctex_build_dir / "main.pdf",
-    ]
-    for pdf_cand in pdf_candidates:
-        if pdf_cand.exists() and pdf_cand.stat().st_size > 0:
-            if not refresh and (not newest_src_mtime or pdf_cand.stat().st_mtime >= newest_src_mtime):
-                target_webp = proj_build_dir / "preview.webp"
-                if generate_pdf_preview_image(pdf_cand, target_webp, target_width=480):
-                    return FileResponse(
-                        target_webp,
-                        media_type="image/webp",
-                        headers={
-                            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
-                            "ETag": f'"{pid}-{int(target_webp.stat().st_mtime)}"',
-                        },
-                    )
-
-    # 3. Instant Thumbnail + Background Compilation (Eliminates 10s wait for initial loading!)
-    # Look for an instant template thumbnail or starter preview to serve immediately
-    instant_thumb = _find_template_thumbnail(p_dir, template)
-
-    # Trigger or deduplicate background compilation
-    if pid not in _preview_compile_tasks or _preview_compile_tasks[pid].done():
-        _preview_compile_tasks[pid] = asyncio.create_task(_compile_project_for_preview(pid, p_dir, supabase))
-
-    if instant_thumb and instant_thumb.exists() and instant_thumb.stat().st_size > 0:
-        media_type = "image/webp" if instant_thumb.suffix.lower() == ".webp" else "image/png"
-        return FileResponse(
-            instant_thumb,
-            media_type=media_type,
-            headers={
-                "Cache-Control": "private, max-age=10, stale-while-revalidate=30",
-                "X-Preview-Fallback": "true",
-            },
+    task = _preview_compile_tasks.get(pid)
+    last_revision, retry_after = _preview_retry_after.get(pid, (None, 0))
+    if task is None and (refresh or last_revision != revision or time.monotonic() >= retry_after):
+        task = _preview_compile_tasks[pid] = asyncio.create_task(
+            _compile_project_for_preview(pid, revision)
         )
 
-    # 4. If no instant thumbnail exists at all, wait for background compile
-    try:
-        await asyncio.wait_for(asyncio.shield(_preview_compile_tasks[pid]), timeout=25.0)
-    except Exception as comp_err:
-        logger.warning(f"Preview compile task error for {pid}: {comp_err}")
-    finally:
-        _preview_compile_tasks.pop(pid, None)
+    if wait and task is not None:
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=20)
+        except asyncio.TimeoutError:
+            return Response(status_code=202, headers={"Cache-Control": "no-store"})
+        current, previous, latest = await asyncio.to_thread(_compiled_preview, p_dir, build_dirs, validator)
+        if current is not None:
+            return current
+        # A save during a build can leave its output stale as soon as TeX finishes.
+        last_failed_revision, _ = _preview_retry_after.get(pid, (None, 0))
+        if latest != last_failed_revision:
+            return Response(status_code=202, headers={"Cache-Control": "no-store"})
 
-    for cand in preview_candidates:
-        if cand.exists() and cand.stat().st_size > 0:
-            media_type = "image/webp" if cand.suffix.lower() == ".webp" else "image/png"
-            return FileResponse(
-                cand,
-                media_type=media_type,
-                headers={
-                    "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800, immutable",
-                    "ETag": f'"{pid}-{int(cand.stat().st_mtime)}"',
-                },
-            )
+    headers = {"Cache-Control": "no-store", "X-Preview-Fallback": "true", "Vary": "Cookie"}
+    if not wait and task is not None:
+        headers["X-Preview-Pending"] = "true"
+    if wait:
+        return Response(status_code=204, headers=headers)
 
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=f"Preview not available for project '{project_id}'."
-    )
+    fallback = previous or (p_dir / "thumbnail.png")
+    if not fallback.is_file():
+        fallback = _template_thumbnail((template or "").strip().lower())
+    if fallback is None:
+        return Response(status_code=202 if task is not None else 204, headers=headers)
+    return FileResponse(fallback, headers=headers)
 
 
 @router.get(

@@ -8,6 +8,7 @@ import time
 import shutil
 import sys
 import logging
+from threading import Lock
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -1881,7 +1882,21 @@ def load_project_text_file(project_id: Optional[str], rel_path: str = "main.tex"
     return None
 
 
-def generate_pdf_preview_image(pdf_path: Path, output_path: Path, dpi: int = 150, target_width: int = 480) -> bool:
+_preview_publish_lock = Lock()
+
+
+def _publish_preview_artifact(staged: Path, target: Path, build_time_ns: Optional[int]) -> None:
+    if build_time_ns is None:
+        os.replace(staged, target)
+        return
+    os.utime(staged, ns=(build_time_ns, build_time_ns))
+    with _preview_publish_lock:
+        if not target.exists() or target.stat().st_mtime_ns <= build_time_ns:
+            os.replace(staged, target)
+
+
+def generate_pdf_preview_image(pdf_path: Path, output_path: Path, dpi: int = 150, target_width: int = 480,
+                               *, build_time_ns: Optional[int] = None) -> bool:
     """
     Renders page 0 of a compiled PDF into a crisp, ultra-compact preview image (~5-15KB).
     Scales to target_width (480px) for sharp retina rendering without payload bloat.
@@ -1891,40 +1906,41 @@ def generate_pdf_preview_image(pdf_path: Path, output_path: Path, dpi: int = 150
         if not pdf_path.exists() or pdf_path.stat().st_size == 0:
             return False
         import pymupdf
-        doc = pymupdf.open(str(pdf_path))
-        if len(doc) == 0:
-            doc.close()
-            return False
-        page = doc[0]
-        rect = page.rect
-        if target_width and rect.width > 0:
-            scale = target_width / rect.width
-            mat = pymupdf.Matrix(scale, scale)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-        else:
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
+        with pymupdf.open(str(pdf_path)) as doc:
+            if not len(doc):
+                return False
+            page = doc[0]
+            if target_width and page.rect.width > 0:
+                scale = target_width / page.rect.width
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+            else:
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        ext = output_path.suffix.lower()
-        if ext == ".webp":
-            try:
+        with tempfile.TemporaryDirectory(dir=output_path.parent) as staging:
+            temp = Path(staging) / output_path.name
+            if output_path.suffix.lower() == ".webp":
                 from PIL import Image
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                img.save(str(output_path), format="WEBP", quality=82, method=4)
-                doc.close()
-                return True
-            except Exception:
-                pass
-        pix.save(str(output_path))
-        doc.close()
+                with Image.frombytes("RGB", (pix.width, pix.height), pix.samples) as image:
+                    image.save(temp, format="WEBP", quality=82, method=4)
+            else:
+                pix.save(str(temp))
+            _publish_preview_artifact(temp, output_path, build_time_ns)
         return True
     except Exception as e:
         logger.warning(f"Failed to generate PDF preview image from {pdf_path}: {e}")
         return False
 
 
+def _copy_preview_artifact(source: Path, target: Path, build_time_ns: int) -> None:
+    with tempfile.TemporaryDirectory(dir=target.parent) as staging:
+        staged = Path(staging) / target.name
+        shutil.copyfile(source, staged)
+        _publish_preview_artifact(staged, target, build_time_ns)
+
+
 def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str], workdir: Optional[Path] = None,
-                            jobname: str = "main") -> None:
+                            jobname: str = "main", *, build_time_ns: Optional[int] = None) -> None:
     """
     Save the PDF, its synctex, first-page preview, and source .tex files to the persistent build directory.
     ``workdir``/``jobname`` locate the output (the main file's directory and stem); it is
@@ -1946,13 +1962,24 @@ def _save_synctex_artifacts(tmpdir: Path, project_id: Optional[str], workdir: Op
             proj_build_dir.mkdir(parents=True, exist_ok=True)
 
         if pdf_path.exists():
-            shutil.copy2(pdf_path, build_dir / "main.pdf")
-            generate_pdf_preview_image(pdf_path, build_dir / "preview.webp")
-            generate_pdf_preview_image(pdf_path, build_dir / "preview.png")
+            build_time_ns = build_time_ns if build_time_ns is not None else time.time_ns()
+            preview_dir = proj_build_dir or build_dir
+            if any(
+                existing.is_file() and existing.stat().st_mtime_ns > build_time_ns
+                for existing in (preview_dir / "main.pdf", build_dir / "main.pdf")
+            ):
+                return  # A newer compile already published its artifacts.
+            _copy_preview_artifact(pdf_path, build_dir / "main.pdf", build_time_ns)
             if proj_build_dir:
-                shutil.copy2(pdf_path, proj_build_dir / "main.pdf")
-                generate_pdf_preview_image(pdf_path, proj_build_dir / "preview.webp")
-                generate_pdf_preview_image(pdf_path, proj_build_dir / "preview.png")
+                _copy_preview_artifact(pdf_path, proj_build_dir / "main.pdf", build_time_ns)
+            with tempfile.TemporaryDirectory(dir=tmpdir) as staging:
+                for name in ("preview.webp", "preview.png"):
+                    preview = Path(staging) / name
+                    if generate_pdf_preview_image(pdf_path, preview):
+                        _copy_preview_artifact(preview, build_dir / name, build_time_ns)
+                        if proj_build_dir:
+                            _copy_preview_artifact(preview, proj_build_dir / name, build_time_ns)
+                        break
 
         synctex_gz = out_dir / f"{jobname}.synctex.gz"
         if synctex_gz.exists():
@@ -2201,6 +2228,7 @@ def _compile_latex_impl(
       from its own directory — never the active file itself.
     """
     start_time = time.time()
+    build_time_ns = time.time_ns()
     augment_path_for_latex()
 
     eng_clean = (engine or "pdfLaTeX").strip().lower()
@@ -2245,6 +2273,11 @@ def _compile_latex_impl(
                 safe_project = re.sub(r'[^a-zA-Z0-9_-]', '_', project_id.strip())
                 uploads_base_dir = Path(os.getenv("UPLOADS_BASE_DIR", os.path.join(os.path.dirname(__file__), "..", "uploads", "projects"))).resolve()
                 project_dir = uploads_base_dir / safe_project
+                if persist_synctex and project_dir.exists():
+                    # Set up the output folder before timestamping the source snapshot.
+                    (project_dir / ".build").mkdir(exist_ok=True)
+                # A save during TeX execution must be newer than this build's artifacts.
+                build_time_ns = time.time_ns()
                 if project_dir.exists():
                     for item in project_dir.rglob("*"):
                         if item.is_file():
@@ -2295,7 +2328,7 @@ def _compile_latex_impl(
                 active_rel = _safe_project_rel(active_file)
                 if active_rel and is_auxiliary_file(active_rel):
                     active_rel = None
-                overlay = active_text if active_text is not None else latex_code
+                overlay = active_text if active_text is not None else (latex_code or None)
                 if active_rel is not None and overlay is not None:
                     dest = tmpdir / active_rel
                     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -2617,7 +2650,7 @@ def _compile_latex_impl(
                                 skip_direct_of = engine_of_cmd
                             continue
                         if persist_synctex:
-                            _save_synctex_artifacts(tmpdir, project_id, workdir, stem)
+                            _save_synctex_artifacts(tmpdir, project_id, workdir, stem, build_time_ns=build_time_ns)
                         pdf_bytes = pdf_path.read_bytes()
                         pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
                         elapsed_ms = int((time.time() - start_time) * 1000)
@@ -2675,7 +2708,7 @@ def _compile_latex_impl(
             # are mapped back to the code this function was given.
             def _recovery_success(log_text: str, output_text: str, patched: str) -> dict:
                 if persist_synctex:
-                    _save_synctex_artifacts(tmpdir, project_id, workdir, stem)
+                    _save_synctex_artifacts(tmpdir, project_id, workdir, stem, build_time_ns=build_time_ns)
                 res = {
                     "success": True,
                     "pdf_base64": base64.b64encode((pdf_out).read_bytes()).decode("utf-8"),
