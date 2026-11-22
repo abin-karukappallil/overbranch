@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
+from ..models import ImageRef
+
 BBox = Tuple[float, float, float, float]
 RGB = Tuple[int, int, int]
 
@@ -126,6 +128,7 @@ class Para(Block):
     left: float = 0.0             # left edge of the column it sits in
     right: float = 0.0            # right edge of the column it sits in (for right-aligned fields)
     keep_with_next: bool = False  # forbid a page break after this block (a signature/author group)
+    keep_source_lines: bool = False  # line-oriented records keep their original rows
 
     def __post_init__(self):
         self.kind = "para"
@@ -259,7 +262,7 @@ class Rule(Block):
     width_frac: float = 1.0
     thickness: float = 0.4
     color: RGB = (0, 0, 0)
-    align: str = "left"
+    offset: float = 0.0           # left edge relative to the text column
 
     def __post_init__(self):
         self.kind = "rule"
@@ -392,11 +395,11 @@ class Furniture:
     numbering_segments: List[Dict] = field(default_factory=list)  # per segment: first_page, style, start
     furniture_line_ids: Set[Tuple[int, int]] = field(default_factory=set)  # (page, line index) to skip
     # The running header/footer to reproduce: items {band, align, text, size, color, bold, italic,
-    # y, image (file) | page_number (True), height}, and the pages that carry them.
+    # y, page_number (True), height}, and the pages that carry them.
     items: List[Dict] = field(default_factory=list)
     header_pages: Set[int] = field(default_factory=set)
     footer_pages: Set[int] = field(default_factory=set)
-    image_keys: Set[Tuple[int, str]] = field(default_factory=set)   # (page, file) of repeated pictures
+    images_by_page: Dict[int, List[ImageRef]] = field(default_factory=dict)
     rule_keys: Set[Tuple[int, int]] = field(default_factory=set)    # (page, round(y)) of repeated rules
     page_numbers: Dict[int, Tuple[str, int]] = field(default_factory=dict)  # page → (style, value)
     header_bottom: float = 0.0     # lowest edge of the header, pt from the top
@@ -404,6 +407,10 @@ class Furniture:
     footer_baseline: float = 0.0   # first footer line's baseline
     initial_numbering: Optional[Tuple] = None   # (style, value, chrome) on page 1, from the plan
     plain_empty: bool = False      # chapter-opening pages print no header, footer or number
+
+    @property
+    def image_keys(self) -> Set[Tuple[int, str]]:
+        return {(page, img.file) for page, images in self.images_by_page.items() for img in images}
 
 
 @dataclass

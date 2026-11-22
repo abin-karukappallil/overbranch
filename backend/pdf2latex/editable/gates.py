@@ -198,27 +198,28 @@ _DERIVED = ("_trim", "_eq", "_bg")
 
 
 def _asset_gate(extract: DocExtract, doc: EditDoc, tex: str, out_dir=None) -> Dict:
-    """Every picture the document references exists, and every content picture of the source
-    (not a running header/footer's, not a page background) is referenced, itself or as its
-    derived file (a crop to its ink: ``*_trim.png``)."""
+    """Verify content and running artwork references, including derived image crops."""
     from pathlib import Path
-    refs = set(re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", tex))
+    from ..preamble import referenced_files
+
+    refs = set(referenced_files(tex))
     furn = getattr(doc.furniture, "image_keys", set()) or set()
     extracted, needed = set(), set()
     for p in extract.pages:
         for img in p.images:
             extracted.add(img.file)
-            if (p.number, img.file) not in furn and p.number not in doc.scanned:
+            in_background = p.number in doc.backgrounds and (p.number, img.file) in furn
+            if p.number not in doc.scanned and not in_background:
                 needed.add(img.file)
 
-    def base(ref: str) -> str:
-        stem, dot, ext = ref.rpartition(".")
+    crop_stems = set()
+    for ref in refs:
+        stem = ref.rsplit(".", 1)[0]
         for suf in _DERIVED:
             if stem.endswith(suf):
-                return stem[: -len(suf)] + dot + ext
-        return ref
-    covered = {base(r) for r in refs} | refs
-    unreferenced = sorted(needed - covered)
+                crop_stems.add(stem[:-len(suf)])
+                break
+    unreferenced = sorted(file for file in needed - refs if file.rsplit(".", 1)[0] not in crop_stems)
     missing = sorted(r for r in refs if out_dir is not None and not (Path(out_dir) / r).exists())
     extra = {r for r in refs - extracted
              if not any(t in r.rsplit("/", 1)[-1] for t in _DERIVED)}

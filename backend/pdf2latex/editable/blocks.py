@@ -26,6 +26,7 @@ _COMPOUND = re.compile(r"^\s*(\d{1,3})\s+([a-z])\)\s+")   # "11 a) ..." question
 _REF = re.compile(r"^\s*\[(\d{1,3})\]\s+")                # "[3] ..." bibliography
 _NUM_PREFIX = re.compile(r"^\s*((?:chapter|section|part)\s+)?"
                          r"((?:\d+|[IVXLC]+|[A-Z])(?:\.\d+)*)[.)]?\s+", re.IGNORECASE)
+_RECORD_START = re.compile(r"^\s*[^|\n]{1,36}\s+\|\s+[^|\n]{1,60}\s+\|\s+\S")
 
 
 # ---------------------------------------------------------------------------
@@ -362,12 +363,9 @@ class _Builder:
         w = d.rect[2] - d.rect[0]
         if W <= 0 or w < 0.25 * W:
             return None
-        cx = (d.rect[0] + d.rect[2]) / 2
-        align = "center" if abs(cx - (col_left + col_right) / 2) <= 0.1 * W else (
-            "left" if cx < (col_left + col_right) / 2 else "right")
-        return Rule(page=page, bbox=d.rect, id=self.nid(), width_frac=min(1.0, round(w / W, 2)),
+        return Rule(page=page, bbox=d.rect, id=self.nid(), width_frac=w / W,
                     thickness=max(0.2, round(d.width or 0.4, 1)), color=d.stroke or d.fill or (0, 0, 0),
-                    align=align)
+                    offset=d.rect[0] - col_left)
 
     # -- headings ----------------------------------------------------------
     def _heading(self, page: int, row: TLine, lv: Dict, col_left: float = 0.0,
@@ -790,6 +788,7 @@ class _Builder:
         lines = [row0]
         body_left = row0.x0
         leading = self._leading_for(row0.size)
+        starts_record = _RECORD_START.match(row0.text) is not None
         i = start + 1
         n = len(items)
         while i < n:
@@ -824,7 +823,10 @@ class _Builder:
             # text too, where lines never reach the right margin); a wider gap starts a new
             # paragraph. This keeps short-line documents (résumés, question papers) from turning
             # every line into its own paragraph.
-            if scope_ok and 0 < gap <= 1.35 * leading and near_left and not_marker and not ended \
+            if scope_ok and 0 < gap <= 1.35 * leading and near_left and not_marker \
+                    and (starts_record or not ended) \
+                    and not (len(lines) == 1 and row_bold(row0) and not row_mostly_bold(r)
+                             and row_color(row0) != row_color(r) and row0.x1 < col_right - 3 * row0.size) \
                     and match_level(self.p, r, col_left, col_right) is None:
                 lines.append(r)
                 i += 1
@@ -839,7 +841,7 @@ class _Builder:
         para = Para(page=page, bbox=(row0.x0, row0.top, row0.x1, lines[-1].bottom), id=self.nid(),
                     lines=lines, align=align, indent_l=indent_l if indent_l > 6 else 0.0,
                     first_indent=first_indent if first_indent > 4 else 0.0, leading=leading,
-                    left=col_left, right=col_right)
+                    left=col_left, right=col_right, keep_source_lines=starts_record and len(lines) > 1)
         return para, i
 
 

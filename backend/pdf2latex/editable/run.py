@@ -45,6 +45,7 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
     """Build the editable LaTeX document from an extraction. Pure of I/O beyond reading ``doc``."""
     pages = extract.pages
     furn = F.detect(pages)
+    furn_imgs = furn.image_keys
     col_left, col_right = C.body_column(pages, furn.furniture_line_ids)
     page_layout: Dict[int, List] = {}
     page_rows: Dict[int, List] = {}
@@ -65,7 +66,6 @@ def assemble(extract: DocExtract, doc, source_name: str = "") -> Tuple[str, Edit
             rows_of_stacks.append(nrows)
         if rows_of_stacks:
             note_stacks[p.number] = rows_of_stacks
-        furn_imgs = getattr(furn, "image_keys", set()) or set()
         wide = [b.bbox for b in extract.metadata.get("_editable_tables", {}).get(p.number, [])] + \
                [img.bbox for img in p.images if (p.number, img.file) not in furn_imgs]
         layout = C.page_zones_and_rows(p, exclude, col_left, col_right, wide)
@@ -415,9 +415,8 @@ def _measure_heading_spacing(blocks: List[Block], profile) -> None:
             base = lb if lb is not None else prev.bbox[3]
             v = top_base - base - 1.2 * size - parskip
             st["before"].append(max(0.0, v))
-            if lb is None and prev.kind in ("rule", "figure", "table", "math"):
-                # under a rule or a picture the level's usual space (measured under text) doesn't
-                # hold; the emitter corrects this heading by the difference
+            if (lb is not None and v >= 6.0) or prev.kind in ("rule", "figure", "table", "math"):
+                # Display headings and headings under a graphic can need more room than the level's usual gap.
                 b.before_measured = v
         nxt = next((x for x in blocks[i + 1:] if x.kind not in ("note",)), None)
         if nxt is not None and nxt.kind != "pagemark" and nxt.page == b.page:
@@ -472,10 +471,12 @@ def _space_at_page_top(blocks: List[Block], profile) -> None:
     if not top:
         return
     lead = profile.leading or 12.0
-    hard = False
+    hard = True
     for b in blocks:
         if b.kind == "pagemark":
-            hard = bool(getattr(b, "hard", False))
+            hard = b.hard
+            continue
+        if b.kind == "note":
             continue
         if hard and not isinstance(b, (Heading, TitlePage)) and not b.space_before \
                 and not getattr(b, "joins_prev", False):
@@ -597,10 +598,12 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
     for k, row in enumerate(rows):
         page_first.setdefault(row[0], k)
     openers = sorted(page_first.values())
-    hard, cursor2 = False, 0
+    hard, cursor2 = True, 0
     for b in doc.blocks:
         if b.kind == "pagemark":
-            hard = bool(getattr(b, "hard", False))
+            hard = b.hard
+            continue
+        if b.kind == "note":
             continue
         opens, hard = hard, False
         if not opens or not isinstance(b, Para) or not b.space_exact or not b.lines:
@@ -612,7 +615,7 @@ def calibrate_heading_spacing(doc: EditDoc, pdf: bytes) -> bool:
         if j is None:
             continue
         cursor2 = j + 1
-        delta = rows[j][3] - b.bbox[1]
+        delta = rows[j][1] - b.lines[0].baseline
         if abs(delta) > 2.0:
             b.space_before = round(max(0.0, b.space_before - delta), 1)
             changed = True
@@ -660,7 +663,8 @@ def _fold_heading_rules(blocks: List[Block], profile) -> List[Block]:
         size = max((r.size for r in b.runs if r.text.strip()), default=profile.body_size)
         nxt = blocks[i + 1] if i + 1 < len(blocks) else None
         base = b.baselines[-1] if b.baselines else b.bbox[3]
-        ok = (isinstance(nxt, Rule) and nxt.page == b.page and nxt.width_frac >= 0.9
+        ok = (isinstance(nxt, Rule) and nxt.page == b.page and 0.9 <= nxt.width_frac <= 1.01
+              and abs(nxt.offset) <= 2
               and 0 < (nxt.bbox[1] + nxt.bbox[3]) / 2 - base <= 1.5 * size)
         found.setdefault(b.level, []).append((b, nxt if ok else None))
     drop = set()

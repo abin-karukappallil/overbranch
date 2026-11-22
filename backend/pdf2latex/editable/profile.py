@@ -93,7 +93,9 @@ def name_colors(rgbs: List[RGB]) -> List[Tuple[str, RGB]]:
             out.append((base, rgb))
         else:
             used[base] += 1
-            out.append((base + chr(ord("A") + used[base] - 2), rgb))
+            index = used[base] - 2
+            suffix = chr(ord("A") + index) if index < 26 else str(index + 1)
+            out.append((base + suffix, rgb))
     return out
 
 
@@ -211,11 +213,10 @@ def _base_class(body: float) -> float:
     return min((10.0, 11.0, 12.0), key=lambda c: abs(c - body))
 
 
-def _size_ladder(sizes: List[float], base: float) -> Tuple[Dict[float, str], List[Tuple[str, float]]]:
+def _size_ladder(sizes: List[float], body: float, base: float) -> Tuple[Dict[float, str], List[Tuple[str, float]]]:
     """
-    Map each used size to a LaTeX size command. The body size is \\normalsize and is never
-    redefined; near-body sizes (±0.75pt rounding noise) also use it. Sizes within 0.6pt of each other
-    are one size measured twice (13.9 and 14.3) and share a command. Each other size takes the
+    Map each used size to a LaTeX size command. \\normalsize uses the measured body size;
+    nearby sizes (±0.75pt rounding noise) also use it. Each other size takes the
     nearest free standard command (redefined in the preamble when its standard pt is off by >0.4);
     when a document uses more sizes than LaTeX has names for, further sizes get commands of their
     own (\\obsizeA, \\obsizeB …) rather than two sizes sharing one.
@@ -223,13 +224,12 @@ def _size_ladder(sizes: List[float], base: float) -> Tuple[Dict[float, str], Lis
     table = [t for t in _SIZE_TABLE[base] if t[0] != "\\normalsize"]
     smaller = [t for t in table if t[1] < base]
     larger = [t for t in table if t[1] > base]
-    cmds: Dict[float, str] = {}
-    redefs: Dict[str, float] = {}
+    redefs: Dict[str, float] = {"\\normalsize": body} if body != base else {}
     used: Dict[str, float] = {}
     extra = iter("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
     def assign(sz: float) -> str:
-        if abs(sz - base) <= 0.75:
+        if abs(sz - body) <= 0.75:
             return "\\normalsize"
         pool = smaller if sz < base else larger
         for cmd, pt in sorted(pool, key=lambda t: (abs(t[1] - sz), t[1])):
@@ -243,20 +243,7 @@ def _size_ladder(sizes: List[float], base: float) -> Tuple[Dict[float, str], Lis
         redefs[cmd] = sz
         return cmd
 
-    clusters: List[List[float]] = []
-    for sz in sorted(set(sizes)):
-        # sizes are already rounded to 0.5pt: two of them are two sizes (a 16.8pt title is not the
-        # 17.3pt one beside it; set at 17.5 it wraps where the PDF's does not)
-        if clusters and sz - clusters[-1][0] <= 0.25 and \
-                (abs(sz - base) <= 0.75) == (abs(clusters[-1][0] - base) <= 0.75):
-            clusters[-1].append(sz)
-        else:
-            clusters.append([sz])
-    for cl in clusters:
-        rep = cl[len(cl) // 2]
-        cmd = assign(rep)
-        for sz in cl:
-            cmds[sz] = cmd
+    cmds = {size: assign(size) for size in sorted(set(sizes))}
     return cmds, list(redefs.items())
 
 
@@ -297,7 +284,7 @@ def build_profile(pages: List[PageExtract], page_rows: Dict[int, List[TLine]],
                 if 0 < g <= 2.2 * body:
                     gaps.append(g)
     leading = _median(gaps) if gaps else _NATURAL_LEAD.get(base, 1.2 * base)
-    natural = _NATURAL_LEAD.get(base, 1.2 * base)
+    natural = _NATURAL_LEAD[base] if body == base else 1.2 * body
     stretch = leading / natural if natural else 1.0
 
     # leading per size class: consecutive same-size rows in reading order, tight enough to be lines
@@ -347,7 +334,7 @@ def build_profile(pages: List[PageExtract], page_rows: Dict[int, List[TLine]],
 
     # size ladder
     sizes_used = sorted({r.size for r in all_rows if r.size > 0})
-    size_cmds, size_redefs = _size_ladder(sizes_used, base)
+    size_cmds, size_redefs = _size_ladder(sizes_used, body, base)
 
     # heading levels
     heading_levels, has_chapters = _heading_levels(pages, page_rows, body, col_left, col_right)
@@ -367,6 +354,12 @@ def _ordered_colors(pages: List[PageExtract]) -> List[RGB]:
         for ln in p.lines:
             for sp in ln.spans:
                 c[sp.color] += max(1, len(sp.text.strip()))
+    for p in pages:
+        for drawing in p.drawings:
+            if drawing.kind == "hrule":
+                color = drawing.stroke or drawing.fill
+                if color is not None:
+                    c.setdefault(color, 0)
     c[(0, 0, 0)] += 0
     return [rgb for rgb, _ in c.most_common()]
 

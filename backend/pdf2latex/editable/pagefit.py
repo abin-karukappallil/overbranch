@@ -173,6 +173,7 @@ def _rung_looseness(doc: EditDoc, blocks: List, need: float, undo: List) -> floa
     from .model import Para
     lead = doc.profile.leading or 12.0
     paras = sorted((b for b in blocks if isinstance(b, Para) and len(b.lines) >= 3 and not b.looseness
+                    and not b.keep_source_lines
                     and b.align in ("justify", "left")), key=_text_len, reverse=True)
     n = min(len(paras), max(1, int(need // lead) + 2))
     for p in paras[:n]:

@@ -84,8 +84,12 @@ class Emitter:
         L.append("\\usepackage{setspace}")
         L.append("\\usepackage{titlesec}")
         L.append("\\usepackage{changepage}")
-        if self.backgrounds:
-            L.append("\\usepackage{eso-pic}   % page decoration (template background) behind the text")
+        if self.backgrounds or (self.furniture and self.furniture.images_by_page):
+            L.append("\\usepackage{eso-pic}   % page backgrounds and running artwork")
+        if self.furniture and self.furniture.images_by_page:
+            L.append("% Place a running graphic at its left edge and its bottom edge measured from the top.")
+            L.append("\\newcommand{\\sourceimage}[3]{\\AddToShipoutPictureBG*{\\AtPageUpperLeft{%"
+                     "\n  \\put(\\LenToUnit{#1},\\LenToUnit{-#2}){#3}}}}")
         if self.boxes:
             L.append("\\usepackage{tcolorbox}")
         if self.deck:
@@ -115,7 +119,11 @@ class Emitter:
             L.append("\\makeatletter")
             for cmd, sz in sorted(p.size_redefs, key=lambda t: t[1]):
                 verb = "newcommand" if cmd.startswith("\\obsize") else "renewcommand"
-                L.append(f"\\{verb}{{{cmd}}}{{\\@setfontsize{cmd}{{{fmt(sz)}}}{{{fmt(sz*1.2)}}}}}  "
+                original = ""
+                if cmd == "\\normalsize":
+                    L.append("\\let\\obclassnormalsize\\normalsize")
+                    original = "\\obclassnormalsize"
+                L.append(f"\\{verb}{{{cmd}}}{{{original}\\@setfontsize{cmd}{{{fmt(sz)}}}{{{fmt(sz*1.2)}}}}}  "
                          f"% {fmt(sz)}pt in the PDF")
             L.append("\\makeatother")
             L.append("")
@@ -159,8 +167,6 @@ class Emitter:
         return "\n".join(x for x in L if x is not None)
 
     def _chrome_text(self, it: Dict) -> str:
-        if it.get("image"):
-            return f"\\raisebox{{-0.3\\height}}{{\\includegraphics[height={fmt(it['height'])}bp]{{{it['image']}}}}}"
         if it.get("page_number"):
             body = _tex(it.get("prefix", "")) + "\\thepage{}" + _tex(it.get("suffix", ""))
         else:
@@ -188,7 +194,7 @@ class Emitter:
     def _page_style_lines(self) -> List[str]:
         """
         The running header and footer as the PDF prints them, as a fancyhdr page style: the header
-        text and logo, the footer text, the rules under the header and over the footer, the page
+        text, the footer text, the rules under the header and over the footer, the page
         number where and how it appears. \\obnumberedtrue/false and \\obchrometrue/false switch the
         number and the running text on and off between parts (an unnumbered front matter, roman
         then arabic numbering). Chapter-opening pages use 'plain', empty when the PDF prints
@@ -198,10 +204,10 @@ class Emitter:
         L = ["% Running header and footer, page numbers", "\\usepackage{fancyhdr}",
              "\\newif\\ifobnumbered", "\\newif\\ifobchrome"]
         parts: Dict[Tuple[str, str], List[Dict]] = {}
-        rules = {"top": 0.0, "bottom": 0.0}
+        rules = {}
         for it in (f.items if f else []):
             if it.get("rule"):
-                rules[it["band"]] = it["rule"]
+                rules[it["band"]] = it
                 continue
             parts.setdefault((it["band"], it["align"]), []).append(it)
         cmds = []
@@ -211,10 +217,8 @@ class Emitter:
             anchor = {"L": "l", "C": "c", "R": "r"}.get(align, "c")
             for it in its:
                 txt = self._chrome_text(it)
-                if not it.get("image") and not it.get("page_number"):
-                    # one PDF line stays one line, even when it is wider than the text (a
-                    # publisher's notice across the page foot)
-                    txt = f"\\makebox[0pt][{anchor}]{{{txt}}}"
+                # Keep the PDF line undivided, with its own horizontal anchor.
+                txt = self._chrome_line(txt, it, anchor)
                 flag = "\\ifobnumbered" if it.get("page_number") else "\\ifobchrome"
                 lines.append(f"{flag} {txt}\\fi")      # the space ends the control word
             where = "head" if band == "top" else "foot"
@@ -222,12 +226,26 @@ class Emitter:
             # Python 3.12, and the production image runs 3.11)
             body = "\\\\".join(lines)
             cmds.append(f"\\fancy{where}[{align}]{{{body}}}")
-        head_rule = f"\\ifobchrome{fmt(rules['top'])}pt\\else0pt\\fi" if rules["top"] else "0pt"
-        foot_rule = f"\\ifobchrome{fmt(rules['bottom'])}pt\\else0pt\\fi" if rules["bottom"] else "0pt"
         L.append("\\fancypagestyle{obmain}{\\fancyhf{}%")
-        for c in cmds:
-            L.append("  " + c + "%")
-        L.append(f"  \\renewcommand{{\\headrulewidth}}{{{head_rule}}}\\renewcommand{{\\footrulewidth}}{{{foot_rule}}}}}")
+        L.extend("  " + c + "%" for c in cmds)
+        for band, name in (("top", "head"), ("bottom", "foot")):
+            rule = rules.get(band)
+            width = fmt(rule["rule"]) + "bp" if rule else "0pt"
+            L.append(f"  \\renewcommand{{\\{name}rulewidth}}{{{width}}}%")
+            if rule:
+                left = fmt(rule["left"] - self.p.margins["left"])
+                length = fmt(rule["right"] - rule["left"])
+                color = _cname(self.p, rule["color"])
+                ink = f"\\textcolor{{{color}}}{{\\rule{{{length}bp}}{{\\{name}rulewidth}}}}"
+                if band == "top" and f.header_bottom:
+                    # The rule can be below the header's box. Move the ink without changing the box height.
+                    gap = rule["y"] - f.header_bottom - rule["rule"] / 2
+                    if gap >= 1.0:
+                        ink = f"\\raisebox{{-{fmt(gap)}bp}}[\\headrulewidth][0pt]{{{ink}}}"
+                line = f"\\nointerlineskip\\hbox to\\headwidth{{\\kern{left}bp{ink}\\hss}}"
+                skip = "\\vskip-\\headrulewidth" if band == "top" else ""
+                L.append(f"  \\renewcommand{{\\{name}rule}}{{\\ifobchrome{line}{skip}\\fi}}%")
+        L.append("}")
         if f and f.plain_empty:
             L.append("\\fancypagestyle{plain}{\\fancyhf{}\\renewcommand{\\headrulewidth}{0pt}"
                      "\\renewcommand{\\footrulewidth}{0pt}}   % chapter-opening pages print nothing")
@@ -235,6 +253,18 @@ class Emitter:
             L.append("\\fancypagestyle{plain}{\\pagestyle{obmain}}")
         L.append("")
         return L
+
+    def _chrome_line(self, text: str, item: Dict, anchor: str) -> str:
+        left = self.p.margins["left"]
+        right = self.p.paper_pt[0] - self.p.margins["right"]
+        if anchor == "l":
+            offset = item["left"] - left
+        elif anchor == "r":
+            offset = item["right"] - right
+        else:
+            offset = (item["left"] + item["right"] - left - right) / 2
+        box = f"\\makebox[0pt][{anchor}]{{{text}}}"
+        return f"\\makebox[0pt][l]{{\\kern{fmt(offset)}bp{box}}}" if abs(offset) >= 1 else box
 
     def _numbering_start(self) -> List[str]:
         f = self.furniture
@@ -328,6 +358,21 @@ class Emitter:
         return out
 
     # ------------------------------------------------------------------ body
+    def _page_art(self, page: int) -> List[str]:
+        from ..preamble import background_command
+
+        if page in self.backgrounds:
+            # Slide backgrounds already include the running artwork.
+            return [background_command(self.backgrounds[page])]
+        if not self.furniture:
+            return []
+        lines = []
+        for img in self.furniture.images_by_page.get(page, ()):
+            x0, y0, x1, y1 = img.bbox
+            graphic = f"\\includegraphics[width={fmt(x1 - x0)}bp,height={fmt(y1 - y0)}bp]{{{img.file}}}"
+            lines.append(f"\\sourceimage{{{fmt(x0)}bp}}{{{fmt(y1)}bp}}{{{graphic}}}")
+        return lines
+
     def document(self, blocks: List[Block], has_notes: bool) -> Tuple[str, LineMap]:
         self.two_column = bool(self.lock and getattr(self.p, "two_column", False) and not self.deck)
         self.multicol = any(getattr(b, "cols", 1) == 2 for b in blocks)
@@ -338,11 +383,12 @@ class Emitter:
         body_lines: List[Tuple[str, int]] = []
         in_cols = False
         in_slide = False
-        bg_done: set = set()
+        art_done: set = set()
         col_now = -1
         first = next((b for b in blocks if b.kind != "pagemark"), None)
         if self.lock and not self.two_column and not self.deck and first is not None \
                 and (not blocks or blocks[0].kind != "pagemark"):
+            self._page_top = True
             for line in self._page_open(first.page):
                 body_lines.append((line, first.id))
         for b in (blocks if not self.two_column else []):
@@ -356,16 +402,12 @@ class Emitter:
                     in_slide = False
                 if getattr(b, "empty", False):
                     # a slide with no text of its own still is a page
-                    if b.page in self.backgrounds and b.page not in bg_done:
-                        from ..preamble import background_command
-                        bg_done.add(b.page)
-                        body_lines.append((background_command(self.backgrounds[b.page]), b.id))
+                    body_lines.extend((line, b.id) for line in self._page_art(b.page))
                     body_lines.append(("\\begin{slide}\\null\\end{slide}", b.id))
                 continue        # the slide environment already ends the page
-            if b.kind != "pagemark" and b.page in self.backgrounds and b.page not in bg_done:
-                from ..preamble import background_command
-                bg_done.add(b.page)
-                body_lines.append((background_command(self.backgrounds[b.page]), b.id))
+            if b.kind != "pagemark" and b.page not in art_done:
+                art_done.add(b.page)
+                body_lines.extend((line, b.id) for line in self._page_art(b.page))
             if self.deck and not in_slide:
                 fitst = self._fit_of(b.page).get("stretch")
                 body_lines.append(("\\begin{slide}" + (f"\\setstretch{{{fmt(round(fitst * self._base_stretch(), 3))}}}"
@@ -392,12 +434,10 @@ class Emitter:
                 body_lines.append(("\\begin{multicols}{2}", b.id))
                 col_now = 0
             self._emit(b, body_lines, top=True)
-            if b.kind == "pagemark" and getattr(b, "empty", False) and b.page in self.backgrounds \
-                    and b.page not in bg_done:
-                # a page with no block of its own: only its picture (a scan)
-                from ..preamble import background_command
-                bg_done.add(b.page)
-                body_lines.append((background_command(self.backgrounds[b.page]), b.id))
+            if b.kind == "pagemark" and getattr(b, "empty", False):
+                # An art-only page still needs its image on the next shipout.
+                art_done.add(b.page)
+                body_lines.extend((line, b.id) for line in self._page_art(b.page))
         if self.two_column:
             self._two_column_body(blocks, body_lines)
         if self.lock and not self.deck:
@@ -451,7 +491,6 @@ class Emitter:
         if cur or mark is not None:
             pages.append((mark, cur))
         mode_now = "two"
-        bg_done: set = set()
         for k, (mk, bl) in enumerate(pages):
             segs = _column_segments(bl)
             ncols = sum(1 for sg in segs if sg[0] == "cols")
@@ -491,10 +530,7 @@ class Emitter:
             for line in rest:
                 if line and line != "%":
                     out.append((line, mid))
-            if pno in self.backgrounds and pno not in bg_done:
-                from ..preamble import background_command
-                bg_done.add(pno)
-                out.append((background_command(self.backgrounds[pno]), mid))
+            out.extend((line, mid) for line in self._page_art(pno))
             self._page_top = True
             if mode == "two":
                 kind, left, right = segs[-1]
@@ -534,7 +570,8 @@ class Emitter:
         # and the block rides up to the margin (a centred "CONTENTS" title landed ~54pt high).
         # The first block after a hard break writes its space as \vspace*, which is not discarded.
         self._space_star = getattr(self, "_page_top", False)
-        self._page_top = False
+        if b.kind != "note":
+            self._page_top = False
         anchor = getattr(b, "anchor_bottom", None) if self.lock and top else None
         if anchor is not None:
             # the PDF sets this block at the foot of its page (a signature, a closing line)
@@ -677,7 +714,7 @@ class Emitter:
         for i, line in enumerate(p.lines):
             n = len(line.segments)
             for si, seg in enumerate(line.segments):
-                if p.right and is_right_field(seg, n, si, p.left, p.right):
+                if not p.keep_source_lines and p.right and is_right_field(seg, n, si, p.left, p.right):
                     right_fields.append(list(seg.runs))
                     continue
                 if si > 0:
@@ -702,6 +739,8 @@ class Emitter:
                 if k:
                     add_space()
                 runs_acc.extend(f)
+        if p.keep_source_lines:
+            return "".join("\\newline\n" if r.text == LINEBREAK else self._run(r) for r in runs_acc)
         return self._runs(runs_acc)
 
     def _local_stretch(self, p: Para) -> Optional[float]:
@@ -725,9 +764,9 @@ class Emitter:
                 return None
             want = pitch / tex_baselineskip(self.p, size)
         else:
-            want = p.leading / (1.2 * size)
+            want = p.leading / tex_baselineskip(self.p, size)
         have = self.p.line_stretch if abs(self.p.line_stretch - 1.0) > 0.05 else 1.0
-        if abs(want - have) <= 0.08:
+        if abs(want - have) <= (0.02 if p.keep_source_lines else 0.08):
             return None
         # a page set tighter to fit scales its local pitches by the same factor
         return round(want * (self._fit_of(self._cur_page).get("stretch") or 1.0), 3)
@@ -789,7 +828,7 @@ class Emitter:
     def _keeps_breaks(p: Para) -> bool:
         """Centred or right-aligned lines keep their breaks: re-wrapped, a name over its register
         number or a two-line address would run together on one line."""
-        return p.align in ("center", "right") and len(p.lines) > 1
+        return p.keep_source_lines or p.align in ("center", "right") and len(p.lines) > 1
 
     def _para_aligned(self, p: Para, body: str, space: bool = True) -> str:
         pre = self._space(p) if space else ""
@@ -807,12 +846,18 @@ class Emitter:
             return pre + "{\\centering " + body + "\\par}"
         if p.align == "right":
             return pre + "{\\raggedleft " + body + "\\par}"
+        if p.keep_source_lines:
+            body = "{\\raggedright " + body + "\\par}"
         if p.align == "offset":
             if self.lock:
                 return self._indented(pre, body, "0.5\\linewidth", p)
             return pre + "\\begin{adjustwidth}{0.5\\linewidth}{0pt}\n" + body + "\n\\end{adjustwidth}"
         if p.align == "left":
-            # ragged right (not justified)
+            if len(p.lines) == 1 and p.right and p.lines[0].size >= self.p.body_size + 3:
+                extra = p.lines[0].x1 - p.right
+                if extra > 2:
+                    # A display line can be wider than the column inferred from the body.
+                    return pre + f"{{\\rightskip=-{fmt(extra + 2)}bp plus 1fil {body}\\par}}"
             if p.indent_l > 6:
                 if self.lock:
                     return self._indented(pre, body, p.indent_l, p)
@@ -1076,13 +1121,13 @@ class Emitter:
 
     # -- rule --------------------------------------------------------------
     def _rule(self, r: Rule) -> str:
-        cname = _cname(self.p, r.color)
-        body = f"\\textcolor{{{cname}}}{{\\rule{{{fmt(r.width_frac)}\\linewidth}}{{{fmt(r.thickness)}pt}}}}"
+        color = _cname(self.p, r.color)
+        width = (f"{fmt(r.width_frac, 3)}\\linewidth" if r.width_frac <= 1.01
+                 else f"{fmt(r.bbox[2] - r.bbox[0])}bp")
+        body = f"\\textcolor{{{color}}}{{\\rule{{{width}}}{{{fmt(r.thickness)}bp}}}}"
         pre = self._space(r)
-        if r.align == "center":
-            return pre + "{\\centering " + body + "\\par}"
-        if r.align == "right":
-            return pre + "{\\raggedleft " + body + "\\par}"
+        if abs(r.offset) >= 1 or r.width_frac > 1.01:
+            body = f"\\makebox[0pt][l]{{\\kern{fmt(r.offset)}bp{body}}}"
         return pre + "\\noindent" + body + "\\par"
 
     # -- math --------------------------------------------------------------
@@ -1333,6 +1378,8 @@ _GYRE = (("texgyretermes", "tgtermes", ""), ("texgyrepagella", "tgpagella", ""),
 def _exact_font_lines(body_font: str) -> List[str]:
     from latex_layout.metrics import tex_package_available
     n = (body_font or "").lower().replace(" ", "")
+    if n == "dejavusans" and tex_package_available("DejaVuSans"):
+        return ["\\usepackage{DejaVuSans}"]
     for key, pkg, default in _GYRE:
         if n.startswith(key) and tex_package_available(pkg):
             return [f"\\usepackage{{{pkg}}}"] + ([default] if default else [])

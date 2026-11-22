@@ -2,9 +2,8 @@
 furniture.py — Running headers/footers, page numbers and numbering segments.
 
 These must come out of the flowing text (a page number in the middle of a paragraph is the classic
-reflow bug, and a footer counted as body text hides where each page really ends) and be reproduced
-as a fancyhdr page style instead: the header's text and logo, the footer's text, the page number
-where and how the PDF prints it. Pure over the extracted lines and images.
+reflow bug, and a footer counted as body text hides where each page really ends). Running text and
+page numbers use a fancyhdr page style; repeating artwork keeps its source page and box.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Dict, List, Optional, Set, Tuple
 
-from ..models import Line, PageExtract
+from ..models import ImageRef, Line, PageExtract
 from .model import Furniture
 
 _PAGENUM = re.compile(r"^\s*(?:page\s*)?(\d{1,4}|[ivxlcdm]{1,7})\s*(?:(?:of|/)\s*\d{1,4})?\s*$",
@@ -135,7 +134,7 @@ def detect(pages: List[PageExtract]) -> Furniture:
             page_w = next(p.width for p in pages if p.number == pno)
             items.append({"band": band, "align": _align(ln.bbox[0], ln.bbox[2], page_w),
                           "text": ln.text.strip(), "y": ln.bbox[1], "bottom": ln.bbox[3],
-                          "baseline": ln.baseline, **_style(ln)})
+                          "baseline": ln.baseline, "left": ln.bbox[0], "right": ln.bbox[2], **_style(ln)})
         return chosen
 
     header_sig = repeated(top_lines, "top")
@@ -189,29 +188,25 @@ def detect(pages: List[PageExtract]) -> Furniture:
         prefix, suffix = (text[:ms.start(1)], text[ms.end(1):]) if ms else ("", "")
         items.append({"band": band, "align": num_align, "page_number": True, "text": "",
                       "prefix": prefix, "suffix": suffix,
-                      "y": ln.bbox[1], "bottom": ln.bbox[3], "baseline": ln.baseline, **_style(ln)})
+                      "y": ln.bbox[1], "bottom": ln.bbox[3], "baseline": ln.baseline,
+                      "left": ln.bbox[0], "right": ln.bbox[2], **_style(ln)})
 
-    # 4. pictures repeated at the same place (a logo in the header)
-    pic_pages: Dict[Tuple[int, int, int, int], Set[int]] = defaultdict(set)
-    pic_files: Dict[Tuple[int, int, int, int], List[Tuple[int, str]]] = defaultdict(list)
+    # 4. Pictures repeated in the margin, such as a logo. Keep each page's actual image
+    # so different logos or codes at a recurring position are never substituted.
+    deck = len(pages) >= 2 and all(p.width > p.height * 1.15 for p in pages)
+    pictures: Dict[Tuple[int, ...], Dict[int, List[ImageRef]]] = defaultdict(lambda: defaultdict(list))
     for p in pages:
         for img in p.images:
+            _, top, _, bottom = img.bbox
+            if img.kind == "scan" or (not deck and bottom > 0.12 * p.height and top < 0.88 * p.height):
+                continue
             key = tuple(int(round(v / 3)) for v in img.bbox)
-            pic_pages[key].add(p.number)
-            pic_files[key].append((p.number, img.file))
-    image_keys: Set[Tuple[int, str]] = set()
-    for key, ps in pic_pages.items():
-        if len(ps) < thresh:
-            continue
-        image_keys.update(pic_files[key])
-        pno, f = min(pic_files[key])
-        img = next(i for p in pages if p.number == pno for i in p.images if i.file == f)
-        page = next(p for p in pages if p.number == pno)
-        band = "top" if img.bbox[1] < page.height / 2 else "bottom"
-        (header_pages if band == "top" else footer_pages).update(ps)
-        items.append({"band": band, "align": _align(img.bbox[0], img.bbox[2], page.width),
-                      "image": f, "height": round(img.bbox[3] - img.bbox[1], 1),
-                      "y": img.bbox[1], "bottom": img.bbox[3], "baseline": img.bbox[3]})
+            pictures[key][p.number].append(img)
+    images_by_page: Dict[int, List[ImageRef]] = defaultdict(list)
+    for by_page in pictures.values():
+        if len(by_page) >= thresh:
+            for pno, images in by_page.items():
+                images_by_page[pno].extend(images)
 
     # 5. rules repeated at the same place in the header or footer band (a header underline)
     rule_pages: Dict[Tuple[int, int, int], Set[int]] = defaultdict(set)
@@ -236,7 +231,8 @@ def detect(pages: List[PageExtract]) -> Furniture:
         for pno in ps:
             rule_keys.add((pno, key[0]))
         items.append({"band": band, "rule": round(max(0.2, d.width or (d.rect[3] - d.rect[1])), 2),
-                      "color": d.stroke or d.fill or (0, 0, 0), "y": y, "bottom": y, "baseline": y})
+                      "color": d.stroke or d.fill or (0, 0, 0), "y": y, "bottom": y, "baseline": y,
+                      "left": d.rect[0], "right": d.rect[2]})
 
     # 6. numbering segments: a new segment at a style change or a non-consecutive value
     segments: List[Dict] = []
@@ -255,7 +251,7 @@ def detect(pages: List[PageExtract]) -> Furniture:
                      page_number_align=num_align, page_number_size=num_size,
                      numbering_segments=segments, furniture_line_ids=furniture_ids,
                      items=items, header_pages=header_pages, footer_pages=footer_pages,
-                     image_keys=image_keys, rule_keys=rule_keys, page_numbers=page_num,
+                     images_by_page=dict(images_by_page), rule_keys=rule_keys, page_numbers=page_num,
                      header_bottom=max((it["bottom"] for it in heads), default=0.0),
                      footer_top=min((it["y"] for it in foots), default=0.0),
                      footer_baseline=min((it["baseline"] for it in foots), default=0.0))

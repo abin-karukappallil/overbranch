@@ -224,8 +224,9 @@ def output_tokens(pdf: bytes, doc: EditDoc, vocab=None) -> Dict[int, List[str]]:
             lines = []
             for blk in pg.get_text("dict", **kw).get("blocks", []):
                 for ln in blk.get("lines", []):
-                    lines.append("".join(sp.get("text", "") for sp in ln.get("spans", [])
-                                         if not _MATH_OUT.search(sp.get("font", ""))))
+                    # A skipped arrow or other math glyph can sit between text in adjacent spans.
+                    lines.append("".join(" " if _MATH_OUT.search(sp.get("font", "")) else sp.get("text", "")
+                                         for sp in ln.get("spans", [])))
             out[i + 1] = tokenize(_join_eol_hyphens("\n".join(lines), doc))
     return out
 
@@ -505,6 +506,13 @@ def figure_position(doc: EditDoc, pdf: bytes, out_dir) -> Dict:
     import pymupdf
     from pathlib import Path
     items = figure_items(doc.blocks)
+    if doc.furniture:
+        items.extend(
+            (page, img.file, img.bbox)
+            for page, images in doc.furniture.images_by_page.items()
+            if page not in doc.backgrounds
+            for img in images
+        )
     if not items:
         return {"total": 0, "ok": 0, "score": 1.0, "items": []}
     placed: List[Dict] = []
@@ -522,8 +530,8 @@ def figure_position(doc: EditDoc, pdf: bytes, out_dir) -> Dict:
         if not cands:
             res.append({"page": page, "file": img, "found": False, "ok": False})
             continue
-        best = min(cands, key=lambda p: (p["page"] != page, abs(p["page"] - page),
-                                         abs(p["bbox"][1] - box[1])))
+        best = min(cands, key=lambda p: (abs(p["page"] - page),
+                                         abs(p["bbox"][0] - box[0]) + abs(p["bbox"][1] - box[1])))
         best["used"] = True
         bw, bh = best["bbox"][2] - best["bbox"][0], best["bbox"][3] - best["bbox"][1]
         sw, sh = box[2] - box[0], box[3] - box[1]
